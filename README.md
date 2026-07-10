@@ -1,1 +1,1 @@
-# pipestream-proto-mapper
+# pipestream-proto-tools
