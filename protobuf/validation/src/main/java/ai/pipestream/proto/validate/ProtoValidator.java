@@ -21,6 +21,7 @@ import ai.pipestream.proto.validate.model.StringFormat;
 import ai.pipestream.proto.validate.model.TimestampConstraints;
 import ai.pipestream.proto.validate.spi.ValidationRuleSource;
 import ai.pipestream.proto.validate.spi.ValidationRuleSources;
+import com.google.common.primitives.UnsignedLong;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
@@ -181,10 +182,20 @@ public final class ProtoValidator {
 
         if (field.isMapField()) {
             validateMap(message, field, constraints, path, violations);
+            // A field-level CEL rule on a map binds `this` to the whole map, evaluated once.
+            Object celMap = celMapValue(message, field);
+            for (FieldConstraints c : constraints) {
+                runFieldCel(c, celMap, path, violations);
+            }
             return;
         }
         if (field.isRepeated()) {
             validateRepeated(message, field, constraints, path, violations);
+            // A field-level CEL rule on a repeated field binds `this` to the whole list.
+            Object celList = celListValue(message, field);
+            for (FieldConstraints c : constraints) {
+                runFieldCel(c, celList, path, violations);
+            }
             return;
         }
 
@@ -248,7 +259,6 @@ public final class ProtoValidator {
                         runFieldCel(items, element, elementPath, violations);
                     }
                 });
-                runFieldCel(c, element, elementPath, violations);
             }
             if (element instanceof Message nested) {
                 validateChildren(nested, elementPath, violations);
@@ -302,7 +312,6 @@ public final class ProtoValidator {
                         }
                     });
                 }
-                runFieldCel(c, value, entryPath, violations);
             }
             if (value instanceof Message nested) {
                 validateChildren(nested, entryPath, violations);
@@ -718,8 +727,9 @@ public final class ProtoValidator {
             return;
         }
         Object celValue = value instanceof EnumValueDescriptor evd ? (long) evd.getNumber() : value;
-        for (CelConstraint rule : constraints.cel()) {
-            evalCel(fieldCel, rule, celValue, path, violations);
+        List<CelConstraint> cel = constraints.cel();
+        for (int i = 0; i < cel.size(); i++) {
+            evalCel(fieldCel, cel.get(i), celValue, path, "cel[" + i + "]", violations);
         }
     }
 
@@ -734,8 +744,9 @@ public final class ProtoValidator {
                 continue;
             }
             String msgPath = path.isEmpty() ? descriptor.getName() : path;
+            // Message-level CEL rules report no FieldRules rule path (they are not on any field).
             for (CelConstraint rule : constraints.cel()) {
-                evalCel(messageCel, rule, message, msgPath, violations);
+                evalCel(messageCel, rule, message, msgPath, "", violations);
             }
             for (MessageConstraints.Oneof oneof : constraints.oneofs()) {
                 validateMessageOneof(message, descriptor, oneof, path, violations);
@@ -800,6 +811,7 @@ public final class ProtoValidator {
             CelConstraint rule,
             Object thisValue,
             String path,
+            String rulePath,
             List<ValidationResult.Violation> violations) {
         if (rule.expression().isBlank()) {
             return;
@@ -810,20 +822,57 @@ public final class ProtoValidator {
             if (result instanceof Boolean ok) {
                 if (!ok) {
                     String msg = rule.message().isBlank() ? "CEL rule failed" : rule.message();
-                    violations.add(new ValidationResult.Violation(path, id, msg));
+                    violations.add(new ValidationResult.Violation(path, id, msg, rulePath));
                 }
             } else if (result instanceof String text) {
                 if (!text.isEmpty()) {
-                    violations.add(new ValidationResult.Violation(path, id, text));
+                    violations.add(new ValidationResult.Violation(path, id, text, rulePath));
                 }
             } else {
                 violations.add(new ValidationResult.Violation(
-                        path, id, "CEL rule must return bool or string"));
+                        path, id, "CEL rule must return bool or string", rulePath));
             }
         } catch (CelEvaluationException e) {
             violations.add(new ValidationResult.Violation(
-                    path, id, "CEL evaluation error: " + e.getMessage()));
+                    path, id, "CEL evaluation error: " + e.getMessage(), rulePath));
         }
+    }
+
+    /** The whole repeated field as a CEL list, each element converted to its CEL Java type. */
+    private static Object celListValue(Message message, FieldDescriptor field) {
+        int count = message.getRepeatedFieldCount(field);
+        List<Object> list = new java.util.ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            list.add(celScalar(field, message.getRepeatedField(field, i)));
+        }
+        return list;
+    }
+
+    /** The whole map field as a CEL map, keys and values converted to their CEL Java types. */
+    private static Object celMapValue(Message message, FieldDescriptor field) {
+        Descriptor entryType = field.getMessageType();
+        FieldDescriptor keyField = entryType.findFieldByNumber(1);
+        FieldDescriptor valueField = entryType.findFieldByNumber(2);
+        int count = message.getRepeatedFieldCount(field);
+        Map<Object, Object> map = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < count; i++) {
+            Message entry = (Message) message.getRepeatedField(field, i);
+            map.put(celScalar(keyField, entry.getField(keyField)),
+                    celScalar(valueField, entry.getField(valueField)));
+        }
+        return map;
+    }
+
+    /** Converts a scalar protobuf value to the Java type CEL expects (unsigned for uint types). */
+    private static Object celScalar(FieldDescriptor field, Object value) {
+        return switch (field.getType()) {
+            case UINT32, FIXED32 -> UnsignedLong.fromLongBits(Integer.toUnsignedLong((Integer) value));
+            case UINT64, FIXED64 -> UnsignedLong.fromLongBits((Long) value);
+            case INT32, SINT32, SFIXED32 -> ((Integer) value).longValue();
+            case FLOAT -> ((Float) value).doubleValue();
+            case ENUM -> (long) ((EnumValueDescriptor) value).getNumber();
+            default -> value;
+        };
     }
 
     /** Whether an element (repeated item, map key/value) is skipped by its own ignore mode. */

@@ -99,7 +99,9 @@ public final class ConformanceRunner {
                 String ruleId = v.ruleId();
                 boolean containerLevel = ruleId.startsWith("repeated.") || ruleId.startsWith("map.");
                 String prefix = containerLevel ? "" : containerPrefix(fieldPath, forKey);
-                b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), prefix + rulePath(ruleId)));
+                // Custom CEL rules carry an explicit cel[N] rule path the id cannot express.
+                String base = v.rulePath().isEmpty() ? rulePath(ruleId) : v.rulePath();
+                b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), prefix + base));
             } catch (RuntimeException ignored) {
                 // Rule ids without a FieldRules mapping (e.g. bare "cel") leave the rule path unset.
             }

@@ -28,12 +28,21 @@ public record ValidationResult(boolean valid, List<Violation> violations) {
         }
     }
 
-    /** Single constraint failure. */
-    public record Violation(String path, String ruleId, String message) {
+    /**
+     * Single constraint failure. {@code rulePath} is an optional dotted {@code FieldRules} path the
+     * rule lives at when it cannot be derived from {@code ruleId} alone (notably custom CEL rules,
+     * whose path is {@code cel[N]}); empty means "derive from the rule id".
+     */
+    public record Violation(String path, String ruleId, String message, String rulePath) {
         public Violation {
             Objects.requireNonNull(path, "path");
             Objects.requireNonNull(ruleId, "ruleId");
             Objects.requireNonNull(message, "message");
+            rulePath = rulePath == null ? "" : rulePath;
+        }
+
+        public Violation(String path, String ruleId, String message) {
+            this(path, ruleId, message, "");
         }
     }
 
