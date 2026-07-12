@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.validate.protovalidate.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.validate.protovalidate.testdata";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Annotated exclusively with the protovalidate (buf.validate) option schema;
+// validated through ProtoValidator via ProtovalidateRuleSource.
+
+enum Plan {
+  PLAN_UNSPECIFIED = 0;
+  PLAN_FREE = 1;
+  PLAN_PAID = 2;
+}
+
+message AnnotatedUser {
+  option (.buf.validate.message).cel = {
+    id: "user.paid_needs_email"
+    message: "paid users need an email"
+    expression: "this.plan != 2 || this.email != ''"
+  };
+
+  string name = 1 [(.buf.validate.field) = {
+    required: true
+    string: { min_len: 3, max_len: 30 }
+  }];
+  optional string email = 2 [(.buf.validate.field).string.email = true];
+  uint32 age = 3 [(.buf.validate.field).uint32.lte = 150];
+  sint32 karma = 4 [(.buf.validate.field).sint32.gte = -100];
+  fixed64 quota = 5 [(.buf.validate.field).fixed64.lt = 1000];
+  double score = 6 [(.buf.validate.field).double.finite = true];
+  repeated string tags = 7 [(.buf.validate.field).repeated = {
+    max_items: 3
+    unique: true
+    items: { string: { min_len: 2 } }
+  }];
+  map<string, int32> limits = 8 [(.buf.validate.field).map = {
+    keys: { string: { min_len: 2 } }
+    values: { int32: { gte: 0 } }
+  }];
+  Plan plan = 9 [(.buf.validate.field).enum.defined_only = true];
+  google.protobuf.Timestamp created = 10 [(.buf.validate.field).timestamp.lt_now = true];
+  google.protobuf.Duration ttl = 11 [(.buf.validate.field).duration = {
+    gte: { seconds: 1 }
+    lte: { seconds: 3600 }
+  }];
+  string nickname = 12 [(.buf.validate.field) = {
+    cel: {
+      id: "nickname.no_spaces"
+      message: "nicknames have no spaces"
+      expression: "!this.contains(' ')"
+    }
+  }];
+  string ignored = 13 [(.buf.validate.field) = {
+    ignore: IGNORE_ALWAYS
+    string: { min_len: 100 }
+  }];
+}

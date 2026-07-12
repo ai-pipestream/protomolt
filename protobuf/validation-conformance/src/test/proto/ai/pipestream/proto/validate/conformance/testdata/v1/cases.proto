@@ -5,7 +5,7 @@ package ai.pipestream.proto.validate.conformance.testdata.v1;
 import "buf/validate/validate.proto";
 
 // Leading dot on the extension name forces top-level resolution regardless of the enclosing
-// package, matching the convention used by the validation-buf test fixtures.
+// package, matching the convention used by the validation-protovalidate test fixtures.
 
 message Person {
   int32 age = 1 [(.buf.validate.field).int32.gte = 18];

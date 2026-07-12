@@ -9,7 +9,7 @@ dependencies {
     // Brings in the validation core + the buf.validate dialect (build.buf.validate.* types,
     // ProtovalidateRuleSource auto-registered via ServiceLoader). harness.proto imports
     // buf/validate/validate.proto, which this project dependency supplies to protoc.
-    api project(':pipestream-proto-tools-protobuf-validation-buf')
+    api project(':pipestream-proto-tools-protobuf-validation-protovalidate')
 
     testImplementation libs.protobuf.java.util
 }

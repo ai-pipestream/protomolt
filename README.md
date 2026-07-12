@@ -43,7 +43,7 @@ samples/
 | `…-metadata` | `mapper/metadata` | CEL selectors → metadata bag (runtime extraction) |
 | `…-protobuf-metadata` | `protobuf/metadata` | **Metadata standard** — Field/Message options |
 | `…-protobuf-validation` | `protobuf/validation` | **Validation standard** — CEL + constraints, pluggable rule-source dialects |
-| `…-protobuf-validation-buf` | `protobuf/validation-buf` | Optional protovalidate (`buf.validate`) dialect (vendored proto, pinned + attributed) |
+| `…-protobuf-validation-protovalidate` | `protobuf/validation-protovalidate` | Optional protovalidate (`buf.validate`) dialect (vendored proto, pinned + attributed) |
 | `…-protobuf-validation-conformance` | `protobuf/validation-conformance` | protovalidate conformance harness — in-build pass-rate + stdin/stdout executor |
 | `…-protobuf-indexing` | `protobuf/indexing` | **Indexing standard** facade — optional validate → NDJSON |
 | `…-schema-apicurio` | `schema/apicurio` | Apicurio Registry → descriptors |
@@ -360,18 +360,18 @@ present and is removed cleanly by dropping it. Pin the chain explicitly when you
 // built-in only, ignore classpath extensions
 ProtoValidator.forMessageType(desc, ValidationRuleSources.pipestreamOnly());
 // explicit multi-dialect chain
-ProtoValidator.forMessageType(desc, List.of(new AiPipestreamRuleSource(), new BufValidateRuleSource()));
+ProtoValidator.forMessageType(desc, List.of(new AiPipestreamRuleSource(), new ProtovalidateRuleSource()));
 ```
 
-**Protovalidate interop** ships as the optional `…-protobuf-validation-buf` module: it
-vendors `buf/validate/validate.proto` (pinned at v1.2.2, Apache-2.0 attributed in its
-`NOTICE`) and provides `BufValidateRuleSource`, so schemas annotated with
-`(buf.validate.field)` / `(buf.validate.message)` validate through `ProtoValidator`
-unchanged — dropping the jar on the classpath is enough. All scalar and collection
-rule families translate, including every integer variant with unsigned semantics and
-`IGNORE_ALWAYS`; the Javadoc lists the not-yet-translated tail (byte-length string
-rules, exotic well-known formats, `Any`/`FieldMask` rules, predefined-rule extensions,
-protovalidate's custom CEL function library). Compatibility is measured, not
+**Protovalidate interop** ships as the optional `…-protobuf-validation-protovalidate`
+module: it vendors `buf/validate/validate.proto` (pinned at v1.2.2, Apache-2.0
+attributed in its `NOTICE`) and provides `ProtovalidateRuleSource`, so schemas
+annotated with `(buf.validate.field)` / `(buf.validate.message)` validate through
+`ProtoValidator` unchanged — dropping the jar on the classpath is enough. The
+implementation is a compatible superset of the protovalidate standard (originally
+created by Buf): it **passes the full protovalidate v1.2.2 conformance suite,
+2872/2872**, including predefined-rule extensions, custom CEL, `Any`/`FieldMask`
+rules, and the well-known string/bytes formats. Compatibility is measured, not
 claimed: the `…-protobuf-validation-conformance` module drives `ProtoValidator`
 against protovalidate's own conformance suite (see below).
 
@@ -398,9 +398,8 @@ protovalidate v1.2.2 conformance suite in two ways that share one runner:
 
   Structured field/rule paths are reconstructed via a faithful port of the
   suite's own field-path algorithm, so matches reflect genuine semantic
-  agreement rather than formatting. Known gaps (the untranslated rule tail above)
-  surface as suite failures — which is the point: the run tells us what to build
-  next.
+  agreement rather than formatting. The executor currently **passes all 2872
+  cases** of the protovalidate v1.2.2 suite.
 
 #### JSON Schema from descriptors + rules
 

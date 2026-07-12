@@ -38,8 +38,8 @@ project(':pipestream-proto-tools-protobuf-metadata').projectDir = file('protobuf
 include 'pipestream-proto-tools-protobuf-validation'
 project(':pipestream-proto-tools-protobuf-validation').projectDir = file('protobuf/validation')
 
-include 'pipestream-proto-tools-protobuf-validation-buf'
-project(':pipestream-proto-tools-protobuf-validation-buf').projectDir = file('protobuf/validation-buf')
+include 'pipestream-proto-tools-protobuf-validation-protovalidate'
+project(':pipestream-proto-tools-protobuf-validation-protovalidate').projectDir = file('protobuf/validation-protovalidate')
 
 include 'pipestream-proto-tools-protobuf-validation-conformance'
 project(':pipestream-proto-tools-protobuf-validation-conformance').projectDir = file('protobuf/validation-conformance')
