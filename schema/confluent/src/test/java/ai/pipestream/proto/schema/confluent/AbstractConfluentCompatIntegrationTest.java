@@ -259,7 +259,7 @@ abstract class AbstractConfluentCompatIntegrationTest {
     }
 
     /**
-     * The subjects-API integration this suite originally documented as missing:
+     * End-to-end subjects-API integration:
      * {@link ConfluentSchemaRegistryLoader} lists the subjects, fetches PROTOBUF schema text
      * plus references directly from the registry base URL, and compiles them to usable runtime
      * descriptors — including the cross-subject reference ({@code Team.members} resolves to the

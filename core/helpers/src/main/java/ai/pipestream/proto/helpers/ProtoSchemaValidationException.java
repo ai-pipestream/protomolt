@@ -2,8 +2,7 @@ package ai.pipestream.proto.helpers;
 
 /**
  * Raised when protobuf schema validation rejects content (malformed identifiers
- * or conflicting FQN definitions). Lifted from the hardening in
- * <a href="https://github.com/Apicurio/apicurio-registry/pull/7784">Apicurio #7784</a>.
+ * or conflicting FQN definitions).
  */
 public class ProtoSchemaValidationException extends Exception {
 

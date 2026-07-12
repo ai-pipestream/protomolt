@@ -26,18 +26,18 @@ import static org.junit.jupiter.api.Assertions.*;
 public class ProtoFieldMapperEnhancedTest {
 
     private static ProtoFieldMapperImpl mapper;
-    private static Descriptor pipeDocDescriptor;
+    private static Descriptor documentDescriptor;
     private static Descriptor searchMetadataDescriptor;
     private static Descriptor customMetadataDescriptor;
 
     @BeforeAll
     static void setUp() throws DescriptorValidationException {
         FileDescriptor fileDescriptor = createTestFileDescriptor();
-        pipeDocDescriptor = fileDescriptor.findMessageTypeByName("PipeDoc");
+        documentDescriptor = fileDescriptor.findMessageTypeByName("Document");
         searchMetadataDescriptor = fileDescriptor.findMessageTypeByName("SearchMetadata");
         customMetadataDescriptor = fileDescriptor.findMessageTypeByName("CustomMetadata");
 
-        assertNotNull(pipeDocDescriptor);
+        assertNotNull(documentDescriptor);
         assertNotNull(searchMetadataDescriptor);
         assertNotNull(customMetadataDescriptor);
 
@@ -79,25 +79,25 @@ public class ProtoFieldMapperEnhancedTest {
                 .setField(customMetadataDescriptor.findFieldByName("document_title"), "Important Document")
                 .build();
 
-        // Create PipeDoc with structured_data as Any
+        // Create Document with structured_data as Any
         Any structuredData = Any.pack(customMetadata);
-        Message sourcePipeDoc = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-456")
-                .setField(pipeDocDescriptor.findFieldByName("structured_data"), structuredData)
+        Message sourceDoc = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-456")
+                .setField(documentDescriptor.findFieldByName("structured_data"), structuredData)
                 .build();
 
         // Map from structured_data to search_metadata
-        Message.Builder targetBuilder = DynamicMessage.newBuilder(pipeDocDescriptor);
+        Message.Builder targetBuilder = DynamicMessage.newBuilder(documentDescriptor);
         List<String> rules = Arrays.asList(
                 "search_metadata.title = structured_data.document_title",
                 "search_metadata.document_type = structured_data.source_system"
         );
 
-        mapper.map(sourcePipeDoc, targetBuilder, rules);
+        mapper.map(sourceDoc, targetBuilder, rules);
         Message result = targetBuilder.build();
 
         // Verify the mapping worked
-        Message searchMetadata = (Message) result.getField(pipeDocDescriptor.findFieldByName("search_metadata"));
+        Message searchMetadata = (Message) result.getField(documentDescriptor.findFieldByName("search_metadata"));
         assertNotNull(searchMetadata);
         assertEquals("Important Document", searchMetadata.getField(searchMetadataDescriptor.findFieldByName("title")));
         assertEquals("legacy-system", searchMetadata.getField(searchMetadataDescriptor.findFieldByName("document_type")));
@@ -112,23 +112,23 @@ public class ProtoFieldMapperEnhancedTest {
                 .setField(searchMetadataDescriptor.findFieldByName("document_type"), "article")
                 .build();
 
-        // Create source PipeDoc with search_metadata
-        Message sourcePipeDoc = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-789")
-                .setField(pipeDocDescriptor.findFieldByName("search_metadata"), searchMetadata)
+        // Create source Document with search_metadata
+        Message sourceDoc = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-789")
+                .setField(documentDescriptor.findFieldByName("search_metadata"), searchMetadata)
                 .build();
 
         // Map search_metadata to structured_data (Any field)
-        Message.Builder targetBuilder = DynamicMessage.newBuilder(pipeDocDescriptor);
+        Message.Builder targetBuilder = DynamicMessage.newBuilder(documentDescriptor);
         List<String> rules = Collections.singletonList(
                 "structured_data = search_metadata"
         );
 
-        mapper.map(sourcePipeDoc, targetBuilder, rules);
+        mapper.map(sourceDoc, targetBuilder, rules);
         Message result = targetBuilder.build();
 
         // Verify the Any field was populated
-        Any packedData = (Any) result.getField(pipeDocDescriptor.findFieldByName("structured_data"));
+        Any packedData = (Any) result.getField(documentDescriptor.findFieldByName("structured_data"));
         assertNotNull(packedData);
         assertTrue(packedData.getTypeUrl().contains("SearchMetadata"));
 
@@ -152,22 +152,22 @@ public class ProtoFieldMapperEnhancedTest {
                 .build();
 
         Any structuredData = Any.pack(customMetadata);
-        Message sourcePipeDoc = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-nested")
-                .setField(pipeDocDescriptor.findFieldByName("structured_data"), structuredData)
+        Message sourceDoc = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-nested")
+                .setField(documentDescriptor.findFieldByName("structured_data"), structuredData)
                 .build();
 
         // Access nested field through Any
-        Message.Builder targetBuilder = DynamicMessage.newBuilder(pipeDocDescriptor);
+        Message.Builder targetBuilder = DynamicMessage.newBuilder(documentDescriptor);
         List<String> rules = Arrays.asList(
                 "search_metadata.document_type = structured_data.source_system",
                 "search_metadata.custom_fields.version = structured_data.version"
         );
 
-        mapper.map(sourcePipeDoc, targetBuilder, rules);
+        mapper.map(sourceDoc, targetBuilder, rules);
         Message result = targetBuilder.build();
 
-        Message searchMetadata = (Message) result.getField(pipeDocDescriptor.findFieldByName("search_metadata"));
+        Message searchMetadata = (Message) result.getField(documentDescriptor.findFieldByName("search_metadata"));
         assertEquals("nested-test", searchMetadata.getField(searchMetadataDescriptor.findFieldByName("document_type")));
     }
 
@@ -180,21 +180,21 @@ public class ProtoFieldMapperEnhancedTest {
                 .build();
 
         Any structuredData = Any.pack(customMetadata);
-        Message sourcePipeDoc = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-conversion")
-                .setField(pipeDocDescriptor.findFieldByName("structured_data"), structuredData)
+        Message sourceDoc = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-conversion")
+                .setField(documentDescriptor.findFieldByName("structured_data"), structuredData)
                 .build();
 
         // Map numeric field to string field (type conversion)
-        Message.Builder targetBuilder = DynamicMessage.newBuilder(pipeDocDescriptor);
+        Message.Builder targetBuilder = DynamicMessage.newBuilder(documentDescriptor);
         List<String> rules = Collections.singletonList(
                 "search_metadata.document_type = structured_data.priority"
         );
 
-        mapper.map(sourcePipeDoc, targetBuilder, rules);
+        mapper.map(sourceDoc, targetBuilder, rules);
         Message result = targetBuilder.build();
 
-        Message searchMetadata = (Message) result.getField(pipeDocDescriptor.findFieldByName("search_metadata"));
+        Message searchMetadata = (Message) result.getField(documentDescriptor.findFieldByName("search_metadata"));
         // The number should be converted to string
         assertEquals("42", searchMetadata.getField(searchMetadataDescriptor.findFieldByName("document_type")));
     }
@@ -209,23 +209,23 @@ public class ProtoFieldMapperEnhancedTest {
                 .build();
 
         Any structuredData = Any.pack(customMetadata);
-        Message sourcePipeDoc = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-struct")
-                .setField(pipeDocDescriptor.findFieldByName("structured_data"), structuredData)
+        Message sourceDoc = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-struct")
+                .setField(documentDescriptor.findFieldByName("structured_data"), structuredData)
                 .build();
 
         // Map Any fields to Struct custom_fields
-        Message.Builder targetBuilder = DynamicMessage.newBuilder(pipeDocDescriptor);
+        Message.Builder targetBuilder = DynamicMessage.newBuilder(documentDescriptor);
         List<String> rules = Arrays.asList(
                 "search_metadata.custom_fields.source = structured_data.source_system",
                 "search_metadata.custom_fields.ver = structured_data.version",
                 "search_metadata.custom_fields.pri = structured_data.priority"
         );
 
-        mapper.map(sourcePipeDoc, targetBuilder, rules);
+        mapper.map(sourceDoc, targetBuilder, rules);
         Message result = targetBuilder.build();
 
-        Message searchMetadata = (Message) result.getField(pipeDocDescriptor.findFieldByName("search_metadata"));
+        Message searchMetadata = (Message) result.getField(documentDescriptor.findFieldByName("search_metadata"));
         Message customFieldsMsg = (Message) searchMetadata.getField(searchMetadataDescriptor.findFieldByName("custom_fields"));
         Struct customFields = Struct.parseFrom(customFieldsMsg.toByteString());
 
@@ -245,35 +245,35 @@ public class ProtoFieldMapperEnhancedTest {
                 .setField(customMetadataDescriptor.findFieldByName("source_system"), "system-2")
                 .build();
 
-        // Create PipeDoc with structured_data
+        // Create Document with structured_data
         Any structuredData1 = Any.pack(customMetadata1);
-        Message sourcePipeDoc1 = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-multi-1")
-                .setField(pipeDocDescriptor.findFieldByName("structured_data"), structuredData1)
+        Message sourceDoc1 = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-multi-1")
+                .setField(documentDescriptor.findFieldByName("structured_data"), structuredData1)
                 .build();
 
         Any structuredData2 = Any.pack(customMetadata2);
-        Message sourcePipeDoc2 = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-multi-2")
-                .setField(pipeDocDescriptor.findFieldByName("structured_data"), structuredData2)
+        Message sourceDoc2 = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-multi-2")
+                .setField(documentDescriptor.findFieldByName("structured_data"), structuredData2)
                 .build();
 
         // Map from first document
-        Message.Builder targetBuilder1 = DynamicMessage.newBuilder(pipeDocDescriptor);
-        mapper.map(sourcePipeDoc1, targetBuilder1, Collections.singletonList(
+        Message.Builder targetBuilder1 = DynamicMessage.newBuilder(documentDescriptor);
+        mapper.map(sourceDoc1, targetBuilder1, Collections.singletonList(
                 "search_metadata.title = structured_data.document_title"
         ));
         Message result1 = targetBuilder1.build();
-        Message searchMetadata1 = (Message) result1.getField(pipeDocDescriptor.findFieldByName("search_metadata"));
+        Message searchMetadata1 = (Message) result1.getField(documentDescriptor.findFieldByName("search_metadata"));
         assertEquals("From Custom 1", searchMetadata1.getField(searchMetadataDescriptor.findFieldByName("title")));
 
         // Map from second document
-        Message.Builder targetBuilder2 = DynamicMessage.newBuilder(pipeDocDescriptor);
-        mapper.map(sourcePipeDoc2, targetBuilder2, Collections.singletonList(
+        Message.Builder targetBuilder2 = DynamicMessage.newBuilder(documentDescriptor);
+        mapper.map(sourceDoc2, targetBuilder2, Collections.singletonList(
                 "search_metadata.document_type = structured_data.source_system"
         ));
         Message result2 = targetBuilder2.build();
-        Message searchMetadata2 = (Message) result2.getField(pipeDocDescriptor.findFieldByName("search_metadata"));
+        Message searchMetadata2 = (Message) result2.getField(documentDescriptor.findFieldByName("search_metadata"));
         assertEquals("system-2", searchMetadata2.getField(searchMetadataDescriptor.findFieldByName("document_type")));
     }
 
@@ -285,23 +285,23 @@ public class ProtoFieldMapperEnhancedTest {
                 .setValue(ByteString.copyFromUtf8("some data"))
                 .build();
 
-        Message sourcePipeDoc = DynamicMessage.newBuilder(pipeDocDescriptor)
-                .setField(pipeDocDescriptor.findFieldByName("doc_id"), "doc-unknown")
-                .setField(pipeDocDescriptor.findFieldByName("structured_data"), unknownAny)
+        Message sourceDoc = DynamicMessage.newBuilder(documentDescriptor)
+                .setField(documentDescriptor.findFieldByName("doc_id"), "doc-unknown")
+                .setField(documentDescriptor.findFieldByName("structured_data"), unknownAny)
                 .build();
 
         // Try to map from the unknown Any - should fail gracefully
-        Message.Builder targetBuilder = DynamicMessage.newBuilder(pipeDocDescriptor);
+        Message.Builder targetBuilder = DynamicMessage.newBuilder(documentDescriptor);
         List<String> rules = Collections.singletonList(
                 "search_metadata.title = structured_data.some_field"
         );
 
         assertThrows(MappingException.class, () ->
-                mapper.map(sourcePipeDoc, targetBuilder, rules));
+                mapper.map(sourceDoc, targetBuilder, rules));
     }
 
     /**
-     * Creates a test file descriptor with PipeDoc, SearchMetadata, and CustomMetadata types.
+     * Creates a test file descriptor with Document, SearchMetadata, and CustomMetadata types.
      */
     private static FileDescriptor createTestFileDescriptor() throws DescriptorValidationException {
         FileDescriptor timestampFd = Timestamp.getDescriptor().getFile();
@@ -349,9 +349,9 @@ public class ProtoFieldMapperEnhancedTest {
                         .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                 .build();
 
-        // PipeDoc message
-        DescriptorProto pipeDocProto = DescriptorProto.newBuilder()
-                .setName("PipeDoc")
+        // Document message
+        DescriptorProto documentProto = DescriptorProto.newBuilder()
+                .setName("Document")
                 .addField(FieldDescriptorProto.newBuilder()
                         .setName("doc_id").setNumber(1)
                         .setType(FieldDescriptorProto.Type.TYPE_STRING))
@@ -366,14 +366,14 @@ public class ProtoFieldMapperEnhancedTest {
                 .build();
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
-                .setName("test_pipedoc.proto")
+                .setName("test_document.proto")
                 .setPackage("ai.pipestream.test")
                 .addDependency(timestampFd.getFullName())
                 .addDependency(structFd.getFullName())
                 .addDependency(anyFd.getFullName())
                 .addMessageType(customMetadataProto)
                 .addMessageType(searchMetadataProto)
-                .addMessageType(pipeDocProto)
+                .addMessageType(documentProto)
                 .build();
 
         return FileDescriptor.buildFrom(fileProto, new FileDescriptor[]{timestampFd, structFd, anyFd});

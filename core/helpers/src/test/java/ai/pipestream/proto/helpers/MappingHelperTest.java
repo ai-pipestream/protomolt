@@ -15,26 +15,26 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Tests for MappingHelper - demonstrates frontend mapper use cases.
  * <p>
- * Example: Building a UI to map PipeDoc → OpenSearchDocument
+ * Example: Building a UI to map Document → OpenSearchDocument
  */
 public class MappingHelperTest {
 
     private static MappingHelper helper;
-    private static Descriptor pipeDocDescriptor;
+    private static Descriptor documentDescriptor;
     private static Descriptor openSearchDocDescriptor;
 
     @BeforeAll
     static void setUp() throws DescriptorValidationException {
         helper = new MappingHelper();
         FileDescriptor fileDescriptor = createTestFileDescriptor();
-        pipeDocDescriptor = fileDescriptor.findMessageTypeByName("PipeDoc");
+        documentDescriptor = fileDescriptor.findMessageTypeByName("Document");
         openSearchDocDescriptor = fileDescriptor.findMessageTypeByName("OpenSearchDocument");
     }
 
     @Test
     void testGetAllFieldPaths() {
-        // Get all available fields for PipeDoc (for source dropdown in UI)
-        List<String> sourceFields = helper.getAllFieldPaths(pipeDocDescriptor, 3);
+        // Get all available fields for Document (for source dropdown in UI)
+        List<String> sourceFields = helper.getAllFieldPaths(documentDescriptor, 3);
 
         assertNotNull(sourceFields);
         assertTrue(sourceFields.contains("doc_id"));
@@ -55,7 +55,7 @@ public class MappingHelperTest {
     @Test
     void testGetFieldInfos() {
         // Get detailed field information for rendering in UI
-        List<MappingHelper.FieldInfo> fields = helper.getFieldInfos(pipeDocDescriptor, 2);
+        List<MappingHelper.FieldInfo> fields = helper.getFieldInfos(documentDescriptor, 2);
 
         assertNotNull(fields);
         assertFalse(fields.isEmpty());
@@ -80,7 +80,7 @@ public class MappingHelperTest {
 
         MappingHelper.ValidationResult result = helper.validateRule(
             rule,
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -95,7 +95,7 @@ public class MappingHelperTest {
 
         MappingHelper.ValidationResult result = helper.validateRule(
             rule,
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -110,7 +110,7 @@ public class MappingHelperTest {
 
         MappingHelper.ValidationResult result = helper.validateRule(
             rule,
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -125,7 +125,7 @@ public class MappingHelperTest {
 
         MappingHelper.ValidationResult result = helper.validateRule(
             rule,
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -139,7 +139,7 @@ public class MappingHelperTest {
 
         MappingHelper.ValidationResult result = helper.validateRule(
             rule,
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -152,7 +152,7 @@ public class MappingHelperTest {
         // UI should suggest compatible target fields
         List<MappingHelper.FieldSuggestion> suggestions = helper.suggestTargetFields(
             "doc_id",
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -174,7 +174,7 @@ public class MappingHelperTest {
         // When field names match exactly, should get very high score
         List<MappingHelper.FieldSuggestion> suggestions = helper.suggestTargetFields(
             "search_metadata.title",
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -190,10 +190,10 @@ public class MappingHelperTest {
     @Test
     void testExportSchema() {
         // Export schema as tree for UI rendering
-        MappingHelper.SchemaNode schema = helper.exportSchema(pipeDocDescriptor, 2);
+        MappingHelper.SchemaNode schema = helper.exportSchema(documentDescriptor, 2);
 
         assertNotNull(schema);
-        assertEquals("PipeDoc", schema.name);
+        assertEquals("Document", schema.name);
         assertFalse(schema.children.isEmpty());
 
         // Should have doc_id field
@@ -216,7 +216,7 @@ public class MappingHelperTest {
         // Simulate a user building a mapper in a UI
 
         // Step 1: Get all source fields for dropdown
-        List<String> sourceFields = helper.getAllFieldPaths(pipeDocDescriptor, 3);
+        List<String> sourceFields = helper.getAllFieldPaths(documentDescriptor, 3);
         assertTrue(sourceFields.size() > 0);
 
         // Step 2: Get all target fields for dropdown
@@ -229,7 +229,7 @@ public class MappingHelperTest {
         // Step 4: Get suggestions for target field
         List<MappingHelper.FieldSuggestion> suggestions = helper.suggestTargetFields(
             selectedSource,
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
@@ -242,18 +242,18 @@ public class MappingHelperTest {
         String rule = selectedTarget + " = " + selectedSource;
         MappingHelper.ValidationResult validation = helper.validateRule(
             rule,
-            pipeDocDescriptor,
+            documentDescriptor,
             openSearchDocDescriptor
         );
 
         assertTrue(validation.isValid);
 
         // Step 7: User can now use this rule with ProtoFieldMapper
-        // mapper.map(pipeDoc, openSearchDocBuilder, List.of(rule));
+        // mapper.map(doc, openSearchDocBuilder, List.of(rule));
     }
 
     /**
-     * Creates test file descriptor with PipeDoc and OpenSearchDocument types.
+     * Creates test file descriptor with Document and OpenSearchDocument types.
      */
     private static FileDescriptor createTestFileDescriptor() throws DescriptorValidationException {
         FileDescriptor structFd = com.google.protobuf.Struct.getDescriptor().getFile();
@@ -277,9 +277,9 @@ public class MappingHelperTest {
                 .setTypeName("google.protobuf.Struct"))
             .build();
 
-        // PipeDoc
-        DescriptorProto pipeDocProto = DescriptorProto.newBuilder()
-            .setName("PipeDoc")
+        // Document
+        DescriptorProto documentProto = DescriptorProto.newBuilder()
+            .setName("Document")
             .addField(FieldDescriptorProto.newBuilder()
                 .setName("doc_id").setNumber(1)
                 .setType(FieldDescriptorProto.Type.TYPE_STRING))
@@ -325,7 +325,7 @@ public class MappingHelperTest {
                 .addDependency(structFd.getFullName())
                 .addDependency(timestampFd.getFullName())
                 .addMessageType(searchMetadataProto)
-                .addMessageType(pipeDocProto)
+                .addMessageType(documentProto)
                 .addMessageType(openSearchDocProto)
                 .build();
 

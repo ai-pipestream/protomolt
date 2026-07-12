@@ -12,11 +12,8 @@ import java.util.Objects;
  * Validates binary {@link FileDescriptorProto} uploads against protobuf identifier grammar
  * via {@link Descriptors.FileDescriptor#buildFrom}.
  *
- * <p>Addresses the binary-upload gap described in
- * <a href="https://github.com/advisories/GHSA-xq3m-2v4x-88gg">GHSA-xq3m-2v4x-88gg</a> /
- * <a href="https://github.com/Apicurio/apicurio-registry/pull/7784">Apicurio #7784</a>:
- * Wire's binary→text round-trip silently drops illegal identifiers, so binary descriptors
- * must be checked with protobuf-java directly.
+ * <p>Wire's binary→text round-trip silently drops illegal identifiers, so binary
+ * descriptors must be checked with protobuf-java directly.
  */
 public final class BinaryProtobufIdentifierValidator {
 

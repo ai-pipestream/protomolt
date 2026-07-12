@@ -11,7 +11,7 @@ import java.util.stream.Collectors;
 
 /**
  * Micronaut-oriented gateway facade (annotation wiring lives in the Micronaut app).
- * Same contract as Micronaut's historic grpc-json proxy: POST /{service}/{method}.
+ * Serves JSON over gRPC methods at POST /{service}/{method}.
  */
 public final class MicronautProtoRestFacade {
 

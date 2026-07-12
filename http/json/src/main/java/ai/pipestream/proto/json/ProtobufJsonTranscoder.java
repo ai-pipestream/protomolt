@@ -13,8 +13,7 @@ import java.util.Objects;
 /**
  * Framework-agnostic protobuf ↔ JSON transcoder.
  *
- * <p>Inspired by Micronaut's {@code ProtobufJsonTranscoder}, extended for
- * {@link DynamicMessage} via a {@link DescriptorRegistry}-backed type registry
+ * <p>Handles {@link DynamicMessage} via a {@link DescriptorRegistry}-backed type registry
  * (Apicurio / Confluent / classpath descriptors).
  */
 public final class ProtobufJsonTranscoder {

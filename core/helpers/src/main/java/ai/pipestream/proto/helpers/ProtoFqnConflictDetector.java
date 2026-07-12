@@ -14,11 +14,9 @@ import java.util.Objects;
 /**
  * Detects cross-file fully-qualified-name conflicts among protobuf descriptors.
  *
- * <p>Lifted from
- * <a href="https://github.com/Apicurio/apicurio-registry/pull/7784">Apicurio #7784</a>
- * without Apicurio/Wire types. Comparison uses compiled descriptor equality
- * ({@link Message#equals(Object)}), so comments and whitespace are irrelevant;
- * wire layout (fields, types, tags, labels, oneofs, reserved ranges, options) drives equality.
+ * <p>Comparison uses compiled descriptor equality ({@link Message#equals(Object)}), so
+ * comments and whitespace are irrelevant; wire layout (fields, types, tags, labels,
+ * oneofs, reserved ranges, options) drives equality.
  *
  * <p>Nested messages are compared shallowly (nested types cleared) so a conflict on an
  * inner type reports the inner FQN rather than its wrapper.

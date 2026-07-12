@@ -11,9 +11,8 @@ import java.util.Objects;
 
 /**
  * Strips the Apicurio Kafka protobuf wire-format prefix and parses the payload with a
- * concrete generated message type — the same recovery path as
- * <a href="https://github.com/Apicurio/apicurio-registry/pull/7603">Apicurio #7603</a>
- * ({@code apicurio.protobuf.fallback.on-schema-error}).
+ * concrete generated message type, recovering when the registry is unavailable but the
+ * message type is known ahead of time.
  *
  * <p>Non-headers wire format:
  * {@code [0x00 magic][ID bytes][indexes?][Ref?][payload]}.

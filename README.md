@@ -5,7 +5,8 @@ schema-registry loaders, metadata extraction, search-index projection, and
 **JSON/REST + OpenAPI** over any descriptor source.
 JDK **25**, virtual threads for parallel CEL warmup / metadata extraction.
 
-No PipeDoc coupling — bind any protobuf message (or `Struct`) into CEL as `input`.
+No coupling to any particular message type — bind any protobuf message (or `Struct`)
+into CEL as `input`.
 
 ## Requirements
 
@@ -93,7 +94,7 @@ new CelProtoMapper(mapper, cel).map(builder, List.of(
 ));
 ```
 
-## Schema validation (Apicurio #7784)
+## Schema validation
 
 ```java
 ProtoFqnConflictDetector.validateAndAssertNoConflicts(Map.of(
@@ -102,24 +103,21 @@ ProtoFqnConflictDetector.validateAndAssertNoConflicts(Map.of(
 BinaryProtobufIdentifierValidator.validate("upload", fileDescriptorProto);
 ```
 
-Rejects illegal binary identifiers and cross-file FQN wire-shape conflicts
-(same hardening as [Apicurio #7784](https://github.com/Apicurio/apicurio-registry/pull/7784)).
+Rejects illegal binary identifiers and cross-file FQN wire-shape conflicts before
+they reach a registry.
 
-## Apicurio parse fallback (Apicurio #7603)
+## Apicurio parse fallback
 
 When the registry is down but you know the concrete type, strip the Apicurio
-wire prefix and `parseFrom` directly — same idea as
-[`apicurio.protobuf.fallback.on-schema-error`](https://github.com/Apicurio/apicurio-registry/pull/7603):
+wire prefix and `parseFrom` directly:
 
 ```java
 Struct msg = ApicurioProtobufParseFallback.forType(Struct.class).parse(wireBytes);
 ```
 
-For Kafka consumers on Apicurio serde, prefer the upstream config flag when available.
+For Kafka consumers on Apicurio serde, prefer the serde's own config flag when available.
 
 ## Apicurio descriptors
-
-Lifted from `pipestream-platform`'s descriptor-apicurio extension.
 
 ```groovy
 implementation 'ai.pipestream:pipestream-proto-tools-schema-apicurio'
@@ -147,7 +145,6 @@ pipestream.proto.apicurio.auto-load-on-startup=false
 
 ## Free REST over any schema registry
 
-Generic take on [Micronaut protobuff-json-support](https://github.com/micronaut-projects/micronaut-grpc/tree/5.0.x/protobuff-json-support):
 JSON in/out for protobuf RPCs, with descriptors resolved through Apicurio or
 Confluent-compatible loaders (plugins), plus OpenAPI 3 from the same registry.
 

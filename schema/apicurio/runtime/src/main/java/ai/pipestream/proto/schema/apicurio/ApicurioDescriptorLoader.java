@@ -27,8 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * (dangling) reference is skipped with a warning naming the unresolved import, never failing
  * the whole bulk load.</p>
  *
- * <p>Lifted from {@code pipestream-platform}'s descriptor-apicurio extension and
- * kept usable as plain Java (no CDI required) via constructors / {@link Builder}.
+ * <p>Usable as plain Java (no CDI required) via constructors / {@link Builder}.
  */
 public class ApicurioDescriptorLoader implements DescriptorLoader {
 
