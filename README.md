@@ -41,7 +41,7 @@ samples/
 | `…-mapper-cel` | `mapper/cel` | CEL env, evaluator, filter/selector mapper |
 | `…-metadata` | `mapper/metadata` | CEL selectors → metadata bag (runtime extraction) |
 | `…-protobuf-metadata` | `protobuf/metadata` | **Metadata standard** — Field/Message options |
-| `…-protobuf-validation` | `protobuf/validation` | **Validation standard** — CEL + constraints, pluggable rule sources (no Protovalidate runtime) |
+| `…-protobuf-validation` | `protobuf/validation` | **Validation standard** — CEL + constraints, pluggable rule-source dialects |
 | `…-protobuf-indexing` | `protobuf/indexing` | **Indexing standard** facade — optional validate → NDJSON |
 | `…-schema-apicurio` | `schema/apicurio` | Apicurio Registry → descriptors |
 | `…-schema-confluent` | `schema/confluent` | Confluent-compatible SR → descriptors (subjects REST API or binary descriptor sets) |
@@ -212,8 +212,8 @@ curl -H 'api_token: secret' -H 'content-type: application/json' \
 
 ## Protobuf standards (metadata · validation · indexing)
 
-Three independent descriptor standards — same `FieldOptions` / `MessageOptions`
-mechanism as Protovalidate, **no Buf CLI**, CEL where it matters. Consume any
+Three independent descriptor standards — the same `FieldOptions` / `MessageOptions`
+mechanism protovalidate uses, with CEL where it matters. Consume any
 subset; chain validate → index only when you want to.
 
 | Standard | Artifact | Option namespace | Role |
@@ -222,8 +222,8 @@ subset; chain validate → index only when you want to.
 | Validation | `…-protobuf-validation` | `(ai.pipestream.proto.validate.v1.field\|message)` + any `ValidationRuleSource` dialect | CEL + standard constraints, neutral rule model |
 | Indexing | `…-index-spi` (+ `…-protobuf-indexing`) | `(ai.pipestream.proto.index.hints.v1.index)` | Field kinds → plan → NDJSON → Lucene/OS/Solr |
 
-Mapping (`mapper-core` / `mapper-cel`) stays a fourth pillar — richer OOTB mapping
-than Buf, not folded into validation.
+Mapping (`mapper-core` / `mapper-cel`) stays a fourth pillar — reshaping messages
+is its own concern, not folded into validation.
 
 ```mermaid
 flowchart TB
@@ -233,7 +233,7 @@ flowchart TB
     IDX["protobuf-indexing<br/>field kinds + hint sources<br/>→ NDJSON → Lucene/OS/Solr"]
   end
 
-  subgraph Mapping["Existing strength vs Buf"]
+  subgraph Mapping["Mapping pillar"]
     MAP["mapper-core + mapper-cel<br/>text rules, filters, selectors"]
   end
 
@@ -286,7 +286,7 @@ DescriptorMetadata.registerExtensions(extensionRegistry);
 Map<String, Object> bag = DescriptorMetadata.asBag(Doc.getDescriptor());
 ```
 
-### Validation (CEL, not Buf)
+### Validation (CEL-first)
 
 ```protobuf
 import "ai/pipestream/proto/validate/v1/validate.proto";
@@ -325,8 +325,9 @@ result.throwIfInvalid();
 | `google.protobuf.Timestamp` | `gt`, `gte`, `lt`, `lte`, `lt_now`, `gt_now`, `within` |
 | `google.protobuf.Duration` | `gt`, `gte`, `lt`, `lte` |
 
-Violation rule ids are stable and buf-style (`string.min_len`, `repeated.unique`,
-`timestamp.within`, …). Paths use `[i]` for repeated elements, `["key"]` for map entries,
+Violation rule ids are stable and deliberately align with protovalidate's naming
+(`string.min_len`, `repeated.unique`, `timestamp.within`, …), so results interoperate
+across annotation dialects. Paths use `[i]` for repeated elements, `["key"]` for map entries,
 and a `#key` suffix when the map key itself violates. Standard rules run only when the
 field is present (proto3 semantics); repeated/map size rules also apply to empty
 collections. Message-typed elements — including repeated elements and map values — are
@@ -362,9 +363,11 @@ ProtoValidator.forMessageType(desc, ValidationRuleSources.pipestreamOnly());
 ProtoValidator.forMessageType(desc, List.of(new AiPipestreamRuleSource(), new BufValidateRuleSource()));
 ```
 
-This is the seam for **`buf.validate` compatibility**: a separate, optional module vendors
-`buf/validate/validate.proto` (descriptors + NOTICE) and adds a `BufValidateRuleSource` — no
-buf runtime code in the tree, and no coupling into the core beyond this interface.
+This is the seam for **protovalidate interop**: an optional module vendors
+`buf/validate/validate.proto` (descriptors + NOTICE, Apache-2.0 attributed) and adds a
+`BufValidateRuleSource`, so schemas annotated for protovalidate validate here unchanged.
+Once that module lands, compatibility will be measured and published against the
+protovalidate conformance suite rather than claimed.
 
 ### Indexing (+ optional validate chain)
 
@@ -377,15 +380,15 @@ indexer.toNdjsonLine(doc);                  // validates first when configured
 
 ## Indexing (hints + NDJSON + engine plugins)
 
-Indexing hints use protobuf `FieldOptions` extensions that bake into the descriptor.
-**No Buf CLI required** — plain `protoc` / protobuf-gradle-plugin is enough. The
+Indexing hints use protobuf `FieldOptions` extensions that bake into the descriptor —
+plain `protoc` / protobuf-gradle-plugin is all the codegen you need. The
 `.proto` ships inside `pipestream-proto-tools-index-spi` (`index/spi`, also on the
 classpath as a resource). Use `…-protobuf-indexing` for the validate → NDJSON facade.
 
 | Concern | Option | Tooling |
 |---|---|---|
 | Metadata | `(ai.pipestream.proto.meta.v1.field)` | `…-protobuf-metadata` |
-| Validation | `(ai.pipestream.proto.validate.v1.field)` | `…-protobuf-validation` (CEL; not Protovalidate) |
+| Validation | `(ai.pipestream.proto.validate.v1.field)` | `…-protobuf-validation` (CEL-first) |
 | Indexing | `(ai.pipestream.proto.index.hints.v1.index)` | `…-index-spi` + engine plugins |
 
 NDJSON does not interpret hints — only engine plugins do.
@@ -415,12 +418,11 @@ engines.get("opensearch").map(message, plan);
 new ProtoNdjsonWriter().writeBulkIndex(bulk, "docs", id, message);
 ```
 
-## Buf lint
+## Proto linting
 
 All Pipestream standard `.proto` files (and their test fixtures) are linted with
-Buf **STANDARD** rules. **Buf is not a runtime or codegen dependency** — only
-`buf lint` / `./gradlew bufLint`. Codegen uses plain `protoc` /
-protobuf-gradle-plugin.
+`buf lint` (**STANDARD** rules) to keep style consistent with the wider protobuf
+ecosystem. Codegen stays plain `protoc` / protobuf-gradle-plugin.
 
 ```shell
 buf lint          # or: ./gradlew bufLint / check
