@@ -7,6 +7,7 @@ import dev.cel.bundle.CelFactory;
 import dev.cel.common.CelFunctionDecl;
 import dev.cel.common.types.CelType;
 import dev.cel.common.types.SimpleType;
+import dev.cel.extensions.CelExtensions;
 import dev.cel.parser.CelStandardMacro;
 import dev.cel.runtime.CelFunctionBinding;
 
@@ -60,6 +61,9 @@ public final class CelEnvironmentFactory {
     public CelBuilder advisoryBuilder() {
         CelBuilder builder = CelFactory.standardCelBuilder();
         builder.setStandardMacros(CelStandardMacro.STANDARD_MACROS);
+        // The strings extension supplies format()/CharAt/indexOf etc. that protovalidate rules use.
+        builder.addCompilerLibraries(CelExtensions.strings());
+        builder.addRuntimeLibraries(CelExtensions.strings());
         builder.addMessageTypes(messageTypes);
         variables.forEach(builder::addVar);
         if (!functionDeclarations.isEmpty()) {

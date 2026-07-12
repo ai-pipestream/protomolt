@@ -1,5 +1,6 @@
 package ai.pipestream.proto.validate.conformance;
 
+import ai.pipestream.proto.validate.ProtoValidator;
 import build.buf.validate.ValidateProto;
 import buf.validate.conformance.harness.Harness.TestConformanceRequest;
 import buf.validate.conformance.harness.Harness.TestConformanceResponse;
@@ -45,8 +46,11 @@ public final class ConformanceMain {
     static TestConformanceResponse process(TestConformanceRequest request, ExtensionRegistry registry) {
         TestConformanceResponse.Builder response = TestConformanceResponse.newBuilder();
         Map<String, Descriptor> types;
+        PredefinedRules predefined;
         try {
-            types = DescriptorSets.messageTypes(request.getFdset());
+            DescriptorSets.Linked linked = DescriptorSets.link(request.getFdset());
+            types = linked.types();
+            predefined = PredefinedRules.from(linked.files(), registry);
         } catch (Exception e) {
             // Without descriptors nothing can run; report the failure per case so the runner sees it.
             String message = "failed to link fdset: " + e.getMessage();
@@ -56,7 +60,7 @@ public final class ConformanceMain {
             return response.build();
         }
 
-        ConformanceRunner runner = new ConformanceRunner();
+        ConformanceRunner runner = new ConformanceRunner(ProtoValidator.create(), predefined);
         for (Map.Entry<String, Any> entry : request.getCasesMap().entrySet()) {
             response.putResults(entry.getKey(), runCase(runner, types, entry.getValue(), registry));
         }

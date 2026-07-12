@@ -31,6 +31,7 @@ public final class ConformanceRunner {
     private static final String KEY_SUFFIX = "#key";
 
     private final ProtoValidator validator;
+    private final PredefinedRules predefined;
 
     /** Uses the default source chain, which includes the buf.validate dialect via ServiceLoader. */
     public ConformanceRunner() {
@@ -38,32 +39,35 @@ public final class ConformanceRunner {
     }
 
     public ConformanceRunner(ProtoValidator validator) {
+        this(validator, null);
+    }
+
+    ConformanceRunner(ProtoValidator validator, PredefinedRules predefined) {
         this.validator = validator;
+        this.predefined = predefined;
     }
 
     /** Validates {@code message} and maps the outcome to a conformance {@link TestResult}. */
     public TestResult run(Message message) {
         try {
             ValidationResult result = validator.validate(message);
-            if (result.valid()) {
+            Violations.Builder violations = Violations.newBuilder();
+            Descriptor root = message.getDescriptorForType();
+            for (ValidationResult.Violation v : result.violations()) {
+                violations.addViolations(toViolation(root, v));
+            }
+            if (predefined != null) {
+                violations.addAllViolations(predefined.evaluate(message));
+            }
+            if (violations.getViolationsCount() == 0) {
                 return TestResult.newBuilder().setSuccess(true).build();
             }
-            return TestResult.newBuilder()
-                    .setValidationError(toViolations(message.getDescriptorForType(), result))
-                    .build();
+            return TestResult.newBuilder().setValidationError(violations.build()).build();
         } catch (RuleCompilationException e) {
             return TestResult.newBuilder().setCompilationError(String.valueOf(e.getMessage())).build();
         } catch (RuntimeException e) {
             return TestResult.newBuilder().setRuntimeError(String.valueOf(e.getMessage())).build();
         }
-    }
-
-    private static Violations toViolations(Descriptor root, ValidationResult result) {
-        Violations.Builder out = Violations.newBuilder();
-        for (ValidationResult.Violation v : result.violations()) {
-            out.addViolations(toViolation(root, v));
-        }
-        return out.build();
     }
 
     private static Violation toViolation(Descriptor root, ValidationResult.Violation v) {

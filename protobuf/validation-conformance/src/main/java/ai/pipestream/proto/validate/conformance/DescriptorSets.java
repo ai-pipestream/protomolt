@@ -27,8 +27,17 @@ final class DescriptorSets {
     private DescriptorSets() {
     }
 
+    /** The linked result of a {@link FileDescriptorSet}: message types by full name and all files. */
+    record Linked(Map<String, Descriptor> types, List<FileDescriptor> files) {
+    }
+
     /** Builds every file in {@code set}, returning a full {@code messageFullName -> Descriptor} map. */
     static Map<String, Descriptor> messageTypes(FileDescriptorSet set) throws DescriptorValidationException {
+        return link(set).types();
+    }
+
+    /** Builds every file in {@code set}, returning both the message-type map and the built files. */
+    static Linked link(FileDescriptorSet set) throws DescriptorValidationException {
         Map<String, FileDescriptorProto> byName = new HashMap<>();
         for (FileDescriptorProto proto : set.getFileList()) {
             byName.put(proto.getName(), proto);
@@ -41,7 +50,7 @@ final class DescriptorSets {
         for (FileDescriptor file : built.values()) {
             collect(file.getMessageTypes(), types);
         }
-        return types;
+        return new Linked(types, List.copyOf(built.values()));
     }
 
     private static FileDescriptor build(
