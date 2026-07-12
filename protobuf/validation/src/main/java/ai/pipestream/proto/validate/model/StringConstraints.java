@@ -24,7 +24,8 @@ public record StringConstraints(
         Optional<String> notContains,
         List<String> in,
         List<String> notIn,
-        Set<StringFormat> formats) {
+        Set<StringFormat> formats,
+        Optional<HttpHeaderRule> httpHeader) {
 
     public StringConstraints {
         Objects.requireNonNull(constant, "constant");
@@ -39,6 +40,7 @@ public record StringConstraints(
         in = List.copyOf(Objects.requireNonNull(in, "in"));
         notIn = List.copyOf(Objects.requireNonNull(notIn, "notIn"));
         Objects.requireNonNull(formats, "formats");
+        Objects.requireNonNull(httpHeader, "httpHeader");
         formats = formats.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(formats));
     }
 
@@ -47,7 +49,7 @@ public record StringConstraints(
         return constant.isEmpty() && len.isEmpty() && minLen.isEmpty() && maxLen.isEmpty()
                 && pattern.isEmpty() && prefix.isEmpty() && suffix.isEmpty()
                 && contains.isEmpty() && notContains.isEmpty()
-                && in.isEmpty() && notIn.isEmpty() && formats.isEmpty();
+                && in.isEmpty() && notIn.isEmpty() && formats.isEmpty() && httpHeader.isEmpty();
     }
 
     public static Builder builder() {
@@ -67,6 +69,7 @@ public record StringConstraints(
         private List<String> in = List.of();
         private List<String> notIn = List.of();
         private final EnumSet<StringFormat> formats = EnumSet.noneOf(StringFormat.class);
+        private Optional<HttpHeaderRule> httpHeader = Optional.empty();
 
         public Builder constant(String constant) {
             this.constant = Optional.ofNullable(constant);
@@ -128,9 +131,14 @@ public record StringConstraints(
             return this;
         }
 
+        public Builder httpHeader(HttpHeaderRule httpHeader) {
+            this.httpHeader = Optional.ofNullable(httpHeader);
+            return this;
+        }
+
         public StringConstraints build() {
             return new StringConstraints(constant, len, minLen, maxLen, pattern,
-                    prefix, suffix, contains, notContains, in, notIn, formats);
+                    prefix, suffix, contains, notContains, in, notIn, formats, httpHeader);
         }
     }
 }

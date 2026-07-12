@@ -64,6 +64,18 @@ public final class ProtoValidator {
     private static final String TIMESTAMP_TYPE = "google.protobuf.Timestamp";
     private static final String DURATION_TYPE = "google.protobuf.Duration";
 
+    /** Well-known wrapper message types mapped to the scalar family that validates their value. */
+    private static final Map<String, FieldDescriptor.JavaType> WRAPPER_TYPES = Map.of(
+            "google.protobuf.Int32Value", FieldDescriptor.JavaType.INT,
+            "google.protobuf.Int64Value", FieldDescriptor.JavaType.LONG,
+            "google.protobuf.UInt32Value", FieldDescriptor.JavaType.INT,
+            "google.protobuf.UInt64Value", FieldDescriptor.JavaType.LONG,
+            "google.protobuf.FloatValue", FieldDescriptor.JavaType.FLOAT,
+            "google.protobuf.DoubleValue", FieldDescriptor.JavaType.DOUBLE,
+            "google.protobuf.BoolValue", FieldDescriptor.JavaType.BOOLEAN,
+            "google.protobuf.StringValue", FieldDescriptor.JavaType.STRING,
+            "google.protobuf.BytesValue", FieldDescriptor.JavaType.BYTE_STRING);
+
     private final CelEvaluator fieldCel;
     private final CelEvaluator messageCel;
     private final List<ValidationRuleSource> sources;
@@ -305,16 +317,8 @@ public final class ProtoValidator {
             String path,
             List<ValidationResult.Violation> violations) {
         switch (field.getJavaType()) {
-            case STRING -> constraints.string()
-                    .ifPresent(s -> applyString(s, (String) value, path, violations));
-            case INT, LONG -> constraints.integral()
-                    .ifPresent(n -> applyIntegral(n, integralValue(n, value), path, violations));
-            case FLOAT, DOUBLE -> constraints.floating()
-                    .ifPresent(n -> applyFloating(n, ((Number) value).doubleValue(), path, violations));
-            case BOOLEAN -> constraints.bool()
-                    .ifPresent(b -> applyBool(b, (Boolean) value, path, violations));
-            case BYTE_STRING -> constraints.bytes()
-                    .ifPresent(b -> applyBytes(b, (ByteString) value, path, violations));
+            case STRING, INT, LONG, FLOAT, DOUBLE, BOOLEAN, BYTE_STRING ->
+                    applyScalar(constraints, field.getJavaType(), value, path, violations);
             case ENUM -> constraints.enumeration()
                     .ifPresent(e -> applyEnum(e, (EnumValueDescriptor) value, path, violations));
             case MESSAGE -> {
@@ -325,7 +329,38 @@ public final class ProtoValidator {
                 } else if (DURATION_TYPE.equals(type)) {
                     constraints.duration().ifPresent(d ->
                             applyDuration(d, toJavaDuration((Message) value), path, violations));
+                } else {
+                    // Well-known wrapper types (Int32Value, StringValue, …) apply their scalar rules
+                    // to the wrapped value; the field is present (message presence) so this only runs
+                    // when the wrapper is set.
+                    FieldDescriptor.JavaType wrapped = WRAPPER_TYPES.get(type);
+                    if (wrapped != null) {
+                        Message wrapper = (Message) value;
+                        Object inner = wrapper.getField(
+                                wrapper.getDescriptorForType().findFieldByNumber(1));
+                        applyScalar(constraints, wrapped, inner, path, violations);
+                    }
                 }
+            }
+        }
+    }
+
+    /** Applies the scalar constraint family matching {@code type} to {@code value}. */
+    private static void applyScalar(
+            FieldConstraints constraints, FieldDescriptor.JavaType type, Object value,
+            String path, List<ValidationResult.Violation> violations) {
+        switch (type) {
+            case STRING -> constraints.string()
+                    .ifPresent(s -> applyString(s, (String) value, path, violations));
+            case INT, LONG -> constraints.integral()
+                    .ifPresent(n -> applyIntegral(n, integralValue(n, value), path, violations));
+            case FLOAT, DOUBLE -> constraints.floating()
+                    .ifPresent(n -> applyFloating(n, ((Number) value).doubleValue(), path, violations));
+            case BOOLEAN -> constraints.bool()
+                    .ifPresent(b -> applyBool(b, (Boolean) value, path, violations));
+            case BYTE_STRING -> constraints.bytes()
+                    .ifPresent(b -> applyBytes(b, (ByteString) value, path, violations));
+            default -> {
             }
         }
     }
@@ -397,6 +432,13 @@ public final class ProtoValidator {
                 violations.add(violation(path, format.ruleId(), format.defaultMessage()));
             }
         }
+        rules.httpHeader().ifPresent(header -> {
+            if (header.rejectEmpty() && value.isEmpty()) {
+                violations.add(violation(path, header.emptyRuleId(), "value is empty"));
+            } else if (!header.matches(value)) {
+                violations.add(violation(path, header.ruleId(), "must be a valid HTTP header"));
+            }
+        });
     }
 
     private static void applyIntegral(

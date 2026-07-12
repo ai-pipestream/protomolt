@@ -7,6 +7,7 @@ import ai.pipestream.proto.validate.model.DurationConstraints;
 import ai.pipestream.proto.validate.model.EnumConstraints;
 import ai.pipestream.proto.validate.model.FieldConstraints;
 import ai.pipestream.proto.validate.model.FloatingConstraints;
+import ai.pipestream.proto.validate.model.HttpHeaderRule;
 import ai.pipestream.proto.validate.model.IgnoreMode;
 import ai.pipestream.proto.validate.model.IntegralConstraints;
 import ai.pipestream.proto.validate.model.MapConstraints;
@@ -196,7 +197,16 @@ public final class BufValidateRuleSource implements ValidationRuleSource {
             case IPV6_PREFIX -> applyFlag(b, StringFormat.IPV6_PREFIX, r.getIpv6Prefix());
             case HOST_AND_PORT -> applyFlag(b, StringFormat.HOST_AND_PORT, r.getHostAndPort());
             default -> {
-                // *_with_prefixlen and well_known_regex: no core evaluator yet — skipped.
+                // *_with_prefixlen: no core evaluator yet — skipped.
+            }
+        }
+        boolean strict = !r.hasStrict() || r.getStrict();
+        switch (r.getWellKnownRegex()) {
+            case KNOWN_REGEX_HTTP_HEADER_NAME ->
+                    b.httpHeader(strict ? HttpHeaderRule.NAME_STRICT : HttpHeaderRule.NAME_LOOSE);
+            case KNOWN_REGEX_HTTP_HEADER_VALUE ->
+                    b.httpHeader(strict ? HttpHeaderRule.VALUE_STRICT : HttpHeaderRule.VALUE_LOOSE);
+            default -> {
             }
         }
         return b.build();

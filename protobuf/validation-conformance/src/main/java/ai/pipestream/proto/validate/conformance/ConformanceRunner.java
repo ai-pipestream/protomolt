@@ -99,6 +99,10 @@ public final class ConformanceRunner {
         }
         String prefix = ruleId.substring(0, dot);
         String suffix = ruleId.substring(dot + 1);
+        // The well_known_regex rule reports header_name/header_value ids but lives on one field.
+        if (suffix.startsWith("well_known_regex")) {
+            return prefix + ".well_known_regex";
+        }
         // Format rules that reject an empty value report <id>_empty but live on the <id> field.
         if (suffix.endsWith("_empty")) {
             return prefix + "." + suffix.substring(0, suffix.length() - "_empty".length());
