@@ -2,13 +2,10 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'JSON Schema (draft 2020-12) generation from protobuf descriptors and validation constraints'
+description = 'Optional protovalidate (buf.validate) rule-source dialect for the validation standard'
 
 dependencies {
     api project(':pipestream-proto-tools-protobuf-validation')
-    implementation libs.jackson.databind
-
-    testImplementation libs.protobuf.java.util
 }
 
 protobuf {

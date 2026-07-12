@@ -12,6 +12,8 @@ import ai.pipestream.proto.validate.model.StringConstraints;
 import ai.pipestream.proto.validate.model.StringFormat;
 import ai.pipestream.proto.validate.spi.ValidationRuleSource;
 import ai.pipestream.proto.validate.spi.ValidationRuleSources;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumDescriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
@@ -47,6 +49,7 @@ import java.util.Objects;
 public final class ProtoJsonSchemaGenerator {
 
     private static final String CEL_KEYWORD = "x-pipestream-cel";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final List<ValidationRuleSource> sources;
 
@@ -72,7 +75,12 @@ public final class ProtoJsonSchemaGenerator {
 
     /** Generates the schema as pretty-printed JSON text. */
     public String generateJson(Descriptor descriptor) {
-        return JsonWriter.toJson(generate(descriptor));
+        try {
+            return MAPPER.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(generate(descriptor));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize JSON Schema", e);
+        }
     }
 
     /** Per-call state: the $defs under construction and the worklist of message types. */

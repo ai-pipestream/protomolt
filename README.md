@@ -42,6 +42,7 @@ samples/
 | `…-metadata` | `mapper/metadata` | CEL selectors → metadata bag (runtime extraction) |
 | `…-protobuf-metadata` | `protobuf/metadata` | **Metadata standard** — Field/Message options |
 | `…-protobuf-validation` | `protobuf/validation` | **Validation standard** — CEL + constraints, pluggable rule-source dialects |
+| `…-protobuf-validation-buf` | `protobuf/validation-buf` | Optional protovalidate (`buf.validate`) dialect (vendored proto, pinned + attributed) |
 | `…-protobuf-indexing` | `protobuf/indexing` | **Indexing standard** facade — optional validate → NDJSON |
 | `…-schema-apicurio` | `schema/apicurio` | Apicurio Registry → descriptors |
 | `…-schema-confluent` | `schema/confluent` | Confluent-compatible SR → descriptors (subjects REST API or binary descriptor sets) |
@@ -364,11 +365,16 @@ ProtoValidator.forMessageType(desc, ValidationRuleSources.pipestreamOnly());
 ProtoValidator.forMessageType(desc, List.of(new AiPipestreamRuleSource(), new BufValidateRuleSource()));
 ```
 
-This is the seam for **protovalidate interop**: an optional module vendors
-`buf/validate/validate.proto` (descriptors + NOTICE, Apache-2.0 attributed) and adds a
-`BufValidateRuleSource`, so schemas annotated for protovalidate validate here unchanged.
-Once that module lands, compatibility will be measured and published against the
-protovalidate conformance suite rather than claimed.
+**Protovalidate interop** ships as the optional `…-protobuf-validation-buf` module: it
+vendors `buf/validate/validate.proto` (pinned at v1.2.2, Apache-2.0 attributed in its
+`NOTICE`) and provides `BufValidateRuleSource`, so schemas annotated with
+`(buf.validate.field)` / `(buf.validate.message)` validate through `ProtoValidator`
+unchanged — dropping the jar on the classpath is enough. All scalar and collection
+rule families translate, including every integer variant with unsigned semantics and
+`IGNORE_ALWAYS`; the Javadoc lists the not-yet-translated tail (byte-length string
+rules, exotic well-known formats, `Any`/`FieldMask` rules, predefined-rule extensions,
+protovalidate's custom CEL function library). Compatibility will be measured and
+published against the protovalidate conformance suite rather than claimed.
 
 #### JSON Schema from descriptors + rules
 

@@ -35,6 +35,9 @@ project(':pipestream-proto-tools-protobuf-metadata').projectDir = file('protobuf
 include 'pipestream-proto-tools-protobuf-validation'
 project(':pipestream-proto-tools-protobuf-validation').projectDir = file('protobuf/validation')
 
+include 'pipestream-proto-tools-protobuf-validation-buf'
+project(':pipestream-proto-tools-protobuf-validation-buf').projectDir = file('protobuf/validation-buf')
+
 include 'pipestream-proto-tools-protobuf-indexing'
 project(':pipestream-proto-tools-protobuf-indexing').projectDir = file('protobuf/indexing')
 
