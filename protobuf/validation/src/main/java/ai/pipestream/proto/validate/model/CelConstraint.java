@@ -11,11 +11,17 @@ import java.util.Objects;
  * and {@code message} is the human-readable failure text used when the expression
  * returns a boolean.
  */
-public record CelConstraint(String id, String expression, String message) {
+public record CelConstraint(String id, String expression, String message, String celField) {
 
     public CelConstraint {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(expression, "expression");
         Objects.requireNonNull(message, "message");
+        celField = (celField == null || celField.isBlank()) ? "cel" : celField;
+    }
+
+    /** The rule lives on the {@code cel} repeated field by default. */
+    public CelConstraint(String id, String expression, String message) {
+        this(id, expression, message, "cel");
     }
 }

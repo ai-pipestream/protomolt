@@ -178,6 +178,9 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
         for (Rule rule : rules.getCelList()) {
             cel.add(toCel(rule));
         }
+        for (String expression : rules.getCelExpressionList()) {
+            cel.add(new CelConstraint("", expression, "", "cel_expression"));
+        }
         List<MessageConstraints.Oneof> oneofs = new ArrayList<>(rules.getOneofCount());
         for (build.buf.validate.MessageOneofRule oneof : rules.getOneofList()) {
             oneofs.add(toOneof(oneof, message));
@@ -268,6 +271,10 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
         }
         for (Rule cel : rules.getCelList()) {
             builder.addCel(toCel(cel));
+        }
+        // cel_expression is the shorthand form: a bare expression whose id is the expression text.
+        for (String expression : rules.getCelExpressionList()) {
+            builder.addCel(new CelConstraint("", expression, "", "cel_expression"));
         }
         return builder.build();
     }

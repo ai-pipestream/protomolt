@@ -850,9 +850,11 @@ public final class ProtoValidator {
             return;
         }
         Object celValue = value instanceof EnumValueDescriptor evd ? (long) evd.getNumber() : value;
-        List<CelConstraint> cel = constraints.cel();
-        for (int i = 0; i < cel.size(); i++) {
-            evalCel(fieldCel, cel.get(i), celValue, path, "cel[" + i + "]", violations);
+        // cel[N] and cel_expression[N] are indexed independently within their own repeated field.
+        Map<String, Integer> next = new java.util.HashMap<>();
+        for (CelConstraint rule : constraints.cel()) {
+            int i = next.merge(rule.celField(), 1, Integer::sum) - 1;
+            evalCel(fieldCel, rule, celValue, path, rule.celField() + "[" + i + "]", violations);
         }
     }
 

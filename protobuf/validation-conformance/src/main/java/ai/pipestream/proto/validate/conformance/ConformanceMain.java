@@ -60,7 +60,7 @@ public final class ConformanceMain {
             return response.build();
         }
 
-        ConformanceRunner runner = new ConformanceRunner(ProtoValidator.create(), predefined);
+        ConformanceRunner runner = new ConformanceRunner(ProtoValidator.create(), predefined, true);
         for (Map.Entry<String, Any> entry : request.getCasesMap().entrySet()) {
             response.putResults(entry.getKey(), runCase(runner, types, entry.getValue(), registry));
         }

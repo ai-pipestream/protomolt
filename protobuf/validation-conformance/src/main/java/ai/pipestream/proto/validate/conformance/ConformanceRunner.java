@@ -32,6 +32,10 @@ public final class ConformanceRunner {
 
     private final ProtoValidator validator;
     private final PredefinedRules predefined;
+    // When set, a per-message-type validator is built (and cached) so message-level CEL can navigate
+    // this.<field>; otherwise the single injected validator is reused.
+    private final boolean perMessageType;
+    private final java.util.Map<Descriptor, ProtoValidator> byType = new java.util.HashMap<>();
 
     /** Uses the default source chain, which includes the buf.validate dialect via ServiceLoader. */
     public ConformanceRunner() {
@@ -39,18 +43,26 @@ public final class ConformanceRunner {
     }
 
     public ConformanceRunner(ProtoValidator validator) {
-        this(validator, null);
+        this(validator, null, false);
     }
 
-    ConformanceRunner(ProtoValidator validator, PredefinedRules predefined) {
+    ConformanceRunner(ProtoValidator validator, PredefinedRules predefined, boolean perMessageType) {
         this.validator = validator;
         this.predefined = predefined;
+        this.perMessageType = perMessageType;
+    }
+
+    private ProtoValidator validatorFor(Descriptor descriptor) {
+        if (!perMessageType) {
+            return validator;
+        }
+        return byType.computeIfAbsent(descriptor, ProtoValidator::forMessageType);
     }
 
     /** Validates {@code message} and maps the outcome to a conformance {@link TestResult}. */
     public TestResult run(Message message) {
         try {
-            ValidationResult result = validator.validate(message);
+            ValidationResult result = validatorFor(message.getDescriptorForType()).validate(message);
             Violations.Builder violations = Violations.newBuilder();
             Descriptor root = message.getDescriptorForType();
             for (ValidationResult.Violation v : result.violations()) {
