@@ -384,14 +384,14 @@ public final class ProtoValidator {
             List<ValidationResult.Violation> violations) {
         @SuppressWarnings("unchecked")
         List<String> paths = (List<String>) mask.getField(mask.getDescriptorForType().findFieldByNumber(1));
-        String value = String.join(",", paths);
-        if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
+        if (rules.constant().isPresent() && !String.join(",", paths).equals(rules.constant().get())) {
             violations.add(violation(path, "field_mask.const", "must equal the required field mask"));
         }
-        if (!rules.in().isEmpty() && !rules.in().contains(value)) {
+        // in / not_in test each path individually: every path must be allowed, none may be forbidden.
+        if (!rules.in().isEmpty() && !paths.stream().allMatch(rules.in()::contains)) {
             violations.add(violation(path, "field_mask.in", "must be one of the allowed values"));
         }
-        if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
+        if (!rules.notIn().isEmpty() && paths.stream().anyMatch(rules.notIn()::contains)) {
             violations.add(violation(path, "field_mask.not_in", "must not be one of the forbidden values"));
         }
     }
@@ -690,10 +690,13 @@ public final class ProtoValidator {
             violations.add(violation(path, "bytes.contains", "must contain the required bytes"));
         }
         if (rules.pattern().isPresent()) {
-            // Match the bytes as a Latin-1 string so each byte maps to exactly one char.
-            String asLatin1 = new String(value.toByteArray(), java.nio.charset.StandardCharsets.ISO_8859_1);
+            // protovalidate applies the pattern to the value decoded as UTF-8; non-UTF-8 bytes are a
+            // runtime error rather than a validation failure.
+            if (!decodesAsUtf8(value)) {
+                throw new IllegalStateException("value must be valid UTF-8 to apply regexp");
+            }
             try {
-                if (!Pattern.compile(rules.pattern().get()).matcher(asLatin1).find()) {
+                if (!Pattern.compile(rules.pattern().get()).matcher(value.toStringUtf8()).find()) {
                     violations.add(violation(path, "bytes.pattern", "value does not match pattern"));
                 }
             } catch (PatternSyntaxException e) {
@@ -707,9 +710,24 @@ public final class ProtoValidator {
             violations.add(violation(path, "bytes.not_in", "must not be one of the forbidden values"));
         }
         for (BytesFormat format : rules.formats()) {
-            if (!format.matches(size)) {
+            if (size == 0) {
+                // An empty value reports the companion <id>_empty rule, matching string formats.
+                violations.add(violation(path, format.emptyRuleId(), "value is empty"));
+            } else if (!format.matches(size)) {
                 violations.add(violation(path, format.ruleId(), format.defaultMessage()));
             }
+        }
+    }
+
+    private static boolean decodesAsUtf8(ByteString value) {
+        try {
+            java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(value.asReadOnlyByteBuffer());
+            return true;
+        } catch (java.nio.charset.CharacterCodingException e) {
+            return false;
         }
     }
 

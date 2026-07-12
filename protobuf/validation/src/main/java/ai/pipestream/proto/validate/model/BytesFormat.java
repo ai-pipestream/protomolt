@@ -26,6 +26,11 @@ public enum BytesFormat {
         return ruleId;
     }
 
+    /** Rule id reported when the value is empty, e.g. {@code bytes.uuid_empty}. */
+    public String emptyRuleId() {
+        return ruleId + "_empty";
+    }
+
     public String defaultMessage() {
         return defaultMessage;
     }

@@ -19,8 +19,20 @@ public final class IpAddresses {
         return parseIpv4(value) != null;
     }
 
-    /** Valid IPv6 address (with optional {@code ::} compression and embedded IPv4). */
+    /**
+     * Valid IPv6 address (with optional {@code ::} compression and embedded IPv4), optionally
+     * carrying an RFC 4007 zone identifier ({@code fe80::1%eth0}). The zone is any non-empty run of
+     * characters after {@code %} that contains no NUL.
+     */
     public static boolean isIpv6(String value) {
+        int pct = value.indexOf('%');
+        if (pct >= 0) {
+            String zone = value.substring(pct + 1);
+            if (zone.isEmpty() || zone.indexOf('\0') >= 0) {
+                return false;
+            }
+            value = value.substring(0, pct);
+        }
         return parseIpv6(value) != null;
     }
 
