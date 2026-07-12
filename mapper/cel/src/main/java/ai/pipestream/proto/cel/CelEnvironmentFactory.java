@@ -7,6 +7,7 @@ import dev.cel.bundle.CelFactory;
 import dev.cel.common.CelFunctionDecl;
 import dev.cel.common.types.CelType;
 import dev.cel.common.types.SimpleType;
+import dev.cel.common.types.StructTypeReference;
 import dev.cel.extensions.CelExtensions;
 import dev.cel.parser.CelStandardMacro;
 import dev.cel.runtime.CelFunctionBinding;
@@ -43,6 +44,16 @@ public final class CelEnvironmentFactory {
     public CelEnvironmentFactory addVar(String name, CelType type) {
         variables.put(Objects.requireNonNull(name, "name"), Objects.requireNonNull(type, "type"));
         return this;
+    }
+
+    /**
+     * Declares {@code name} with the concrete type of {@code descriptor} (and registers the type),
+     * so field access like {@code this.foo} is type-checked at compile time. Overrides any prior
+     * declaration of {@code name}.
+     */
+    public CelEnvironmentFactory addMessageVar(String name, Descriptor descriptor) {
+        addMessageType(descriptor);
+        return addVar(name, StructTypeReference.create(descriptor.getFullName()));
     }
 
     /**

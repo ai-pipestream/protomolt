@@ -88,7 +88,7 @@ public final class CelEvaluator {
         try {
             var validation = cel.compile(expression);
             if (validation.hasError()) {
-                throw new CelEvaluationException("Invalid CEL expression: " + validation.getErrorString());
+                throw new CelCompilationException("Invalid CEL expression: " + validation.getErrorString());
             }
             CelAbstractSyntaxTree ast = validation.getAst();
             return cel.createProgram(ast);

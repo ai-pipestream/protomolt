@@ -1,5 +1,6 @@
 package ai.pipestream.proto.validate;
 
+import ai.pipestream.proto.cel.CelCompilationException;
 import ai.pipestream.proto.cel.CelEnvironmentFactory;
 import ai.pipestream.proto.cel.CelEvaluationException;
 import ai.pipestream.proto.cel.CelEvaluator;
@@ -81,6 +82,10 @@ public final class ProtoValidator {
     private final CelEvaluator fieldCel;
     private final CelEvaluator messageCel;
     private final List<ValidationRuleSource> sources;
+    // Message-level CEL is compiled with `this` typed as the message under validation, so a rule on
+    // a nested message sees its own fields. Evaluators are built lazily and cached per descriptor.
+    private final java.util.Map<Descriptor, CelEvaluator> messageCelByType =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Uses the default rule-source chain ({@link ValidationRuleSources#defaults()}). */
     public ProtoValidator(CelEvaluator fieldCel, CelEvaluator messageCel) {
@@ -117,6 +122,12 @@ public final class ProtoValidator {
                 .addFunctions(ValidationCelFunctions.declarations(), ValidationCelFunctions.bindings());
     }
 
+    /** A message-level CEL evaluator whose {@code this} is typed as {@code descriptor}. */
+    private CelEvaluator messageCelFor(Descriptor descriptor) {
+        return messageCelByType.computeIfAbsent(descriptor,
+                d -> new CelEvaluator(celEnv().addMessageVar("this", d).build()));
+    }
+
     /**
      * Builds a validator whose message-level CEL knows {@code descriptor}'s type
      * (field access like {@code this.age}).
@@ -130,7 +141,9 @@ public final class ProtoValidator {
             Descriptor descriptor, List<ValidationRuleSource> sources) {
         Objects.requireNonNull(descriptor, "descriptor");
         CelEvaluator field = new CelEvaluator(celEnv().build());
-        CelEvaluator message = new CelEvaluator(celEnv().addMessageType(descriptor).build());
+        // Declaring `this` as the concrete message type lets message-level CEL type-check field
+        // access (this.foo), surfacing type/field mismatches as compilation errors.
+        CelEvaluator message = new CelEvaluator(celEnv().addMessageVar("this", descriptor).build());
         return new ProtoValidator(field, message, sources);
     }
 
@@ -876,8 +889,9 @@ public final class ProtoValidator {
             }
             String msgPath = path.isEmpty() ? descriptor.getName() : path;
             // Message-level CEL rules report no FieldRules rule path (they are not on any field).
+            CelEvaluator evaluator = messageCelFor(descriptor);
             for (CelConstraint rule : constraints.cel()) {
-                evalCel(messageCel, rule, message, msgPath, "", violations);
+                evalCel(evaluator, rule, message, msgPath, "", violations);
             }
             for (MessageConstraints.Oneof oneof : constraints.oneofs()) {
                 validateMessageOneof(message, descriptor, oneof, path, violations);
@@ -969,9 +983,12 @@ public final class ProtoValidator {
                 violations.add(new ValidationResult.Violation(
                         path, id, "CEL rule must return bool or string", rulePath));
             }
+        } catch (CelCompilationException e) {
+            // A rule whose CEL does not compile (type error, unknown field) is a compilation error.
+            throw new RuleCompilationException(e.getMessage());
         } catch (CelEvaluationException e) {
-            violations.add(new ValidationResult.Violation(
-                    path, id, "CEL evaluation error: " + e.getMessage(), rulePath));
+            // A rule that compiles but fails at evaluation is a runtime error, not a violation.
+            throw new IllegalStateException("CEL runtime error: " + e.getMessage(), e);
         }
     }
 
