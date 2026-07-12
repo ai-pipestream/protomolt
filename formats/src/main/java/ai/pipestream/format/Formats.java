@@ -66,4 +66,24 @@ public final class Formats {
     public static boolean isHostAndPort(String value, boolean portRequired) {
         return HostAndPort.isHostAndPort(value, portRequired);
     }
+
+    /** Canonical dashed UUID. */
+    public static boolean isUuid(String value) {
+        return Identifiers.isUuid(value);
+    }
+
+    /** Trimmed (dash-less) UUID. */
+    public static boolean isTuuid(String value) {
+        return Identifiers.isTuuid(value);
+    }
+
+    /** ULID. */
+    public static boolean isUlid(String value) {
+        return Identifiers.isUlid(value);
+    }
+
+    /** A hostname or an IP address. */
+    public static boolean isAddress(String value) {
+        return Hostnames.isHostname(value) || IpAddresses.isIp(value, 0);
+    }
 }

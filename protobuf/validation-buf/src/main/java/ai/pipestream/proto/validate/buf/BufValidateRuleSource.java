@@ -186,10 +186,17 @@ public final class BufValidateRuleSource implements ValidationRuleSource {
             case IPV4 -> applyFlag(b, StringFormat.IPV4, r.getIpv4());
             case IPV6 -> applyFlag(b, StringFormat.IPV6, r.getIpv6());
             case URI -> applyFlag(b, StringFormat.URI, r.getUri());
+            case URI_REF -> applyFlag(b, StringFormat.URI_REF, r.getUriRef());
+            case ADDRESS -> applyFlag(b, StringFormat.ADDRESS, r.getAddress());
             case UUID -> applyFlag(b, StringFormat.UUID, r.getUuid());
+            case TUUID -> applyFlag(b, StringFormat.TUUID, r.getTuuid());
+            case ULID -> applyFlag(b, StringFormat.ULID, r.getUlid());
+            case IP_PREFIX -> applyFlag(b, StringFormat.IP_PREFIX, r.getIpPrefix());
+            case IPV4_PREFIX -> applyFlag(b, StringFormat.IPV4_PREFIX, r.getIpv4Prefix());
+            case IPV6_PREFIX -> applyFlag(b, StringFormat.IPV6_PREFIX, r.getIpv6Prefix());
+            case HOST_AND_PORT -> applyFlag(b, StringFormat.HOST_AND_PORT, r.getHostAndPort());
             default -> {
-                // uri_ref, address, tuuid, *_with_prefixlen, *_prefix, host_and_port,
-                // well_known_regex: no core evaluator yet — skipped.
+                // *_with_prefixlen and well_known_regex: no core evaluator yet — skipped.
             }
         }
         return b.build();

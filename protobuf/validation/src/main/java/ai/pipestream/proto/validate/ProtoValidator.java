@@ -391,7 +391,9 @@ public final class ProtoValidator {
             violations.add(violation(path, "string.not_in", "must not be one of " + rules.notIn()));
         }
         for (StringFormat format : rules.formats()) {
-            if (!format.matches(value)) {
+            if (value.isEmpty()) {
+                violations.add(violation(path, format.emptyRuleId(), format.emptyMessage()));
+            } else if (!format.matches(value)) {
                 violations.add(violation(path, format.ruleId(), format.defaultMessage()));
             }
         }
