@@ -254,15 +254,21 @@ public final class ProtoValidator {
         for (int i = 0; i < count; i++) {
             Object element = message.getRepeatedField(field, i);
             String elementPath = path + "[" + i + "]";
+            boolean skipElement = false;
             for (FieldConstraints c : constraints) {
-                c.repeated().flatMap(RepeatedConstraints::items).ifPresent(items -> {
-                    if (!skipValue(items, element, field)) {
-                        applyFieldConstraints(field, items, element, elementPath, violations);
-                        runFieldCel(items, element, elementPath, violations);
-                    }
-                });
+                var items = c.repeated().flatMap(RepeatedConstraints::items).orElse(null);
+                if (items == null) {
+                    continue;
+                }
+                if (skipValue(items, element, field)) {
+                    // An item ignored by its own rule (IGNORE_ALWAYS) also skips embedded validation.
+                    skipElement = true;
+                    continue;
+                }
+                applyFieldConstraints(field, items, element, elementPath, violations);
+                runFieldCel(items, element, elementPath, violations);
             }
-            if (element instanceof Message nested) {
+            if (!skipElement && element instanceof Message nested) {
                 validateChildren(nested, elementPath, violations);
             }
         }
