@@ -16,16 +16,16 @@ message Person {
     }
   };
 
-  string name = 1 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string name = 1 [(ai.pipestream.proto.validate.v1.field) = {
     required: true
     string: { min_len: 2, max_len: 40 }
   }];
 
-  int32 age = 2 [(ai.pipestream.proto.validate.v1.field) = {
+  optional int32 age = 2 [(ai.pipestream.proto.validate.v1.field) = {
     int32: { gte: 0, lte: 150 }
   }];
 
-  string email = 3 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string email = 3 [(ai.pipestream.proto.validate.v1.field) = {
     string: { email: true }
     cel: {
       id: "email.not_localhost"

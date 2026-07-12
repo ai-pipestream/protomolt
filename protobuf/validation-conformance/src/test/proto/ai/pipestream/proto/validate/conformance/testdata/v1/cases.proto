@@ -21,8 +21,9 @@ message Person {
   map<bool, string> flags = 9;
 
   // Combined-range rules: normal (between) and reversed (outside/exclusive).
-  int32 ranged = 10 [(.buf.validate.field).int32 = {gt: 10, lt: 100}];
-  int32 wrapped = 11 [(.buf.validate.field).int32 = {gt: 100, lt: 10}];
+  // optional so an unset value is skipped and only the case under test is validated.
+  optional int32 ranged = 10 [(.buf.validate.field).int32 = {gt: 10, lt: 100}];
+  optional int32 wrapped = 11 [(.buf.validate.field).int32 = {gt: 100, lt: 10}];
 }
 
 message Signup {

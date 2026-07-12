@@ -11,6 +11,7 @@ import ai.pipestream.proto.validate.model.DurationConstraints;
 import ai.pipestream.proto.validate.model.EnumConstraints;
 import ai.pipestream.proto.validate.model.FieldConstraints;
 import ai.pipestream.proto.validate.model.FloatingConstraints;
+import ai.pipestream.proto.validate.model.IgnoreMode;
 import ai.pipestream.proto.validate.model.IntegralConstraints;
 import ai.pipestream.proto.validate.model.MapConstraints;
 import ai.pipestream.proto.validate.model.MessageConstraints;
@@ -145,24 +146,31 @@ public final class ProtoValidator {
             String path,
             List<ValidationResult.Violation> violations) {
         List<FieldConstraints> constraints = fieldConstraints(field);
-        boolean present = isPresent(message, field);
+        IgnoreMode ignore = effectiveIgnore(constraints);
+        if (ignore == IgnoreMode.ALWAYS) {
+            return;
+        }
+        boolean hasField = isPresent(message, field);
 
-        boolean requiredUnset = constraints.stream().anyMatch(FieldConstraints::required) && !present;
-        if (requiredUnset) {
+        if (constraints.stream().anyMatch(FieldConstraints::required) && !hasField) {
             violations.add(new ValidationResult.Violation(path, "required", "field is required"));
             return;
         }
 
-        // Collection rules apply even to empty collections (min_items / min_pairs).
+        // Fields that track presence (message, optional, oneof) and fields marked ignore-if-zero are
+        // skipped when unpopulated. Implicit-presence scalars/collections are validated even at their
+        // zero value, so min_items / bounds on a zero apply.
+        boolean skipWhenEmpty = field.hasPresence() || ignore == IgnoreMode.IF_ZERO_VALUE;
+        if (skipWhenEmpty && !hasField) {
+            return;
+        }
+
         if (field.isMapField()) {
             validateMap(message, field, constraints, path, violations);
             return;
         }
         if (field.isRepeated()) {
             validateRepeated(message, field, constraints, path, violations);
-            return;
-        }
-        if (!present) {
             return;
         }
 
@@ -219,8 +227,10 @@ public final class ProtoValidator {
             String elementPath = path + "[" + i + "]";
             for (FieldConstraints c : constraints) {
                 c.repeated().flatMap(RepeatedConstraints::items).ifPresent(items -> {
-                    applyFieldConstraints(field, items, element, elementPath, violations);
-                    runFieldCel(items, element, elementPath, violations);
+                    if (!skipValue(items, element, field)) {
+                        applyFieldConstraints(field, items, element, elementPath, violations);
+                        runFieldCel(items, element, elementPath, violations);
+                    }
                 });
                 runFieldCel(c, element, elementPath, violations);
             }
@@ -264,12 +274,16 @@ public final class ProtoValidator {
                 MapConstraints m = c.map().orElse(null);
                 if (m != null) {
                     m.keys().ifPresent(k -> {
-                        applyFieldConstraints(keyField, k, key, keyPath, violations);
-                        runFieldCel(k, key, keyPath, violations);
+                        if (!skipValue(k, key, keyField)) {
+                            applyFieldConstraints(keyField, k, key, keyPath, violations);
+                            runFieldCel(k, key, keyPath, violations);
+                        }
                     });
                     m.values().ifPresent(v -> {
-                        applyFieldConstraints(valueField, v, value, entryPath, violations);
-                        runFieldCel(v, value, entryPath, violations);
+                        if (!skipValue(v, value, valueField)) {
+                            applyFieldConstraints(valueField, v, value, entryPath, violations);
+                            runFieldCel(v, value, entryPath, violations);
+                        }
                     });
                 }
                 runFieldCel(c, value, entryPath, violations);
@@ -707,6 +721,40 @@ public final class ProtoValidator {
             violations.add(new ValidationResult.Violation(
                     path, id, "CEL evaluation error: " + e.getMessage()));
         }
+    }
+
+    /** Whether an element (repeated item, map key/value) is skipped by its own ignore mode. */
+    private static boolean skipValue(FieldConstraints constraints, Object value, FieldDescriptor field) {
+        return switch (constraints.ignore()) {
+            case ALWAYS -> true;
+            case IF_ZERO_VALUE -> isZeroValue(value, field);
+            case UNSPECIFIED -> false;
+        };
+    }
+
+    private static boolean isZeroValue(Object value, FieldDescriptor field) {
+        return switch (field.getJavaType()) {
+            case INT -> (Integer) value == 0;
+            case LONG -> (Long) value == 0L;
+            case FLOAT -> (Float) value == 0f;
+            case DOUBLE -> (Double) value == 0d;
+            case BOOLEAN -> !((Boolean) value);
+            case STRING -> ((String) value).isEmpty();
+            case BYTE_STRING -> ((ByteString) value).isEmpty();
+            case ENUM -> ((EnumValueDescriptor) value).getNumber() == 0;
+            case MESSAGE -> false;
+        };
+    }
+
+    /** The strongest ignore mode declared across a field's rule sources. */
+    private static IgnoreMode effectiveIgnore(List<FieldConstraints> constraints) {
+        IgnoreMode mode = IgnoreMode.UNSPECIFIED;
+        for (FieldConstraints c : constraints) {
+            if (c.ignore().ordinal() > mode.ordinal()) {
+                mode = c.ignore();
+            }
+        }
+        return mode;
     }
 
     private static boolean isPresent(Message message, FieldDescriptor field) {

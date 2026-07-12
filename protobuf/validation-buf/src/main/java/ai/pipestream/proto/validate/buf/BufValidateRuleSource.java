@@ -7,6 +7,7 @@ import ai.pipestream.proto.validate.model.DurationConstraints;
 import ai.pipestream.proto.validate.model.EnumConstraints;
 import ai.pipestream.proto.validate.model.FieldConstraints;
 import ai.pipestream.proto.validate.model.FloatingConstraints;
+import ai.pipestream.proto.validate.model.IgnoreMode;
 import ai.pipestream.proto.validate.model.IntegralConstraints;
 import ai.pipestream.proto.validate.model.MapConstraints;
 import ai.pipestream.proto.validate.model.MessageConstraints;
@@ -83,9 +84,6 @@ public final class BufValidateRuleSource implements ValidationRuleSource {
             return Optional.empty();
         }
         FieldRules rules = options.getExtension(ValidateProto.field);
-        if (rules.hasIgnore() && rules.getIgnore() == Ignore.IGNORE_ALWAYS) {
-            return Optional.empty();
-        }
         return Optional.of(toFieldConstraints(rules));
     }
 
@@ -103,10 +101,19 @@ public final class BufValidateRuleSource implements ValidationRuleSource {
         return Optional.of(new MessageConstraints(cel));
     }
 
+    private static IgnoreMode toIgnoreMode(Ignore ignore) {
+        return switch (ignore) {
+            case IGNORE_ALWAYS -> IgnoreMode.ALWAYS;
+            case IGNORE_IF_ZERO_VALUE -> IgnoreMode.IF_ZERO_VALUE;
+            default -> IgnoreMode.UNSPECIFIED;
+        };
+    }
+
     /** Recursively translates {@link FieldRules} (also used for items/keys/values). */
     private static FieldConstraints toFieldConstraints(FieldRules rules) {
         FieldConstraints.Builder builder = FieldConstraints.builder()
-                .required(rules.hasRequired() && rules.getRequired());
+                .required(rules.hasRequired() && rules.getRequired())
+                .ignore(toIgnoreMode(rules.getIgnore()));
         switch (rules.getTypeCase()) {
             case STRING -> builder.string(toStringConstraints(rules.getString()));
             case INT32 -> builder.integral(toInt32(rules.getInt32()));

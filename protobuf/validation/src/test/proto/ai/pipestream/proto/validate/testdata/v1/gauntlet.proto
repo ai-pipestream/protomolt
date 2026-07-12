@@ -13,67 +13,67 @@ import "google/protobuf/timestamp.proto";
 // are skipped by presence semantics (collections excepted).
 
 message StringGauntlet {
-  string exact = 1 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string exact = 1 [(ai.pipestream.proto.validate.v1.field) = {
     string: { const: "fixed" }
   }];
-  string three = 2 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string three = 2 [(ai.pipestream.proto.validate.v1.field) = {
     string: { len: 3 }
   }];
-  string affixed = 3 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string affixed = 3 [(ai.pipestream.proto.validate.v1.field) = {
     string: { prefix: "pre", suffix: "fix", contains: "mid", not_contains: "bad" }
   }];
-  string choice = 4 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string choice = 4 [(ai.pipestream.proto.validate.v1.field) = {
     string: { in: "red", in: "green" }
   }];
-  string veto = 5 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string veto = 5 [(ai.pipestream.proto.validate.v1.field) = {
     string: { not_in: "nope" }
   }];
-  string id = 6 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string id = 6 [(ai.pipestream.proto.validate.v1.field) = {
     string: { uuid: true }
   }];
-  string host = 7 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string host = 7 [(ai.pipestream.proto.validate.v1.field) = {
     string: { hostname: true }
   }];
-  string link = 8 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string link = 8 [(ai.pipestream.proto.validate.v1.field) = {
     string: { uri: true }
   }];
-  string addr = 9 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string addr = 9 [(ai.pipestream.proto.validate.v1.field) = {
     string: { ip: true }
   }];
-  string addr4 = 10 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string addr4 = 10 [(ai.pipestream.proto.validate.v1.field) = {
     string: { ipv4: true }
   }];
-  string addr6 = 11 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string addr6 = 11 [(ai.pipestream.proto.validate.v1.field) = {
     string: { ipv6: true }
   }];
 }
 
 message NumberGauntlet {
-  uint32 small = 1 [(ai.pipestream.proto.validate.v1.field) = {
+  optional uint32 small = 1 [(ai.pipestream.proto.validate.v1.field) = {
     uint32: { lte: 10 }
   }];
-  uint64 big = 2 [(ai.pipestream.proto.validate.v1.field) = {
+  optional uint64 big = 2 [(ai.pipestream.proto.validate.v1.field) = {
     uint64: { gt: 5 }
   }];
-  int32 exact = 3 [(ai.pipestream.proto.validate.v1.field) = {
+  optional int32 exact = 3 [(ai.pipestream.proto.validate.v1.field) = {
     int32: { const: 7 }
   }];
-  int64 choice = 4 [(ai.pipestream.proto.validate.v1.field) = {
+  optional int64 choice = 4 [(ai.pipestream.proto.validate.v1.field) = {
     int64: { in: 1, in: 2 }
   }];
-  int32 veto = 5 [(ai.pipestream.proto.validate.v1.field) = {
+  optional int32 veto = 5 [(ai.pipestream.proto.validate.v1.field) = {
     int32: { not_in: 13 }
   }];
-  double finite = 6 [(ai.pipestream.proto.validate.v1.field) = {
+  optional double finite = 6 [(ai.pipestream.proto.validate.v1.field) = {
     double: { finite: true }
   }];
-  float ranged = 7 [(ai.pipestream.proto.validate.v1.field) = {
+  optional float ranged = 7 [(ai.pipestream.proto.validate.v1.field) = {
     float: { gte: 0.5, lt: 2.5 }
   }];
-  sint32 negative = 8 [(ai.pipestream.proto.validate.v1.field) = {
+  optional sint32 negative = 8 [(ai.pipestream.proto.validate.v1.field) = {
     int32: { lt: 0 }
   }];
-  fixed64 fixed = 9 [(ai.pipestream.proto.validate.v1.field) = {
+  optional fixed64 fixed = 9 [(ai.pipestream.proto.validate.v1.field) = {
     uint64: { lte: 100 }
   }];
 }
@@ -89,28 +89,28 @@ message MiscGauntlet {
   optional bool accepted = 1 [(ai.pipestream.proto.validate.v1.field) = {
     bool: { const: true }
   }];
-  bytes payload = 2 [(ai.pipestream.proto.validate.v1.field) = {
+  optional bytes payload = 2 [(ai.pipestream.proto.validate.v1.field) = {
     bytes: { min_len: 2, max_len: 4 }
   }];
-  bytes framed = 3 [(ai.pipestream.proto.validate.v1.field) = {
+  optional bytes framed = 3 [(ai.pipestream.proto.validate.v1.field) = {
     bytes: { prefix: "\001", suffix: "\377", contains: "B" }
   }];
-  bytes token = 4 [(ai.pipestream.proto.validate.v1.field) = {
+  optional bytes token = 4 [(ai.pipestream.proto.validate.v1.field) = {
     bytes: { len: 3 }
   }];
-  Rank rank = 5 [(ai.pipestream.proto.validate.v1.field) = {
+  optional Rank rank = 5 [(ai.pipestream.proto.validate.v1.field) = {
     enum: { defined_only: true, not_in: 3 }
   }];
-  Rank fixed_rank = 6 [(ai.pipestream.proto.validate.v1.field) = {
+  optional Rank fixed_rank = 6 [(ai.pipestream.proto.validate.v1.field) = {
     enum: { const: 2 }
   }];
-  Rank listed_rank = 7 [(ai.pipestream.proto.validate.v1.field) = {
+  optional Rank listed_rank = 7 [(ai.pipestream.proto.validate.v1.field) = {
     enum: { in: 1, in: 2 }
   }];
 }
 
 message Widget {
-  string name = 1 [(ai.pipestream.proto.validate.v1.field) = {
+  optional string name = 1 [(ai.pipestream.proto.validate.v1.field) = {
     required: true
   }];
 }

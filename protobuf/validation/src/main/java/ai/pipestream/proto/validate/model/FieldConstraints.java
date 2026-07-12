@@ -18,6 +18,7 @@ import java.util.Optional;
  */
 public record FieldConstraints(
         boolean required,
+        IgnoreMode ignore,
         Optional<StringConstraints> string,
         Optional<IntegralConstraints> integral,
         Optional<FloatingConstraints> floating,
@@ -31,6 +32,7 @@ public record FieldConstraints(
         List<CelConstraint> cel) {
 
     public FieldConstraints {
+        Objects.requireNonNull(ignore, "ignore");
         Objects.requireNonNull(string, "string");
         Objects.requireNonNull(integral, "integral");
         Objects.requireNonNull(floating, "floating");
@@ -51,6 +53,7 @@ public record FieldConstraints(
     /** Mutable builder; empty sub-constraints collapse to {@link Optional#empty()}. */
     public static final class Builder {
         private boolean required;
+        private IgnoreMode ignore = IgnoreMode.UNSPECIFIED;
         private StringConstraints string;
         private IntegralConstraints integral;
         private FloatingConstraints floating;
@@ -65,6 +68,11 @@ public record FieldConstraints(
 
         public Builder required(boolean required) {
             this.required = required;
+            return this;
+        }
+
+        public Builder ignore(IgnoreMode ignore) {
+            this.ignore = Objects.requireNonNull(ignore, "ignore");
             return this;
         }
 
@@ -126,6 +134,7 @@ public record FieldConstraints(
         public FieldConstraints build() {
             return new FieldConstraints(
                     required,
+                    ignore,
                     Optional.ofNullable(string),
                     Optional.ofNullable(integral),
                     Optional.ofNullable(floating),
