@@ -29,6 +29,7 @@ import com.google.protobuf.Message;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -391,22 +392,10 @@ public final class ProtoValidator {
             violations.add(violation(path, prefix + ".const",
                     "must equal " + fmt(rules.constant().getAsLong(), unsigned)));
         }
-        if (rules.gt().isPresent() && compare(value, rules.gt().getAsLong(), unsigned) <= 0) {
-            violations.add(violation(path, prefix + ".gt",
-                    "must be > " + fmt(rules.gt().getAsLong(), unsigned)));
-        }
-        if (rules.gte().isPresent() && compare(value, rules.gte().getAsLong(), unsigned) < 0) {
-            violations.add(violation(path, prefix + ".gte",
-                    "must be >= " + fmt(rules.gte().getAsLong(), unsigned)));
-        }
-        if (rules.lt().isPresent() && compare(value, rules.lt().getAsLong(), unsigned) >= 0) {
-            violations.add(violation(path, prefix + ".lt",
-                    "must be < " + fmt(rules.lt().getAsLong(), unsigned)));
-        }
-        if (rules.lte().isPresent() && compare(value, rules.lte().getAsLong(), unsigned) > 0) {
-            violations.add(violation(path, prefix + ".lte",
-                    "must be <= " + fmt(rules.lte().getAsLong(), unsigned)));
-        }
+        Comparator<Long> order = unsigned ? Long::compareUnsigned : Long::compare;
+        applyRange(prefix, path, value,
+                boxed(rules.gt()), boxed(rules.gte()), boxed(rules.lt()), boxed(rules.lte()),
+                order, v -> fmt(v, unsigned), violations);
         if (!rules.in().isEmpty() && !rules.in().contains(value)) {
             violations.add(violation(path, prefix + ".in", "must be one of the allowed values"));
         }
@@ -423,6 +412,101 @@ public final class ProtoValidator {
         return unsigned ? Long.toUnsignedString(value) : Long.toString(value);
     }
 
+    private static Long boxed(java.util.OptionalLong o) {
+        return o.isPresent() ? o.getAsLong() : null;
+    }
+
+    private static Double boxed(java.util.OptionalDouble o) {
+        return o.isPresent() ? o.getAsDouble() : null;
+    }
+
+    /**
+     * Emits a single range violation for the combined lower/upper bounds, matching protovalidate's
+     * semantics: when only one bound is set it fires the individual {@code gt/gte/lt/lte} rule; when
+     * both are set they collapse into one {@code <lower>_<upper>} rule (or {@code …_exclusive} when
+     * the bounds are reversed so the valid region is outside the range). {@code null} bounds are
+     * absent. Used for every totally-ordered numeric type (integers, timestamps, durations).
+     */
+    private static <T> void applyRange(
+            String prefix, String path, T value, T gt, T gte, T lt, T lte,
+            Comparator<T> order, java.util.function.Function<T, String> fmt,
+            List<ValidationResult.Violation> violations) {
+        T lower = gt != null ? gt : gte;
+        String lowerName = gt != null ? "gt" : (gte != null ? "gte" : null);
+        boolean lowerInclusive = gt == null && gte != null;
+        T upper = lt != null ? lt : lte;
+        String upperName = lt != null ? "lt" : (lte != null ? "lte" : null);
+        boolean upperInclusive = lt == null && lte != null;
+
+        if (lower != null && upper != null) {
+            boolean satLower = lowerInclusive
+                    ? order.compare(value, lower) >= 0 : order.compare(value, lower) > 0;
+            boolean satUpper = upperInclusive
+                    ? order.compare(value, upper) <= 0 : order.compare(value, upper) < 0;
+            boolean exclusive = order.compare(upper, lower) < 0;
+            boolean ok = exclusive ? (satLower || satUpper) : (satLower && satUpper);
+            if (!ok) {
+                String ruleId = prefix + "." + lowerName + "_" + upperName + (exclusive ? "_exclusive" : "");
+                violations.add(violation(path, ruleId, exclusive
+                        ? "must be " + lowerName + " " + fmt.apply(lower) + " or " + upperName + " " + fmt.apply(upper)
+                        : "must be " + lowerName + " " + fmt.apply(lower) + " and " + upperName + " " + fmt.apply(upper)));
+            }
+        } else if (lower != null) {
+            boolean sat = lowerInclusive
+                    ? order.compare(value, lower) >= 0 : order.compare(value, lower) > 0;
+            if (!sat) {
+                violations.add(violation(path, prefix + "." + lowerName,
+                        "must be " + (lowerInclusive ? ">= " : "> ") + fmt.apply(lower)));
+            }
+        } else if (upper != null) {
+            boolean sat = upperInclusive
+                    ? order.compare(value, upper) <= 0 : order.compare(value, upper) < 0;
+            if (!sat) {
+                violations.add(violation(path, prefix + "." + upperName,
+                        "must be " + (upperInclusive ? "<= " : "< ") + fmt.apply(upper)));
+            }
+        }
+    }
+
+    /**
+     * IEEE-aware counterpart of {@link #applyRange} for floating-point values: a {@code NaN} value
+     * satisfies no bound (every comparison is false), so it violates any range — which a total-order
+     * comparator could not express.
+     */
+    private static void applyDoubleRange(
+            String prefix, String path, double value, Double gt, Double gte, Double lt, Double lte,
+            List<ValidationResult.Violation> violations) {
+        Double lower = gt != null ? gt : gte;
+        String lowerName = gt != null ? "gt" : (gte != null ? "gte" : null);
+        boolean lowerInclusive = gt == null && gte != null;
+        Double upper = lt != null ? lt : lte;
+        String upperName = lt != null ? "lt" : (lte != null ? "lte" : null);
+        boolean upperInclusive = lt == null && lte != null;
+
+        if (lower != null && upper != null) {
+            boolean satLower = lowerInclusive ? value >= lower : value > lower;
+            boolean satUpper = upperInclusive ? value <= upper : value < upper;
+            boolean exclusive = upper < lower;
+            boolean ok = exclusive ? (satLower || satUpper) : (satLower && satUpper);
+            if (!ok) {
+                String ruleId = prefix + "." + lowerName + "_" + upperName + (exclusive ? "_exclusive" : "");
+                violations.add(violation(path, ruleId, "must be within " + lowerName + "/" + upperName + " range"));
+            }
+        } else if (lower != null) {
+            boolean sat = lowerInclusive ? value >= lower : value > lower;
+            if (!sat) {
+                violations.add(violation(path, prefix + "." + lowerName,
+                        "must be " + (lowerInclusive ? ">= " : "> ") + lower));
+            }
+        } else if (upper != null) {
+            boolean sat = upperInclusive ? value <= upper : value < upper;
+            if (!sat) {
+                violations.add(violation(path, prefix + "." + upperName,
+                        "must be " + (upperInclusive ? "<= " : "< ") + upper));
+            }
+        }
+    }
+
     private static void applyFloating(
             FloatingConstraints rules, double value, String path,
             List<ValidationResult.Violation> violations) {
@@ -431,18 +515,9 @@ public final class ProtoValidator {
             violations.add(violation(path, prefix + ".const",
                     "must equal " + rules.constant().getAsDouble()));
         }
-        if (rules.gt().isPresent() && !(value > rules.gt().getAsDouble())) {
-            violations.add(violation(path, prefix + ".gt", "must be > " + rules.gt().getAsDouble()));
-        }
-        if (rules.gte().isPresent() && !(value >= rules.gte().getAsDouble())) {
-            violations.add(violation(path, prefix + ".gte", "must be >= " + rules.gte().getAsDouble()));
-        }
-        if (rules.lt().isPresent() && !(value < rules.lt().getAsDouble())) {
-            violations.add(violation(path, prefix + ".lt", "must be < " + rules.lt().getAsDouble()));
-        }
-        if (rules.lte().isPresent() && !(value <= rules.lte().getAsDouble())) {
-            violations.add(violation(path, prefix + ".lte", "must be <= " + rules.lte().getAsDouble()));
-        }
+        applyDoubleRange(prefix, path, value,
+                boxed(rules.gt()), boxed(rules.gte()), boxed(rules.lt()), boxed(rules.lte()),
+                violations);
         if (!rules.in().isEmpty() && !rules.in().contains(value)) {
             violations.add(violation(path, prefix + ".in", "must be one of the allowed values"));
         }
@@ -532,18 +607,10 @@ public final class ProtoValidator {
             TimestampConstraints rules, Instant value, String path,
             List<ValidationResult.Violation> violations) {
         Instant now = Instant.now();
-        if (rules.gt().isPresent() && value.compareTo(rules.gt().get()) <= 0) {
-            violations.add(violation(path, "timestamp.gt", "must be after " + rules.gt().get()));
-        }
-        if (rules.gte().isPresent() && value.compareTo(rules.gte().get()) < 0) {
-            violations.add(violation(path, "timestamp.gte", "must be at or after " + rules.gte().get()));
-        }
-        if (rules.lt().isPresent() && value.compareTo(rules.lt().get()) >= 0) {
-            violations.add(violation(path, "timestamp.lt", "must be before " + rules.lt().get()));
-        }
-        if (rules.lte().isPresent() && value.compareTo(rules.lte().get()) > 0) {
-            violations.add(violation(path, "timestamp.lte", "must be at or before " + rules.lte().get()));
-        }
+        applyRange("timestamp", path, value,
+                rules.gt().orElse(null), rules.gte().orElse(null),
+                rules.lt().orElse(null), rules.lte().orElse(null),
+                Comparator.naturalOrder(), Instant::toString, violations);
         if (rules.ltNow() && value.compareTo(now) >= 0) {
             violations.add(violation(path, "timestamp.lt_now", "must be in the past"));
         }
@@ -562,18 +629,10 @@ public final class ProtoValidator {
     private static void applyDuration(
             DurationConstraints rules, Duration value, String path,
             List<ValidationResult.Violation> violations) {
-        if (rules.gt().isPresent() && value.compareTo(rules.gt().get()) <= 0) {
-            violations.add(violation(path, "duration.gt", "must be > " + rules.gt().get()));
-        }
-        if (rules.gte().isPresent() && value.compareTo(rules.gte().get()) < 0) {
-            violations.add(violation(path, "duration.gte", "must be >= " + rules.gte().get()));
-        }
-        if (rules.lt().isPresent() && value.compareTo(rules.lt().get()) >= 0) {
-            violations.add(violation(path, "duration.lt", "must be < " + rules.lt().get()));
-        }
-        if (rules.lte().isPresent() && value.compareTo(rules.lte().get()) > 0) {
-            violations.add(violation(path, "duration.lte", "must be <= " + rules.lte().get()));
-        }
+        applyRange("duration", path, value,
+                rules.gt().orElse(null), rules.gte().orElse(null),
+                rules.lt().orElse(null), rules.lte().orElse(null),
+                Comparator.naturalOrder(), Duration::toString, violations);
     }
 
     private static Instant toInstant(Message timestamp) {

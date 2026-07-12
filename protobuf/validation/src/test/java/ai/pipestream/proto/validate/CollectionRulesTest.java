@@ -56,10 +56,10 @@ class CollectionRulesTest {
         assertViolation(RepeatedGauntlet.newBuilder().addTags("ab").addTags("x").build(),
                 "tags[1]", "string.min_len");
         assertViolation(withValidTags().addPorts(8080).addPorts(80).build(),
-                "ports[1]", "int32.gte");
+                "ports[1]", "int32.gte_lte");
         assertViolation(withValidTags().addPorts(70000).build(),
-                "ports[0]", "int32.lte");
-        assertNoViolation(withValidTags().addPorts(8080).build(), "int32.gte");
+                "ports[0]", "int32.gte_lte");
+        assertNoViolation(withValidTags().addPorts(8080).build(), "int32.gte_lte");
     }
 
     @Test

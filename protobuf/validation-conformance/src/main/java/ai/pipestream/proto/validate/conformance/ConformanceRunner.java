@@ -80,10 +80,33 @@ public final class ConformanceRunner {
             }
         }
         try {
-            b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), v.ruleId()));
+            b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), rulePath(v.ruleId())));
         } catch (RuntimeException ignored) {
             // Rule ids without a FieldRules mapping (e.g. bare "cel") leave the rule path unset.
         }
         return b.build();
     }
+
+    /**
+     * The dotted {@code FieldRules} path a rule id points at. Most ids are themselves valid paths;
+     * the combined-range ids ({@code <type>.gt_lt}, {@code …_exclusive}, etc.) are defined as
+     * predefined rules on the lower-bound field, so their path is {@code <type>.gt}/{@code .gte}.
+     */
+    static String rulePath(String ruleId) {
+        int dot = ruleId.indexOf('.');
+        if (dot < 0) {
+            return ruleId;
+        }
+        String prefix = ruleId.substring(0, dot);
+        String suffix = ruleId.substring(dot + 1);
+        if (suffix.endsWith("_exclusive")) {
+            suffix = suffix.substring(0, suffix.length() - "_exclusive".length());
+        }
+        return switch (suffix) {
+            case "gt_lt", "gt_lte" -> prefix + ".gt";
+            case "gte_lt", "gte_lte" -> prefix + ".gte";
+            default -> ruleId;
+        };
+    }
 }
+

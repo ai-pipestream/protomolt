@@ -67,6 +67,20 @@ class ConformanceHarnessTest {
         cases.add(new Case("signup_nested",
                 Signup.newBuilder().setPerson(validPerson().setAge(10)).build(),
                 invalid(viol(SIGNUP, "int32.gte", "person.age", false))));
+        // Combined range (gt:0, lt:100) collapses to one gt_lt violation.
+        cases.add(new Case("range_valid", validPerson().setRanged(50).build(), success()));
+        cases.add(new Case("range_low",
+                validPerson().setRanged(5).build(),
+                invalid(viol(PERSON, "int32.gt_lt", "ranged", false))));
+        cases.add(new Case("range_high",
+                validPerson().setRanged(100).build(),
+                invalid(viol(PERSON, "int32.gt_lt", "ranged", false))));
+        // Reversed range (gt:100, lt:10): valid region is OUTSIDE [10,100], one _exclusive rule.
+        cases.add(new Case("wrapped_below", validPerson().setWrapped(5).build(), success()));
+        cases.add(new Case("wrapped_above", validPerson().setWrapped(200).build(), success()));
+        cases.add(new Case("wrapped_inside",
+                validPerson().setWrapped(50).build(),
+                invalid(viol(PERSON, "int32.gt_lt_exclusive", "wrapped", false))));
         return cases;
     }
 
@@ -152,7 +166,7 @@ class ConformanceHarnessTest {
         if (!rawPath.isEmpty()) {
             b.setField(FieldPaths.unmarshal(root, rawPath));
         }
-        b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), ruleId));
+        b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), ConformanceRunner.rulePath(ruleId)));
         return b.build();
     }
 

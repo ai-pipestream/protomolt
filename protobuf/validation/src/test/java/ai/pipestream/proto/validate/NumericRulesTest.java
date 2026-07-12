@@ -74,10 +74,11 @@ class NumericRulesTest {
     @Test
     void floatRange() {
         assertValid(NumberGauntlet.newBuilder().setRanged(1.0f).build());
+        // gte + lt both set collapse into a single combined-range rule.
         assertViolation(NumberGauntlet.newBuilder().setRanged(0.25f).build(),
-                "ranged", "float.gte");
+                "ranged", "float.gte_lt");
         assertViolation(NumberGauntlet.newBuilder().setRanged(3.0f).build(),
-                "ranged", "float.lt");
+                "ranged", "float.gte_lt");
     }
 
     @Test

@@ -63,7 +63,7 @@ class ProtoValidatorTest {
         ValidationResult result = validator.validate(person);
 
         assertThat(result.violations())
-                .anyMatch(v -> v.ruleId().equals("int32.lte"));
+                .anyMatch(v -> v.ruleId().equals("int32.gte_lte"));
     }
 
     @Test

@@ -62,10 +62,10 @@ class TimeRulesTest {
                 .setEpochWindow(Timestamp.newBuilder().setSeconds(500)).build());
         assertViolation(TimeGauntlet.newBuilder()
                         .setEpochWindow(Timestamp.newBuilder().setSeconds(-5)).build(),
-                "epoch_window", "timestamp.gte");
+                "epoch_window", "timestamp.gte_lt");
         assertViolation(TimeGauntlet.newBuilder()
                         .setEpochWindow(Timestamp.newBuilder().setSeconds(2_000_000)).build(),
-                "epoch_window", "timestamp.lt");
+                "epoch_window", "timestamp.gte_lt");
     }
 
     @Test
@@ -87,9 +87,9 @@ class TimeRulesTest {
         assertValid(TimeGauntlet.newBuilder().setTimeout(secs(30)).build());
         assertViolation(TimeGauntlet.newBuilder()
                         .setTimeout(Duration.newBuilder().setNanos(500_000_000)).build(),
-                "timeout", "duration.gte");
+                "timeout", "duration.gte_lte");
         assertViolation(TimeGauntlet.newBuilder().setTimeout(secs(61)).build(),
-                "timeout", "duration.lte");
+                "timeout", "duration.gte_lte");
     }
 
     @Test
@@ -98,9 +98,9 @@ class TimeRulesTest {
                 .setStrict(Duration.newBuilder().setNanos(1000)).build());
         assertViolation(TimeGauntlet.newBuilder()
                         .setStrict(Duration.newBuilder().setNanos(100)).build(),
-                "strict", "duration.gt");
+                "strict", "duration.gt_lt");
         // Exactly the lt bound fails a strict comparison.
         assertViolation(TimeGauntlet.newBuilder().setStrict(secs(1)).build(),
-                "strict", "duration.lt");
+                "strict", "duration.gt_lt");
     }
 }

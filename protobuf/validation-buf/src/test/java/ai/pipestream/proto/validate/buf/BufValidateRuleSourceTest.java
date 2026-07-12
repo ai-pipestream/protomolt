@@ -102,7 +102,7 @@ class BufValidateRuleSourceTest {
                 "created", "timestamp.lt_now");
         assertViolation(validUser().setTtl(com.google.protobuf.Duration.newBuilder()
                         .setSeconds(7200)).build(),
-                "ttl", "duration.lte");
+                "ttl", "duration.gte_lte");
     }
 
     @Test
