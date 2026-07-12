@@ -125,14 +125,15 @@ final class PredefinedRules {
     /** Evaluates every predefined rule reachable from {@code message}, collecting violations. */
     List<Violation> evaluate(Message message) {
         List<Violation> out = new ArrayList<>();
-        for (FieldDescriptor field : message.getDescriptorForType().getFields()) {
-            FieldRules rules = fieldRules(field);
-            if (rules == null) {
-                continue;
-            }
-            walkField(message, field, rules, out);
-        }
+        walkMessage(message, List.of(), out);
         return out;
+    }
+
+    /** Walks every field of {@code message}, prefixing produced field paths with {@code prefix}. */
+    private void walkMessage(Message message, List<FieldPathElement> prefix, List<Violation> out) {
+        for (FieldDescriptor field : message.getDescriptorForType().getFields()) {
+            walkField(message, field, fieldRules(field), prefix, out);
+        }
     }
 
     private FieldRules fieldRules(FieldDescriptor field) {
@@ -144,13 +145,18 @@ final class PredefinedRules {
     }
 
     private void walkField(
-            Message message, FieldDescriptor field, FieldRules rules, List<Violation> out) {
+            Message message, FieldDescriptor field, FieldRules rules,
+            List<FieldPathElement> prefix, List<Violation> out) {
         if (field.isMapField()) {
-            evalMap(message, field, rules, out);
+            if (rules != null) {
+                evalMap(message, field, rules, prefix, out);
+            }
             return;
         }
         if (field.isRepeated()) {
-            evalRepeated(message, field, rules, out);
+            if (rules != null) {
+                evalRepeated(message, field, rules, prefix, out);
+            }
             return;
         }
         // Skip unpopulated message/optional fields; implicit scalars validate at their zero value.
@@ -158,20 +164,32 @@ final class PredefinedRules {
             return;
         }
         Object value = message.getField(field);
-        // The field-level rules attach to the type sub-rules (or the wrapper's scalar sub-rules).
-        FieldPath.Builder fieldPath = FieldPath.newBuilder().addElements(fieldElement(field, null));
-        applyRules(rules, unwrap(field, value), fieldPath, List.of(), out);
+        if (rules != null) {
+            // The field-level rules attach to the type sub-rules (or the wrapper's scalar sub-rules).
+            FieldPath.Builder fieldPath = FieldPath.newBuilder()
+                    .addAllElements(prefix).addElements(fieldElement(field, null));
+            applyRules(rules, unwrap(field, value), fieldPath, List.of(), out);
+        }
+        // Recurse into a nested non-wrapper message so predefined rules on its fields are reached.
+        if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE && value instanceof Message nested
+                && wrapperValueField(nested.getDescriptorForType()) == null) {
+            List<FieldPathElement> childPrefix = new ArrayList<>(prefix);
+            childPrefix.add(fieldElement(field, null));
+            walkMessage(nested, childPrefix, out);
+        }
     }
 
     private void evalRepeated(
-            Message message, FieldDescriptor field, FieldRules rules, List<Violation> out) {
+            Message message, FieldDescriptor field, FieldRules rules,
+            List<FieldPathElement> pathPrefix, List<Violation> out) {
         // Rules on the repeated field itself (e.g. repeated.at_least_five): this = the whole list.
         List<Object> list = new ArrayList<>();
         int count = message.getRepeatedFieldCount(field);
         for (int i = 0; i < count; i++) {
             list.add(unwrapElement(field, message.getRepeatedField(field, i)));
         }
-        FieldPath.Builder fieldPath = FieldPath.newBuilder().addElements(fieldElement(field, null));
+        FieldPath.Builder fieldPath = FieldPath.newBuilder()
+                .addAllElements(pathPrefix).addElements(fieldElement(field, null));
         applyRules(rules, list, fieldPath, List.of(), out);
 
         // Rules on each element (repeated.items.<type>): this = the element value.
@@ -182,15 +200,16 @@ final class PredefinedRules {
                     ruleElement(RepeatedRules.getDescriptor(), "items"));
             for (int i = 0; i < count; i++) {
                 Object element = unwrapElement(field, message.getRepeatedField(field, i));
-                FieldPath.Builder elementPath =
-                        FieldPath.newBuilder().addElements(fieldElement(field, i));
+                FieldPath.Builder elementPath = FieldPath.newBuilder()
+                        .addAllElements(pathPrefix).addElements(fieldElement(field, i));
                 applyRules(items, element, elementPath, prefix, out);
             }
         }
     }
 
     private void evalMap(
-            Message message, FieldDescriptor field, FieldRules rules, List<Violation> out) {
+            Message message, FieldDescriptor field, FieldRules rules,
+            List<FieldPathElement> pathPrefix, List<Violation> out) {
         FieldDescriptor keyField = field.getMessageType().findFieldByNumber(1);
         FieldDescriptor valueField = field.getMessageType().findFieldByNumber(2);
         int count = message.getRepeatedFieldCount(field);
@@ -202,7 +221,8 @@ final class PredefinedRules {
             map.put(celValue(keyField, entry.getField(keyField)),
                     celValue(valueField, entry.getField(valueField)));
         }
-        FieldPath.Builder fieldPath = FieldPath.newBuilder().addElements(fieldElement(field, null));
+        FieldPath.Builder fieldPath = FieldPath.newBuilder()
+                .addAllElements(pathPrefix).addElements(fieldElement(field, null));
         applyRules(rules, map, fieldPath, List.of(), out);
 
         // Rules on keys/values.
@@ -214,14 +234,16 @@ final class PredefinedRules {
             Message entry = (Message) message.getRepeatedField(field, i);
             Object key = entry.getField(keyField);
             if (mapRules.hasKeys()) {
-                FieldPath.Builder p = FieldPath.newBuilder().addElements(mapElement(field, keyField, valueField, key));
+                FieldPath.Builder p = FieldPath.newBuilder()
+                        .addAllElements(pathPrefix).addElements(mapElement(field, keyField, valueField, key));
                 applyRules(mapRules.getKeys(), celValue(keyField, key), p,
                         List.of(ruleElement(FieldRules.getDescriptor(), "map"),
                                 ruleElement(MapRules.getDescriptor(), "keys")),
                         out, true);
             }
             if (mapRules.hasValues()) {
-                FieldPath.Builder p = FieldPath.newBuilder().addElements(mapElement(field, keyField, valueField, key));
+                FieldPath.Builder p = FieldPath.newBuilder()
+                        .addAllElements(pathPrefix).addElements(mapElement(field, keyField, valueField, key));
                 applyRules(mapRules.getValues(), celValue(valueField, entry.getField(valueField)), p,
                         List.of(ruleElement(FieldRules.getDescriptor(), "map"),
                                 ruleElement(MapRules.getDescriptor(), "values")),
