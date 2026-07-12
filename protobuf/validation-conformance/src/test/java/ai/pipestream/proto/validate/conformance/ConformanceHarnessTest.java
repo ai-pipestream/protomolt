@@ -163,10 +163,23 @@ class ConformanceHarnessTest {
         if (forKey) {
             b.setForKey(true);
         }
+        String prefix = "";
         if (!rawPath.isEmpty()) {
-            b.setField(FieldPaths.unmarshal(root, rawPath));
+            FieldPath field = FieldPaths.unmarshal(root, rawPath);
+            b.setField(field);
+            // A rule directly on a repeated item / map entry takes the container's rule-path prefix.
+            FieldPathElement last = field.getElements(field.getElementsCount() - 1);
+            boolean containerLevel = ruleId.startsWith("repeated.") || ruleId.startsWith("map.");
+            if (!containerLevel) {
+                prefix = switch (last.getSubscriptCase()) {
+                    case INDEX -> "repeated.items.";
+                    case BOOL_KEY, INT_KEY, UINT_KEY, STRING_KEY -> forKey ? "map.keys." : "map.values.";
+                    default -> "";
+                };
+            }
         }
-        b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), ConformanceRunner.rulePath(ruleId)));
+        b.setRule(FieldPaths.unmarshal(
+                FieldRules.getDescriptor(), prefix + ConformanceRunner.rulePath(ruleId)));
         return b.build();
     }
 

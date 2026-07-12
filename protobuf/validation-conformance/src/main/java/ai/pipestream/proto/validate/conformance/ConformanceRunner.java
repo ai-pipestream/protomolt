@@ -1,7 +1,10 @@
 package ai.pipestream.proto.validate.conformance;
 
 import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.RuleCompilationException;
 import ai.pipestream.proto.validate.ValidationResult;
+import build.buf.validate.FieldPath;
+import build.buf.validate.FieldPathElement;
 import build.buf.validate.FieldRules;
 import build.buf.validate.Violation;
 import build.buf.validate.Violations;
@@ -48,6 +51,8 @@ public final class ConformanceRunner {
             return TestResult.newBuilder()
                     .setValidationError(toViolations(message.getDescriptorForType(), result))
                     .build();
+        } catch (RuleCompilationException e) {
+            return TestResult.newBuilder().setCompilationError(String.valueOf(e.getMessage())).build();
         } catch (RuntimeException e) {
             return TestResult.newBuilder().setRuntimeError(String.valueOf(e.getMessage())).build();
         }
@@ -72,19 +77,68 @@ public final class ConformanceRunner {
             path = path.substring(0, path.length() - KEY_SUFFIX.length());
             b.setForKey(true);
         }
+        FieldPath fieldPath = null;
         if (!path.isEmpty()) {
             try {
-                b.setField(FieldPaths.unmarshal(root, path));
+                fieldPath = FieldPaths.unmarshal(root, path);
+                b.setField(fieldPath);
             } catch (RuntimeException ignored) {
                 // Leave field unset when the path cannot be resolved; the case simply won't match.
             }
         }
-        try {
-            b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), rulePath(v.ruleId())));
-        } catch (RuntimeException ignored) {
-            // Rule ids without a FieldRules mapping (e.g. bare "cel") leave the rule path unset.
+        // An oneof-level required rule targets the oneof name itself (a bare field_name element with
+        // no field number). It comes from OneofRules, not FieldRules, so it carries no rule path.
+        if (!targetsOneofName(fieldPath)) {
+            try {
+                // Container-level rules (repeated.*/map.*) live on the container even when their field
+                // path is subscripted; only element-type rules take a repeated.items/map.* prefix.
+                String ruleId = v.ruleId();
+                boolean containerLevel = ruleId.startsWith("repeated.") || ruleId.startsWith("map.");
+                String prefix = containerLevel ? "" : containerPrefix(fieldPath, forKey);
+                b.setRule(FieldPaths.unmarshal(FieldRules.getDescriptor(), prefix + rulePath(ruleId)));
+            } catch (RuntimeException ignored) {
+                // Rule ids without a FieldRules mapping (e.g. bare "cel") leave the rule path unset.
+            }
         }
         return b.build();
+    }
+
+    /**
+     * True when the field path targets a oneof by name: its final element is a bare {@code field_name}
+     * with no field number (a real field always has a positive number). Such violations come from
+     * oneof rules rather than {@code FieldRules} and therefore carry no rule path.
+     */
+    private static boolean targetsOneofName(FieldPath fieldPath) {
+        if (fieldPath == null || fieldPath.getElementsCount() == 0) {
+            return false;
+        }
+        FieldPathElement last = fieldPath.getElements(fieldPath.getElementsCount() - 1);
+        return last.getFieldNumber() == 0 && !last.getFieldName().isEmpty();
+    }
+
+    /**
+     * The {@code FieldRules} rule-path prefix implied by validating a rule directly on a repeated
+     * item or map entry: {@code repeated.items.}, {@code map.keys.}, or {@code map.values.}. Empty
+     * when the violation is on the field itself (last path element carries no subscript) or the rule
+     * is a container-level rule ({@code repeated.*}/{@code map.*}), which lives on the container, not
+     * the element, even though its field path may be subscripted.
+     */
+    private static String containerPrefix(FieldPath fieldPath, boolean forKey) {
+        if (fieldPath == null || fieldPath.getElementsCount() == 0) {
+            return "";
+        }
+        FieldPathElement last = fieldPath.getElements(fieldPath.getElementsCount() - 1);
+        switch (last.getSubscriptCase()) {
+            case INDEX -> {
+                return "repeated.items.";
+            }
+            case BOOL_KEY, INT_KEY, UINT_KEY, STRING_KEY -> {
+                return forKey ? "map.keys." : "map.values.";
+            }
+            default -> {
+                return "";
+            }
+        }
     }
 
     /**

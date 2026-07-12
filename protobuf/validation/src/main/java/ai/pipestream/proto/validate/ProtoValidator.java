@@ -171,8 +171,10 @@ public final class ProtoValidator {
 
         // Fields that track presence (message, optional, oneof) and fields marked ignore-if-zero are
         // skipped when unpopulated. Implicit-presence scalars/collections are validated even at their
-        // zero value, so min_items / bounds on a zero apply.
-        boolean skipWhenEmpty = field.hasPresence() || ignore == IgnoreMode.IF_ZERO_VALUE;
+        // zero value, so min_items / bounds on a zero apply. Members of a message-level oneof rule are
+        // treated as presence-tracking too: their field-level rules only apply when populated.
+        boolean skipWhenEmpty = field.hasPresence() || ignore == IgnoreMode.IF_ZERO_VALUE
+                || isMessageOneofMember(field);
         if (skipWhenEmpty && !hasField) {
             return;
         }
@@ -228,8 +230,10 @@ public final class ProtoValidator {
                 Set<Object> seen = new HashSet<>();
                 for (int i = 0; i < count; i++) {
                     if (!seen.add(message.getRepeatedField(field, i))) {
-                        violations.add(violation(path + "[" + i + "]", "repeated.unique",
+                        // A single violation on the repeated field itself, not per duplicate element.
+                        violations.add(violation(path, "repeated.unique",
                                 "repeated values must be unique"));
+                        break;
                     }
                 }
             }
@@ -733,6 +737,61 @@ public final class ProtoValidator {
             for (CelConstraint rule : constraints.cel()) {
                 evalCel(messageCel, rule, message, msgPath, violations);
             }
+            for (MessageConstraints.Oneof oneof : constraints.oneofs()) {
+                validateMessageOneof(message, descriptor, oneof, path, violations);
+            }
+            for (String oneofName : constraints.requiredOneofs()) {
+                validateRequiredOneof(message, descriptor, oneofName, path, violations);
+            }
+        }
+    }
+
+    /**
+     * A real protobuf oneof marked {@code required}: exactly one member must be set. The violation
+     * reports {@code required} on the oneof name itself (a bare {@code field_name} path element).
+     */
+    private static void validateRequiredOneof(
+            Message message,
+            Descriptor descriptor,
+            String oneofName,
+            String path,
+            List<ValidationResult.Violation> violations) {
+        var oneof = descriptor.getRealOneofs().stream()
+                .filter(o -> o.getName().equals(oneofName))
+                .findFirst()
+                .orElse(null);
+        if (oneof != null && !message.hasOneof(oneof)) {
+            String oneofPath = path.isEmpty() ? oneofName : path + "." + oneofName;
+            violations.add(new ValidationResult.Violation(
+                    oneofPath, "required", "exactly one field is required in oneof"));
+        }
+    }
+
+    /**
+     * A message-level {@code oneof} rule: at most one member may be populated, and when
+     * {@code required} at least one must be. Both failures report {@code message.oneof} on the
+     * message path with the member list spelled out, matching protovalidate's wording.
+     */
+    private static void validateMessageOneof(
+            Message message,
+            Descriptor descriptor,
+            MessageConstraints.Oneof oneof,
+            String path,
+            List<ValidationResult.Violation> violations) {
+        int populated = 0;
+        for (String name : oneof.fields()) {
+            FieldDescriptor fd = descriptor.findFieldByName(name);
+            if (fd != null && isPresent(message, fd)) {
+                populated++;
+            }
+        }
+        String members = String.join(", ", oneof.fields());
+        if (populated > 1) {
+            violations.add(new ValidationResult.Violation(
+                    path, "message.oneof", "only one of " + members + " can be set"));
+        } else if (oneof.required() && populated == 0) {
+            violations.add(new ValidationResult.Violation(
+                    path, "message.oneof", "one of " + members + " must be set"));
         }
     }
 
@@ -791,6 +850,23 @@ public final class ProtoValidator {
     }
 
     /** The strongest ignore mode declared across a field's rule sources. */
+    /** True when {@code field} is named by a message-level oneof rule on its containing message. */
+    private boolean isMessageOneofMember(FieldDescriptor field) {
+        Descriptor type = field.getContainingType();
+        for (ValidationRuleSource source : sources) {
+            MessageConstraints mc = source.messageConstraints(type).orElse(null);
+            if (mc == null) {
+                continue;
+            }
+            for (MessageConstraints.Oneof oneof : mc.oneofs()) {
+                if (oneof.fields().contains(field.getName())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static IgnoreMode effectiveIgnore(List<FieldConstraints> constraints) {
         IgnoreMode mode = IgnoreMode.UNSPECIFIED;
         for (FieldConstraints c : constraints) {

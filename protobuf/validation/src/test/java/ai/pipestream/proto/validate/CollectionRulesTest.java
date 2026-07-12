@@ -46,7 +46,7 @@ class CollectionRulesTest {
     @Test
     void uniqueFlagsDuplicateElements() {
         assertViolation(RepeatedGauntlet.newBuilder().addTags("ab").addTags("ab").build(),
-                "tags[1]", "repeated.unique");
+                "tags", "repeated.unique");
         assertNoViolation(RepeatedGauntlet.newBuilder().addTags("ab").addTags("cd").build(),
                 "repeated.unique");
     }

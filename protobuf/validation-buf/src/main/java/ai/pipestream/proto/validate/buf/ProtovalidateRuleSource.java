@@ -1,5 +1,6 @@
 package ai.pipestream.proto.validate.buf;
 
+import ai.pipestream.proto.validate.RuleCompilationException;
 import ai.pipestream.proto.validate.model.BoolConstraints;
 import ai.pipestream.proto.validate.model.BytesConstraints;
 import ai.pipestream.proto.validate.model.CelConstraint;
@@ -53,14 +54,19 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 /**
- * {@link ValidationRuleSource} for the protovalidate annotation dialect: reads
- * {@code (buf.validate.field)} and {@code (buf.validate.message)} options off
- * descriptors and translates them into the neutral rule model, so schemas annotated
- * for protovalidate validate through {@code ProtoValidator} unchanged. Registered via
- * {@code ServiceLoader} — adding this module to the classpath enables the dialect.
+ * {@link ValidationRuleSource} for the <a href="https://github.com/bufbuild/protovalidate">
+ * protovalidate</a> annotation standard: reads {@code (buf.validate.field)} and
+ * {@code (buf.validate.message)} options off descriptors and translates them into the neutral
+ * rule model, so schemas annotated for protovalidate validate through {@code ProtoValidator}
+ * unchanged. Registered via {@code ServiceLoader} — adding this module to the classpath enables
+ * the standard.
  *
- * <p>The vendored {@code buf/validate/validate.proto} is pinned and attributed in this
- * module's {@code NOTICE}; its semantics are defined by the upstream project.
+ * <p>The protovalidate standard and its {@code buf/validate/validate.proto} schema were created
+ * by Buf; this project consumes that schema verbatim and aims to be a compatible superset — every
+ * conformant protovalidate annotation validates identically here, while this project may extend
+ * the rule set further. The vendored {@code validate.proto} is pinned and attributed in this
+ * module's {@code NOTICE}, and its wire types remain under the {@code build.buf.validate} package
+ * for exact compatibility.
  *
  * <p>Coverage notes (translated ↔ skipped): all scalar/collection rule families map
  * onto the neutral model, including every integer variant with correct unsigned
@@ -76,7 +82,7 @@ import java.util.OptionalLong;
  * verbatim and will report an evaluation-error violation until that library is
  * available in the CEL environment.
  */
-public final class BufValidateRuleSource implements ValidationRuleSource {
+public final class ProtovalidateRuleSource implements ValidationRuleSource {
 
     @Override
     public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
@@ -85,21 +91,138 @@ public final class BufValidateRuleSource implements ValidationRuleSource {
             return Optional.empty();
         }
         FieldRules rules = options.getExtension(ValidateProto.field);
+        checkRuleType(field, rules);
         return Optional.of(toFieldConstraints(rules));
+    }
+
+    /**
+     * Rejects a type-specific rule whose type does not match the field it annotates (e.g. double
+     * rules on an int32 field, or scalar rules on a {@code google.protobuf.Any}). protovalidate
+     * treats this as a compile-time error rather than silently ignoring the rule.
+     */
+    private static void checkRuleType(FieldDescriptor field, FieldRules rules) {
+        FieldRules.TypeCase actual = rules.getTypeCase();
+        if (actual == FieldRules.TypeCase.TYPE_NOT_SET) {
+            return;
+        }
+        FieldRules.TypeCase expected = expectedTypeCase(field);
+        if (actual != expected) {
+            throw new RuleCompilationException("mismatched rule type and field type");
+        }
+    }
+
+    /** The single {@link FieldRules.TypeCase} that may legally annotate {@code field}. */
+    private static FieldRules.TypeCase expectedTypeCase(FieldDescriptor field) {
+        if (field.isMapField()) {
+            return FieldRules.TypeCase.MAP;
+        }
+        if (field.isRepeated()) {
+            return FieldRules.TypeCase.REPEATED;
+        }
+        return switch (field.getType()) {
+            case INT32 -> FieldRules.TypeCase.INT32;
+            case INT64 -> FieldRules.TypeCase.INT64;
+            case UINT32 -> FieldRules.TypeCase.UINT32;
+            case UINT64 -> FieldRules.TypeCase.UINT64;
+            case SINT32 -> FieldRules.TypeCase.SINT32;
+            case SINT64 -> FieldRules.TypeCase.SINT64;
+            case FIXED32 -> FieldRules.TypeCase.FIXED32;
+            case FIXED64 -> FieldRules.TypeCase.FIXED64;
+            case SFIXED32 -> FieldRules.TypeCase.SFIXED32;
+            case SFIXED64 -> FieldRules.TypeCase.SFIXED64;
+            case FLOAT -> FieldRules.TypeCase.FLOAT;
+            case DOUBLE -> FieldRules.TypeCase.DOUBLE;
+            case BOOL -> FieldRules.TypeCase.BOOL;
+            case STRING -> FieldRules.TypeCase.STRING;
+            case BYTES -> FieldRules.TypeCase.BYTES;
+            case ENUM -> FieldRules.TypeCase.ENUM;
+            case MESSAGE, GROUP -> messageTypeCase(field.getMessageType().getFullName());
+        };
+    }
+
+    /** Well-known and wrapper message types accept a specific rule type; others accept none. */
+    private static FieldRules.TypeCase messageTypeCase(String fullName) {
+        return switch (fullName) {
+            case "google.protobuf.Timestamp" -> FieldRules.TypeCase.TIMESTAMP;
+            case "google.protobuf.Duration" -> FieldRules.TypeCase.DURATION;
+            case "google.protobuf.Any" -> FieldRules.TypeCase.ANY;
+            case "google.protobuf.FieldMask" -> FieldRules.TypeCase.FIELD_MASK;
+            case "google.protobuf.Int32Value" -> FieldRules.TypeCase.INT32;
+            case "google.protobuf.Int64Value" -> FieldRules.TypeCase.INT64;
+            case "google.protobuf.UInt32Value" -> FieldRules.TypeCase.UINT32;
+            case "google.protobuf.UInt64Value" -> FieldRules.TypeCase.UINT64;
+            case "google.protobuf.FloatValue" -> FieldRules.TypeCase.FLOAT;
+            case "google.protobuf.DoubleValue" -> FieldRules.TypeCase.DOUBLE;
+            case "google.protobuf.BoolValue" -> FieldRules.TypeCase.BOOL;
+            case "google.protobuf.StringValue" -> FieldRules.TypeCase.STRING;
+            case "google.protobuf.BytesValue" -> FieldRules.TypeCase.BYTES;
+            // A plain message field admits no type-specific rule; anything set is a mismatch.
+            default -> FieldRules.TypeCase.TYPE_NOT_SET;
+        };
     }
 
     @Override
     public Optional<MessageConstraints> messageConstraints(Descriptor message) {
         var options = message.getOptions();
+        // Required protobuf oneofs are declared on the oneof, not via the message extension, so a
+        // message can carry oneof rules with no (buf.validate.message) option at all.
+        List<String> requiredOneofs = requiredOneofs(message);
         if (!options.hasExtension(ValidateProto.message)) {
-            return Optional.empty();
+            return requiredOneofs.isEmpty()
+                    ? Optional.empty()
+                    : Optional.of(new MessageConstraints(List.of(), List.of(), requiredOneofs));
         }
         MessageRules rules = options.getExtension(ValidateProto.message);
         List<CelConstraint> cel = new ArrayList<>(rules.getCelList().size());
         for (Rule rule : rules.getCelList()) {
             cel.add(toCel(rule));
         }
-        return Optional.of(new MessageConstraints(cel));
+        List<MessageConstraints.Oneof> oneofs = new ArrayList<>(rules.getOneofCount());
+        for (build.buf.validate.MessageOneofRule oneof : rules.getOneofList()) {
+            oneofs.add(toOneof(oneof, message));
+        }
+        return Optional.of(new MessageConstraints(cel, oneofs, requiredOneofs));
+    }
+
+    /** Names of the message's real protobuf oneofs annotated {@code (buf.validate.oneof).required}. */
+    private static List<String> requiredOneofs(Descriptor message) {
+        List<String> names = new ArrayList<>();
+        for (com.google.protobuf.Descriptors.OneofDescriptor oneof : message.getRealOneofs()) {
+            var opts = oneof.getOptions();
+            if (opts.hasExtension(ValidateProto.oneof)
+                    && opts.getExtension(ValidateProto.oneof).getRequired()) {
+                names.add(oneof.getName());
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Translates a message {@code oneof} rule, validating it against the message descriptor. buf's
+     * conformance suite expects malformed oneof rules to surface as compilation errors, so an empty
+     * field list, an unknown field name, or a duplicated field name throws
+     * {@link RuleCompilationException} with buf's exact wording.
+     */
+    private static MessageConstraints.Oneof toOneof(
+            build.buf.validate.MessageOneofRule oneof, Descriptor message) {
+        List<String> fields = oneof.getFieldsList();
+        if (fields.isEmpty()) {
+            throw new RuleCompilationException(
+                    "at least one field must be specified in oneof rule for the message "
+                            + message.getFullName());
+        }
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (String name : fields) {
+            if (message.findFieldByName(name) == null) {
+                throw new RuleCompilationException(
+                        "field " + name + " not found in message " + message.getFullName());
+            }
+            if (!seen.add(name)) {
+                throw new RuleCompilationException(
+                        "duplicate " + name + " in oneof rule for the message " + message.getFullName());
+            }
+        }
+        return new MessageConstraints.Oneof(fields, oneof.getRequired());
     }
 
     private static IgnoreMode toIgnoreMode(Ignore ignore) {

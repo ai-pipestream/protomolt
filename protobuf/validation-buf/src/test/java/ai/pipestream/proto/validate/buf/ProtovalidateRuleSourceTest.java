@@ -17,12 +17,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Validates protovalidate-annotated messages through the standard validator with
- * {@link BufValidateRuleSource} in the chain — the interop the module exists for.
+ * {@link ProtovalidateRuleSource} in the chain — the interop the module exists for.
  */
-class BufValidateRuleSourceTest {
+class ProtovalidateRuleSourceTest {
 
     private static final ProtoValidator VALIDATOR = ProtoValidator.create(
-            List.of(new BufValidateRuleSource()));
+            List.of(new ProtovalidateRuleSource()));
 
     private static BufUser.Builder validUser() {
         return BufUser.newBuilder()
@@ -76,7 +76,7 @@ class BufValidateRuleSourceTest {
     @Test
     void repeatedRules() {
         assertViolation(validUser().addTags("ab").addTags("ab").build(),
-                "tags[1]", "repeated.unique");
+                "tags", "repeated.unique");
         assertViolation(validUser().addAllTags(List.of("aa", "bb", "cc", "dd")).build(),
                 "tags", "repeated.max_items");
         assertViolation(validUser().addTags("x").build(), "tags[0]", "string.min_len");
@@ -124,7 +124,7 @@ class BufValidateRuleSourceTest {
     void serviceLoaderDiscoversTheDialect() {
         List<ValidationRuleSource> defaults = ValidationRuleSources.defaults();
         assertThat(defaults)
-                .anyMatch(s -> s instanceof BufValidateRuleSource);
+                .anyMatch(s -> s instanceof ProtovalidateRuleSource);
         // The default chain therefore validates buf-annotated messages out of the box.
         ProtoValidator validator = ProtoValidator.create();
         assertThat(validator.validate(validUser().setName("ab").build()).violations())
