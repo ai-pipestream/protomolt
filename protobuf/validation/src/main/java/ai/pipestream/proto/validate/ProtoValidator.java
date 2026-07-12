@@ -387,13 +387,27 @@ public final class ProtoValidator {
         if (rules.constant().isPresent() && !String.join(",", paths).equals(rules.constant().get())) {
             violations.add(violation(path, "field_mask.const", "must equal the required field mask"));
         }
-        // in / not_in test each path individually: every path must be allowed, none may be forbidden.
-        if (!rules.in().isEmpty() && !paths.stream().allMatch(rules.in()::contains)) {
+        // in / not_in test each path against the rule paths by prefix coverage: a mask path "a.foo"
+        // is covered by the entry "a". Every path must be covered by some in entry; no path may be
+        // covered by any not_in entry.
+        if (!rules.in().isEmpty()
+                && !paths.stream().allMatch(p -> coveredByAny(p, rules.in()))) {
             violations.add(violation(path, "field_mask.in", "must be one of the allowed values"));
         }
-        if (!rules.notIn().isEmpty() && paths.stream().anyMatch(rules.notIn()::contains)) {
+        if (!rules.notIn().isEmpty()
+                && paths.stream().anyMatch(p -> coveredByAny(p, rules.notIn()))) {
             violations.add(violation(path, "field_mask.not_in", "must not be one of the forbidden values"));
         }
+    }
+
+    /** True when {@code path} equals or is nested under one of {@code entries} (e.g. a.foo under a). */
+    private static boolean coveredByAny(String path, List<String> entries) {
+        for (String entry : entries) {
+            if (path.equals(entry) || path.startsWith(entry + ".")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Applies the scalar constraint family matching {@code type} to {@code value}. */
@@ -925,7 +939,8 @@ public final class ProtoValidator {
         if (rule.expression().isBlank()) {
             return;
         }
-        String id = rule.id().isBlank() ? "cel" : rule.id();
+        // With no explicit id protovalidate uses the expression text as the rule id.
+        String id = rule.id().isBlank() ? rule.expression() : rule.id();
         try {
             Map<String, Object> bindings = new java.util.HashMap<>();
             bindings.put("this", thisValue);
@@ -934,7 +949,8 @@ public final class ProtoValidator {
             Object result = evaluator.evaluateValue(rule.expression(), bindings);
             if (result instanceof Boolean ok) {
                 if (!ok) {
-                    String msg = rule.message().isBlank() ? "CEL rule failed" : rule.message();
+                    String msg = rule.message().isBlank()
+                            ? "\"" + rule.expression() + "\" returned false" : rule.message();
                     violations.add(new ValidationResult.Violation(path, id, msg, rulePath));
                 }
             } else if (result instanceof String text) {
