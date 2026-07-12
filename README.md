@@ -53,6 +53,7 @@ samples/
 | `…-json` | `http/json` | Protobuf ↔ JSON transcoder |
 | `…-rest` | `http/rest` | Framework-agnostic JSON/REST gateway |
 | `…-openapi` | `http/openapi` | OpenAPI 3.x from registered REST methods |
+| `…-jsonschema` | `http/jsonschema` | JSON Schema (2020-12) from descriptors + validation rules |
 | `…-quarkus` / `…-spring` | `integrations/*` | Framework DI wiring (mappers / descriptors) |
 | `…-server-*` | `servers/*` | HTTP hosts (JDK, Vert.x 5, Netty, Spring, Micronaut, Quarkus) |
 | `samples` | `samples/` | Unpublished examples |
@@ -368,6 +369,27 @@ This is the seam for **protovalidate interop**: an optional module vendors
 `BufValidateRuleSource`, so schemas annotated for protovalidate validate here unchanged.
 Once that module lands, compatibility will be measured and published against the
 protovalidate conformance suite rather than claimed.
+
+#### JSON Schema from descriptors + rules
+
+`…-jsonschema` renders any message type as JSON Schema (draft 2020-12) describing its
+canonical proto3 JSON form — and because it consumes the same neutral constraint model
+the validator evaluates, every mappable rule lands as a real JSON Schema keyword:
+`min_len`→`minLength`, bounds→`minimum`/`exclusiveMaximum`, `in`→`enum`,
+`min_items`/`unique`→`minItems`/`uniqueItems`, map `keys`→`propertyNames`, and the
+string formats (`email`, `uuid`, `hostname`, `uri`, `ipv4`, `ipv6`) map to their
+`format` equivalents. Works for any `ValidationRuleSource` dialect. CEL rules (not
+expressible in JSON Schema) are surfaced under `x-pipestream-cel`.
+
+```java
+Map<String, Object> schema = ProtoJsonSchemaGenerator.create().generate(Person.getDescriptor());
+String json = ProtoJsonSchemaGenerator.create().generateJson(Person.getDescriptor());
+```
+
+Message types are defined once under `$defs` (recursion-safe `$ref`s); 64-bit integers
+accept both JSON number and string forms per proto3 JSON; enums accept declared names
+or numbers. Not mapped (by design, documented in the Javadoc): bytes length rules and
+timestamp/duration bounds.
 
 ### Indexing (+ optional validate chain)
 

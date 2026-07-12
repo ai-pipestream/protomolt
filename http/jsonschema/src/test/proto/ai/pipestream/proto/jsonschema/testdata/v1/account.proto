@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.jsonschema.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.jsonschema.testdata";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+enum Tier {
+  TIER_UNSPECIFIED = 0;
+  TIER_BASIC = 1;
+  TIER_PRO = 2;
+}
+
+message Account {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "account.pro_needs_email"
+      message: "pro accounts need an email"
+      expression: "this.tier != 2 || this.email != ''"
+    }
+  };
+
+  string username = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: { min_len: 3, max_len: 20, pattern: "^[a-z0-9_]+$" }
+  }];
+  string email = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    string: { email: true }
+  }];
+  int32 age = 3 [(ai.pipestream.proto.validate.v1.field) = {
+    int32: { gte: 13, lt: 200 }
+  }];
+  uint64 balance = 4 [(ai.pipestream.proto.validate.v1.field) = {
+    uint64: { lte: 1000000 }
+  }];
+  repeated string roles = 5 [(ai.pipestream.proto.validate.v1.field) = {
+    repeated: {
+      min_items: 1
+      unique: true
+      items: { string: { in: "admin", in: "user" } }
+    }
+  }];
+  map<string, int32> quotas = 6 [(ai.pipestream.proto.validate.v1.field) = {
+    map: {
+      keys: { string: { min_len: 2 } }
+      values: { int32: { gte: 0 } }
+    }
+  }];
+  Tier tier = 7 [(ai.pipestream.proto.validate.v1.field) = {
+    enum: { defined_only: true }
+  }];
+  bytes avatar = 8;
+  optional bool active = 9 [(ai.pipestream.proto.validate.v1.field) = {
+    bool: { const: true }
+  }];
+  google.protobuf.Timestamp created = 10;
+  google.protobuf.Duration ttl = 11;
+  Account parent = 12;
+  string note = 13 [(ai.pipestream.proto.validate.v1.field) = {
+    cel: {
+      id: "note.short"
+      message: "notes are short"
+      expression: "this.size() < 100"
+    }
+  }];
+}

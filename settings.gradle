@@ -71,6 +71,9 @@ project(':pipestream-proto-tools-rest').projectDir = file('http/rest')
 include 'pipestream-proto-tools-openapi'
 project(':pipestream-proto-tools-openapi').projectDir = file('http/openapi')
 
+include 'pipestream-proto-tools-jsonschema'
+project(':pipestream-proto-tools-jsonschema').projectDir = file('http/jsonschema')
+
 include 'pipestream-proto-tools-quarkus'
 project(':pipestream-proto-tools-quarkus').projectDir = file('integrations/quarkus/runtime')
 

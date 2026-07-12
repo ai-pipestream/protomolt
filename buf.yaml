@@ -14,6 +14,8 @@ modules:
     name: buf.build/ai-pipestream/protobuf-validation-testdata
   - path: protobuf/indexing/src/test/proto
     name: buf.build/ai-pipestream/protobuf-indexing-testdata
+  - path: http/jsonschema/src/test/proto
+    name: buf.build/ai-pipestream/jsonschema-testdata
 lint:
   use:
     - STANDARD
