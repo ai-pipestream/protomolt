@@ -7,9 +7,16 @@ option java_package = "ai.pipestream.proto.validate";
 option java_outer_classname = "ValidateProto";
 
 import "google/protobuf/descriptor.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 // Pipestream protobuf validation — CEL-first, no Buf CLI / buf.validate dependency.
 // Standard constraints are evaluated in-process; custom rules use CEL with `this`.
+//
+// Presence semantics: standard rules run only when the field is present
+// (proto3 semantics: non-zero / non-empty, or hasField for explicit presence).
+// Repeated and map fields are the exception — collection rules (min_items,
+// min_pairs, …) also apply when the collection is empty.
 
 message CelRule {
   // Stable id unique within the field or message.
@@ -21,10 +28,32 @@ message CelRule {
 }
 
 message StringRules {
+  // Length rules count Unicode code points, not UTF-16 units or bytes.
   optional int64 min_len = 1;
   optional int64 max_len = 2;
+  // RE2-style pattern; matches anywhere in the value (find, not full match).
   optional string pattern = 3;
   optional bool email = 4;
+  // Exact value the field must equal.
+  optional string const = 5;
+  // Exact length in code points.
+  optional int64 len = 6;
+  optional string prefix = 7;
+  optional string suffix = 8;
+  optional string contains = 9;
+  optional string not_contains = 10;
+  // Value must equal one of these.
+  repeated string in = 11;
+  // Value must equal none of these.
+  repeated string not_in = 12;
+  // Well-known formats.
+  optional bool uuid = 13;
+  optional bool hostname = 14;
+  // Absolute URI (has a scheme).
+  optional bool uri = 15;
+  optional bool ip = 16;
+  optional bool ipv4 = 17;
+  optional bool ipv6 = 18;
 }
 
 message Int32Rules {
@@ -32,6 +61,9 @@ message Int32Rules {
   optional int32 gte = 2;
   optional int32 lt = 3;
   optional int32 lte = 4;
+  optional int32 const = 5;
+  repeated int32 in = 6;
+  repeated int32 not_in = 7;
 }
 
 message Int64Rules {
@@ -39,6 +71,29 @@ message Int64Rules {
   optional int64 gte = 2;
   optional int64 lt = 3;
   optional int64 lte = 4;
+  optional int64 const = 5;
+  repeated int64 in = 6;
+  repeated int64 not_in = 7;
+}
+
+message UInt32Rules {
+  optional uint32 gt = 1;
+  optional uint32 gte = 2;
+  optional uint32 lt = 3;
+  optional uint32 lte = 4;
+  optional uint32 const = 5;
+  repeated uint32 in = 6;
+  repeated uint32 not_in = 7;
+}
+
+message UInt64Rules {
+  optional uint64 gt = 1;
+  optional uint64 gte = 2;
+  optional uint64 lt = 3;
+  optional uint64 lte = 4;
+  optional uint64 const = 5;
+  repeated uint64 in = 6;
+  repeated uint64 not_in = 7;
 }
 
 message DoubleRules {
@@ -46,6 +101,11 @@ message DoubleRules {
   optional double gte = 2;
   optional double lt = 3;
   optional double lte = 4;
+  optional double const = 5;
+  repeated double in = 6;
+  repeated double not_in = 7;
+  // Value must not be NaN or infinite.
+  optional bool finite = 8;
 }
 
 message FloatRules {
@@ -53,17 +113,93 @@ message FloatRules {
   optional float gte = 2;
   optional float lt = 3;
   optional float lte = 4;
+  optional float const = 5;
+  repeated float in = 6;
+  repeated float not_in = 7;
+  optional bool finite = 8;
+}
+
+message BoolRules {
+  optional bool const = 1;
+}
+
+message BytesRules {
+  // Length rules count bytes.
+  optional int64 len = 1;
+  optional int64 min_len = 2;
+  optional int64 max_len = 3;
+  optional bytes prefix = 4;
+  optional bytes suffix = 5;
+  optional bytes contains = 6;
+}
+
+message EnumRules {
+  optional int32 const = 1;
+  // Value must be a number declared in the enum (proto3 enums are open).
+  optional bool defined_only = 2;
+  repeated int32 in = 3;
+  repeated int32 not_in = 4;
+}
+
+message RepeatedRules {
+  optional int64 min_items = 1;
+  optional int64 max_items = 2;
+  optional bool unique = 3;
+  // Rules applied to every element; the element type selects which rule
+  // set inside applies (repeated/map rules inside items are ignored).
+  FieldRules items = 4;
+}
+
+message MapRules {
+  optional int64 min_pairs = 1;
+  optional int64 max_pairs = 2;
+  // Rules applied to every key.
+  FieldRules keys = 3;
+  // Rules applied to every value.
+  FieldRules values = 4;
+}
+
+message TimestampRules {
+  google.protobuf.Timestamp gt = 1;
+  google.protobuf.Timestamp gte = 2;
+  google.protobuf.Timestamp lt = 3;
+  google.protobuf.Timestamp lte = 4;
+  // Value must be in the past / future at validation time.
+  optional bool lt_now = 5;
+  optional bool gt_now = 6;
+  // Value must be within this duration of validation time (past or future).
+  google.protobuf.Duration within = 7;
+}
+
+message DurationRules {
+  google.protobuf.Duration gt = 1;
+  google.protobuf.Duration gte = 2;
+  google.protobuf.Duration lt = 3;
+  google.protobuf.Duration lte = 4;
 }
 
 message FieldRules {
   // When true, the field must be present / non-empty (proto3 semantics).
   bool required = 1;
   StringRules string = 2;
+  // Also applies to sint32/sfixed32 fields.
   Int32Rules int32 = 3;
+  // Also applies to sint64/sfixed64 fields.
   Int64Rules int64 = 4;
   DoubleRules double = 5;
   FloatRules float = 6;
+  // Also applies to fixed32 fields.
+  UInt32Rules uint32 = 7;
+  // Also applies to fixed64 fields.
+  UInt64Rules uint64 = 8;
+  BoolRules bool = 9;
   repeated CelRule cel = 10;
+  BytesRules bytes = 11;
+  EnumRules enum = 12;
+  RepeatedRules repeated = 13;
+  MapRules map = 14;
+  TimestampRules timestamp = 15;
+  DurationRules duration = 16;
 }
 
 message MessageRules {

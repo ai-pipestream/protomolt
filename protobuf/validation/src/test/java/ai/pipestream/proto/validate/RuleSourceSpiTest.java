@@ -13,7 +13,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,12 +30,7 @@ class RuleSourceSpiTest {
         public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
             if (field.getJavaType() == FieldDescriptor.JavaType.INT && field.getName().equals("age")) {
                 return Optional.of(FieldConstraints.builder()
-                        .integral(new IntegralConstraints(
-                                "agecap",
-                                OptionalLong.empty(),
-                                OptionalLong.empty(),
-                                OptionalLong.empty(),
-                                OptionalLong.of(10)))
+                        .integral(IntegralConstraints.builder("agecap").lte(10).build())
                         .build());
             }
             return Optional.empty();
@@ -87,15 +81,20 @@ class RuleSourceSpiTest {
     void neutralModelBuilderCollapsesEmptyConstraints() {
         FieldConstraints empty = FieldConstraints.builder()
                 .string(null)
-                .integral(new IntegralConstraints(
-                        "int32", OptionalLong.empty(), OptionalLong.empty(),
-                        OptionalLong.empty(), OptionalLong.empty()))
+                .integral(IntegralConstraints.builder("int32").build())
                 .build();
 
         assertThat(empty.required()).isFalse();
         assertThat(empty.string()).isEmpty();
         assertThat(empty.integral()).isEmpty();
         assertThat(empty.floating()).isEmpty();
+        assertThat(empty.bool()).isEmpty();
+        assertThat(empty.bytes()).isEmpty();
+        assertThat(empty.enumeration()).isEmpty();
+        assertThat(empty.repeated()).isEmpty();
+        assertThat(empty.map()).isEmpty();
+        assertThat(empty.timestamp()).isEmpty();
+        assertThat(empty.duration()).isEmpty();
         assertThat(empty.cel()).isEmpty();
     }
 }

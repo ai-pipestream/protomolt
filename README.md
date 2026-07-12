@@ -308,12 +308,37 @@ var result = ProtoValidator.forMessageType(Person.getDescriptor()).validate(pers
 result.throwIfInvalid();
 ```
 
+#### Rule surface
+
+| Category | Rules |
+|---|---|
+| any field | `required`, `cel` (custom CEL with `this`) |
+| `string` | `const`, `len`, `min_len`, `max_len` (code points), `pattern`, `prefix`, `suffix`, `contains`, `not_contains`, `in`, `not_in`, `email`, `uuid`, `hostname`, `uri`, `ip`, `ipv4`, `ipv6` |
+| `int32` / `int64` (+ `sint*`, `sfixed*`) | `const`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in` |
+| `uint32` / `uint64` (+ `fixed*`) | same, with unsigned comparison semantics |
+| `double` / `float` | `const`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `finite` |
+| `bool` | `const` |
+| `bytes` | `len`, `min_len`, `max_len`, `prefix`, `suffix`, `contains` |
+| `enum` | `const`, `defined_only`, `in`, `not_in` |
+| `repeated` | `min_items`, `max_items`, `unique`, `items` (nested `FieldRules` per element) |
+| `map` | `min_pairs`, `max_pairs`, `keys` / `values` (nested `FieldRules` per entry) |
+| `google.protobuf.Timestamp` | `gt`, `gte`, `lt`, `lte`, `lt_now`, `gt_now`, `within` |
+| `google.protobuf.Duration` | `gt`, `gte`, `lt`, `lte` |
+
+Violation rule ids are stable and buf-style (`string.min_len`, `repeated.unique`,
+`timestamp.within`, …). Paths use `[i]` for repeated elements, `["key"]` for map entries,
+and a `#key` suffix when the map key itself violates. Standard rules run only when the
+field is present (proto3 semantics); repeated/map size rules also apply to empty
+collections. Message-typed elements — including repeated elements and map values — are
+validated recursively.
+
 #### Rule sources (extension seam)
 
 `ProtoValidator` does not read any specific annotation dialect directly. It evaluates a
-neutral constraint model (`ai.pipestream.proto.validate.model` — `FieldConstraints`,
-`StringConstraints`, `IntegralConstraints`, `FloatingConstraints`, `CelConstraint`,
-`MessageConstraints`). Each annotation dialect is a `ValidationRuleSource` that reads its
+neutral constraint model (`ai.pipestream.proto.validate.model` — `FieldConstraints` plus
+per-category records: string, integral, floating, bool, bytes, enum, repeated, map,
+timestamp, duration, CEL, and `MessageConstraints`). Each annotation dialect is a
+`ValidationRuleSource` that reads its
 own options off the descriptor and translates them into that model. The built-in
 `AiPipestreamRuleSource` reads the Pipestream `validate.v1` options.
 
