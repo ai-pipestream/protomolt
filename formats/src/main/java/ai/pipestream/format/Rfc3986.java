@@ -127,8 +127,9 @@ public final class Rfc3986 {
         }
         int colon = hostPort.indexOf(':');
         String host = colon < 0 ? hostPort : hostPort.substring(0, colon);
-        // reg-name (which subsumes IPv4address) — pct-encoded and sub-delims permitted.
-        if (!validComponent(host, "")) {
+        // reg-name (which subsumes IPv4address): pct-encoded and sub-delims permitted, and the
+        // pct-decoded octets must form valid UTF-8.
+        if (!validHost(host)) {
             return false;
         }
         return colon < 0 || isPortStar(hostPort.substring(colon + 1));
@@ -138,7 +139,19 @@ public final class Rfc3986 {
         if (!inner.isEmpty() && (inner.charAt(0) == 'v' || inner.charAt(0) == 'V')) {
             return validIpvFuture(inner);
         }
-        return IpAddresses.isIpv6(inner);
+        // IP-literal = "[" ( IPv6address / IPv6addrz / IPvFuture ) "]", where a zone id is written
+        // percent-encoded: IPv6addrz = IPv6address "%25" ZoneID, ZoneID = 1*( unreserved / pct-encoded ).
+        int zone = inner.indexOf("%25");
+        if (zone >= 0) {
+            String address = inner.substring(0, zone);
+            String zoneId = inner.substring(zone + 3);
+            return !zoneId.isEmpty() && validHost(zoneId) && IpAddresses.parseIpv6(address) != null;
+        }
+        // A bare "%" is not a valid IPv6 character: an unencoded zone id (%eth0) is rejected here.
+        if (inner.indexOf('%') >= 0) {
+            return false;
+        }
+        return IpAddresses.parseIpv6(inner) != null;
     }
 
     /** IPvFuture = "v" 1*HEXDIG "." 1*( unreserved / sub-delims / ":" ). */
@@ -263,6 +276,44 @@ public final class Rfc3986 {
             }
         }
         return true;
+    }
+
+    /**
+     * As {@link #validComponent} but for a host reg-name (or IPv6 zone id): every {@code pct-encoded}
+     * octet is decoded and the resulting byte sequence must be valid UTF-8. This rejects hosts such
+     * as {@code foo%c3x%96} whose percent-encoding does not decode to well-formed UTF-8.
+     */
+    private static boolean validHost(String s) {
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(s.length());
+        int i = 0;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (c == '%') {
+                if (i + 2 >= s.length() || !isHex(s.charAt(i + 1)) || !isHex(s.charAt(i + 2))) {
+                    return false;
+                }
+                bytes.write(Integer.parseInt(s.substring(i + 1, i + 3), 16));
+                i += 3;
+            } else if (isUnreserved(c) || SUB_DELIMS.indexOf(c) >= 0) {
+                bytes.write(c);
+                i++;
+            } else {
+                return false;
+            }
+        }
+        return isValidUtf8(bytes.toByteArray());
+    }
+
+    private static boolean isValidUtf8(byte[] bytes) {
+        try {
+            java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(bytes));
+            return true;
+        } catch (java.nio.charset.CharacterCodingException e) {
+            return false;
+        }
     }
 
     private static boolean isUnreserved(char c) {
