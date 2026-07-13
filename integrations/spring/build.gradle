@@ -4,7 +4,11 @@ dependencies {
     api project(':proteus-mapper-cel')
     api project(':proteus-rest')
     compileOnly libs.spring.context
+    // Boot is optional: plain-Spring users can still @Import the configuration.
+    compileOnly libs.spring.boot.autoconfigure
 
     testImplementation libs.spring.context
     testImplementation libs.spring.test
+    testImplementation libs.spring.boot.autoconfigure
+    testImplementation libs.spring.boot.test
 }

@@ -10,6 +10,8 @@ axion-release = "1.21.2"
 lucene = "10.5.0"
 apicurio = "3.3.0"
 spring = "7.0.8"
+# Boot line matching Spring Framework 7
+spring-boot = "4.0.7"
 vertx = "5.1.4"
 netty = "4.2.16.Final"
 # Micronaut 4.x is the JDK 21-compatible line (5.x requires JVM 25+)
@@ -38,6 +40,8 @@ spring-web = { module = "org.springframework:spring-web", version.ref = "spring"
 spring-webmvc = { module = "org.springframework:spring-webmvc", version.ref = "spring" }
 spring-test = { module = "org.springframework:spring-test", version.ref = "spring" }
 spring-core = { module = "org.springframework:spring-core", version.ref = "spring" }
+spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot" }
+spring-boot-test = { module = "org.springframework.boot:spring-boot-test", version.ref = "spring-boot" }
 vertx-core = { module = "io.vertx:vertx-core", version.ref = "vertx" }
 vertx-web = { module = "io.vertx:vertx-web", version.ref = "vertx" }
 vertx-junit5 = { module = "io.vertx:vertx-junit5", version.ref = "vertx" }

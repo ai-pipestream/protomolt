@@ -17,14 +17,26 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
 
-/** CDI producers for the Pipestream protobuf tools runtime. */
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * CDI producers for the Pipestream protobuf tools runtime.
+ *
+ * <p>Every producer is a {@link DefaultBean}, so applications override any of them by
+ * declaring their own bean of the same type without hitting an
+ * {@code AmbiguousResolutionException}.</p>
+ */
 @Singleton
 public final class ProtoToolsProducer {
 
     @Produces
+    @DefaultBean
     @Singleton
     public DescriptorRegistry descriptorRegistry(Instance<DescriptorLoader> extraLoaders) {
-        DescriptorRegistry registry = new DescriptorRegistry();
+        DescriptorRegistry registry = new LoaderDedupingDescriptorRegistry();
         registry.addLoader(new GoogleDescriptorLoader());
         registry.addLoader(new ClasspathDescriptorLoader());
         if (extraLoaders != null) {
@@ -38,24 +50,28 @@ public final class ProtoToolsProducer {
     }
 
     @Produces
+    @DefaultBean
     @Singleton
     public ProtoFieldMapper protoFieldMapper(DescriptorRegistry descriptorRegistry) {
         return new ProtoFieldMapperImpl(descriptorRegistry);
     }
 
     @Produces
+    @DefaultBean
     @Singleton
     public CelEvaluator celEvaluator() {
         return new CelEvaluator();
     }
 
     @Produces
+    @DefaultBean
     @Singleton
     public ProtobufJsonTranscoder protobufJsonTranscoder(DescriptorRegistry descriptorRegistry) {
         return new ProtobufJsonTranscoder(descriptorRegistry);
     }
 
     @Produces
+    @DefaultBean
     @Singleton
     public ProtoRestMethodRegistry protoRestMethodRegistry() {
         return new ProtoRestMethodRegistry();
@@ -69,14 +85,51 @@ public final class ProtoToolsProducer {
         return ProtoToolsServerConfig.defaults();
     }
 
+    /**
+     * Fail-closed default token validator: every token-protected method is rejected until the
+     * application supplies a real {@link ProtoApiTokenValidator} bean (for example
+     * {@link ProtoApiTokenValidator#sharedSecret(String)}). This is deliberate; a default that
+     * accepts any non-blank token would silently pass junk tokens.
+     */
     @Produces
+    @DefaultBean
+    @Singleton
+    public ProtoApiTokenValidator protoApiTokenValidator() {
+        return (tokenConfig, headers, queryParams) -> Optional.of(
+                "No API token validator is configured; rejecting request. Provide a "
+                        + "ProtoApiTokenValidator bean to enable token-protected methods.");
+    }
+
+    @Produces
+    @DefaultBean
     @Singleton
     public ProtoRestGateway protoRestGateway(
             ProtoRestMethodRegistry protoRestMethodRegistry,
-            ProtobufJsonTranscoder protobufJsonTranscoder) {
+            ProtobufJsonTranscoder protobufJsonTranscoder,
+            ProtoApiTokenValidator protoApiTokenValidator) {
         return new ProtoRestGateway(
                 protoRestMethodRegistry,
                 protobufJsonTranscoder,
-                ProtoApiTokenValidator.acceptNonBlank());
+                protoApiTokenValidator);
+    }
+
+    /**
+     * Registry whose {@code addLoader} is idempotent per loader <em>instance</em>: this
+     * producer registers every available {@link DescriptorLoader} bean up front, and extension
+     * installers (e.g. the Apicurio extension's startup observer) may re-add their loader bean
+     * afterwards; without deduplication the loader would be consulted twice per lookup and
+     * bulk load.
+     */
+    static final class LoaderDedupingDescriptorRegistry extends DescriptorRegistry {
+        private final Set<DescriptorLoader> addedLoaders =
+                Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
+
+        @Override
+        public void addLoader(DescriptorLoader loader) {
+            if (loader == null || !addedLoaders.add(loader)) {
+                return;
+            }
+            super.addLoader(loader);
+        }
     }
 }
