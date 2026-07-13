@@ -44,8 +44,14 @@ import build.buf.validate.TimestampRules;
 import build.buf.validate.UInt32Rules;
 import build.buf.validate.UInt64Rules;
 import build.buf.validate.ValidateProto;
+import com.google.common.primitives.UnsignedLong;
+import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.ExtensionRegistry;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -69,31 +75,81 @@ import java.util.OptionalLong;
  * module's {@code NOTICE}, and its wire types remain under the {@code build.buf.validate} package
  * for exact compatibility.
  *
- * <p>Coverage notes (translated ↔ skipped): all scalar/collection rule families map
- * onto the neutral model, including every integer variant with correct unsigned
- * semantics, and {@code const} on timestamp/duration translates to equal upper and
- * lower bounds. Not yet translated: byte-length string rules ({@code len_bytes},
- * {@code min_bytes}, {@code max_bytes} — the core counts code points), bytes
- * {@code pattern}/{@code in}/{@code not_in}/{@code ip}, exotic well-known string
- * formats ({@code uri_ref}, {@code address}, {@code tuuid}, prefix-length IP forms,
- * {@code well_known_regex}), duration {@code in}/{@code not_in}, {@code Any} and
- * {@code FieldMask} rules, predefined-rule extensions, message {@code oneof} rules,
- * and the non-trivial {@code ignore} modes ({@code IGNORE_ALWAYS} is honored).
- * Protovalidate CEL rules referencing its custom function library are translated
- * verbatim and will report an evaluation-error violation until that library is
- * available in the CEL environment.
+ * <p>Coverage notes: every rule family maps onto the neutral model — all scalar
+ * variants with correct unsigned semantics, string byte-length rules, bytes
+ * {@code pattern}/{@code in}/{@code not_in} and well-known formats, string
+ * well-known formats including the prefix-length IP forms and
+ * {@code well_known_regex}, collection rules, {@code Any} and {@code FieldMask}
+ * rules, message {@code oneof} rules, the {@code ignore} modes, custom CEL rules
+ * (the protovalidate CEL function library is registered in the validator's
+ * environment), and predefined rules ({@code (buf.validate.predefined)} CEL
+ * extensions on {@code buf.validate.<T>Rules} fields), which are translated into
+ * CEL constraints with their configured value bound as {@code rule}.
+ *
+ * <p>Descriptors linked without the {@code buf.validate} extension registry (for
+ * example from a {@code FileDescriptorSet} parsed with plain {@code parseFrom})
+ * keep the rule annotations only as unknown fields; this source detects that and
+ * reparses the options against its own registry, so rules are never silently
+ * dropped.
  */
 public final class ProtovalidateRuleSource implements ValidationRuleSource {
 
+    /** Registry knowing the {@code buf.validate} option extensions, for reparsing options. */
+    private static final ExtensionRegistry EXTENSIONS = createExtensionRegistry();
+
+    // Predefined-rule extension index per proto file (built from the file and its transitive
+    // imports). Simple clear-on-threshold bound; wiped and repopulated on demand when full.
+    private static final int MAX_CACHED_FILES = 64;
+    private static final java.util.Map<FileDescriptor, PredefinedIndex> PREDEFINED_INDEXES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static ExtensionRegistry createExtensionRegistry() {
+        ExtensionRegistry registry = ExtensionRegistry.newInstance();
+        ValidateProto.registerAllExtensions(registry);
+        return registry;
+    }
+
     @Override
     public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
-        var options = field.getOptions();
-        if (!options.hasExtension(ValidateProto.field)) {
+        FieldRules rules = fieldRules(field.getOptions());
+        if (rules == null) {
             return Optional.empty();
         }
-        FieldRules rules = options.getExtension(ValidateProto.field);
         checkRuleType(field, rules);
-        return Optional.of(toFieldConstraints(rules));
+        return Optional.of(toFieldConstraints(rules, predefinedIndex(field.getFile())));
+    }
+
+    /**
+     * The {@code (buf.validate.field)} rules on {@code options}, or null when absent. Descriptors
+     * linked without the buf.validate extension registry carry the annotation only as an unknown
+     * field; reparse the options against a knowing registry rather than silently dropping rules.
+     */
+    private static FieldRules fieldRules(DescriptorProtos.FieldOptions options) {
+        if (options.hasExtension(ValidateProto.field)) {
+            return options.getExtension(ValidateProto.field);
+        }
+        if (!options.getUnknownFields().hasField(ValidateProto.field.getNumber())) {
+            return null;
+        }
+        return reparse(options, DescriptorProtos.FieldOptions::parseFrom, "(buf.validate.field)")
+                .getExtension(ValidateProto.field);
+    }
+
+    /** Parses {@code options}' bytes against {@link #EXTENSIONS}; failures are schema errors. */
+    private static <T extends com.google.protobuf.Message> T reparse(
+            T options, OptionsParser<T> parser, String extensionName) {
+        try {
+            return parser.parse(options.toByteString(), EXTENSIONS);
+        } catch (InvalidProtocolBufferException e) {
+            throw new RuleCompilationException(
+                    "cannot reparse options carrying " + extensionName + ": " + e.getMessage(), e);
+        }
+    }
+
+    @FunctionalInterface
+    private interface OptionsParser<T> {
+        T parse(com.google.protobuf.ByteString bytes, ExtensionRegistry registry)
+                throws InvalidProtocolBufferException;
     }
 
     /**
@@ -164,16 +220,15 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
 
     @Override
     public Optional<MessageConstraints> messageConstraints(Descriptor message) {
-        var options = message.getOptions();
         // Required protobuf oneofs are declared on the oneof, not via the message extension, so a
         // message can carry oneof rules with no (buf.validate.message) option at all.
         List<String> requiredOneofs = requiredOneofs(message);
-        if (!options.hasExtension(ValidateProto.message)) {
+        MessageRules rules = messageRules(message.getOptions());
+        if (rules == null) {
             return requiredOneofs.isEmpty()
                     ? Optional.empty()
                     : Optional.of(new MessageConstraints(List.of(), List.of(), requiredOneofs));
         }
-        MessageRules rules = options.getExtension(ValidateProto.message);
         List<CelConstraint> cel = new ArrayList<>(rules.getCelList().size());
         for (Rule rule : rules.getCelList()) {
             cel.add(toCel(rule));
@@ -188,11 +243,27 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
         return Optional.of(new MessageConstraints(cel, oneofs, requiredOneofs));
     }
 
+    /** As {@link #fieldRules} for the {@code (buf.validate.message)} extension. */
+    private static MessageRules messageRules(DescriptorProtos.MessageOptions options) {
+        if (options.hasExtension(ValidateProto.message)) {
+            return options.getExtension(ValidateProto.message);
+        }
+        if (!options.getUnknownFields().hasField(ValidateProto.message.getNumber())) {
+            return null;
+        }
+        return reparse(options, DescriptorProtos.MessageOptions::parseFrom, "(buf.validate.message)")
+                .getExtension(ValidateProto.message);
+    }
+
     /** Names of the message's real protobuf oneofs annotated {@code (buf.validate.oneof).required}. */
     private static List<String> requiredOneofs(Descriptor message) {
         List<String> names = new ArrayList<>();
         for (com.google.protobuf.Descriptors.OneofDescriptor oneof : message.getRealOneofs()) {
             var opts = oneof.getOptions();
+            if (!opts.hasExtension(ValidateProto.oneof)
+                    && opts.getUnknownFields().hasField(ValidateProto.oneof.getNumber())) {
+                opts = reparse(opts, DescriptorProtos.OneofOptions::parseFrom, "(buf.validate.oneof)");
+            }
             if (opts.hasExtension(ValidateProto.oneof)
                     && opts.getExtension(ValidateProto.oneof).getRequired()) {
                 names.add(oneof.getName());
@@ -238,7 +309,7 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
     }
 
     /** Recursively translates {@link FieldRules} (also used for items/keys/values). */
-    private static FieldConstraints toFieldConstraints(FieldRules rules) {
+    private static FieldConstraints toFieldConstraints(FieldRules rules, PredefinedIndex predefined) {
         FieldConstraints.Builder builder = FieldConstraints.builder()
                 .required(rules.hasRequired() && rules.getRequired())
                 .ignore(toIgnoreMode(rules.getIgnore()));
@@ -259,8 +330,8 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
             case BOOL -> builder.bool(toBool(rules.getBool()));
             case BYTES -> builder.bytes(toBytes(rules.getBytes()));
             case ENUM -> builder.enumeration(toEnum(rules.getEnum()));
-            case REPEATED -> builder.repeated(toRepeated(rules.getRepeated()));
-            case MAP -> builder.map(toMap(rules.getMap()));
+            case REPEATED -> builder.repeated(toRepeated(rules.getRepeated(), predefined));
+            case MAP -> builder.map(toMap(rules.getMap(), predefined));
             case TIMESTAMP -> builder.timestamp(toTimestamp(rules.getTimestamp()));
             case DURATION -> builder.duration(toDuration(rules.getDuration()));
             case ANY -> builder.any(new ai.pipestream.proto.validate.model.AnyConstraints(
@@ -276,6 +347,7 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
         for (String expression : rules.getCelExpressionList()) {
             builder.addCel(new CelConstraint("", expression, "", "cel_expression"));
         }
+        addPredefinedCel(builder, rules, predefined);
         return builder.build();
     }
 
@@ -699,20 +771,26 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
                 r.getNotInList());
     }
 
-    private static RepeatedConstraints toRepeated(RepeatedRules r) {
+    private static RepeatedConstraints toRepeated(RepeatedRules r, PredefinedIndex predefined) {
         return new RepeatedConstraints(
                 r.hasMinItems() ? OptionalLong.of(r.getMinItems()) : OptionalLong.empty(),
                 r.hasMaxItems() ? OptionalLong.of(r.getMaxItems()) : OptionalLong.empty(),
                 r.hasUnique() && r.getUnique(),
-                r.hasItems() ? Optional.of(toFieldConstraints(r.getItems())) : Optional.empty());
+                r.hasItems()
+                        ? Optional.of(toFieldConstraints(r.getItems(), predefined))
+                        : Optional.empty());
     }
 
-    private static MapConstraints toMap(MapRules r) {
+    private static MapConstraints toMap(MapRules r, PredefinedIndex predefined) {
         return new MapConstraints(
                 r.hasMinPairs() ? OptionalLong.of(r.getMinPairs()) : OptionalLong.empty(),
                 r.hasMaxPairs() ? OptionalLong.of(r.getMaxPairs()) : OptionalLong.empty(),
-                r.hasKeys() ? Optional.of(toFieldConstraints(r.getKeys())) : Optional.empty(),
-                r.hasValues() ? Optional.of(toFieldConstraints(r.getValues())) : Optional.empty());
+                r.hasKeys()
+                        ? Optional.of(toFieldConstraints(r.getKeys(), predefined))
+                        : Optional.empty(),
+                r.hasValues()
+                        ? Optional.of(toFieldConstraints(r.getValues(), predefined))
+                        : Optional.empty());
     }
 
     private static TimestampConstraints toTimestamp(TimestampRules r) {
@@ -739,10 +817,243 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
     }
 
     private static Instant toInstant(com.google.protobuf.Timestamp ts) {
-        return Instant.ofEpochSecond(ts.getSeconds(), ts.getNanos());
+        try {
+            return Instant.ofEpochSecond(ts.getSeconds(), ts.getNanos());
+        } catch (java.time.DateTimeException | ArithmeticException e) {
+            // A rule bound that cannot be represented is a schema error, not a raw leak.
+            throw new RuleCompilationException("timestamp rule value out of range: " + e.getMessage(), e);
+        }
     }
 
     private static java.time.Duration toJavaDuration(com.google.protobuf.Duration d) {
-        return java.time.Duration.ofSeconds(d.getSeconds(), d.getNanos());
+        try {
+            return java.time.Duration.ofSeconds(d.getSeconds(), d.getNanos());
+        } catch (java.time.DateTimeException | ArithmeticException e) {
+            throw new RuleCompilationException("duration rule value out of range: " + e.getMessage(), e);
+        }
+    }
+
+    // ---- predefined rules ((buf.validate.predefined) CEL extensions on <T>Rules fields) ----
+
+    /** One predefined extension: its descriptor and the CEL rules attached to it. */
+    private record PredefinedExt(FieldDescriptor descriptor, List<Rule> rules) {
+    }
+
+    /** rulesTypeFullName (e.g. {@code buf.validate.Int32Rules}) → extension number → extension. */
+    private record PredefinedIndex(java.util.Map<String, java.util.Map<Integer, PredefinedExt>> bySubRules) {
+        static final PredefinedIndex EMPTY = new PredefinedIndex(java.util.Map.of());
+
+        java.util.Map<Integer, PredefinedExt> forType(String rulesTypeFullName) {
+            return bySubRules.getOrDefault(rulesTypeFullName, java.util.Map.of());
+        }
+
+        boolean isEmpty() {
+            return bySubRules.isEmpty();
+        }
+    }
+
+    /** The predefined extensions visible from {@code file} (itself plus transitive imports). */
+    private static PredefinedIndex predefinedIndex(FileDescriptor file) {
+        PredefinedIndex existing = PREDEFINED_INDEXES.get(file);
+        if (existing != null) {
+            return existing;
+        }
+        if (PREDEFINED_INDEXES.size() >= MAX_CACHED_FILES) {
+            PREDEFINED_INDEXES.clear();
+        }
+        return PREDEFINED_INDEXES.computeIfAbsent(file, ProtovalidateRuleSource::buildPredefinedIndex);
+    }
+
+    private static PredefinedIndex buildPredefinedIndex(FileDescriptor file) {
+        java.util.Map<String, java.util.Map<Integer, PredefinedExt>> index = new java.util.HashMap<>();
+        collectPredefined(file, new java.util.HashSet<>(), index);
+        return index.isEmpty() ? PredefinedIndex.EMPTY : new PredefinedIndex(index);
+    }
+
+    private static void collectPredefined(
+            FileDescriptor file,
+            java.util.Set<String> visited,
+            java.util.Map<String, java.util.Map<Integer, PredefinedExt>> index) {
+        if (!visited.add(file.getFullName())) {
+            return;
+        }
+        indexExtensions(file.getExtensions(), index);
+        for (Descriptor message : file.getMessageTypes()) {
+            indexNested(message, index);
+        }
+        for (FileDescriptor dep : file.getDependencies()) {
+            collectPredefined(dep, visited, index);
+        }
+    }
+
+    private static void indexNested(
+            Descriptor message, java.util.Map<String, java.util.Map<Integer, PredefinedExt>> index) {
+        indexExtensions(message.getExtensions(), index);
+        for (Descriptor nested : message.getNestedTypes()) {
+            indexNested(nested, index);
+        }
+    }
+
+    private static void indexExtensions(
+            List<FieldDescriptor> extensions,
+            java.util.Map<String, java.util.Map<Integer, PredefinedExt>> index) {
+        for (FieldDescriptor ext : extensions) {
+            String containing = ext.getContainingType().getFullName();
+            if (!containing.startsWith("buf.validate.")) {
+                continue;
+            }
+            List<Rule> rules = predefinedRules(ext);
+            if (rules.isEmpty()) {
+                continue;
+            }
+            index.computeIfAbsent(containing, k -> new java.util.HashMap<>())
+                    .put(ext.getNumber(), new PredefinedExt(ext, rules));
+        }
+    }
+
+    /** Reads the {@code (buf.validate.predefined).cel} rules off an extension's options. */
+    private static List<Rule> predefinedRules(FieldDescriptor ext) {
+        DescriptorProtos.FieldOptions options = ext.getOptions();
+        if (!options.hasExtension(ValidateProto.predefined)) {
+            if (!options.getUnknownFields().hasField(ValidateProto.predefined.getNumber())) {
+                return List.of();
+            }
+            // Custom options on a dynamically linked descriptor may survive only as unknown fields.
+            options = reparse(options, DescriptorProtos.FieldOptions::parseFrom,
+                    "(buf.validate.predefined)");
+            if (!options.hasExtension(ValidateProto.predefined)) {
+                return List.of();
+            }
+        }
+        return options.getExtension(ValidateProto.predefined).getCelList();
+    }
+
+    /**
+     * Appends a CEL constraint for every predefined extension set on {@code rules}' active
+     * sub-rules message, with the extension's configured value carried as the {@code rule}
+     * binding and an extension-shaped rule path ({@code <type>.[<ext.full.name>]}).
+     */
+    private static void addPredefinedCel(
+            FieldConstraints.Builder builder, FieldRules rules, PredefinedIndex predefined) {
+        if (predefined.isEmpty()) {
+            return;
+        }
+        com.google.protobuf.Message subRules = activeSubRules(rules);
+        if (subRules == null) {
+            return;
+        }
+        java.util.Map<Integer, PredefinedExt> byNumber =
+                predefined.forType(subRules.getDescriptorForType().getFullName());
+        if (byNumber.isEmpty()) {
+            return;
+        }
+        String subField = typeFieldName(rules.getTypeCase());
+        for (int number : extensionNumbersSetOn(subRules)) {
+            PredefinedExt ext = byNumber.get(number);
+            if (ext == null) {
+                continue;
+            }
+            Object ruleValue = ruleValue(subRules, ext.descriptor());
+            String rulePath = subField + ".[" + ext.descriptor().getFullName() + "]";
+            for (Rule rule : ext.rules()) {
+                builder.addCel(new CelConstraint(
+                        rule.getId(), rule.getExpression(), rule.getMessage(),
+                        "cel", rulePath, ruleValue));
+            }
+        }
+    }
+
+    /**
+     * The field numbers of extensions set on {@code subRules}: unknown fields (the common case —
+     * user extensions are unknown to the generated {@code buf.validate} types) plus any extension
+     * fields known to the message's registry.
+     */
+    private static List<Integer> extensionNumbersSetOn(com.google.protobuf.Message subRules) {
+        java.util.TreeSet<Integer> numbers =
+                new java.util.TreeSet<>(subRules.getUnknownFields().asMap().keySet());
+        for (FieldDescriptor fd : subRules.getAllFields().keySet()) {
+            if (fd.isExtension()) {
+                numbers.add(fd.getNumber());
+            }
+        }
+        return List.copyOf(numbers);
+    }
+
+    /** The set type sub-rules message (int32/float/…/repeated/map), or null when none is set. */
+    private static com.google.protobuf.Message activeSubRules(FieldRules rules) {
+        FieldDescriptor typeField = rules.getDescriptorForType()
+                .findFieldByName(typeFieldName(rules.getTypeCase()));
+        if (typeField == null || !rules.hasField(typeField)) {
+            return null;
+        }
+        return (com.google.protobuf.Message) rules.getField(typeField);
+    }
+
+    private static String typeFieldName(FieldRules.TypeCase typeCase) {
+        return switch (typeCase) {
+            case TYPE_NOT_SET -> "";
+            default -> typeCase.name().toLowerCase(java.util.Locale.ROOT);
+        };
+    }
+
+    /**
+     * Reads the value the predefined extension is set to on {@code subRules}, as the CEL value the
+     * rule's {@code rule} variable binds to. The extension is typically an unknown field on our
+     * generated sub-rules message, so the message bytes are re-parsed against the extension's own
+     * descriptor to recover a typed value. An undecodable value is a schema error.
+     */
+    private static Object ruleValue(com.google.protobuf.Message subRules, FieldDescriptor ext) {
+        try {
+            ExtensionRegistry registry = ExtensionRegistry.newInstance();
+            if (ext.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+                registry.add(ext, DynamicMessage.getDefaultInstance(ext.getMessageType()));
+            } else {
+                registry.add(ext);
+            }
+            DynamicMessage parsed = DynamicMessage.parseFrom(
+                    ext.getContainingType(), subRules.toByteString(), registry);
+            return celValue(ext, parsed.getField(ext));
+        } catch (RuntimeException | InvalidProtocolBufferException e) {
+            throw new RuleCompilationException(
+                    "cannot decode predefined rule value " + ext.getFullName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    /** Converts a protobuf field value to the Java type CEL expects for that proto type. */
+    private static Object celValue(FieldDescriptor fd, Object value) {
+        if (value instanceof List<?> list) {
+            List<Object> converted = new ArrayList<>(list.size());
+            for (Object element : list) {
+                converted.add(scalarCelValue(fd, element));
+            }
+            return converted;
+        }
+        return scalarCelValue(fd, value);
+    }
+
+    private static Object scalarCelValue(FieldDescriptor fd, Object value) {
+        return switch (fd.getType()) {
+            case UINT32, FIXED32 -> UnsignedLong.fromLongBits(Integer.toUnsignedLong((Integer) value));
+            case UINT64, FIXED64 -> UnsignedLong.fromLongBits((Long) value);
+            case INT32, SINT32, SFIXED32 -> ((Integer) value).longValue();
+            case FLOAT -> ((Float) value).doubleValue();
+            case ENUM -> (long) ((com.google.protobuf.Descriptors.EnumValueDescriptor) value).getNumber();
+            case MESSAGE, GROUP -> messageCelValue((com.google.protobuf.Message) value);
+            default -> value;
+        };
+    }
+
+    /** Well-known temporal messages map to their CEL temporal representation. */
+    private static Object messageCelValue(com.google.protobuf.Message value) {
+        Descriptor descriptor = value.getDescriptorForType();
+        return switch (descriptor.getFullName()) {
+            case "google.protobuf.Duration" -> java.time.Duration.ofSeconds(
+                    (Long) value.getField(descriptor.findFieldByName("seconds")),
+                    (Integer) value.getField(descriptor.findFieldByName("nanos")));
+            case "google.protobuf.Timestamp" -> Instant.ofEpochSecond(
+                    (Long) value.getField(descriptor.findFieldByName("seconds")),
+                    (Integer) value.getField(descriptor.findFieldByName("nanos")));
+            default -> value;
+        };
     }
 }

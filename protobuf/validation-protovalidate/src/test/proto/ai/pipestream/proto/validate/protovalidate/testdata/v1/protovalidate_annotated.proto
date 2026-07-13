@@ -60,4 +60,12 @@ message AnnotatedUser {
     ignore: IGNORE_ALWAYS
     string: { min_len: 100 }
   }];
+  // Custom CEL over the full unsigned range; `this` must bind as a CEL uint so
+  // values at or above 2^63 compare correctly against uint literals. Zero (unset)
+  // is allowed because implicit-presence fields run their rules at the zero value.
+  uint64 big = 14 [(.buf.validate.field).cel = {
+    id: "big.uint64_range"
+    message: "big must be zero, or over 100 and below the uint64 max"
+    expression: "this == 0u || (this > 100u && this < 18446744073709551615u)"
+  }];
 }
