@@ -4,6 +4,9 @@ import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
@@ -22,14 +25,35 @@ import java.util.Objects;
 /**
  * Solr-oriented document map builder (SolrInputDocument-compatible {@link Map}).
  * Uses a shared {@link IndexingPlan} from descriptor indexing hints.
+ *
+ * <p>Message values are rendered through {@link JsonFormat}: object-shaped messages become
+ * compact JSON strings (Solr documents are flat), while well-known types that print as JSON
+ * primitives (Timestamp, Duration, wrappers, FieldMask) become the primitive itself — a
+ * DATE-hinted Timestamp therefore lands as an ISO-8601 string, which Solr date fields accept.
  */
 public final class SolrDocumentMapper implements SearchEngineIndexer {
     public static final String ENGINE_ID = "solr";
 
+    // Message bodies are proto3 JSON via JsonFormat; Jackson only parses that output to decide
+    // between object and primitive shapes. No JSON is hand-escaped.
+    private static final JsonFormat.Printer COMPACT_PRINTER =
+            JsonFormat.printer().omittingInsignificantWhitespace();
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final ProtoFieldMapper fieldMapper;
+    private final boolean includeDefaults;
 
     public SolrDocumentMapper(ProtoFieldMapper fieldMapper) {
+        this(fieldMapper, false);
+    }
+
+    /**
+     * @param includeDefaults when true, proto3 implicit-presence fields at their default value
+     *        ({@code false} / {@code 0} / {@code ""}) are written to documents instead of skipped
+     */
+    public SolrDocumentMapper(ProtoFieldMapper fieldMapper, boolean includeDefaults) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
+        this.includeDefaults = includeDefaults;
     }
 
     @Override
@@ -45,9 +69,12 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
             if (hasUnsetIntermediate(message, field.path())) {
                 continue; // unset optional parent: no value for this field, not a mapping error
             }
-            Object value = fieldMapper.getValue(message, field.path());
+            Object value = fieldMapper.getValue(message, field.path(), includeDefaults);
             if (value != null) {
-                document.put(field.fieldName(), coerce(value, field.path()));
+                Object coerced = coerce(value, field.path());
+                if (coerced != null) {
+                    document.put(field.fieldName(), coerced);
+                }
             }
         }
         return document;
@@ -93,9 +120,12 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
             return document;
         }
         for (FieldProjection projection : projections) {
-            Object value = fieldMapper.getValue(message, projection.path());
+            Object value = fieldMapper.getValue(message, projection.path(), includeDefaults);
             if (value != null) {
-                document.put(projection.fieldName(), coerce(value, projection.path()));
+                Object coerced = coerce(value, projection.path());
+                if (coerced != null) {
+                    document.put(projection.fieldName(), coerced);
+                }
             }
         }
         return document;
@@ -116,14 +146,43 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
             return ev.getName();
         }
         if (value instanceof Message message) {
-            // Solr documents are flat: nested messages are emitted as their JSON string.
+            String json;
             try {
-                return JsonFormat.printer().print(message);
+                json = COMPACT_PRINTER.print(message);
             } catch (InvalidProtocolBufferException e) {
                 throw new MappingException("Failed to render nested message as JSON", e, path);
             }
+            JsonNode node;
+            try {
+                node = JSON.readTree(json);
+            } catch (JsonProcessingException e) {
+                throw new MappingException("Failed to parse JsonFormat output", e, path);
+            }
+            if (node.isObject() || node.isArray()) {
+                // Solr documents are flat: object-shaped messages are emitted as JSON strings.
+                return json;
+            }
+            // Well-known types printing as JSON primitives (Timestamp, Duration, wrappers,
+            // FieldMask) become the raw value: never the quoted JSON literal.
+            return unwrapPrimitive(node);
         }
         return value;
+    }
+
+    private static Object unwrapPrimitive(JsonNode node) {
+        if (node.isTextual()) {
+            return node.asText();
+        }
+        if (node.isNumber()) {
+            return node.numberValue();
+        }
+        if (node.isBoolean()) {
+            return node.asBoolean();
+        }
+        if (node.isNull()) {
+            return null;
+        }
+        return node.toString();
     }
 
     public record FieldProjection(String path, String fieldName) {

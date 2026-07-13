@@ -91,6 +91,59 @@ class OpenSearchDocumentMapperTest {
     }
 
     @Test
+    void dateHintedTimestampBecomesIso8601String() throws Exception {
+        Descriptor descriptor = timestampDescriptor();
+        FieldDescriptor created = descriptor.findFieldByName("created");
+        Descriptor tsDescriptor = created.getMessageType();
+        DynamicMessage timestamp = DynamicMessage.newBuilder(tsDescriptor)
+                .setField(tsDescriptor.findFieldByName("seconds"), 1_700_000_000L)
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(created, timestamp)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
+
+        Map<String, Object> doc = mapper.map(message, plan);
+
+        // ISO-8601 string (consistent with the Solr mapper), never a {seconds,nanos} object
+        assertThat(doc.get("created")).isEqualTo("2023-11-14T22:13:20Z");
+    }
+
+    @Test
+    void nestedMessagesTakeJsonFormatShapes() throws Exception {
+        Descriptor descriptor = shapesDescriptor();
+        Descriptor innerType = descriptor.findFieldByName("inner").getMessageType();
+        Descriptor entryType = innerType.findFieldByName("labels").getMessageType();
+        DynamicMessage entry = DynamicMessage.newBuilder(entryType)
+                .setField(entryType.findFieldByName("key"), "env")
+                .setField(entryType.findFieldByName("value"), "prod")
+                .build();
+        DynamicMessage inner = DynamicMessage.newBuilder(innerType)
+                .setField(innerType.findFieldByName("small"), 7)
+                .setField(innerType.findFieldByName("big"), 9L)
+                .setField(innerType.findFieldByName("ratio"), 1.5f)
+                .addRepeatedField(innerType.findFieldByName("labels"), entry)
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("inner"), inner)
+                .build();
+
+        Map<String, Object> doc = mapper.map(message, List.of(
+                new OpenSearchDocumentMapper.FieldProjection("inner", "inner")
+        ));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> shaped = (Map<String, Object>) doc.get("inner");
+        // JsonFormat shapes: int32 stays a number, int64 becomes a string,
+        // float stays a number, maps become JSON objects (not entry arrays)
+        assertThat(shaped.get("small")).isEqualTo(7);
+        assertThat(shaped.get("big")).isEqualTo("9");
+        assertThat(((Number) shaped.get("ratio")).doubleValue()).isEqualTo(1.5d);
+        assertThat(shaped.get("labels")).isEqualTo(Map.of("env", "prod"));
+    }
+
+    @Test
     void unsetIntermediateMessageInPlanPathSkipsField() throws Exception {
         Descriptor descriptor = docDescriptor();
         FieldDescriptor colors = descriptor.findFieldByName("colors");
@@ -107,6 +160,22 @@ class OpenSearchDocumentMapperTest {
     }
 
     @Test
+    void includeDefaultsWritesImplicitPresenceDefaults() throws Exception {
+        Descriptor descriptor = boolDocDescriptor();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("archived", "archived",
+                        ResolvedFieldHint.of(IndexFieldKind.BOOLEAN))));
+
+        // default behaviour: fields at their default value are skipped
+        assertThat(mapper.map(message, plan)).doesNotContainKey("archived");
+
+        OpenSearchDocumentMapper withDefaults = new OpenSearchDocumentMapper(
+                new ProtoFieldMapperImpl(new DescriptorRegistry()), true);
+        assertThat(withDefaults.map(message, plan)).containsEntry("archived", false);
+    }
+
+    @Test
     void genuinelyInvalidPlanPathStillThrows() throws Exception {
         Descriptor descriptor = docDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
@@ -114,6 +183,96 @@ class OpenSearchDocumentMapperTest {
                 new IndexingPlan.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
         assertThatThrownBy(() -> mapper.map(message, plan)).isInstanceOf(MappingException.class);
+    }
+
+    private static Descriptor boolDocDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("bool_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("BoolDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("archived")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_BOOL)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("BoolDoc");
+    }
+
+    private static Descriptor timestampDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("ts_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/timestamp.proto")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("TsDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("created")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Timestamp")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(
+                        file, new FileDescriptor[]{com.google.protobuf.TimestampProto.getDescriptor()})
+                .findMessageTypeByName("TsDoc");
+    }
+
+    private static Descriptor shapesDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("shapes_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Shapes")
+                        .addNestedType(DescriptorProto.newBuilder()
+                                .setName("LabelsEntry")
+                                .setOptions(com.google.protobuf.DescriptorProtos.MessageOptions.newBuilder()
+                                        .setMapEntry(true))
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("key")
+                                        .setNumber(1)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("value")
+                                        .setNumber(2)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("small")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_INT32)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("big")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_INT64)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("ratio")
+                                .setNumber(3)
+                                .setType(FieldDescriptorProto.Type.TYPE_FLOAT)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("labels")
+                                .setNumber(4)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Shapes.LabelsEntry")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Outer")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("inner")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Shapes")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Outer");
     }
 
     private static Descriptor docDescriptor() throws Exception {
