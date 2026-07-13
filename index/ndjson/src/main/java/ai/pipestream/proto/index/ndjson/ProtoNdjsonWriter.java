@@ -35,8 +35,18 @@ public final class ProtoNdjsonWriter {
         this(options, null);
     }
 
+    /**
+     * @throws IllegalArgumentException when {@code options.omitWhitespace()} is {@code false}:
+     *         every output of this writer is line-oriented (NDJSON / bulk), and pretty-printed
+     *         multi-line JSON is structurally invalid there.
+     */
     public ProtoNdjsonWriter(NdjsonOptions options, DescriptorRegistry descriptorRegistry) {
         Objects.requireNonNull(options, "options");
+        if (!options.omitWhitespace()) {
+            throw new IllegalArgumentException(
+                    "NdjsonOptions.omitWhitespace(false) would produce pretty-printed multi-line JSON, "
+                            + "which is structurally invalid NDJSON/bulk output; use omitWhitespace(true)");
+        }
         JsonFormat.Printer p = JsonFormat.printer();
         if (descriptorRegistry != null && !descriptorRegistry.registeredDescriptors().isEmpty()) {
             p = p.usingTypeRegistry(JsonFormat.TypeRegistry.newBuilder()
@@ -97,13 +107,7 @@ public final class ProtoNdjsonWriter {
     public void writeBulkIndex(Appendable out, String index, String id, Message document) {
         Objects.requireNonNull(index, "index");
         Objects.requireNonNull(document, "document");
-        String source = objectSourceLine(document);
-        try {
-            out.append(bulkIndexAction(index, id)).append('\n');
-            out.append(source).append('\n');
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        appendBulkPair(out, bulkIndexAction(index, id), objectSourceLine(document));
     }
 
     /**
@@ -112,10 +116,17 @@ public final class ProtoNdjsonWriter {
     public void writeBulkCreate(Appendable out, String index, String id, Message document) {
         Objects.requireNonNull(index, "index");
         Objects.requireNonNull(document, "document");
-        String source = objectSourceLine(document);
+        appendBulkPair(out, bulkAction("create", index, id), objectSourceLine(document));
+    }
+
+    /**
+     * Appends an action line and its source line as one atomic write, so an
+     * {@link IOException} can never leave the bulk stream with a dangling action line.
+     */
+    private static void appendBulkPair(Appendable out, String action, String source) {
+        String pair = action + '\n' + source + '\n';
         try {
-            out.append(bulkAction("create", index, id)).append('\n');
-            out.append(source).append('\n');
+            out.append(pair);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

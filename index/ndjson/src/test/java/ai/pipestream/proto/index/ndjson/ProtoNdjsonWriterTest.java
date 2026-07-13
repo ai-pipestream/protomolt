@@ -90,6 +90,75 @@ class ProtoNdjsonWriterTest {
     }
 
     @Test
+    void rejectsPrettyPrintedOptionsForLineOrientedOutput() {
+        // omitWhitespace(false) would emit multi-line JSON: structurally invalid NDJSON/bulk.
+        NdjsonOptions pretty = NdjsonOptions.builder().omitWhitespace(false).build();
+        assertThatThrownBy(() -> new ProtoNdjsonWriter(pretty))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("omitWhitespace");
+    }
+
+    @Test
+    void bulkPairIsAppendedAtomically() {
+        Struct doc = Struct.newBuilder()
+                .putFields("title", Value.newBuilder().setStringValue("Hello").build())
+                .build();
+        // Appendable that fails every write: a failure must never leave a dangling action line.
+        class FailingAppendable implements Appendable {
+            final StringBuilder written = new StringBuilder();
+            int calls;
+
+            @Override
+            public Appendable append(CharSequence csq) throws java.io.IOException {
+                calls++;
+                throw new java.io.IOException("boom");
+            }
+
+            @Override
+            public Appendable append(CharSequence csq, int start, int end) throws java.io.IOException {
+                return append(csq.subSequence(start, end));
+            }
+
+            @Override
+            public Appendable append(char c) throws java.io.IOException {
+                return append(String.valueOf(c));
+            }
+        }
+        FailingAppendable failing = new FailingAppendable();
+        assertThatThrownBy(() -> writer.writeBulkIndex(failing, "docs", "id-1", doc))
+                .isInstanceOf(java.io.UncheckedIOException.class);
+        // one atomic append for the action+source pair, nothing written on failure
+        assertThat(failing.calls).isEqualTo(1);
+        assertThat(failing.written).isEmpty();
+
+        // and on success both lines arrive in a single append
+        class RecordingAppendable implements Appendable {
+            final java.util.List<String> appends = new java.util.ArrayList<>();
+
+            @Override
+            public Appendable append(CharSequence csq) {
+                appends.add(csq.toString());
+                return this;
+            }
+
+            @Override
+            public Appendable append(CharSequence csq, int start, int end) {
+                return append(csq.subSequence(start, end));
+            }
+
+            @Override
+            public Appendable append(char c) {
+                return append(String.valueOf(c));
+            }
+        }
+        RecordingAppendable recording = new RecordingAppendable();
+        writer.writeBulkCreate(recording, "docs", "id-1", doc);
+        assertThat(recording.appends).hasSize(1);
+        assertThat(recording.appends.getFirst())
+                .isEqualTo("{\"create\":{\"_index\":\"docs\",\"_id\":\"id-1\"}}\n{\"title\":\"Hello\"}\n");
+    }
+
+    @Test
     void bulkDeleteRejectsBlankId() {
         StringBuilder out = new StringBuilder();
         assertThatThrownBy(() -> writer.writeBulkDelete(out, "docs", ""))
