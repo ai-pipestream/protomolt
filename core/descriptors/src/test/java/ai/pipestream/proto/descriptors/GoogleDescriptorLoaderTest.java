@@ -191,6 +191,63 @@ public class GoogleDescriptorLoaderTest {
     }
 
     @Test
+    void testSelfDependencyCycleThrowsDescriptorLoadException() {
+        FileDescriptorProto selfProto = FileDescriptorProto.newBuilder()
+            .setName("test/self.proto")
+            .setPackage("test")
+            .addDependency("test/self.proto")
+            .build();
+
+        FileDescriptorSet set = FileDescriptorSet.newBuilder()
+            .addFile(selfProto)
+            .build();
+
+        String resourcePath = "test-descriptors/self-cycle.dsc";
+        ClassLoader cl = new MapBackedClassLoader(Map.of(resourcePath, set.toByteArray()));
+        GoogleDescriptorLoader loader = new GoogleDescriptorLoader(resourcePath, cl);
+
+        DescriptorLoader.DescriptorLoadException ex =
+            assertThrows(DescriptorLoader.DescriptorLoadException.class, loader::loadDescriptors);
+        assertTrue(ex.getMessage().contains("dependency cycle"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("test/self.proto"), ex.getMessage());
+    }
+
+    @Test
+    void testTwoFileDependencyCycleThrowsDescriptorLoadException() {
+        FileDescriptorProto aProto = FileDescriptorProto.newBuilder()
+            .setName("test/a.proto")
+            .setPackage("test")
+            .addDependency("test/b.proto")
+            .build();
+        FileDescriptorProto bProto = FileDescriptorProto.newBuilder()
+            .setName("test/b.proto")
+            .setPackage("test")
+            .addDependency("test/a.proto")
+            .build();
+
+        FileDescriptorSet set = FileDescriptorSet.newBuilder()
+            .addFile(aProto)
+            .addFile(bProto)
+            .build();
+
+        String resourcePath = "test-descriptors/two-cycle.dsc";
+        ClassLoader cl = new MapBackedClassLoader(Map.of(resourcePath, set.toByteArray()));
+        GoogleDescriptorLoader loader = new GoogleDescriptorLoader(resourcePath, cl);
+
+        DescriptorLoader.DescriptorLoadException ex =
+            assertThrows(DescriptorLoader.DescriptorLoadException.class, loader::loadDescriptors);
+        assertTrue(ex.getMessage().contains("dependency cycle"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("test/a.proto"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("test/b.proto"), ex.getMessage());
+
+        // The static descriptor-set entry point must honor the same contract.
+        DescriptorLoader.DescriptorLoadException fromSetEx =
+            assertThrows(DescriptorLoader.DescriptorLoadException.class,
+                () -> GoogleDescriptorLoader.fromDescriptorSet(set));
+        assertTrue(fromSetEx.getMessage().contains("dependency cycle"), fromSetEx.getMessage());
+    }
+
+    @Test
     void testSearchPaths() {
         GoogleDescriptorLoader loader = GoogleDescriptorLoader.searchPaths(
             "invalid/path1.dsc",
@@ -213,6 +270,25 @@ public class GoogleDescriptorLoaderTest {
 
         assertNotNull(loader);
         assertEquals("invalid/path1.dsc", loader.getDescriptorPath());
+    }
+
+    @Test
+    void testSearchPathsWithNoPathsThrows() {
+        assertThrows(IllegalArgumentException.class, () -> GoogleDescriptorLoader.searchPaths());
+    }
+
+    @Test
+    void testSearchPathsWithNullContextClassLoader() {
+        Thread current = Thread.currentThread();
+        ClassLoader original = current.getContextClassLoader();
+        current.setContextClassLoader(null);
+        try {
+            GoogleDescriptorLoader loader = GoogleDescriptorLoader.searchPaths("invalid/path1.dsc");
+            assertNotNull(loader);
+            assertEquals("invalid/path1.dsc", loader.getDescriptorPath());
+        } finally {
+            current.setContextClassLoader(original);
+        }
     }
 
     @Test
