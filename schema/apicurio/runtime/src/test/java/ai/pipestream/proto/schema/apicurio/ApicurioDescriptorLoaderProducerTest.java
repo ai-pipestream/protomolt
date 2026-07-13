@@ -1,8 +1,10 @@
 package ai.pipestream.proto.schema.apicurio;
 
 import ai.pipestream.proto.descriptors.DescriptorLoader;
+import ai.pipestream.proto.schema.apicurio.ApicurioDescriptorLoaderProducer.ApicurioRegistryClientHolder;
 import io.apicurio.registry.rest.client.RegistryClient;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.inject.Disposes;
 import jakarta.inject.Singleton;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +28,10 @@ class ApicurioDescriptorLoaderProducerTest {
     @Test
     void missingRegistryUrlYieldsUnavailableLoaderInsteadOfNull() {
         ProtoToolsApicurioConfig config = config(true, Optional.of(" "));
-        assertThat(producer.produceRegistryClient(config)).isNull();
+        ApicurioRegistryClientHolder holder = producer.registryClientHolder(config);
+        assertThat(holder.client()).isNull();
+        assertThat(producer.produceRegistryClient(holder)).isNull();
+        holder.close(); // no owned transport; must be a safe no-op
         DescriptorLoader loader = producer.produceApicurioDescriptorLoader(null, config);
         assertThat(loader).isNotNull();
         assertThat(loader.isAvailable()).isFalse();
@@ -35,11 +40,41 @@ class ApicurioDescriptorLoaderProducerTest {
     @Test
     void registryClientProducerIsDependentScopedSoNullIsPermitted() throws Exception {
         Method method = ApicurioDescriptorLoaderProducer.class.getMethod(
-                "produceRegistryClient", ProtoToolsApicurioConfig.class);
+                "produceRegistryClient", ApicurioRegistryClientHolder.class);
         assertThat(method.isAnnotationPresent(Dependent.class))
                 .as("a producer that can return null must be @Dependent")
                 .isTrue();
         assertThat(method.isAnnotationPresent(Singleton.class)).isFalse();
+    }
+
+    @Test
+    void holderIsSingletonScopedWithADisposer() throws Exception {
+        Method holderProducer = ApicurioDescriptorLoaderProducer.class.getMethod(
+                "registryClientHolder", ProtoToolsApicurioConfig.class);
+        assertThat(holderProducer.isAnnotationPresent(Singleton.class))
+                .as("one client per application")
+                .isTrue();
+
+        Method disposer = ApicurioDescriptorLoaderProducer.class.getDeclaredMethod(
+                "closeRegistryClientHolder", ApicurioRegistryClientHolder.class);
+        assertThat(disposer.getParameters()[0].isAnnotationPresent(Disposes.class))
+                .as("the transport must be closed on shutdown")
+                .isTrue();
+    }
+
+    @Test
+    void configuredUrlYieldsSharedClientWhoseTransportCloses() {
+        ProtoToolsApicurioConfig config = config(true, Optional.of("http://localhost:65535/apis/registry/v3"));
+        ApicurioRegistryClientHolder holder = producer.registryClientHolder(config);
+        try {
+            assertThat(holder.client()).isNotNull();
+            // Every injection point sees the holder's single client instance.
+            assertThat(producer.produceRegistryClient(holder))
+                    .isSameAs(producer.produceRegistryClient(holder))
+                    .isSameAs(holder.client());
+        } finally {
+            holder.close();
+        }
     }
 
     @Test

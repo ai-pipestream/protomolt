@@ -123,11 +123,8 @@ public final class ApicurioProtobufParseFallback {
             }
             shift += 7;
         }
-        while (true) {
-            int b = in.read();
-            if (b < 0 || (b & 0x80) == 0) {
-                return result;
-            }
-        }
+        // Continuation past 32 bits: lengths and message indexes never need more, so this is
+        // malformed framing. Fail like the first loop instead of silently discarding bytes.
+        throw new IOException("Malformed varint: exceeds 32 bits");
     }
 }

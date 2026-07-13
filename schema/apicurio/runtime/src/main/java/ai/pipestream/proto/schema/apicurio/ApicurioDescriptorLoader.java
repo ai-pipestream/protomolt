@@ -2,6 +2,9 @@ package ai.pipestream.proto.schema.apicurio;
 
 import ai.pipestream.proto.descriptors.DescriptorLoader;
 import com.google.protobuf.Descriptors.FileDescriptor;
+import com.microsoft.kiota.ApiException;
+import io.apicurio.registry.client.RegistryClientFactory;
+import io.apicurio.registry.client.common.RegistryClientOptions;
 import io.apicurio.registry.resolver.SchemaParser;
 import io.apicurio.registry.rest.client.RegistryClient;
 import io.apicurio.registry.rest.client.models.ArtifactReference;
@@ -16,6 +19,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -27,17 +31,25 @@ import java.util.concurrent.ConcurrentHashMap;
  * (dangling) reference is skipped with a warning naming the unresolved import, never failing
  * the whole bulk load.</p>
  *
- * <p>Usable as plain Java (no CDI required) via constructors / {@link Builder}.
+ * <p>Usable as plain Java (no CDI required) via constructors / {@link Builder}. When only a
+ * registry URL is supplied, the builder constructs a {@link RegistryClient} for it.</p>
+ *
+ * <p>Resolved descriptors (and, bounded, names that resolved to nothing) are cached for the
+ * lifetime of the loader; the caches never expire except via {@link #clearCache()}.</p>
  */
 public class ApicurioDescriptorLoader implements DescriptorLoader {
 
     private static final Logger LOG = LoggerFactory.getLogger(ApicurioDescriptorLoader.class);
+
+    /** Bound for the negative (not-found) lookup cache. */
+    private static final int MAX_NEGATIVE_CACHE_SIZE = 1024;
 
     private final RegistryClient client;
     private final String groupId;
     private final SchemaParser<ProtobufSchema, ?> schemaParser;
     private final ApicurioReferenceResolver referenceResolver;
     private final ConcurrentHashMap<String, FileDescriptor> cache = new ConcurrentHashMap<>();
+    private final Set<String> negativeCache = ConcurrentHashMap.newKeySet();
 
     public ApicurioDescriptorLoader(RegistryClient client, String groupId) {
         this.client = client;
@@ -67,10 +79,9 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
         List<FileDescriptor> results = new ArrayList<>();
         int offset = 0;
         int limit = 100;
-        int total;
 
         try {
-            do {
+            while (true) {
                 int currentOffset = offset;
                 ArtifactSearchResults searchResults = client.search().artifacts().get(config -> {
                     config.queryParameters.groupId = groupId;
@@ -83,9 +94,8 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
                     break;
                 }
 
-                total = searchResults.getCount();
-
-                for (SearchedArtifact artifact : searchResults.getArtifacts()) {
+                List<SearchedArtifact> artifacts = searchResults.getArtifacts();
+                for (SearchedArtifact artifact : artifacts) {
                     String artifactId = artifact.getArtifactId();
                     String artifactGroup = artifact.getGroupId() != null ? artifact.getGroupId() : groupId;
                     try {
@@ -101,8 +111,13 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
                 }
 
                 offset += limit;
-            } while (offset < total);
-
+                // getCount() is a nullable Integer; when absent, fall back to page-size
+                // detection so a missing total cannot NPE or loop forever.
+                Integer total = searchResults.getCount();
+                if (total != null ? offset >= total : artifacts.size() < limit) {
+                    break;
+                }
+            }
         } catch (Exception e) {
             throw new DescriptorLoadException("Failed to search Apicurio for PROTOBUF artifacts", e);
         }
@@ -111,47 +126,113 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
         return results;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Resolution runs outside any cache lock (concurrent lookups of different names never
+     * block each other) and negative results are cached (bounded) so a repeatedly requested
+     * unknown name does not hit the registry every time. Only a genuine not-found (HTTP 404)
+     * falls through the lookup heuristics; any other registry failure (auth, server error,
+     * connection refused) surfaces as a {@link DescriptorLoadException}.</p>
+     */
     @Override
     public FileDescriptor loadDescriptor(String name) throws DescriptorLoadException {
         if (!isAvailable()) {
             throw new DescriptorLoadException("Apicurio registry client is not available");
         }
-        return cache.computeIfAbsent(name, n -> {
-            try {
-                LOG.debug("Heuristic 1: Fetching artifactId={} from group={}", n, groupId);
-                try {
-                    return fetchAndParse(groupId, n);
-                } catch (Exception ignored) {
-                    // try next heuristic
-                }
+        FileDescriptor cached = cache.get(name);
+        if (cached != null) {
+            return cached;
+        }
+        if (negativeCache.contains(name)) {
+            return null;
+        }
 
-                if (n.contains(".")) {
-                    int lastDot = n.lastIndexOf('.');
-                    String g = n.substring(0, lastDot);
-                    String a = n.substring(lastDot + 1);
-                    LOG.debug("Heuristic 2: Fetching artifactId={} from group={}", a, g);
-                    try {
-                        return fetchAndParse(g, a);
-                    } catch (Exception ignored) {
-                        // try next heuristic
-                    }
-                }
+        FileDescriptor resolved = resolve(name);
+        if (resolved == null) {
+            if (negativeCache.size() >= MAX_NEGATIVE_CACHE_SIZE) {
+                negativeCache.clear();
+            }
+            negativeCache.add(name);
+            return null;
+        }
+        FileDescriptor previous = cache.putIfAbsent(name, resolved);
+        return previous != null ? previous : resolved;
+    }
 
-                if (!"default".equals(groupId)) {
-                    LOG.debug("Heuristic 3: Fetching artifactId={} from group=default", n);
-                    try {
-                        return fetchAndParse("default", n);
-                    } catch (Exception ignored) {
-                        // fall through
-                    }
-                }
+    private FileDescriptor resolve(String name) throws DescriptorLoadException {
+        LOG.debug("Heuristic 1: Fetching artifactId={} from group={}", name, groupId);
+        FileDescriptor fd = fetchIfPresent(groupId, name);
+        if (fd != null) {
+            return fd;
+        }
 
-                return null;
-            } catch (Exception e) {
-                LOG.warn("Failed to resolve descriptor for {}: {}", n, e.getMessage());
+        if (name.contains(".")) {
+            int lastDot = name.lastIndexOf('.');
+            String g = name.substring(0, lastDot);
+            String a = name.substring(lastDot + 1);
+            LOG.debug("Heuristic 2: Fetching artifactId={} from group={}", a, g);
+            fd = fetchIfPresent(g, a);
+            if (fd != null) {
+                return fd;
+            }
+        }
+
+        if (!"default".equals(groupId)) {
+            LOG.debug("Heuristic 3: Fetching artifactId={} from group=default", name);
+            fd = fetchIfPresent("default", name);
+            if (fd != null) {
+                return fd;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Fetches and parses one artifact, returning {@code null} only when the artifact is
+     * genuinely unavailable: the registry reports it as not found (HTTP 404) or it exists but
+     * cannot be resolved because of a dangling/cyclic reference (logged, mirroring the bulk
+     * load's skip behaviour). Every other failure, notably auth errors, server errors and
+     * connectivity problems, is wrapped in a {@link DescriptorLoadException} so outages are
+     * not mistaken for missing artifacts.
+     */
+    private FileDescriptor fetchIfPresent(String gid, String aid) throws DescriptorLoadException {
+        try {
+            return fetchAndParse(gid, aid);
+        } catch (ApicurioReferenceResolver.ArtifactNotFoundException e) {
+            return null;
+        } catch (IllegalStateException e) {
+            // Reference resolution failed on an existing artifact. A registry outage while
+            // fetching a reference must still surface; a genuinely missing reference degrades
+            // to "cannot provide this descriptor".
+            ApiException api = findApiException(e);
+            if (api != null && api.getResponseStatusCode() != 404) {
+                throw new DescriptorLoadException("Apicurio registry request failed while resolving "
+                        + "references of artifact " + gid + "/" + aid
+                        + " (HTTP " + api.getResponseStatusCode() + ")", e);
+            }
+            LOG.warn("Artifact {}/{} exists but could not be resolved: {}", gid, aid, e.getMessage());
+            return null;
+        } catch (ApiException e) {
+            if (e.getResponseStatusCode() == 404) {
                 return null;
             }
-        });
+            throw new DescriptorLoadException("Apicurio registry request failed for artifact "
+                    + gid + "/" + aid + " (HTTP " + e.getResponseStatusCode() + ")", e);
+        } catch (Exception e) {
+            throw new DescriptorLoadException(
+                    "Failed to load descriptor for artifact " + gid + "/" + aid, e);
+        }
+    }
+
+    private static ApiException findApiException(Throwable t) {
+        for (Throwable current = t; current != null; current = current.getCause()) {
+            if (current instanceof ApiException apiException) {
+                return apiException;
+            }
+        }
+        return null;
     }
 
     private FileDescriptor fetchAndParse(String gid, String aid) throws Exception {
@@ -191,9 +272,13 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
         }
     }
 
-    /** Clears the on-demand resolution cache. */
+    /**
+     * Clears the on-demand resolution caches (positive and negative). The caches have no
+     * time-based expiry; this is the only way stale entries are dropped.
+     */
     public void clearCache() {
         cache.clear();
+        negativeCache.clear();
     }
 
     public String getGroupId() {
@@ -214,6 +299,7 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
         private String registryUrl;
         private String groupId = "default";
         private RegistryClient registryClient;
+        private boolean registryClientSet;
 
         public Builder registryUrl(String registryUrl) {
             this.registryUrl = registryUrl;
@@ -225,8 +311,14 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
             return this;
         }
 
+        /**
+         * Supplies a pre-built client. Passing {@code null} explicitly opts out of client
+         * creation and yields an unavailable loader; leaving the client unset lets
+         * {@link #build()} construct one from {@link #registryUrl(String)}.
+         */
         public Builder registryClient(RegistryClient registryClient) {
             this.registryClient = registryClient;
+            this.registryClientSet = true;
             return this;
         }
 
@@ -237,7 +329,11 @@ public class ApicurioDescriptorLoader implements DescriptorLoader {
             if (groupId == null || groupId.isBlank()) {
                 throw new IllegalArgumentException("Group ID is required");
             }
-            return new ApicurioDescriptorLoader(registryUrl, groupId, registryClient);
+            RegistryClient client = registryClient;
+            if (client == null && !registryClientSet) {
+                client = RegistryClientFactory.create(RegistryClientOptions.create(registryUrl));
+            }
+            return new ApicurioDescriptorLoader(registryUrl, groupId, client);
         }
     }
 }

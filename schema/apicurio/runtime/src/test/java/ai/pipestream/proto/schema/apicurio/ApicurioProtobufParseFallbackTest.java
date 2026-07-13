@@ -78,6 +78,33 @@ class ApicurioProtobufParseFallbackTest {
         assertThat(parsed).isNull();
     }
 
+    @Test
+    void varintContinuingPastThirtyTwoBitsIsRejected() {
+        // Six bytes, all with the continuation bit set: overflows a 32-bit varint.
+        byte[] malformed = {(byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80};
+        assertThatThrownBy(() -> ApicurioProtobufParseFallback.readVarint(
+                new java.io.ByteArrayInputStream(malformed)))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("32 bits");
+    }
+
+    @Test
+    void eofMidVarintContinuationIsRejectedInsteadOfReturningATruncatedValue() {
+        // Five continuation bytes then EOF: previously returned a silently truncated value.
+        byte[] truncated = {(byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80};
+        assertThatThrownBy(() -> ApicurioProtobufParseFallback.readVarint(
+                new java.io.ByteArrayInputStream(truncated)))
+                .isInstanceOf(java.io.IOException.class);
+    }
+
+    @Test
+    void maximalFiveByteVarintStillParses() throws Exception {
+        // 0xFFFFFFFF encodes as five bytes with the final byte's continuation bit clear.
+        byte[] max = {(byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0x0F};
+        assertThat(ApicurioProtobufParseFallback.readVarint(new java.io.ByteArrayInputStream(max)))
+                .isEqualTo(-1);
+    }
+
     private static byte[] wrapWithMagicAndId(byte[] payload, int idSize) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(ApicurioProtobufParseFallback.MAGIC_BYTE);

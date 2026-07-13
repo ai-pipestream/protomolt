@@ -51,6 +51,17 @@ final class ApicurioReferenceResolver {
     record Reference(String name, String groupId, String artifactId, String version) {
     }
 
+    /**
+     * The root artifact itself has no content in the registry. Distinct from the generic
+     * {@link IllegalStateException}s raised for unresolved <em>references</em> or cycles, so
+     * callers can treat "artifact not found" differently from "artifact exists but is broken".
+     */
+    static final class ArtifactNotFoundException extends IllegalStateException {
+        ArtifactNotFoundException(String message) {
+            super(message);
+        }
+    }
+
     private final ArtifactSource source;
     private final SchemaParser<ProtobufSchema, ?> schemaParser;
 
@@ -71,7 +82,7 @@ final class ApicurioReferenceResolver {
             throws Exception {
         byte[] bytes = source.content(groupId, artifactId, versionExpression);
         if (bytes == null) {
-            throw new IllegalStateException(
+            throw new ArtifactNotFoundException(
                     "Artifact content not found for " + coordinate(groupId, artifactId, versionExpression));
         }
         Map<String, ParsedSchema<ProtobufSchema>> resolved = resolveReferences(
