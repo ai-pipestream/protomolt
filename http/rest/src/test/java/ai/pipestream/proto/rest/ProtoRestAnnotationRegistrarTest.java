@@ -72,9 +72,14 @@ class ProtoRestAnnotationRegistrarTest {
 
         assertThat(registry.find("Update", "update").orElseThrow().httpMethods())
                 .containsExactly("PUT");
+        assertThat(registry.find("Update", "update").orElseThrow().allowedHttpVerbs())
+                .containsExactly("PUT");
         assertThat(registry.find("Update", "patch").orElseThrow().httpMethods())
                 .containsExactly("PATCH");
-        assertThat(registry.find("Plain", "go").orElseThrow().httpMethods())
-                .containsExactly("POST");
+        // No declared verbs: the declaration stays empty and the gateway allows all
+        // standard verbs (backward compatible).
+        assertThat(registry.find("Plain", "go").orElseThrow().httpMethods()).isEmpty();
+        assertThat(registry.find("Plain", "go").orElseThrow().allowedHttpVerbs())
+                .isEqualTo(ProtoRestMethod.DEFAULT_HTTP_VERBS);
     }
 }

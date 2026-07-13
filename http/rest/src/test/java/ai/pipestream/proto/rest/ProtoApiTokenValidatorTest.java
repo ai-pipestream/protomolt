@@ -42,6 +42,18 @@ class ProtoApiTokenValidatorTest {
     }
 
     @Test
+    void denyAllRejectsEvenValidLookingTokens() {
+        ProtoApiTokenValidator validator = ProtoApiTokenValidator.denyAll();
+
+        assertThat(validator.validate(
+                ApiTokenRequirement.apiKeyHeader("api_token"),
+                Map.of("api_token", "some-real-looking-token"),
+                Map.of())).isPresent();
+        assertThat(validator.validate(ApiTokenRequirement.apiKeyHeader("api_token"), Map.of(), Map.of()))
+                .isPresent();
+    }
+
+    @Test
     void acceptNonBlankRequiresTheNamedCookie() {
         ProtoApiTokenValidator validator = ProtoApiTokenValidator.acceptNonBlank();
         Map<String, String> headers = Map.of("cookie", "session=abc; theme=dark");

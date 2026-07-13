@@ -22,6 +22,14 @@ class QuarkusProtoRestFacadeTest {
 
     @BeforeEach
     void setUp() {
+        gateway = new ProtoRestGateway(
+                newRegistry(),
+                new ProtobufJsonTranscoder(),
+                ProtoApiTokenValidator.acceptNonBlank());
+        facade = new QuarkusProtoRestFacade(gateway, ProtoToolsServerConfig.defaults());
+    }
+
+    private static ProtoRestMethodRegistry newRegistry() {
         ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
         registry.register(ProtoRestMethod.builder("EchoService", "Echo", request -> {
                     Struct in = (Struct) request;
@@ -32,11 +40,24 @@ class QuarkusProtoRestFacadeTest {
                 })
                 .requestType(Struct.class)
                 .build());
-        gateway = new ProtoRestGateway(
-                registry,
-                new ProtobufJsonTranscoder(),
-                ProtoApiTokenValidator.acceptNonBlank());
-        facade = new QuarkusProtoRestFacade(gateway, ProtoToolsServerConfig.defaults());
+        registry.register(ProtoRestMethod.builder("RestrictedService", "PostOnly",
+                        request -> Struct.getDefaultInstance())
+                .requestType(Struct.class)
+                .httpMethods("POST")
+                .build());
+        registry.register(ProtoRestMethod.builder("BoomService", "Boom", request -> {
+                    throw new RuntimeException("kaboom-secret-detail");
+                })
+                .requestType(Struct.class)
+                .build());
+        registry.register(ProtoRestMethod.builder("SecureService", "Ping", request ->
+                        Struct.newBuilder()
+                                .putFields("ok", Value.newBuilder().setBoolValue(true).build())
+                                .build())
+                .requestType(Struct.class)
+                .apiToken(ai.pipestream.proto.rest.ApiTokenRequirement.apiKeyHeader("api_token"))
+                .build());
+        return registry;
     }
 
     @Test
@@ -70,5 +91,49 @@ class QuarkusProtoRestFacadeTest {
         assertThat(QuarkusProtoRestFacade.class
                 .getConstructor(ai.pipestream.proto.rest.ProtoRestGateway.class, ProtoToolsServerConfig.class)
                 .isAnnotationPresent(jakarta.inject.Inject.class)).isTrue();
+    }
+
+    @Test
+    void declaredHttpMethodsAreEnforcedWith405AndAllow() {
+        QuarkusProtoRestFacade.Result viaGet = facade.invoke(
+                "GET", "RestrictedService", "PostOnly", "{}", Map.of(), Map.of());
+        assertThat(viaGet.status()).isEqualTo(405);
+        assertThat(viaGet.headers()).containsEntry("Allow", "POST");
+
+        assertThat(facade.invoke("POST", "RestrictedService", "PostOnly", "{}", Map.of(), Map.of()).status())
+                .isEqualTo(200);
+        // Undeclared verbs allow all standard verbs.
+        assertThat(facade.invoke("DELETE", "EchoService", "Echo", "{}", Map.of(), Map.of()).status())
+                .isEqualTo(200);
+    }
+
+    @Test
+    void oversizedBodyIs413() {
+        QuarkusProtoRestFacade small = new QuarkusProtoRestFacade(
+                gateway, ProtoToolsServerConfig.defaults().withMaxRequestBytes(64));
+        QuarkusProtoRestFacade.Result res = small.invoke(
+                "POST", "EchoService", "Echo",
+                "{\"name\":\"" + "x".repeat(256) + "\"}", Map.of(), Map.of());
+        assertThat(res.status()).isEqualTo(413);
+    }
+
+    @Test
+    void serverErrorBodyIsGeneric() {
+        QuarkusProtoRestFacade.Result res = facade.invoke(
+                "POST", "BoomService", "Boom", "{}", Map.of(), Map.of());
+        assertThat(res.status()).isEqualTo(500);
+        assertThat(res.body()).contains("Internal server error");
+        assertThat(res.body()).doesNotContain("kaboom-secret-detail");
+    }
+
+    @Test
+    void defaultGatewayFailsClosedForTokenProtectedMethods() {
+        QuarkusProtoRestFacade failClosed = new QuarkusProtoRestFacade(
+                new ProtoRestGateway(newRegistry(), new ProtobufJsonTranscoder()),
+                ProtoToolsServerConfig.defaults());
+        assertThat(failClosed.invoke(
+                "POST", "SecureService", "Ping", "{}",
+                Map.of("api_token", "any-junk-token"), Map.of()).status())
+                .isEqualTo(401);
     }
 }

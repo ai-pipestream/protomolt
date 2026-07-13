@@ -63,6 +63,52 @@ class ProtoRestGatewayTest {
     }
 
     @Test
+    void defaultConstructorFailsClosedForTokenProtectedMethods() {
+        // No validator supplied: token-protected methods must reject ANY token, junk or not.
+        ProtoRestGateway failClosed = new ProtoRestGateway(registry, new ProtobufJsonTranscoder());
+
+        assertThatThrownBy(() -> failClosed.invoke(
+                "SecureService", "Ping", "{}", Map.of("api_token", "any-junk-token"), Map.of()))
+                .isInstanceOf(UnauthorizedProtoRestException.class);
+        assertThatThrownBy(() -> failClosed.invoke("SecureService", "Ping", "{}"))
+                .isInstanceOf(UnauthorizedProtoRestException.class);
+
+        // Methods without a token requirement keep working.
+        assertThat(failClosed.invoke("EchoService", "Echo", "{\"name\":\"open\"}"))
+                .contains("hello open");
+    }
+
+    @Test
+    void enforcesDeclaredHttpMethods() {
+        registry.register(ProtoRestMethod.builder("WriteService", "Put", request -> Struct.getDefaultInstance())
+                .requestType(Struct.class)
+                .httpMethods("POST", "PUT")
+                .build());
+
+        assertThat(gateway.invoke("PUT", "WriteService", "Put", "{}", Map.of(), Map.of()))
+                .isNotBlank();
+        assertThat(gateway.invoke("post", "WriteService", "Put", "{}", Map.of(), Map.of()))
+                .isNotBlank();
+
+        assertThatThrownBy(() -> gateway.invoke("GET", "WriteService", "Put", "{}", Map.of(), Map.of()))
+                .isInstanceOf(HttpMethodNotAllowedException.class)
+                .satisfies(e -> assertThat(((HttpMethodNotAllowedException) e).allowedMethods())
+                        .containsExactly("POST", "PUT"));
+    }
+
+    @Test
+    void undeclaredHttpMethodsAllowAllStandardVerbs() {
+        // EchoService.Echo declares no verbs: all five standard verbs pass.
+        for (String verb : ProtoRestMethod.DEFAULT_HTTP_VERBS) {
+            assertThat(gateway.invoke(verb, "EchoService", "Echo", "{\"name\":\"v\"}", Map.of(), Map.of()))
+                    .contains("hello v");
+        }
+        // Null verb skips enforcement (legacy signature).
+        assertThat(gateway.invoke(null, "EchoService", "Echo", "{\"name\":\"v\"}", Map.of(), Map.of()))
+                .contains("hello v");
+    }
+
+    @Test
     void requiresApiToken() {
         assertThatThrownBy(() -> gateway.invoke("SecureService", "Ping", "{}"))
                 .isInstanceOf(UnauthorizedProtoRestException.class);

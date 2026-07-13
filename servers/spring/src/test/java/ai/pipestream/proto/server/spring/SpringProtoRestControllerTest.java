@@ -28,6 +28,15 @@ class SpringProtoRestControllerTest {
 
     @BeforeEach
     void setUp() {
+        ProtoRestGateway gateway = new ProtoRestGateway(
+                newRegistry(),
+                new ProtobufJsonTranscoder(),
+                ProtoApiTokenValidator.sharedSecret("secret-token"));
+        mockMvc = mockMvcFor(gateway, ProtoToolsServerConfig.defaults());
+        assertThat(SpringProtoRestController.ENGINE_ID).isEqualTo("spring");
+    }
+
+    private static ProtoRestMethodRegistry newRegistry() {
         ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
         registry.register(ProtoRestMethod.builder("EchoService", "Echo", request -> {
                     Struct in = (Struct) request;
@@ -45,18 +54,26 @@ class SpringProtoRestControllerTest {
                 .requestType(Struct.class)
                 .apiToken(ApiTokenRequirement.apiKeyHeader("api_token"))
                 .build());
-        ProtoRestGateway gateway = new ProtoRestGateway(
-                registry,
-                new ProtobufJsonTranscoder(),
-                ProtoApiTokenValidator.sharedSecret("secret-token"));
-        SpringProtoRestController controller =
-                new SpringProtoRestController(gateway, ProtoToolsServerConfig.defaults());
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        registry.register(ProtoRestMethod.builder("RestrictedService", "PostOnly",
+                        request -> Struct.getDefaultInstance())
+                .requestType(Struct.class)
+                .httpMethods("POST")
+                .build());
+        registry.register(ProtoRestMethod.builder("BoomService", "Boom", request -> {
+                    throw new RuntimeException("kaboom-secret-detail");
+                })
+                .requestType(Struct.class)
+                .build());
+        return registry;
+    }
+
+    private static MockMvc mockMvcFor(ProtoRestGateway gateway, ProtoToolsServerConfig config) {
+        SpringProtoRestController controller = new SpringProtoRestController(gateway, config);
+        return MockMvcBuilders.standaloneSetup(controller)
                 .addPlaceholderValue("pipestream.proto.rest.health-path", "/health")
                 .addPlaceholderValue("pipestream.proto.rest.openapi-path", "/openapi.json")
                 .addPlaceholderValue("pipestream.proto.rest.path-prefix", "/grpc-json")
                 .build();
-        assertThat(SpringProtoRestController.ENGINE_ID).isEqualTo("spring");
     }
 
     @Test
@@ -114,5 +131,72 @@ class SpringProtoRestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void acceptsNonJsonContentTypes() throws Exception {
+        // No consumes restriction: other hosts accept any content-type, Spring must too.
+        mockMvc.perform(post("/grpc-json/EchoService/Echo")
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("{\"name\":\"Ada\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void declaredHttpMethodsAreEnforcedWith405AndAllow() throws Exception {
+        String allow = mockMvc.perform(get("/grpc-json/RestrictedService/PostOnly"))
+                .andExpect(status().isMethodNotAllowed())
+                .andReturn()
+                .getResponse()
+                .getHeader("Allow");
+        assertThat(allow).isEqualTo("POST");
+
+        mockMvc.perform(post("/grpc-json/RestrictedService/PostOnly")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void trailingSlashOnInvokeRouteIs404() throws Exception {
+        mockMvc.perform(get("/grpc-json/EchoService/Echo/"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void serverErrorBodyIsGeneric() throws Exception {
+        String body = mockMvc.perform(post("/grpc-json/BoomService/Boom")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isInternalServerError())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(body).contains("Internal server error");
+        assertThat(body).doesNotContain("kaboom-secret-detail");
+    }
+
+    @Test
+    void oversizedBodyIs413() throws Exception {
+        MockMvc small = mockMvcFor(
+                new ProtoRestGateway(newRegistry(), new ProtobufJsonTranscoder(),
+                        ProtoApiTokenValidator.sharedSecret("secret-token")),
+                ProtoToolsServerConfig.defaults().withMaxRequestBytes(64));
+        small.perform(post("/grpc-json/EchoService/Echo")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"" + "x".repeat(256) + "\"}"))
+                .andExpect(status().isPayloadTooLarge());
+    }
+
+    @Test
+    void defaultGatewayFailsClosedForTokenProtectedMethods() throws Exception {
+        MockMvc failClosed = mockMvcFor(
+                new ProtoRestGateway(newRegistry(), new ProtobufJsonTranscoder()),
+                ProtoToolsServerConfig.defaults());
+        failClosed.perform(post("/grpc-json/SecureService/Ping")
+                        .header("api_token", "any-junk-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
     }
 }

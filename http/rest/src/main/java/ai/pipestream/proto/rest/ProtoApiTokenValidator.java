@@ -1,5 +1,8 @@
 package ai.pipestream.proto.rest;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -23,7 +26,24 @@ public interface ProtoApiTokenValidator {
             Map<String, String> queryParams);
 
     /**
-     * Accepts any non-blank token in the configured location (dev / open gateways).
+     * Rejects every token-protected method. This is the fail-closed default used by
+     * {@link ProtoRestGateway#ProtoRestGateway(ProtoRestMethodRegistry, ai.pipestream.proto.json.ProtobufJsonTranscoder)}
+     * when no validator is supplied: methods carrying a required token always get 401
+     * until the integrator wires a real validator (for example {@link #sharedSecret(String)}).
+     */
+    static ProtoApiTokenValidator denyAll() {
+        return (tokenConfig, headers, queryParams) -> Optional.of(
+                "No API token validator configured; supply a ProtoApiTokenValidator to accept token '"
+                        + tokenConfig.name() + "'");
+    }
+
+    /**
+     * Accepts any non-blank token in the configured location.
+     *
+     * <p><strong>WARNING:</strong> this performs no verification whatsoever; any junk value
+     * passes. It exists only for dev / demo / open gateways where the token requirement is
+     * documentation, not security. Never use it in production; prefer
+     * {@link #sharedSecret(String)} or a framework-backed validator.
      */
     static ProtoApiTokenValidator acceptNonBlank() {
         return (tokenConfig, headers, queryParams) -> {
@@ -36,7 +56,7 @@ public interface ProtoApiTokenValidator {
     }
 
     /**
-     * Requires an exact match against {@code expectedToken}.
+     * Requires an exact match against {@code expectedToken} (constant-time comparison).
      */
     static ProtoApiTokenValidator sharedSecret(String expectedToken) {
         Objects.requireNonNull(expectedToken, "expectedToken");
@@ -49,7 +69,9 @@ public interface ProtoApiTokenValidator {
                     && value.regionMatches(true, 0, "Bearer ", 0, 7)) {
                 value = value.substring(7).trim();
             }
-            if (!expectedToken.equals(value)) {
+            if (!MessageDigest.isEqual(
+                    expectedToken.getBytes(StandardCharsets.UTF_8),
+                    value.getBytes(StandardCharsets.UTF_8))) {
                 return Optional.of("Invalid API token");
             }
             return Optional.empty();
@@ -61,7 +83,7 @@ public interface ProtoApiTokenValidator {
             Map<String, String> headers,
             Map<String, String> queryParams) {
         return switch (tokenConfig.in()) {
-            case HEADER -> headers.getOrDefault(tokenConfig.name().toLowerCase(), null);
+            case HEADER -> headers.getOrDefault(tokenConfig.name().toLowerCase(Locale.ROOT), null);
             case QUERY -> queryParams.get(tokenConfig.name());
             case COOKIE -> cookieValue(headers.get("cookie"), tokenConfig.name());
         };

@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -30,8 +31,13 @@ public final class ProtoRestGateway {
     private final ProtobufJsonTranscoder transcoder;
     private final ProtoApiTokenValidator tokenValidator;
 
+    /**
+     * Creates a gateway with the fail-closed default validator: every method that carries a
+     * required token responds 401 until a real {@link ProtoApiTokenValidator} is supplied.
+     */
     public ProtoRestGateway(ProtoRestMethodRegistry registry, ProtobufJsonTranscoder transcoder) {
-        this(registry, transcoder, ProtoApiTokenValidator.acceptNonBlank());
+        this(registry, transcoder, ProtoApiTokenValidator.denyAll());
+        warnIfTokenProtectedWithoutValidator();
     }
 
     public ProtoRestGateway(
@@ -43,11 +49,40 @@ public final class ProtoRestGateway {
         this.tokenValidator = Objects.requireNonNull(tokenValidator, "tokenValidator");
     }
 
+    private void warnIfTokenProtectedWithoutValidator() {
+        long protectedMethods = registry.all().stream()
+                .filter(m -> m.apiToken().map(ApiTokenRequirement::required).orElse(false))
+                .count();
+        if (protectedMethods > 0) {
+            LOG.warn("{} registered method(s) require an API token but no ProtoApiTokenValidator "
+                            + "was supplied; they will respond 401 until one is configured "
+                            + "(e.g. ProtoApiTokenValidator.sharedSecret(...))",
+                    protectedMethods);
+        }
+    }
+
     public String invoke(String serviceName, String methodName, String jsonRequest) {
         return invoke(serviceName, methodName, jsonRequest, Map.of(), Map.of());
     }
 
     public String invoke(
+            String serviceName,
+            String methodName,
+            String jsonRequest,
+            Map<String, String> headers,
+            Map<String, String> queryParams) {
+        return invoke(null, serviceName, methodName, jsonRequest, headers, queryParams);
+    }
+
+    /**
+     * Invokes a registered method, enforcing its declared HTTP verbs.
+     *
+     * @param httpMethod the request's HTTP verb, or {@code null} to skip verb enforcement
+     * @throws HttpMethodNotAllowedException when the verb is not among the method's declared
+     *         {@code httpMethods} (empty declaration allows all standard verbs)
+     */
+    public String invoke(
+            String httpMethod,
             String serviceName,
             String methodName,
             String jsonRequest,
@@ -67,6 +102,14 @@ public final class ProtoRestGateway {
         ProtoRestMethod method = registry.find(serviceName, methodName)
                 .orElseThrow(() -> new MethodNotFoundException(serviceName, methodName));
 
+        if (httpMethod != null) {
+            String verb = httpMethod.toUpperCase(Locale.ROOT);
+            List<String> allowed = method.allowedHttpVerbs();
+            if (!allowed.contains(verb)) {
+                throw new HttpMethodNotAllowedException(verb, allowed);
+            }
+        }
+
         method.apiToken().ifPresent(token -> {
             if (token.required()) {
                 tokenValidator.validate(token, normalizedHeaders, safeQuery)
@@ -84,7 +127,8 @@ public final class ProtoRestGateway {
             }
             return transcoder.toJson(response);
         } catch (MalformedProtobufJsonException | UnauthorizedProtoRestException
-                 | ServiceNotFoundException | MethodNotFoundException e) {
+                 | ServiceNotFoundException | MethodNotFoundException
+                 | HttpMethodNotAllowedException e) {
             throw e;
         } catch (ProtobufJsonException e) {
             throw e;
@@ -116,7 +160,8 @@ public final class ProtoRestGateway {
                 .collect(Collectors.toUnmodifiableMap(
                         e -> e.getKey().toLowerCase(Locale.ROOT),
                         Map.Entry::getValue,
-                        (a, b) -> b));
+                        // Keep the first value for duplicate keys, matching the host contract.
+                        (a, b) -> a));
     }
 
     public ProtoRestMethodRegistry getRegistry() {

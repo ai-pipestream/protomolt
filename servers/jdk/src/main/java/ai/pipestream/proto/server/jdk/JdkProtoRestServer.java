@@ -2,6 +2,7 @@ package ai.pipestream.proto.server.jdk;
 
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.rest.ProtoRestGateway;
+import ai.pipestream.proto.rest.RequestTooLargeException;
 import ai.pipestream.proto.server.ProtoRestHttpSupport;
 import ai.pipestream.proto.server.ProtoRestServerHost;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
@@ -11,6 +12,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -37,6 +40,7 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
     private final ProtoRestGateway gateway;
     private final ProtoOpenApiGenerator openApiGenerator;
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
+    private volatile ExecutorService executor;
     private volatile String cachedOpenApiJson;
 
     public JdkProtoRestServer(ProtoRestGateway gateway) {
@@ -70,21 +74,31 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
         if (httpServer.get() != null) {
             throw new IllegalStateException("Server already started");
         }
+        HttpServer server;
         try {
-            HttpServer server = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 0);
-            server.createContext(config.healthPath(), this::handleHealth);
-            server.createContext(config.openApiPath(), this::handleOpenApi);
-            server.createContext(config.restPathPrefix(), this::handleRest);
-            server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-            server.start();
-            httpServer.set(server);
-            int bound = server.getAddress().getPort();
-            LOG.info("Proto REST JDK host on {}:{} ({} , {})",
-                    config.host(), bound, config.restPathPrefix(), config.openApiPath());
-            return bound;
+            server = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 0);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to start JDK HttpServer", e);
         }
+        ExecutorService workerPool = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            server.createContext(config.healthPath(), this::handleHealth);
+            server.createContext(config.openApiPath(), this::handleOpenApi);
+            server.createContext(config.restPathPrefix(), this::handleRest);
+            server.setExecutor(workerPool);
+            server.start();
+        } catch (Throwable t) {
+            // The socket is bound after create(); release it before rethrowing.
+            server.stop(0);
+            workerPool.shutdownNow();
+            throw new IllegalStateException("Failed to start JDK HttpServer", t);
+        }
+        this.executor = workerPool;
+        httpServer.set(server);
+        int bound = server.getAddress().getPort();
+        LOG.info("Proto REST JDK host on {}:{} ({} , {})",
+                config.host(), bound, config.restPathPrefix(), config.openApiPath());
+        return bound;
     }
 
     @Override
@@ -111,40 +125,55 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
     }
 
     private void handleHealth(HttpExchange exchange) throws IOException {
-        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            write(exchange, 405, "{\"error\":\"Method not allowed\"}");
+        // createContext prefix-matches; only the exact path is a valid route.
+        if (!config.healthPath().equals(exchange.getRequestURI().getPath())) {
+            write(exchange, 404, "{\"error\":\"Not found\"}", null);
             return;
         }
-        write(exchange, 200, "{\"status\":\"UP\"}");
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            write(exchange, 405, "{\"error\":\"Method not allowed\"}", "GET");
+            return;
+        }
+        write(exchange, 200, "{\"status\":\"UP\"}", null);
     }
 
     private void handleOpenApi(HttpExchange exchange) throws IOException {
-        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            write(exchange, 405, "{\"error\":\"Method not allowed\"}");
+        if (!config.openApiPath().equals(exchange.getRequestURI().getPath())) {
+            write(exchange, 404, "{\"error\":\"Not found\"}", null);
             return;
         }
-        write(exchange, 200, openApiJson());
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            write(exchange, 405, "{\"error\":\"Method not allowed\"}", "GET");
+            return;
+        }
+        write(exchange, 200, openApiJson(), null);
     }
 
     private void handleRest(HttpExchange exchange) throws IOException {
-        if (!ProtoRestHttpSupport.isAllowedHttpMethod(exchange.getRequestMethod())) {
-            write(exchange, 405, "{\"error\":\"Method not allowed\"}");
-            return;
-        }
-        var route = ProtoRestHttpSupport.parseServiceMethod(
-                exchange.getRequestURI().getPath(), config.restPathPrefix());
-        if (route.isEmpty()) {
-            write(exchange, 404, "{\"error\":\"Expected " + config.restPathPrefix() + "/{service}/{method}\"}");
-            return;
-        }
-        String[] parts = route.get();
-        String body = ProtoRestHttpSupport.bodyOrEmptyJson(readBody(exchange));
-        Map<String, String> headers = flattenHeaders(exchange.getRequestHeaders());
-        Map<String, String> query = ProtoRestHttpSupport.parseQuery(exchange.getRequestURI().getRawQuery());
         try {
-            write(exchange, 200, gateway.invoke(parts[0], parts[1], body, headers, query));
+            if (!ProtoRestHttpSupport.isAllowedHttpMethod(exchange.getRequestMethod())) {
+                write(exchange, 405, "{\"error\":\"Method not allowed\"}",
+                        ProtoRestHttpSupport.REST_ALLOW_HEADER);
+                return;
+            }
+            var route = ProtoRestHttpSupport.parseServiceMethod(
+                    exchange.getRequestURI().getPath(), config.restPathPrefix());
+            if (route.isEmpty()) {
+                write(exchange, 404,
+                        "{\"error\":\"Expected " + config.restPathPrefix() + "/{service}/{method}\"}", null);
+                return;
+            }
+            String[] parts = route.get();
+            String body = ProtoRestHttpSupport.bodyOrEmptyJson(readBody(exchange, config.maxRequestBytes()));
+            Map<String, String> headers = flattenHeaders(exchange.getRequestHeaders());
+            Map<String, String> query = ProtoRestHttpSupport.parseQuery(exchange.getRequestURI().getRawQuery());
+            write(exchange, 200,
+                    gateway.invoke(exchange.getRequestMethod(), parts[0], parts[1], body, headers, query),
+                    null);
         } catch (Throwable err) {
-            write(exchange, ProtoRestHttpSupport.statusFor(err), ProtoRestHttpSupport.errorJson(err));
+            ProtoRestHttpSupport.logIfServerError(LOG, err);
+            write(exchange, ProtoRestHttpSupport.statusFor(err), ProtoRestHttpSupport.errorJson(err),
+                    ProtoRestHttpSupport.allowHeaderFor(err).orElse(null));
         }
     }
 
@@ -157,9 +186,18 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
         return cached;
     }
 
-    private static String readBody(HttpExchange exchange) throws IOException {
+    private static String readBody(HttpExchange exchange, int maxRequestBytes) throws IOException {
         try (InputStream in = exchange.getRequestBody()) {
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                if (out.size() + read > maxRequestBytes) {
+                    throw new RequestTooLargeException(maxRequestBytes);
+                }
+                out.write(buffer, 0, read);
+            }
+            return out.toString(StandardCharsets.UTF_8);
         }
     }
 
@@ -174,9 +212,13 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
         return out;
     }
 
-    private static void write(HttpExchange exchange, int status, String body) throws IOException {
+    private static void write(HttpExchange exchange, int status, String body, String allowHeader)
+            throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("content-type", "application/json");
+        if (allowHeader != null) {
+            exchange.getResponseHeaders().set("allow", allowHeader);
+        }
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(bytes);
@@ -187,7 +229,13 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
     public void close() {
         HttpServer server = httpServer.getAndSet(null);
         if (server != null) {
-            server.stop(0);
+            // Small grace period so in-flight exchanges can finish.
+            server.stop(1);
+        }
+        ExecutorService workerPool = executor;
+        executor = null;
+        if (workerPool != null) {
+            workerPool.shutdown();
         }
     }
 }

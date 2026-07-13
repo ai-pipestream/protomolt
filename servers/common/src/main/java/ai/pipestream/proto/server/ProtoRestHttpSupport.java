@@ -2,13 +2,17 @@ package ai.pipestream.proto.server;
 
 import ai.pipestream.proto.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.json.ProtobufJsonException;
+import ai.pipestream.proto.rest.HttpMethodNotAllowedException;
+import ai.pipestream.proto.rest.MalformedRequestException;
 import ai.pipestream.proto.rest.MethodNotFoundException;
 import ai.pipestream.proto.rest.ProtoRestException;
+import ai.pipestream.proto.rest.RequestTooLargeException;
 import ai.pipestream.proto.rest.ServiceNotFoundException;
 import ai.pipestream.proto.rest.UnauthorizedProtoRestException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -24,6 +28,12 @@ public final class ProtoRestHttpSupport {
 
     /** HTTP methods the OpenAPI generator may document via {@code @ProtoRestExposed(httpMethods=...)}. */
     private static final Set<String> ALLOWED_HTTP_METHODS = Set.of("GET", "POST", "PUT", "PATCH", "DELETE");
+
+    /** {@code Allow} header value for the REST invoke routes when no per-method verbs apply. */
+    public static final String REST_ALLOW_HEADER = "GET, POST, PUT, PATCH, DELETE";
+
+    /** Body sent to clients for any 5xx; details are logged server-side, never leaked. */
+    public static final String INTERNAL_ERROR_MESSAGE = "Internal server error";
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -42,7 +52,17 @@ public final class ProtoRestHttpSupport {
     }
 
     /**
+     * @throws RequestTooLargeException when the body's UTF-8 length exceeds {@code maxRequestBytes}
+     */
+    public static void checkBodySize(String body, int maxRequestBytes) {
+        if (body != null && body.getBytes(StandardCharsets.UTF_8).length > maxRequestBytes) {
+            throw new RequestTooLargeException(maxRequestBytes);
+        }
+    }
+
+    /**
      * @return {@code [service, method]} or empty if the path is not {@code prefix/service/method}
+     *         (trailing slashes are rejected: {@code prefix/S/M/} is a 404 on every host)
      */
     public static Optional<String[]> parseServiceMethod(String path, String restPathPrefix) {
         if (path == null || !path.startsWith(restPathPrefix)) {
@@ -55,13 +75,16 @@ public final class ProtoRestHttpSupport {
             // The prefix must be a whole path segment: /grpc-jsonFoo/Bar is not /grpc-json.
             return Optional.empty();
         }
-        String[] parts = remainder.split("/");
+        String[] parts = remainder.split("/", -1);
         if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
             return Optional.empty();
         }
         return Optional.of(parts);
     }
 
+    /**
+     * @throws MalformedRequestException on malformed percent-encoding (mapped to 400)
+     */
     public static Map<String, String> parseQuery(String rawQuery) {
         Map<String, String> out = new HashMap<>();
         if (rawQuery == null || rawQuery.isBlank()) {
@@ -72,7 +95,8 @@ public final class ProtoRestHttpSupport {
             if (eq <= 0) {
                 continue;
             }
-            out.put(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
+            // Keep the first value for a repeated parameter, matching the host contract.
+            out.putIfAbsent(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
         }
         return out;
     }
@@ -98,7 +122,13 @@ public final class ProtoRestHttpSupport {
         if (cause instanceof ServiceNotFoundException || cause instanceof MethodNotFoundException) {
             return 404;
         }
-        if (cause instanceof MalformedProtobufJsonException) {
+        if (cause instanceof HttpMethodNotAllowedException) {
+            return 405;
+        }
+        if (cause instanceof RequestTooLargeException) {
+            return 413;
+        }
+        if (cause instanceof MalformedProtobufJsonException || cause instanceof MalformedRequestException) {
             return 400;
         }
         // A plain ProtobufJsonException means the server failed to serialize its own
@@ -109,10 +139,31 @@ public final class ProtoRestHttpSupport {
         return 500;
     }
 
+    /**
+     * @return the {@code Allow} header value for a 405, when {@code err} maps to one
+     */
+    public static Optional<String> allowHeaderFor(Throwable err) {
+        Throwable cause = unwrap(err);
+        if (cause instanceof HttpMethodNotAllowedException notAllowed) {
+            return Optional.of(String.join(", ", notAllowed.allowedMethods()));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Builds the JSON error body for {@code err}. For 5xx the body is always the generic
+     * {@value #INTERNAL_ERROR_MESSAGE}; internal exception details must never reach clients
+     * (log them server-side via {@link #logIfServerError(Logger, Throwable)} at the catch site).
+     */
     public static String errorJson(Throwable err) {
         Throwable cause = unwrap(err);
         int status = statusFor(cause);
-        String message = cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
+        String message;
+        if (status >= 500) {
+            message = INTERNAL_ERROR_MESSAGE;
+        } else {
+            message = cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
+        }
         ObjectNode node = JSON.createObjectNode();
         node.put("error", message);
         node.put("status", status);
@@ -121,6 +172,17 @@ public final class ProtoRestHttpSupport {
         } catch (JsonProcessingException e) {
             // A node of a string and an int cannot fail to serialize; treat as a server fault.
             throw new IllegalStateException("failed to serialize error response JSON", e);
+        }
+    }
+
+    /**
+     * Logs {@code err} (with stack trace) at ERROR when it maps to a 5xx. Call at the
+     * point of catch in every host so server faults are diagnosable despite the generic
+     * client body.
+     */
+    public static void logIfServerError(Logger log, Throwable err) {
+        if (statusFor(err) >= 500) {
+            log.error("Request failed with an internal error", err);
         }
     }
 
@@ -136,6 +198,10 @@ public final class ProtoRestHttpSupport {
     }
 
     private static String decode(String value) {
-        return java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
+        try {
+            return java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new MalformedRequestException("Malformed percent-encoding in query string", e);
+        }
     }
 }

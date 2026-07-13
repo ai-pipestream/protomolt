@@ -1,6 +1,7 @@
 package ai.pipestream.proto.server.netty;
 
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
+import ai.pipestream.proto.rest.MalformedRequestException;
 import ai.pipestream.proto.rest.ProtoRestGateway;
 import ai.pipestream.proto.server.ProtoRestHttpSupport;
 import ai.pipestream.proto.server.ProtoRestServerHost;
@@ -40,20 +41,25 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Netty HTTP host for protobuf JSON/REST. Binds the same three routes every {@code servers/*}
  * adapter serves — {@code POST {restPrefix}/{service}/{method}}, {@code GET /openapi.json},
  * {@code GET /health} — and delegates all logic to {@link ProtoRestGateway}; this class only wires
  * the HTTP pipeline (codec + aggregator + a single request handler) onto a Netty event loop.
+ * Gateway invocations run on a virtual-thread-per-task executor so slow backends never stall
+ * the I/O event loops; health and OpenAPI stay on the loop.
  */
 public final class NettyProtoRestServer implements ProtoRestServerHost {
 
     public static final String ENGINE_ID = "netty";
 
     private static final Logger LOG = LoggerFactory.getLogger(NettyProtoRestServer.class);
-    private static final int MAX_CONTENT_BYTES = 16 * 1024 * 1024;
     private static final String METHOD_NOT_ALLOWED = "{\"error\":\"Method not allowed\"}";
+    private static final long CLOSE_TIMEOUT_MILLIS = 15_000;
 
     private final ProtoToolsServerConfig config;
     private final ProtoRestGateway gateway;
@@ -61,6 +67,7 @@ public final class NettyProtoRestServer implements ProtoRestServerHost {
 
     private volatile EventLoopGroup bossGroup;
     private volatile EventLoopGroup workerGroup;
+    private volatile ExecutorService invokerPool;
     private volatile Channel serverChannel;
     private volatile int boundPort = -1;
     private volatile String cachedOpenApiJson;
@@ -95,6 +102,7 @@ public final class NettyProtoRestServer implements ProtoRestServerHost {
         }
         EventLoopGroup boss = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         EventLoopGroup workers = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
         try {
             ServerBootstrap bootstrap = new ServerBootstrap()
                     .group(boss, workers)
@@ -104,13 +112,14 @@ public final class NettyProtoRestServer implements ProtoRestServerHost {
                         protected void initChannel(SocketChannel ch) {
                             ChannelPipeline pipeline = ch.pipeline();
                             pipeline.addLast(new HttpServerCodec());
-                            pipeline.addLast(new HttpObjectAggregator(MAX_CONTENT_BYTES));
+                            pipeline.addLast(new HttpObjectAggregator(config.maxRequestBytes()));
                             pipeline.addLast(new RestHandler());
                         }
                     });
             Channel channel = bootstrap.bind(config.host(), config.port()).sync().channel();
             this.bossGroup = boss;
             this.workerGroup = workers;
+            this.invokerPool = pool;
             this.serverChannel = channel;
             this.boundPort = ((InetSocketAddress) channel.localAddress()).getPort();
             LOG.info("Proto REST Netty host on {}:{} ({} , {})",
@@ -118,11 +127,15 @@ public final class NettyProtoRestServer implements ProtoRestServerHost {
             return boundPort;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            pool.shutdownNow();
             shutdownGroups(boss, workers);
             throw new IllegalStateException("Interrupted while starting Netty host", e);
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
+            // bind().sync() rethrows checked failures (e.g. BindException) unchecked;
+            // always release the event loop groups before surfacing the failure.
+            pool.shutdownNow();
             shutdownGroups(boss, workers);
-            throw new IllegalStateException("Failed to start Netty host", e);
+            throw new IllegalStateException("Failed to start Netty host", t);
         }
     }
 
@@ -174,12 +187,22 @@ public final class NettyProtoRestServer implements ProtoRestServerHost {
         return q < 0 ? null : uri.substring(q + 1);
     }
 
-    private static void shutdownGroups(EventLoopGroup boss, EventLoopGroup workers) {
-        if (boss != null) {
-            boss.shutdownGracefully();
+    private static String decodePath(String uri) {
+        try {
+            return new QueryStringDecoder(uri).path();
+        } catch (IllegalArgumentException e) {
+            throw new MalformedRequestException("Malformed percent-encoding in request path", e);
         }
-        if (workers != null) {
-            workers.shutdownGracefully();
+    }
+
+    private static void shutdownGroups(EventLoopGroup boss, EventLoopGroup workers) {
+        io.netty.util.concurrent.Future<?> bossDone = boss == null ? null : boss.shutdownGracefully();
+        io.netty.util.concurrent.Future<?> workersDone = workers == null ? null : workers.shutdownGracefully();
+        if (bossDone != null) {
+            bossDone.awaitUninterruptibly(CLOSE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+        }
+        if (workersDone != null) {
+            workersDone.awaitUninterruptibly(CLOSE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -189,6 +212,11 @@ public final class NettyProtoRestServer implements ProtoRestServerHost {
         serverChannel = null;
         if (channel != null) {
             channel.close().awaitUninterruptibly();
+        }
+        ExecutorService pool = invokerPool;
+        invokerPool = null;
+        if (pool != null) {
+            pool.shutdown();
         }
         shutdownGroups(bossGroup, workerGroup);
         bossGroup = null;
@@ -201,60 +229,88 @@ public final class NettyProtoRestServer implements ProtoRestServerHost {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) {
-            String method = request.method().name();
-            String path = new QueryStringDecoder(request.uri()).path();
+            boolean keepAlive = HttpUtil.isKeepAlive(request);
             try {
-                dispatch(ctx, request, method, path);
+                dispatch(ctx, keepAlive, request);
             } catch (Throwable err) {
-                respond(ctx, request, ProtoRestHttpSupport.statusFor(err),
-                        ProtoRestHttpSupport.errorJson(err));
+                ProtoRestHttpSupport.logIfServerError(LOG, err);
+                respond(ctx, keepAlive, ProtoRestHttpSupport.statusFor(err),
+                        ProtoRestHttpSupport.errorJson(err),
+                        ProtoRestHttpSupport.allowHeaderFor(err).orElse(null));
             }
         }
 
-        private void dispatch(ChannelHandlerContext ctx, FullHttpRequest request,
-                String method, String path) {
+        private void dispatch(ChannelHandlerContext ctx, boolean keepAlive, FullHttpRequest request) {
+            String method = request.method().name();
+            String path = decodePath(request.uri());
             if (path.equals(config.healthPath())) {
-                respond(ctx, request, "GET".equalsIgnoreCase(method) ? 200 : 405,
-                        "GET".equalsIgnoreCase(method) ? "{\"status\":\"UP\"}" : METHOD_NOT_ALLOWED);
+                if ("GET".equalsIgnoreCase(method)) {
+                    respond(ctx, keepAlive, 200, "{\"status\":\"UP\"}", null);
+                } else {
+                    respond(ctx, keepAlive, 405, METHOD_NOT_ALLOWED, "GET");
+                }
                 return;
             }
             if (path.equals(config.openApiPath())) {
-                respond(ctx, request, "GET".equalsIgnoreCase(method) ? 200 : 405,
-                        "GET".equalsIgnoreCase(method) ? openApiJson() : METHOD_NOT_ALLOWED);
+                if ("GET".equalsIgnoreCase(method)) {
+                    respond(ctx, keepAlive, 200, openApiJson(), null);
+                } else {
+                    respond(ctx, keepAlive, 405, METHOD_NOT_ALLOWED, "GET");
+                }
                 return;
             }
             if (!ProtoRestHttpSupport.isAllowedHttpMethod(method)) {
-                respond(ctx, request, 405, METHOD_NOT_ALLOWED);
+                respond(ctx, keepAlive, 405, METHOD_NOT_ALLOWED, ProtoRestHttpSupport.REST_ALLOW_HEADER);
                 return;
             }
             Optional<String[]> route = ProtoRestHttpSupport.parseServiceMethod(path, config.restPathPrefix());
             if (route.isEmpty()) {
-                respond(ctx, request, 404,
-                        "{\"error\":\"Expected " + config.restPathPrefix() + "/{service}/{method}\"}");
+                respond(ctx, keepAlive, 404,
+                        "{\"error\":\"Expected " + config.restPathPrefix() + "/{service}/{method}\"}", null);
                 return;
             }
+            // Extract everything on the event loop so only immutable data crosses to the
+            // invoker thread; the request itself is released when channelRead0 returns.
             String[] parts = route.get();
             String body = ProtoRestHttpSupport.bodyOrEmptyJson(
                     request.content().toString(StandardCharsets.UTF_8));
             Map<String, String> headers = flattenHeaders(request.headers());
             Map<String, String> query = ProtoRestHttpSupport.parseQuery(rawQuery(request.uri()));
-            respond(ctx, request, 200, gateway.invoke(parts[0], parts[1], body, headers, query));
+            ExecutorService pool = invokerPool;
+            if (pool == null) {
+                throw new IllegalStateException("Server not started");
+            }
+            pool.execute(() -> {
+                try {
+                    String json = gateway.invoke(method, parts[0], parts[1], body, headers, query);
+                    respond(ctx, keepAlive, 200, json, null);
+                } catch (Throwable err) {
+                    ProtoRestHttpSupport.logIfServerError(LOG, err);
+                    respond(ctx, keepAlive, ProtoRestHttpSupport.statusFor(err),
+                            ProtoRestHttpSupport.errorJson(err),
+                            ProtoRestHttpSupport.allowHeaderFor(err).orElse(null));
+                }
+            });
         }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            LOG.debug("Netty channel error", cause);
+            LOG.warn("Netty channel error", cause);
             ctx.close();
         }
     }
 
-    private static void respond(ChannelHandlerContext ctx, FullHttpRequest request, int status, String body) {
+    private static void respond(
+            ChannelHandlerContext ctx, boolean keepAlive, int status, String body, String allowHeader) {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         FullHttpResponse response = new DefaultFullHttpResponse(
                 HttpVersion.HTTP_1_1, HttpResponseStatus.valueOf(status), Unpooled.wrappedBuffer(bytes));
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json");
         response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bytes.length);
-        if (HttpUtil.isKeepAlive(request)) {
+        if (allowHeader != null) {
+            response.headers().set(HttpHeaderNames.ALLOW, allowHeader);
+        }
+        if (keepAlive) {
             response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
             ctx.writeAndFlush(response);
         } else {

@@ -4,6 +4,9 @@ import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.rest.ProtoRestGateway;
 import ai.pipestream.proto.server.ProtoRestHttpSupport;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,15 +31,22 @@ public class SpringProtoRestController {
 
     public static final String ENGINE_ID = "spring";
 
+    private static final Logger LOG = LoggerFactory.getLogger(SpringProtoRestController.class);
+
     private final ProtoRestGateway gateway;
     private final ProtoToolsServerConfig config;
     private final ProtoOpenApiGenerator openApiGenerator;
+    private volatile String cachedOpenApiJson;
 
     public SpringProtoRestController(ProtoRestGateway gateway, ProtoToolsServerConfig config) {
         this.gateway = gateway;
         this.config = config;
         this.openApiGenerator = new ProtoOpenApiGenerator(
                 "Protobuf REST Gateway", "1.0.0", "/", config.restPathPrefix());
+    }
+
+    public void invalidateOpenApiCache() {
+        cachedOpenApiJson = null;
     }
 
     @GetMapping("${pipestream.proto.rest.health-path:/health}")
@@ -48,34 +58,44 @@ public class SpringProtoRestController {
             value = "${pipestream.proto.rest.openapi-path:/openapi.json}",
             produces = MediaType.APPLICATION_JSON_VALUE)
     public String openApi() {
-        return openApiGenerator.generateJson(gateway.getRegistry());
+        String cached = cachedOpenApiJson;
+        if (cached == null) {
+            cached = openApiGenerator.generateJson(gateway.getRegistry());
+            cachedOpenApiJson = cached;
+        }
+        return cached;
     }
 
     @RequestMapping(
             path = "${pipestream.proto.rest.path-prefix:/grpc-json}/{serviceName}/{methodName}",
             method = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH,
                     RequestMethod.DELETE},
-            consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> invoke(
+            HttpMethod httpMethod,
             @PathVariable("serviceName") String serviceName,
             @PathVariable("methodName") String methodName,
             @RequestBody(required = false) String body,
             @RequestHeader Map<String, String> headers,
             @RequestParam Map<String, String> query) {
         try {
+            ProtoRestHttpSupport.checkBodySize(body, config.maxRequestBytes());
             Map<String, String> normalized = headers.entrySet().stream()
                     .collect(Collectors.toMap(
                             e -> e.getKey().toLowerCase(Locale.ROOT),
                             Map.Entry::getValue,
-                            (a, b) -> b));
+                            // Keep the first value for duplicate keys, matching the host contract.
+                            (a, b) -> a));
             String json = gateway.invoke(
-                    serviceName, methodName, ProtoRestHttpSupport.bodyOrEmptyJson(body), normalized, query);
+                    httpMethod.name(), serviceName, methodName,
+                    ProtoRestHttpSupport.bodyOrEmptyJson(body), normalized, query);
             return ResponseEntity.ok(json);
         } catch (Throwable err) {
-            return ResponseEntity.status(ProtoRestHttpSupport.statusFor(err))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(ProtoRestHttpSupport.errorJson(err));
+            ProtoRestHttpSupport.logIfServerError(LOG, err);
+            ResponseEntity.BodyBuilder builder = ResponseEntity.status(ProtoRestHttpSupport.statusFor(err))
+                    .contentType(MediaType.APPLICATION_JSON);
+            ProtoRestHttpSupport.allowHeaderFor(err).ifPresent(allow -> builder.header("Allow", allow));
+            return builder.body(ProtoRestHttpSupport.errorJson(err));
         }
     }
 }
