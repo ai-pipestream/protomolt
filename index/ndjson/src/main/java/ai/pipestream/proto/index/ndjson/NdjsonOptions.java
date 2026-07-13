@@ -2,6 +2,10 @@ package ai.pipestream.proto.index.ndjson;
 
 /**
  * Options for protobuf → NDJSON encoding (OpenSearch bulk–friendly).
+ *
+ * <p>{@code omitWhitespace} must stay {@code true} for line-oriented output:
+ * {@link ProtoNdjsonWriter} rejects {@code omitWhitespace(false)} because pretty-printed
+ * multi-line JSON is structurally invalid NDJSON / bulk output.
  */
 public record NdjsonOptions(
         boolean preservingProtoFieldNames,

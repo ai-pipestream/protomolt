@@ -5,12 +5,16 @@ import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.Struct;
+import com.google.protobuf.util.JsonFormat;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,20 +26,45 @@ import java.util.Objects;
  * OpenSearch-oriented document map builder.
  * Uses a shared {@link IndexingPlan} (descriptor hints); does not emit NDJSON —
  * pair with {@code proteus-index-ndjson} when you need bulk lines.
+ *
+ * <p>Message values are converted through {@link JsonFormat}, so nested values take exactly
+ * the shapes the NDJSON writer emits: nested maps become JSON objects, int64 becomes a string,
+ * and Timestamps become ISO-8601 strings (consistent with the Solr mapper and compatible with
+ * OpenSearch {@code date} mappings), including under a DATE hint.
  */
 public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
     public static final String ENGINE_ID = "opensearch";
 
+    // Message bodies are proto3 JSON via JsonFormat; Jackson only parses that output into
+    // plain maps/lists/scalars. No JSON is hand-escaped.
+    private static final JsonFormat.Printer COMPACT_PRINTER =
+            JsonFormat.printer().omittingInsignificantWhitespace();
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final ProtoFieldMapper fieldMapper;
-    private final TypeConverter typeConverter;
+    private final boolean includeDefaults;
 
     public OpenSearchDocumentMapper(ProtoFieldMapper fieldMapper) {
-        this(fieldMapper, new TypeConverter());
+        this(fieldMapper, false);
     }
 
-    public OpenSearchDocumentMapper(ProtoFieldMapper fieldMapper, TypeConverter typeConverter) {
+    /**
+     * @param includeDefaults when true, proto3 implicit-presence fields at their default value
+     *        ({@code false} / {@code 0} / {@code ""}) are written to documents instead of skipped
+     */
+    public OpenSearchDocumentMapper(ProtoFieldMapper fieldMapper, boolean includeDefaults) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
-        this.typeConverter = Objects.requireNonNull(typeConverter, "typeConverter");
+        this.includeDefaults = includeDefaults;
+    }
+
+    /**
+     * @deprecated nested message conversion now goes through {@link JsonFormat}; the
+     *             {@code typeConverter} argument is ignored. Use
+     *             {@link #OpenSearchDocumentMapper(ProtoFieldMapper)}.
+     */
+    @Deprecated
+    public OpenSearchDocumentMapper(ProtoFieldMapper fieldMapper, TypeConverter typeConverter) {
+        this(fieldMapper);
     }
 
     @Override
@@ -51,9 +80,9 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
             if (hasUnsetIntermediate(message, field.path())) {
                 continue; // unset optional parent: no value for this field, not a mapping error
             }
-            Object value = fieldMapper.getValue(message, field.path());
+            Object value = fieldMapper.getValue(message, field.path(), includeDefaults);
             if (value != null) {
-                document.put(field.fieldName(), coerce(value));
+                document.put(field.fieldName(), coerce(value, field.path()));
             }
         }
         return document;
@@ -95,31 +124,32 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
     /** Legacy projection API (explicit paths). Prefer {@link #map(Message, IndexingPlan)}. */
     public Map<String, Object> map(Message message, List<FieldProjection> projections) throws MappingException {
         if (projections == null || projections.isEmpty()) {
-            if (message instanceof com.google.protobuf.Struct struct) {
-                Map<String, Object> document = new LinkedHashMap<>();
-                struct.getFieldsMap().forEach((key, value) -> document.put(key, typeConverter.fromValue(value)));
-                return document;
+            Object document = jsonShaped(message, message.getDescriptorForType().getFullName());
+            if (document instanceof Map<?, ?> map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> objectDocument = (Map<String, Object>) map;
+                return objectDocument;
             }
-            return typeConverter.messageToStruct(message).getFieldsMap().entrySet().stream()
-                    .collect(LinkedHashMap::new,
-                            (map, entry) -> map.put(entry.getKey(), typeConverter.fromValue(entry.getValue())),
-                            LinkedHashMap::putAll);
+            throw new MappingException(
+                    "Whole-message mapping requires a message that serializes to a JSON object, but "
+                            + message.getDescriptorForType().getFullName()
+                            + " serializes to a JSON value", null);
         }
         Map<String, Object> document = new LinkedHashMap<>();
         for (FieldProjection projection : projections) {
-            Object value = fieldMapper.getValue(message, projection.path());
+            Object value = fieldMapper.getValue(message, projection.path(), includeDefaults);
             if (value != null) {
-                document.put(projection.fieldName(), coerce(value));
+                document.put(projection.fieldName(), coerce(value, projection.path()));
             }
         }
         return document;
     }
 
-    private Object coerce(Object value) {
+    private static Object coerce(Object value, String path) throws MappingException {
         if (value instanceof List<?> values) {
             List<Object> coerced = new ArrayList<>(values.size());
             for (Object element : values) {
-                coerced.add(coerce(element));
+                coerced.add(coerce(element, path));
             }
             return coerced;
         }
@@ -129,33 +159,27 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
         if (value instanceof com.google.protobuf.Descriptors.EnumValueDescriptor ev) {
             return ev.getName();
         }
-        if (value instanceof com.google.protobuf.Struct struct) {
-            return structToMap(struct);
-        }
         if (value instanceof Message message) {
-            return structToMap(typeConverter.messageToStruct(message));
+            // Route through JsonFormat so nested shapes match the NDJSON writer exactly
+            // (Timestamps become ISO-8601 strings, maps become JSON objects, int64 strings).
+            return jsonShaped(message, path);
         }
         return value;
     }
 
-    private Map<String, Object> structToMap(com.google.protobuf.Struct struct) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        struct.getFieldsMap().forEach((key, value) -> map.put(key, toPlain(typeConverter.fromValue(value))));
-        return map;
-    }
-
-    private Object toPlain(Object value) {
-        if (value instanceof com.google.protobuf.Struct struct) {
-            return structToMap(struct);
+    /** Plain maps/lists/scalars mirroring the message's proto3 canonical JSON form. */
+    private static Object jsonShaped(Message message, String path) throws MappingException {
+        String json;
+        try {
+            json = COMPACT_PRINTER.print(message);
+        } catch (InvalidProtocolBufferException e) {
+            throw new MappingException("Failed to render message as JSON", e, path);
         }
-        if (value instanceof List<?> values) {
-            List<Object> plain = new ArrayList<>(values.size());
-            for (Object element : values) {
-                plain.add(toPlain(element));
-            }
-            return plain;
+        try {
+            return JSON.readValue(json, Object.class);
+        } catch (JsonProcessingException e) {
+            throw new MappingException("Failed to parse JsonFormat output", e, path);
         }
-        return value;
     }
 
     public record FieldProjection(String path, String fieldName) {

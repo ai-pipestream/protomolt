@@ -56,6 +56,35 @@ class IndexingPlanFactoryTest {
     }
 
     @Test
+    void jsonNameModeUsesJsonNamesForEveryFieldNameSegment() throws Exception {
+        Descriptor descriptor = nestedSampleDescriptor();
+        IndexingPlanFactory factory = new IndexingPlanFactory(expandingHints(), false, 8);
+        IndexingPlan plan = factory.create(descriptor);
+
+        // paths stay in proto names (the field-mapper vocabulary)
+        IndexingPlan.IndexedField leaf = plan.find("user_address.display_name").orElseThrow();
+        // prefix and leaf use the same naming mode: no mixed user_address_displayName
+        assertThat(leaf.fieldName()).isEqualTo("userAddress_displayName");
+    }
+
+    @Test
+    void protoNameModeUsesProtoNamesForEveryFieldNameSegment() throws Exception {
+        Descriptor descriptor = nestedSampleDescriptor();
+        IndexingPlanFactory factory = new IndexingPlanFactory(expandingHints(), true, 8);
+        IndexingPlan plan = factory.create(descriptor);
+
+        IndexingPlan.IndexedField leaf = plan.find("user_address.display_name").orElseThrow();
+        assertThat(leaf.fieldName()).isEqualTo("user_address_display_name");
+    }
+
+    /** Hints message fields with an expandable kind so nested fields become dotted paths. */
+    private static IndexingHintSource expandingHints() {
+        return field -> field.getJavaType() == com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE
+                ? java.util.Optional.of(ResolvedFieldHint.of(IndexFieldKind.TEXT))
+                : java.util.Optional.empty();
+    }
+
+    @Test
     void structInfersObjectFields() {
         IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(Struct.getDescriptor());
         assertThat(plan.fields()).isNotEmpty();
@@ -83,6 +112,30 @@ class IndexingPlanFactoryTest {
                                 .setOptions(titleOptions)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("HintedDoc");
+    }
+
+    private static Descriptor nestedSampleDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("nested_names.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Address")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("display_name")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Profile")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("user_address")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Address")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Profile");
     }
 
     private static Descriptor sampleDescriptor() throws Exception {

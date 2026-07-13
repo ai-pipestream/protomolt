@@ -18,6 +18,18 @@ public interface ProtoFieldMapper {
 
     Object getValue(MessageOrBuilder source, String path) throws MappingException;
 
+    /**
+     * As {@link #getValue(MessageOrBuilder, String)}, but when {@code includeDefaults} is
+     * {@code true} a proto3 implicit-presence leaf field at its default value
+     * ({@code false} / {@code 0} / {@code ""}) is returned as that default instead of
+     * {@code null}. Fields with explicit presence (optional, message, oneof members) still
+     * return {@code null} when unset.
+     */
+    default Object getValue(MessageOrBuilder source, String path, boolean includeDefaults)
+            throws MappingException {
+        return getValue(source, path);
+    }
+
     void setValue(Message.Builder targetBuilder, String path, Object value) throws MappingException;
 
     void appendValue(Message.Builder targetBuilder, String path, Object value) throws MappingException;

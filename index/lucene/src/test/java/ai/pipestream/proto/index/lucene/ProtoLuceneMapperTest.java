@@ -189,6 +189,165 @@ class ProtoLuceneMapperTest {
     }
 
     @Test
+    void indexedOnlyByteStringProducesExactMatchField() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("digest", FieldDescriptorProto.Type.TYPE_BYTES);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("digest"),
+                        com.google.protobuf.ByteString.copyFrom(new byte[]{1, 2, 3}))
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("digest", "digest",
+                        new ResolvedFieldHint(IndexFieldKind.BINARY, false, true, "", 0))));
+
+        Document doc = mapper.map(message, plan);
+
+        // hinted indexed-only bytes must never be dropped silently
+        assertThat(doc.getFields("digest")).hasSize(1);
+        assertThat(doc.getFields("digest")[0].binaryValue().bytes)
+                .startsWith((byte) 1, (byte) 2, (byte) 3);
+    }
+
+    @Test
+    void storedByteStringKeepsRawBytes() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("digest", FieldDescriptorProto.Type.TYPE_BYTES);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("digest"),
+                        com.google.protobuf.ByteString.copyFrom(new byte[]{9, 8}))
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("digest", "digest",
+                        new ResolvedFieldHint(IndexFieldKind.BINARY, true, false, "", 0))));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("digest")).hasSize(1);
+        assertThat(doc.getFields("digest")[0].fieldType().stored()).isTrue();
+        assertThat(doc.getFields("digest")[0].binaryValue().bytes).startsWith((byte) 9, (byte) 8);
+    }
+
+    @Test
+    void objectHintedMessageStoresCompactJson() throws Exception {
+        Descriptor descriptor = nestedDescriptor();
+        Descriptor innerDescriptor = descriptor.findFieldByName("inner").getMessageType();
+        DynamicMessage inner = DynamicMessage.newBuilder(innerDescriptor)
+                .setField(innerDescriptor.findFieldByName("name"), "n1")
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("inner"), inner)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("inner", "inner",
+                        ResolvedFieldHint.of(IndexFieldKind.OBJECT))));
+
+        Document doc = mapper.map(message, plan);
+
+        // compact JsonFormat JSON, not protobuf text format
+        assertThat(doc.get("inner")).isEqualTo("{\"name\":\"n1\"}");
+    }
+
+    @Test
+    void objectHintedMapFieldStoresOneJsonObject() throws Exception {
+        Descriptor descriptor = mapFieldDescriptor();
+        FieldDescriptor labels = descriptor.findFieldByName("labels");
+        Descriptor entryType = labels.getMessageType();
+        DynamicMessage entryA = DynamicMessage.newBuilder(entryType)
+                .setField(entryType.findFieldByName("key"), "env")
+                .setField(entryType.findFieldByName("value"), "prod")
+                .build();
+        DynamicMessage entryB = DynamicMessage.newBuilder(entryType)
+                .setField(entryType.findFieldByName("key"), "team")
+                .setField(entryType.findFieldByName("value"), "search")
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .addRepeatedField(labels, entryA)
+                .addRepeatedField(labels, entryB)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("labels", "labels",
+                        ResolvedFieldHint.of(IndexFieldKind.OBJECT))));
+
+        Document doc = mapper.map(message, plan);
+
+        // one JSON object string for the whole map, not one MapEntry toString per pair
+        assertThat(doc.getFields("labels")).hasSize(1);
+        assertThat(doc.get("labels")).isEqualTo("{\"env\":\"prod\",\"team\":\"search\"}");
+    }
+
+    @Test
+    void vectorHintWithMatchingDimsBuildsKnnField() throws Exception {
+        Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
+        FieldDescriptor embedding = descriptor.findFieldByName("embedding");
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .addRepeatedField(embedding, 0.1f)
+                .addRepeatedField(embedding, 0.2f)
+                .addRepeatedField(embedding, 0.3f)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("embedding", "embedding",
+                        new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 3))));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("embedding")).hasSize(1);
+        assertThat(doc.getFields("embedding")[0])
+                .isInstanceOf(org.apache.lucene.document.KnnFloatVectorField.class);
+        float[] vector = ((org.apache.lucene.document.KnnFloatVectorField) doc.getFields("embedding")[0])
+                .vectorValue();
+        assertThat(vector).containsExactly(new float[]{0.1f, 0.2f, 0.3f}, org.assertj.core.data.Offset.offset(0.0001f));
+    }
+
+    @Test
+    void vectorHintWithDimsMismatchFallsBackToStoredJson() throws Exception {
+        Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
+        FieldDescriptor embedding = descriptor.findFieldByName("embedding");
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .addRepeatedField(embedding, 0.5f)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("embedding", "embedding",
+                        new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 3))));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("embedding")).hasSize(1);
+        assertThat(doc.getFields("embedding")[0].fieldType().stored()).isTrue();
+        assertThat(doc.get("embedding")).isEqualTo("[0.5]");
+    }
+
+    @Test
+    void numericHintOnNonNumericValueThrowsMappingException() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("count", FieldDescriptorProto.Type.TYPE_STRING);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("count"), "not-a-number")
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("count", "count", ResolvedFieldHint.of(IndexFieldKind.INT64))));
+
+        assertThatThrownBy(() -> mapper.map(message, plan))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("count")
+                .hasMessageContaining("INT64")
+                .hasMessageContaining("java.lang.String");
+    }
+
+    @Test
+    void includeDefaultsIndexesImplicitPresenceDefaults() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("archived", FieldDescriptorProto.Type.TYPE_BOOL);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("archived", "archived",
+                        ResolvedFieldHint.of(IndexFieldKind.BOOLEAN))));
+
+        // default behaviour: fields at their default value are skipped
+        assertThat(mapper.map(message, plan).getFields("archived")).isEmpty();
+
+        ProtoLuceneMapper withDefaults = new ProtoLuceneMapper(
+                new ProtoFieldMapperImpl(new DescriptorRegistry()), true);
+        Document doc = withDefaults.map(message, plan);
+        assertThat(doc.get("archived")).isEqualTo("false");
+    }
+
+    @Test
     void emptyProjectionsYieldEmptyDocument() throws Exception {
         assertThat(mapper.map(Struct.getDefaultInstance(), List.<ProtoLuceneMapper.FieldProjection>of()).getFields()).isEmpty();
         assertThat(mapper.map(Struct.getDefaultInstance(), (List<ProtoLuceneMapper.FieldProjection>) null).getFields()).isEmpty();
@@ -256,6 +415,37 @@ class ProtoLuceneMapperTest {
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Doc");
+    }
+
+    private static Descriptor mapFieldDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("map_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("MapDoc")
+                        .addNestedType(DescriptorProto.newBuilder()
+                                .setName("LabelsEntry")
+                                .setOptions(com.google.protobuf.DescriptorProtos.MessageOptions.newBuilder()
+                                        .setMapEntry(true))
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("key")
+                                        .setNumber(1)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("value")
+                                        .setNumber(2)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("labels")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.MapDoc.LabelsEntry")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("MapDoc");
     }
 
     private static Descriptor repeatedFieldDescriptor(String fieldName, FieldDescriptorProto.Type type) throws Exception {

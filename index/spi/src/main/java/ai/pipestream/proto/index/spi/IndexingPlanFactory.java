@@ -45,13 +45,14 @@ public final class IndexingPlanFactory {
 
     public IndexingPlan create(Descriptor descriptor) {
         List<IndexingPlan.IndexedField> fields = new ArrayList<>();
-        walk(descriptor, "", 0, fields, new HashSet<>());
+        walk(descriptor, "", "", 0, fields, new HashSet<>());
         return new IndexingPlan(descriptor.getFullName(), fields);
     }
 
     private void walk(
             Descriptor descriptor,
-            String prefix,
+            String pathPrefix,
+            String namePrefix,
             int depth,
             List<IndexingPlan.IndexedField> out,
             Set<String> visiting) {
@@ -67,13 +68,15 @@ public final class IndexingPlanFactory {
                 hint = new ResolvedFieldHint(
                         inferred.type(), hint.stored(), hint.indexed(), hint.name(), hint.vectorDims());
             }
+            // Paths always use proto field names (the field-mapper vocabulary); engine field
+            // names use one naming mode for every segment, prefix and leaf alike.
             String segment = preservingProtoFieldNames ? field.getName() : field.getJsonName();
-            String path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
-            String fieldName = hint.nameOverride().orElse(
-                    prefix.isEmpty() ? segment : prefix.replace('.', '_') + "_" + segment);
+            String path = pathPrefix.isEmpty() ? field.getName() : pathPrefix + "." + field.getName();
+            String qualified = namePrefix.isEmpty() ? segment : namePrefix + "_" + segment;
+            String fieldName = hint.nameOverride().orElse(qualified);
 
             if (shouldExpand(field, hint) && depth < maxDepth) {
-                walk(field.getMessageType(), path, depth + 1, out, new HashSet<>(visiting));
+                walk(field.getMessageType(), path, qualified, depth + 1, out, new HashSet<>(visiting));
                 continue;
             }
             out.add(new IndexingPlan.IndexedField(path, fieldName, hint));

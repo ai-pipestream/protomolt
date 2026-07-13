@@ -92,6 +92,22 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
     }
 
     /**
+     * Reads a value like {@link #getValue(MessageOrBuilder, String)}, optionally surfacing the
+     * default value ({@code false} / {@code 0} / {@code ""}) of proto3 implicit-presence leaf
+     * fields instead of {@code null}.
+     * @param source the source
+     * @param path the path
+     * @param includeDefaults when true, implicit-presence leaves at default return the default
+     * @return the value
+     * @throws MappingException if the operation fails
+     */
+    @Override
+    public Object getValue(MessageOrBuilder source, String path, boolean includeDefaults)
+            throws MappingException {
+        return fieldAccessor.getValue(source, path, path, includeDefaults);
+    }
+
+    /**
      * Writes a value to a protobuf builder using a dot-notation path.
      * @param targetBuilder the target builder
      * @param path the path
@@ -268,6 +284,11 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
         }
 
         public Object getValue(MessageOrBuilder root, String path, String rule) throws MappingException {
+            return getValue(root, path, rule, false);
+        }
+
+        public Object getValue(MessageOrBuilder root, String path, String rule, boolean includeDefaults)
+                throws MappingException {
             String trimmedPath = path.trim();
             // Check for literals first.
             switch (trimmedPath) {
@@ -332,7 +353,14 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
                         FieldDescriptor fd = findField(currentMsg.getDescriptorForType(), part, rule);
 
                         if (i == parts.length - 1) {
-                            if (!fd.isRepeated() && !currentMsg.hasField(fd)) return null;
+                            if (!fd.isRepeated() && !currentMsg.hasField(fd)) {
+                                // Implicit-presence proto3 fields at default (false/0/"") have no
+                                // presence; surface the default only when the caller asked for it.
+                                if (includeDefaults && !fd.hasPresence()) {
+                                    return currentMsg.getField(fd);
+                                }
+                                return null;
+                            }
                             Object fieldValue = currentMsg.getField(fd);
 
                             // If the final field is an Any and we want to return the unpacked value

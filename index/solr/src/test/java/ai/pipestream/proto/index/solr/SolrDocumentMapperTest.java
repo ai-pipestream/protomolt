@@ -95,6 +95,56 @@ class SolrDocumentMapperTest {
     }
 
     @Test
+    void dateHintedTimestampBecomesIso8601String() throws Exception {
+        Descriptor descriptor = timestampDescriptor();
+        FieldDescriptor created = descriptor.findFieldByName("created");
+        Descriptor tsDescriptor = created.getMessageType();
+        DynamicMessage timestamp = DynamicMessage.newBuilder(tsDescriptor)
+                .setField(tsDescriptor.findFieldByName("seconds"), 1_700_000_000L)
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(created, timestamp)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
+
+        Map<String, Object> doc = mapper.map(message, plan);
+
+        // the raw RFC3339 string, never the quoted JSON literal "\"...\""
+        assertThat(doc.get("created")).isEqualTo("2023-11-14T22:13:20Z");
+    }
+
+    @Test
+    void primitivePrintingWellKnownTypesLoseTheirJsonQuotes() throws Exception {
+        Descriptor descriptor = wktDescriptor();
+        Descriptor duration = descriptor.findFieldByName("ttl").getMessageType();
+        Descriptor int64Value = descriptor.findFieldByName("count").getMessageType();
+        Descriptor boolValue = descriptor.findFieldByName("flag").getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("ttl"), DynamicMessage.newBuilder(duration)
+                        .setField(duration.findFieldByName("seconds"), 90L)
+                        .build())
+                .setField(descriptor.findFieldByName("count"), DynamicMessage.newBuilder(int64Value)
+                        .setField(int64Value.findFieldByName("value"), 42L)
+                        .build())
+                .setField(descriptor.findFieldByName("flag"), DynamicMessage.newBuilder(boolValue)
+                        .setField(boolValue.findFieldByName("value"), true)
+                        .build())
+                .build();
+
+        Map<String, Object> doc = mapper.map(message, List.of(
+                new SolrDocumentMapper.FieldProjection("ttl", "ttl"),
+                new SolrDocumentMapper.FieldProjection("count", "count"),
+                new SolrDocumentMapper.FieldProjection("flag", "flag")
+        ));
+
+        assertThat(doc.get("ttl")).isEqualTo("90s");
+        // Int64Value prints as a JSON string per proto3 canonical JSON
+        assertThat(doc.get("count")).isEqualTo("42");
+        assertThat(doc.get("flag")).isEqualTo(true);
+    }
+
+    @Test
     void unsetIntermediateMessageInPlanPathSkipsField() throws Exception {
         Descriptor descriptor = docDescriptor();
         FieldDescriptor colors = descriptor.findFieldByName("colors");
@@ -111,6 +161,22 @@ class SolrDocumentMapperTest {
     }
 
     @Test
+    void includeDefaultsWritesImplicitPresenceDefaults() throws Exception {
+        Descriptor descriptor = boolDocDescriptor();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("archived", "archived",
+                        ResolvedFieldHint.of(IndexFieldKind.BOOLEAN))));
+
+        // default behaviour: fields at their default value are skipped
+        assertThat(mapper.map(message, plan)).doesNotContainKey("archived");
+
+        SolrDocumentMapper withDefaults = new SolrDocumentMapper(
+                new ProtoFieldMapperImpl(new DescriptorRegistry()), true);
+        assertThat(withDefaults.map(message, plan)).containsEntry("archived", false);
+    }
+
+    @Test
     void genuinelyInvalidPlanPathStillThrows() throws Exception {
         Descriptor descriptor = docDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
@@ -118,6 +184,76 @@ class SolrDocumentMapperTest {
                 new IndexingPlan.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
         assertThatThrownBy(() -> mapper.map(message, plan)).isInstanceOf(MappingException.class);
+    }
+
+    private static Descriptor boolDocDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("bool_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("BoolDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("archived")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_BOOL)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("BoolDoc");
+    }
+
+    private static Descriptor timestampDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("ts_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/timestamp.proto")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("TsDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("created")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Timestamp")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(
+                        file, new FileDescriptor[]{com.google.protobuf.TimestampProto.getDescriptor()})
+                .findMessageTypeByName("TsDoc");
+    }
+
+    private static Descriptor wktDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("wkt_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/duration.proto")
+                .addDependency("google/protobuf/wrappers.proto")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("WktDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("ttl")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Duration")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("count")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Int64Value")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("flag")
+                                .setNumber(3)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.BoolValue")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[]{
+                        com.google.protobuf.DurationProto.getDescriptor(),
+                        com.google.protobuf.WrappersProto.getDescriptor()})
+                .findMessageTypeByName("WktDoc");
     }
 
     private static Descriptor docDescriptor() throws Exception {

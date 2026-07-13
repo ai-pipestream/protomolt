@@ -13,8 +13,11 @@ import com.google.protobuf.Descriptors.EnumDescriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,6 +33,8 @@ import java.util.Set;
  * Honors {@link ai.pipestream.proto.rest.ProtoApiToken} / {@link ProtoRestExposed} when present.
  */
 public final class ProtoOpenApiGenerator {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ProtoOpenApiGenerator.class);
 
     public static final String DEFAULT_SECURITY_SCHEME = "ApiToken";
 
@@ -176,6 +181,9 @@ public final class ProtoOpenApiGenerator {
                     try {
                         return (Descriptor) c.getMethod("getDescriptor").invoke(null);
                     } catch (ReflectiveOperationException e) {
+                        LOG.warn("Could not resolve request descriptor for {}.{}: {}.getDescriptor() failed; "
+                                        + "the operation is emitted without a requestBody schema",
+                                method.serviceName(), method.methodName(), c.getName(), e);
                         return null;
                     }
                 })
@@ -230,6 +238,15 @@ public final class ProtoOpenApiGenerator {
             return;
         }
 
+        // Well-known types are (de)serialized by JsonFormat as special JSON forms, never as
+        // objects of their internal fields; the document must describe the JsonFormat form.
+        Map<String, Object> wellKnown = wellKnownSchema(descriptor);
+        if (wellKnown != null) {
+            schemas.put(key, wellKnown);
+            visiting.remove(descriptor.getFullName());
+            return;
+        }
+
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");
         schema.put("title", descriptor.getFullName());
@@ -280,6 +297,10 @@ public final class ProtoOpenApiGenerator {
             Set<String> visiting) {
         return switch (field.getJavaType()) {
             case MESSAGE -> {
+                Map<String, Object> wellKnown = wellKnownSchema(field.getMessageType());
+                if (wellKnown != null) {
+                    yield wellKnown;
+                }
                 addMessageSchema(schemas, field.getMessageType(), visiting);
                 yield ref(field.getMessageType().getFullName());
             }
@@ -300,14 +321,79 @@ public final class ProtoOpenApiGenerator {
                 || field.getType() == FieldDescriptor.Type.FIXED64;
     }
 
+    /**
+     * Schema for the canonical proto3 JSON encoding of an enum: JsonFormat prints declared
+     * values as their names but unrecognized values as bare numbers, and accepts both forms.
+     */
     private static Map<String, Object> enumSchema(EnumDescriptor enumType) {
-        List<String> values = enumType.getValues().stream()
+        if ("google.protobuf.NullValue".equals(enumType.getFullName())) {
+            // JsonFormat prints NullValue as JSON null.
+            Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put("nullable", true);
+            schema.put("enum", Collections.singletonList(null));
+            return schema;
+        }
+        List<String> names = enumType.getValues().stream()
                 .map(EnumValueDescriptor::getName)
                 .toList();
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "string");
-        schema.put("enum", values);
+        schema.put("anyOf", List.of(
+                schemaOf("type", "string", "enum", names),
+                schemaOf("type", "integer", "format", "int32")));
         return schema;
+    }
+
+    /**
+     * JsonFormat form of a well-known type, or {@code null} for ordinary messages.
+     * Mirrors the table in {@code ProtoJsonSchemaGenerator.messageRef}, spelled in
+     * OpenAPI 3.0 vocabulary ({@code nullable} instead of {@code type: "null"}).
+     */
+    private static Map<String, Object> wellKnownSchema(Descriptor type) {
+        return switch (type.getFullName()) {
+            case "google.protobuf.Timestamp" -> schemaOf("type", "string", "format", "date-time");
+            case "google.protobuf.Duration" ->
+                    schemaOf("type", "string", "pattern", "^-?[0-9]+(\\.[0-9]{1,9})?s$");
+            case "google.protobuf.Struct" -> schemaOf("type", "object");
+            // google.protobuf.Value is any JSON value: the empty schema.
+            case "google.protobuf.Value" -> new LinkedHashMap<>();
+            case "google.protobuf.ListValue" ->
+                    schemaOf("type", "array", "items", new LinkedHashMap<>());
+            case "google.protobuf.FieldMask" -> schemaOf("type", "string");
+            case "google.protobuf.Any" -> schemaOf(
+                    "type", "object",
+                    "properties", schemaOf("@type", schemaOf("type", "string")));
+            case "google.protobuf.StringValue" -> nullable(schemaOf("type", "string"));
+            case "google.protobuf.BytesValue" ->
+                    nullable(schemaOf("type", "string", "format", "byte"));
+            case "google.protobuf.BoolValue" -> nullable(schemaOf("type", "boolean"));
+            case "google.protobuf.Int32Value" ->
+                    nullable(schemaOf("type", "integer", "format", "int32"));
+            case "google.protobuf.UInt32Value" ->
+                    nullable(schemaOf("type", "integer", "minimum", 0L));
+            // JsonFormat prints 64-bit wrapper values as JSON strings (proto3 JSON spec).
+            case "google.protobuf.Int64Value" ->
+                    nullable(schemaOf("type", "string", "format", "int64"));
+            case "google.protobuf.UInt64Value" ->
+                    nullable(schemaOf("type", "string", "format", "uint64"));
+            case "google.protobuf.FloatValue" ->
+                    nullable(schemaOf("type", "number", "format", "float"));
+            case "google.protobuf.DoubleValue" ->
+                    nullable(schemaOf("type", "number", "format", "double"));
+            default -> null;
+        };
+    }
+
+    private static Map<String, Object> nullable(Map<String, Object> schema) {
+        schema.put("nullable", true);
+        return schema;
+    }
+
+    private static Map<String, Object> schemaOf(Object... pairs) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            map.put((String) pairs[i], pairs[i + 1]);
+        }
+        return map;
     }
 
     private static String normalizePrefix(String pathPrefix) {
