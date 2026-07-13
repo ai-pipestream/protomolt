@@ -279,7 +279,15 @@ public class MappingHelper {
 
     private PathValidation validatePath(String path, Descriptor descriptor) {
         try {
-            String[] parts = path.split("\\.");
+            // Limit -1 keeps trailing empty tokens so "user." is seen as ["user", ""] and
+            // rejected below instead of silently validating as "user".
+            String[] parts = path.split("\\.", -1);
+            for (String part : parts) {
+                if (part.isEmpty()) {
+                    return new PathValidation(false, "Path '" + path + "' contains an empty segment", null);
+                }
+            }
+
             Descriptor currentDescriptor = descriptor;
             FieldDescriptor lastField = null;
 

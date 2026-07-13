@@ -31,10 +31,10 @@ public final class Formats {
     /**
      * IP address of a specific version.
      *
-     * @param version 4, 6, or 0 for "either"
+     * @param version 4, 6, or 0 for "either"; any other value yields {@code false}
      */
     public static boolean isIp(String value, long version) {
-        return IpAddresses.isIp(value, (int) version);
+        return isKnownIpVersion(version) && IpAddresses.isIp(value, (int) version);
     }
 
     /** IPv4 or IPv6 CIDR prefix (host bits need not be zero). */
@@ -44,12 +44,12 @@ public final class Formats {
 
     /** IP CIDR prefix of a specific version. */
     public static boolean isIpPrefix(String value, long version) {
-        return IpAddresses.isIpPrefix(value, (int) version, false);
+        return isKnownIpVersion(version) && IpAddresses.isIpPrefix(value, (int) version, false);
     }
 
     /** IP CIDR prefix, optionally requiring host bits to be zero. */
     public static boolean isIpPrefix(String value, long version, boolean strict) {
-        return IpAddresses.isIpPrefix(value, (int) version, strict);
+        return isKnownIpVersion(version) && IpAddresses.isIpPrefix(value, (int) version, strict);
     }
 
     /** Absolute URI (RFC 3986 {@code URI}). */
@@ -94,11 +94,20 @@ public final class Formats {
 
     /** An IP address carrying a prefix length ({@code 192.168.1.1/24}); host bits may be set. */
     public static boolean isIpWithPrefixLen(String value, long version) {
-        return IpAddresses.isIpPrefix(value, (int) version, false);
+        return isKnownIpVersion(version) && IpAddresses.isIpPrefix(value, (int) version, false);
     }
 
     /** A hostname or an IP address. */
     public static boolean isAddress(String value) {
         return Hostnames.isHostname(value) || IpAddresses.isIp(value, 0);
+    }
+
+    /**
+     * The only IP versions these checks understand. The full {@code long} is checked before any
+     * narrowing so values such as {@code 4294967300} (which truncates to 4 as an {@code int}) are
+     * rejected rather than silently treated as a known version.
+     */
+    private static boolean isKnownIpVersion(long version) {
+        return version == 0 || version == 4 || version == 6;
     }
 }

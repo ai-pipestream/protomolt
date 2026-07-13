@@ -184,6 +184,58 @@ public class DescriptorRegistryTest {
         assertNotNull(nestedDescriptor);
     }
 
+    @Test
+    void testSimpleNameCollisionKeepsFirstRegistration() throws DescriptorValidationException {
+        DescriptorRegistry registry = new DescriptorRegistry();
+
+        Descriptor first = createMessageInPackage("pkg.one", "one.proto", "Dup");
+        Descriptor second = createMessageInPackage("pkg.two", "two.proto", "Dup");
+
+        registry.register(first);
+        registry.register(second);
+
+        // Full-name lookups see both types.
+        assertSame(first, registry.findDescriptorByFullName("pkg.one.Dup"));
+        assertSame(second, registry.findDescriptorByFullName("pkg.two.Dup"));
+
+        // Simple-name lookup deterministically returns the FIRST registration.
+        assertSame(first, registry.findDescriptorBySimpleName("Dup"));
+    }
+
+    @Test
+    void testReRegisteringSameTypeUpdatesSimpleNameMapping() throws DescriptorValidationException {
+        DescriptorRegistry registry = new DescriptorRegistry();
+
+        Descriptor original = createMessageInPackage("pkg.one", "one.proto", "Same");
+        Descriptor rebuilt = createMessageInPackage("pkg.one", "one.proto", "Same");
+
+        registry.register(original);
+        registry.register(rebuilt);
+
+        // Same full name is not a collision: the latest instance wins for both lookups.
+        assertSame(rebuilt, registry.findDescriptorByFullName("pkg.one.Same"));
+        assertSame(rebuilt, registry.findDescriptorBySimpleName("Same"));
+    }
+
+    private static Descriptor createMessageInPackage(String packageName, String fileName, String messageName)
+            throws DescriptorValidationException {
+        DescriptorProto messageProto = DescriptorProto.newBuilder()
+                .setName(messageName)
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("id").setNumber(1)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .build();
+
+        DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName(fileName)
+                .setPackage(packageName)
+                .addMessageType(messageProto)
+                .build();
+
+        return FileDescriptor.buildFrom(fileProto, new FileDescriptor[]{})
+                .findMessageTypeByName(messageName);
+    }
+
     private FileDescriptor createTestFileDescriptor() throws DescriptorValidationException {
         DescriptorProto testMessageProto = DescriptorProto.newBuilder()
                 .setName("TestMessage")

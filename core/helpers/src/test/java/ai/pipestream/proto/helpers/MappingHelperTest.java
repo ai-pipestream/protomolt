@@ -119,6 +119,43 @@ public class MappingHelperTest {
     }
 
     @Test
+    void testValidateRule_TrailingDotInSourcePathRejected() {
+        // "doc_id." must NOT validate as "doc_id": trailing empty segments are errors.
+        MappingHelper.ValidationResult result = helper.validateRule(
+            "original_doc_id = doc_id.",
+            documentDescriptor,
+            openSearchDocDescriptor
+        );
+
+        assertFalse(result.isValid);
+        assertTrue(result.message.contains("empty segment"));
+    }
+
+    @Test
+    void testValidateRule_EmptyMiddleSegmentRejected() {
+        MappingHelper.ValidationResult result = helper.validateRule(
+            "title = search_metadata..title",
+            documentDescriptor,
+            openSearchDocDescriptor
+        );
+
+        assertFalse(result.isValid);
+        assertTrue(result.message.contains("empty segment"));
+    }
+
+    @Test
+    void testValidateRule_TrailingDotInTargetPathRejected() {
+        MappingHelper.ValidationResult result = helper.validateRule(
+            "original_doc_id. = doc_id",
+            documentDescriptor,
+            openSearchDocDescriptor
+        );
+
+        assertFalse(result.isValid);
+        assertTrue(result.message.contains("empty segment"));
+    }
+
+    @Test
     void testValidateRule_NestedMapping() {
         // User creates nested mapping
         String rule = "title = search_metadata.title";

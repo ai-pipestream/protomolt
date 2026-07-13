@@ -78,6 +78,39 @@ class FormatsTest {
     }
 
     @Test
+    void ipVersionMustBeCheckedAsFullLong() {
+        // 4294967300 == 2^32 + 4: a bare (int) cast would truncate it to 4.
+        assertThat(Formats.isIp("1.2.3.4", 4294967300L)).isFalse();
+        assertThat(Formats.isIp("::1", 4294967302L)).isFalse();
+        assertThat(Formats.isIp("1.2.3.4", 5)).isFalse();
+        assertThat(Formats.isIp("1.2.3.4", -4)).isFalse();
+
+        assertThat(Formats.isIpPrefix("192.168.0.0/24", 4294967300L)).isFalse();
+        assertThat(Formats.isIpPrefix("192.168.0.0/24", 4294967300L, true)).isFalse();
+        assertThat(Formats.isIpWithPrefixLen("192.168.0.1/24", 4294967300L)).isFalse();
+
+        // Sanity: the supported versions still work.
+        assertThat(Formats.isIp("1.2.3.4", 4)).isTrue();
+        assertThat(Formats.isIp("::1", 6)).isTrue();
+        assertThat(Formats.isIp("1.2.3.4", 0)).isTrue();
+        assertThat(Formats.isIpPrefix("192.168.0.0/24", 4)).isTrue();
+        assertThat(Formats.isIpWithPrefixLen("192.168.0.1/24", 4)).isTrue();
+    }
+
+    @Test
+    void ipv6ZoneIds() {
+        // RFC 6874: ZoneID = 1*( unreserved / pct-encoded )
+        assertThat(Formats.isUri("http://[fe80::1%25eth0]/")).isTrue();
+        assertThat(Formats.isUri("http://[fe80::1%25en1.2_3~x-]/")).isTrue();
+        assertThat(Formats.isUri("http://[fe80::1%25et%41h0]/")).isTrue();  // pct-encoded 'A'
+
+        assertThat(Formats.isUri("http://[fe80::1%25e!0]/")).isFalse();     // sub-delim '!'
+        assertThat(Formats.isUri("http://[fe80::1%25e$0]/")).isFalse();     // sub-delim '$'
+        assertThat(Formats.isUri("http://[fe80::1%25]/")).isFalse();        // empty zone id
+        assertThat(Formats.isUri("http://[fe80::1%25e%zzh]/")).isFalse();   // bad pct-encoding
+    }
+
+    @Test
     void uris() {
         assertThat(Formats.isUri("https://example.com/path?q=1#frag")).isTrue();
         assertThat(Formats.isUri("ftp://user@host:21/dir/file")).isTrue();

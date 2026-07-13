@@ -10,6 +10,7 @@ import com.google.protobuf.Message;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -22,9 +23,19 @@ public class DescriptorRegistry {
 
     private static final Logger LOG = LoggerFactory.getLogger(DescriptorRegistry.class);
 
+    /** Bound on the negative-lookup cache; when reached, the cache is reset rather than grown. */
+    private static final int MAX_KNOWN_MISSING_TYPES = 1024;
+
     private final Map<String, Descriptor> descriptorsByFullName = new ConcurrentHashMap<>();
     private final Map<String, Descriptor> descriptorsBySimpleName = new ConcurrentHashMap<>();
     private final List<DescriptorLoader> manualLoaders = new CopyOnWriteArrayList<>();
+
+    /**
+     * Full type names that on-demand resolution already failed to find. Without this, every
+     * {@link #findDescriptorByFullName} miss would re-consult (and typically re-parse) every
+     * loader. Cleared by {@link #clear()} and {@link #addLoader(DescriptorLoader)}.
+     */
+    private final Set<String> knownMissingTypes = ConcurrentHashMap.newKeySet();
 
     private volatile boolean autoLoadAttempted = false;
 
@@ -90,11 +101,28 @@ public class DescriptorRegistry {
     /**
      * Registers a descriptor in the registry.
      *
+     * <p>Full-name registrations always win (last write). For simple-name lookups, the FIRST
+     * registration of a given simple name wins: registering a different type with the same simple
+     * name later logs a WARN and leaves the original mapping in place, so
+     * {@link #findDescriptorBySimpleName(String)} stays deterministic. Use full names to
+     * disambiguate colliding types.
+     *
      * @param descriptor The descriptor to register
      */
     public void register(Descriptor descriptor) {
         descriptorsByFullName.put(descriptor.getFullName(), descriptor);
-        descriptorsBySimpleName.put(descriptor.getName(), descriptor);
+        Descriptor existing = descriptorsBySimpleName.putIfAbsent(descriptor.getName(), descriptor);
+        if (existing != null) {
+            if (existing.getFullName().equals(descriptor.getFullName())) {
+                // Same type re-registered (possibly a rebuilt descriptor instance): keep current.
+                descriptorsBySimpleName.put(descriptor.getName(), descriptor);
+            } else {
+                LOG.warn("Simple name collision for '{}': keeping first registration {} and ignoring {}; "
+                        + "use findDescriptorByFullName to disambiguate",
+                    descriptor.getName(), existing.getFullName(), descriptor.getFullName());
+            }
+        }
+        knownMissingTypes.remove(descriptor.getFullName());
     }
 
     /**
@@ -141,15 +169,17 @@ public class DescriptorRegistry {
     }
 
     private Descriptor resolveOnDemand(String typeName) {
-        // We might need a mapping from typeName -> fileName.
-        // For now, let's assume artifactId == typeName or use heuristics.
-        
+        if (knownMissingTypes.contains(typeName)) {
+            return null;
+        }
+
         List<DescriptorLoader> allLoaders = getLoaders();
         for (DescriptorLoader loader : allLoaders) {
             if (loader.isAvailable()) {
                 try {
-                    // Try to load by name (heuristically using typeName)
-                    FileDescriptor fd = loader.loadDescriptor(typeName);
+                    // Ask for the file DEFINING this type; loadDescriptor(name) would treat the
+                    // type name as a proto file name and never match.
+                    FileDescriptor fd = loader.loadDescriptorForType(typeName);
                     if (fd != null) {
                         registerFile(fd);
                         // Look up directly (non-recursive): re-entering resolution for the same
@@ -164,6 +194,12 @@ public class DescriptorRegistry {
                 }
             }
         }
+
+        // Negative-cache the miss so repeated lookups do not re-consult every loader.
+        if (knownMissingTypes.size() >= MAX_KNOWN_MISSING_TYPES) {
+            knownMissingTypes.clear();
+        }
+        knownMissingTypes.add(typeName);
         return null;
     }
 
@@ -235,10 +271,14 @@ public class DescriptorRegistry {
 
     /**
      * Clears all registered descriptors except well-known types.
+     * Also resets the auto-load and negative-lookup state so descriptors can be reloaded.
      */
     public void clear() {
         descriptorsByFullName.clear();
         descriptorsBySimpleName.clear();
+        knownMissingTypes.clear();
+        // Allow auto-loading to run again so cleared descriptors are reloadable.
+        autoLoadAttempted = false;
         registerWellKnownTypes();
     }
 
@@ -248,8 +288,10 @@ public class DescriptorRegistry {
     public void addLoader(DescriptorLoader loader) {
         if (loader != null) {
             manualLoaders.add(loader);
-            // Allow the next auto-load to pick up the new loader.
+            // Allow the next auto-load to pick up the new loader, and retry lookups that
+            // previously missed since this loader may supply them.
             autoLoadAttempted = false;
+            knownMissingTypes.clear();
         }
     }
 

@@ -8,8 +8,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Loads Protocol Buffer descriptors from Google descriptor set files (.dsc).
@@ -47,11 +49,18 @@ public class GoogleDescriptorLoader implements DescriptorLoader {
      * Searches for a descriptor file in the specified paths and returns a loader for the first one found.
      * If none are found, returns a loader for the first path.
      *
-     * @param paths the paths to search
+     * @param paths the paths to search; at least one is required
      * @return a descriptor loader
+     * @throws IllegalArgumentException if no paths are given
      */
     public static GoogleDescriptorLoader searchPaths(String... paths) {
+        if (paths == null || paths.length == 0) {
+            throw new IllegalArgumentException("searchPaths requires at least one path");
+        }
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        if (cl == null) {
+            cl = GoogleDescriptorLoader.class.getClassLoader();
+        }
         for (String path : paths) {
             if (cl.getResource(path) != null) {
                 return new GoogleDescriptorLoader(path, cl);
@@ -124,7 +133,7 @@ public class GoogleDescriptorLoader implements DescriptorLoader {
     }
 
     private List<FileDescriptor> buildFileDescriptors(FileDescriptorSet descriptorSet)
-            throws DescriptorValidationException {
+            throws DescriptorValidationException, DescriptorLoadException {
 
         Map<String, FileDescriptor> descriptorMap = new HashMap<>();
         Map<String, com.google.protobuf.DescriptorProtos.FileDescriptorProto> protoMap = new HashMap<>();
@@ -135,7 +144,7 @@ public class GoogleDescriptorLoader implements DescriptorLoader {
 
         for (com.google.protobuf.DescriptorProtos.FileDescriptorProto proto : descriptorSet.getFileList()) {
             if (!descriptorMap.containsKey(proto.getName())) {
-                buildFileDescriptor(proto, protoMap, descriptorMap);
+                buildFileDescriptor(proto, protoMap, descriptorMap, new LinkedHashSet<>());
             }
         }
 
@@ -145,10 +154,19 @@ public class GoogleDescriptorLoader implements DescriptorLoader {
     private FileDescriptor buildFileDescriptor(
             com.google.protobuf.DescriptorProtos.FileDescriptorProto proto,
             Map<String, com.google.protobuf.DescriptorProtos.FileDescriptorProto> protoMap,
-            Map<String, FileDescriptor> descriptorMap) throws DescriptorValidationException {
+            Map<String, FileDescriptor> descriptorMap,
+            Set<String> inProgress) throws DescriptorValidationException, DescriptorLoadException {
 
         if (descriptorMap.containsKey(proto.getName())) {
             return descriptorMap.get(proto.getName());
+        }
+
+        // Guard against cyclic dependency declarations (a.proto -> a.proto, or a <-> b), which
+        // would otherwise recurse until StackOverflowError. The insertion-ordered set doubles
+        // as the dependency chain for the error message.
+        if (!inProgress.add(proto.getName())) {
+            throw new DescriptorLoadException(
+                "dependency cycle: " + String.join(" -> ", inProgress) + " -> " + proto.getName());
         }
 
         List<FileDescriptor> dependencies = new ArrayList<>();
@@ -157,7 +175,7 @@ public class GoogleDescriptorLoader implements DescriptorLoader {
             if (depDescriptor == null) {
                 com.google.protobuf.DescriptorProtos.FileDescriptorProto depProto = protoMap.get(dependency);
                 if (depProto != null) {
-                    depDescriptor = buildFileDescriptor(depProto, protoMap, descriptorMap);
+                    depDescriptor = buildFileDescriptor(depProto, protoMap, descriptorMap, inProgress);
                 } else {
                     depDescriptor = tryGetWellKnownType(dependency);
                     if (depDescriptor == null) {
@@ -175,6 +193,7 @@ public class GoogleDescriptorLoader implements DescriptorLoader {
         );
 
         descriptorMap.put(proto.getName(), descriptor);
+        inProgress.remove(proto.getName());
         return descriptor;
     }
 

@@ -145,7 +145,7 @@ public final class Rfc3986 {
         if (zone >= 0) {
             String address = inner.substring(0, zone);
             String zoneId = inner.substring(zone + 3);
-            return !zoneId.isEmpty() && validHost(zoneId) && IpAddresses.parseIpv6(address) != null;
+            return !zoneId.isEmpty() && validZoneId(zoneId) && IpAddresses.parseIpv6(address) != null;
         }
         // A bare "%" is not a valid IPv6 character: an unencoded zone id (%eth0) is rejected here.
         if (inner.indexOf('%') >= 0) {
@@ -295,6 +295,32 @@ public final class Rfc3986 {
                 bytes.write(Integer.parseInt(s.substring(i + 1, i + 3), 16));
                 i += 3;
             } else if (isUnreserved(c) || SUB_DELIMS.indexOf(c) >= 0) {
+                bytes.write(c);
+                i++;
+            } else {
+                return false;
+            }
+        }
+        return isValidUtf8(bytes.toByteArray());
+    }
+
+    /**
+     * RFC 6874 {@code ZoneID = 1*( unreserved / pct-encoded )}. Unlike a host reg-name,
+     * {@code sub-delims} are NOT permitted, so {@code [fe80::1%25e!0]} is rejected. As with
+     * {@link #validHost}, the pct-decoded octets must form valid UTF-8.
+     */
+    private static boolean validZoneId(String s) {
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(s.length());
+        int i = 0;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (c == '%') {
+                if (i + 2 >= s.length() || !isHex(s.charAt(i + 1)) || !isHex(s.charAt(i + 2))) {
+                    return false;
+                }
+                bytes.write(Integer.parseInt(s.substring(i + 1, i + 3), 16));
+                i += 3;
+            } else if (isUnreserved(c)) {
                 bytes.write(c);
                 i++;
             } else {

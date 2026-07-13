@@ -248,13 +248,17 @@ public class TypeConverter {
 
         switch (field.getJavaType()) {
             case INT:
-                try {
-                    return Math.toIntExact(Math.round(value.getNumberValue()));
-                } catch (ArithmeticException e) {
-                    throw new IllegalArgumentException(
-                            "Value " + value.getNumberValue() + " is out of int32 range for field "
-                                    + field.getFullName(), e);
+                // Accept the string encoding and reject non-integral numbers, mirroring LONG.
+                if (value.getKindCase() == Value.KindCase.STRING_VALUE) {
+                    try {
+                        return Integer.parseInt(value.getStringValue());
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException(
+                                "Value \"" + value.getStringValue() + "\" is not a valid int32 for field "
+                                        + field.getFullName(), e);
+                    }
                 }
+                return numberToInt(value.getNumberValue(), field);
             case LONG:
                 // Accept the string encoding (proto3 JSON convention) and, for backward
                 // compatibility, numbers that are exactly representable as int64.
@@ -267,12 +271,28 @@ public class TypeConverter {
             case DOUBLE:
                 return value.getNumberValue();
             case BOOLEAN:
+                if (value.getKindCase() != Value.KindCase.BOOL_VALUE) {
+                    throw new IllegalArgumentException(
+                            "Expected a bool value for field " + field.getFullName()
+                                    + " but got " + value.getKindCase());
+                }
                 return value.getBoolValue();
             case STRING:
+                if (value.getKindCase() != Value.KindCase.STRING_VALUE) {
+                    throw new IllegalArgumentException(
+                            "Expected a string value for field " + field.getFullName()
+                                    + " but got " + value.getKindCase());
+                }
                 return value.getStringValue();
             case ENUM:
                 EnumDescriptor enumDescriptor = field.getEnumType();
-                return enumDescriptor.findValueByName(value.getStringValue());
+                EnumValueDescriptor enumValue = enumDescriptor.findValueByName(value.getStringValue());
+                if (enumValue == null) {
+                    throw new IllegalArgumentException(
+                            "Unknown value \"" + value.getStringValue() + "\" for enum "
+                                    + enumDescriptor.getFullName() + " on field " + field.getFullName());
+                }
+                return enumValue;
             case MESSAGE:
                 if (field.getMessageType().getFullName().equals(Struct.getDescriptor().getFullName())) {
                     return value.getStructValue();
@@ -303,6 +323,30 @@ public class TypeConverter {
             throw new IllegalArgumentException(
                     "Value " + number + " cannot be represented exactly as int64 for field "
                             + field.getFullName());
+        }
+        return result;
+    }
+
+    /**
+     * Converts a JSON number to an int, rejecting NaN, non-integral values, and values outside
+     * int32 range.
+     *
+     * @param number The number to convert
+     * @param field The target field descriptor (used for error reporting)
+     * @return The exact int value
+     * @throws IllegalArgumentException if the number is non-integral or outside int32 range
+     */
+    private static int numberToInt(double number, FieldDescriptor field) {
+        long asLong = (long) number;
+        if ((double) asLong != number) {
+            throw new IllegalArgumentException(
+                    "Value " + number + " cannot be represented exactly as int32 for field "
+                            + field.getFullName());
+        }
+        int result = (int) asLong;
+        if (result != asLong) {
+            throw new IllegalArgumentException(
+                    "Value " + number + " is out of int32 range for field " + field.getFullName());
         }
         return result;
     }

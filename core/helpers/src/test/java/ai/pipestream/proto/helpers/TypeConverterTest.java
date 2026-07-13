@@ -160,6 +160,109 @@ public class TypeConverterTest {
     }
 
     @Test
+    void testStructToMessageAcceptsStringEncodedInt() throws DescriptorValidationException {
+        FileDescriptor fd = createIntFieldDescriptor();
+        Descriptor intDescriptor = fd.findMessageTypeByName("IntMessage");
+        Struct struct = Struct.newBuilder()
+                .putFields("count", Value.newBuilder().setStringValue("8080").build())
+                .build();
+
+        DynamicMessage message = converter.structToMessage(struct, intDescriptor);
+        assertEquals(8080, message.getField(intDescriptor.findFieldByName("count")));
+    }
+
+    @Test
+    void testStructToMessageRejectsNonNumericStringForIntField() throws DescriptorValidationException {
+        FileDescriptor fd = createIntFieldDescriptor();
+        Descriptor intDescriptor = fd.findMessageTypeByName("IntMessage");
+        Struct struct = Struct.newBuilder()
+                .putFields("count", Value.newBuilder().setStringValue("not-a-number").build())
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.structToMessage(struct, intDescriptor));
+        assertTrue(ex.getMessage().contains("count"));
+        assertTrue(ex.getMessage().contains("not-a-number"));
+    }
+
+    @Test
+    void testStructToMessageRejectsNonIntegralNumberForIntField() throws DescriptorValidationException {
+        FileDescriptor fd = createIntFieldDescriptor();
+        Descriptor intDescriptor = fd.findMessageTypeByName("IntMessage");
+        Struct struct = Struct.newBuilder()
+                .putFields("count", Value.newBuilder().setNumberValue(1.7).build())
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.structToMessage(struct, intDescriptor));
+        assertTrue(ex.getMessage().contains("count"));
+    }
+
+    @Test
+    void testStructToMessageRejectsNaNForIntField() throws DescriptorValidationException {
+        FileDescriptor fd = createIntFieldDescriptor();
+        Descriptor intDescriptor = fd.findMessageTypeByName("IntMessage");
+        Struct struct = Struct.newBuilder()
+                .putFields("count", Value.newBuilder().setNumberValue(Double.NaN).build())
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.structToMessage(struct, intDescriptor));
+        assertTrue(ex.getMessage().contains("count"));
+    }
+
+    @Test
+    void testStructToMessageRejectsNumberForStringField() {
+        Struct struct = Struct.newBuilder()
+                .putFields("name", Value.newBuilder().setNumberValue(8080).build())
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.structToMessage(struct, testMessageDescriptor));
+        assertTrue(ex.getMessage().contains("name"));
+    }
+
+    @Test
+    void testStructToMessageRejectsStringForBoolField() {
+        Struct struct = Struct.newBuilder()
+                .putFields("active", Value.newBuilder().setStringValue("true").build())
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.structToMessage(struct, testMessageDescriptor));
+        assertTrue(ex.getMessage().contains("active"));
+    }
+
+    @Test
+    void testStructToMessageResolvesKnownEnumName() throws DescriptorValidationException {
+        FileDescriptor fd = createEnumFieldDescriptor();
+        Descriptor enumDescriptor = fd.findMessageTypeByName("EnumMessage");
+        Struct struct = Struct.newBuilder()
+                .putFields("color", Value.newBuilder().setStringValue("GREEN").build())
+                .build();
+
+        DynamicMessage message = converter.structToMessage(struct, enumDescriptor);
+        Descriptors.EnumValueDescriptor value =
+                (Descriptors.EnumValueDescriptor) message.getField(enumDescriptor.findFieldByName("color"));
+        assertEquals("GREEN", value.getName());
+    }
+
+    @Test
+    void testStructToMessageRejectsUnknownEnumName() throws DescriptorValidationException {
+        FileDescriptor fd = createEnumFieldDescriptor();
+        Descriptor enumDescriptor = fd.findMessageTypeByName("EnumMessage");
+        Struct struct = Struct.newBuilder()
+                .putFields("color", Value.newBuilder().setStringValue("MAGENTA").build())
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.structToMessage(struct, enumDescriptor));
+        assertTrue(ex.getMessage().contains("color"));
+        assertTrue(ex.getMessage().contains("MAGENTA"));
+        assertTrue(ex.getMessage().contains("ai.pipestream.test.Color"));
+    }
+
+    @Test
     void testStructToMessageRejectsNonIntegralNumberForLongField() {
         Struct struct = Struct.newBuilder()
                 .putFields("age", Value.newBuilder().setNumberValue(1.5).build())
@@ -369,6 +472,33 @@ public class TypeConverterTest {
                 .setName("test_int.proto")
                 .setPackage("ai.pipestream.test")
                 .addMessageType(intMessageProto)
+                .build();
+
+        return FileDescriptor.buildFrom(fileProto, new FileDescriptor[]{});
+    }
+
+    private static FileDescriptor createEnumFieldDescriptor() throws DescriptorValidationException {
+        DescriptorProtos.EnumDescriptorProto enumProto = DescriptorProtos.EnumDescriptorProto.newBuilder()
+                .setName("Color")
+                .addValue(DescriptorProtos.EnumValueDescriptorProto.newBuilder()
+                        .setName("RED").setNumber(0))
+                .addValue(DescriptorProtos.EnumValueDescriptorProto.newBuilder()
+                        .setName("GREEN").setNumber(1))
+                .build();
+
+        DescriptorProto enumMessageProto = DescriptorProto.newBuilder()
+                .setName("EnumMessage")
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("color").setNumber(1)
+                        .setType(FieldDescriptorProto.Type.TYPE_ENUM)
+                        .setTypeName(".ai.pipestream.test.Color"))
+                .build();
+
+        DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName("test_enum.proto")
+                .setPackage("ai.pipestream.test")
+                .addEnumType(enumProto)
+                .addMessageType(enumMessageProto)
                 .build();
 
         return FileDescriptor.buildFrom(fileProto, new FileDescriptor[]{});
