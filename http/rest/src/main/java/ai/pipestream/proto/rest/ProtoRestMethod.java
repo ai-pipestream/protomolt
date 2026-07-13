@@ -4,6 +4,9 @@ import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.Message;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -22,7 +25,8 @@ import java.util.function.Function;
  * @param path optional path override (takes precedence over {@link ProtoRestExposed#path()})
  * @param summary optional OpenAPI summary
  * @param description optional OpenAPI description
- * @param httpMethods HTTP verbs; default {@code POST}
+ * @param httpMethods declared HTTP verbs (uppercase); empty = unset, which the gateway treats
+ *        as allowing all standard verbs (see {@link #allowedHttpVerbs()})
  */
 public record ProtoRestMethod(
         String serviceName,
@@ -38,6 +42,9 @@ public record ProtoRestMethod(
         Optional<String> description,
         String[] httpMethods) {
 
+    /** Verbs allowed when {@link #httpMethods()} is unset (backward-compatible default). */
+    public static final List<String> DEFAULT_HTTP_VERBS = List.of("GET", "POST", "PUT", "PATCH", "DELETE");
+
     public ProtoRestMethod {
         Objects.requireNonNull(serviceName, "serviceName");
         Objects.requireNonNull(methodName, "methodName");
@@ -48,13 +55,65 @@ public record ProtoRestMethod(
         path = path == null ? Optional.empty() : path;
         summary = summary == null ? Optional.empty() : summary;
         description = description == null ? Optional.empty() : description;
-        if (httpMethods == null || httpMethods.length == 0) {
-            httpMethods = new String[]{"POST"};
-        }
+        // Defensive copy, normalized to uppercase; empty means "unset".
+        httpMethods = httpMethods == null
+                ? new String[0]
+                : Arrays.stream(httpMethods)
+                        .filter(Objects::nonNull)
+                        .map(m -> m.toUpperCase(Locale.ROOT))
+                        .toArray(String[]::new);
+    }
+
+    /** @return a defensive copy of the declared verbs (empty when unset) */
+    @Override
+    public String[] httpMethods() {
+        return httpMethods.clone();
+    }
+
+    /**
+     * @return the verbs this method accepts: the declared {@link #httpMethods()}, or
+     *         {@link #DEFAULT_HTTP_VERBS} when none were declared
+     */
+    public List<String> allowedHttpVerbs() {
+        return httpMethods.length == 0 ? DEFAULT_HTTP_VERBS : List.of(httpMethods);
     }
 
     public String routeKey() {
         return serviceName + "/" + methodName;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof ProtoRestMethod that)) {
+            return false;
+        }
+        return serviceName.equals(that.serviceName)
+                && methodName.equals(that.methodName)
+                && Objects.equals(serviceDescriptor, that.serviceDescriptor)
+                && Objects.equals(methodDescriptor, that.methodDescriptor)
+                && requestType.equals(that.requestType)
+                && invoker.equals(that.invoker)
+                && apiToken.equals(that.apiToken)
+                && exposed.equals(that.exposed)
+                && path.equals(that.path)
+                && summary.equals(that.summary)
+                && description.equals(that.description)
+                && Arrays.equals(httpMethods, that.httpMethods);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hash(serviceName, methodName, serviceDescriptor, methodDescriptor,
+                requestType, invoker, apiToken, exposed, path, summary, description);
+        return 31 * result + Arrays.hashCode(httpMethods);
+    }
+
+    @Override
+    public String toString() {
+        return "ProtoRestMethod[" + routeKey() + ", httpMethods=" + Arrays.toString(httpMethods) + "]";
     }
 
     public static Builder builder(String serviceName, String methodName, Function<Message, Message> invoker) {
@@ -73,7 +132,7 @@ public record ProtoRestMethod(
         private String path;
         private String summary;
         private String description;
-        private String[] httpMethods = {"POST"};
+        private String[] httpMethods = {};
 
         private Builder(String serviceName, String methodName, Function<Message, Message> invoker) {
             this.serviceName = serviceName;
