@@ -67,4 +67,16 @@ message Account {
       expression: "this.size() < 100"
     }
   }];
+  int64 exact_version = 14 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { const: 5 }
+  }];
+  int64 level = 15 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { in: 1, in: 2, in: 3 }
+  }];
+  int64 shard = 16 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { not_in: 4 }
+  }];
+  int64 offset_ms = 17 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { gte: -500, lte: 500 }
+  }];
 }

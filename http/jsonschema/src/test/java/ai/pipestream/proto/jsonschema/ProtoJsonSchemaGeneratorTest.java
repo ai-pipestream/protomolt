@@ -1,12 +1,19 @@
 package ai.pipestream.proto.jsonschema;
 
 import ai.pipestream.proto.jsonschema.testdata.Account;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Struct;
 import com.google.protobuf.util.JsonFormat;
+import com.networknt.schema.JsonSchema;
+import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.SpecVersion;
+import com.networknt.schema.ValidationMessage;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -67,12 +74,105 @@ class ProtoJsonSchemaGeneratorTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void uint64AcceptsIntegerOrStringWithUnsignedBounds() {
         Map<String, Object> balance = property("balance");
         assertThat((List<Object>) balance.get("type")).containsExactly("integer", "string");
         assertThat(balance.get("pattern")).isEqualTo("^[0-9]+$");
         assertThat(balance.get("minimum")).isEqualTo(0L);
-        assertThat(balance.get("maximum")).isEqualTo(1000000L);
+        // range bounds cover both accepted spellings: numeric keywords and a string pattern
+        List<Map<String, Object>> anyOf = (List<Map<String, Object>>) balance.get("anyOf");
+        assertThat(anyOf).hasSize(2);
+        assertThat(anyOf.get(0))
+                .containsEntry("type", "integer")
+                .containsEntry("maximum", 1000000L);
+        assertThat(anyOf.get(1)).containsEntry("type", "string");
+        Pattern stringForm = Pattern.compile((String) anyOf.get(1).get("pattern"));
+        assertThat(stringForm.matcher("1000000").matches()).isTrue();
+        assertThat(stringForm.matcher("0").matches()).isTrue();
+        assertThat(stringForm.matcher("1000001").matches()).isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void int64ConstAndEnumConstraintsAcceptBothSpellings() {
+        // JsonFormat prints int64 as a JSON string; const/in/not_in must match both forms.
+        assertThat((List<Object>) property("exactVersion").get("enum"))
+                .containsExactly(5L, "5");
+        assertThat((List<Object>) property("level").get("enum"))
+                .containsExactly(1L, "1", 2L, "2", 3L, "3");
+        Map<String, Object> not = (Map<String, Object>) property("shard").get("not");
+        assertThat((List<Object>) not.get("enum")).containsExactly(4L, "4");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void int64RangeConstraintsApplyToTheStringSpelling() {
+        Map<String, Object> offset = property("offsetMs");
+        List<Map<String, Object>> anyOf = (List<Map<String, Object>>) offset.get("anyOf");
+        assertThat(anyOf.get(0))
+                .containsEntry("type", "integer")
+                .containsEntry("minimum", -500L)
+                .containsEntry("maximum", 500L);
+        Pattern stringForm = Pattern.compile((String) anyOf.get(1).get("pattern"));
+        assertThat(stringForm.matcher("500").matches()).isTrue();
+        assertThat(stringForm.matcher("-500").matches()).isTrue();
+        assertThat(stringForm.matcher("0").matches()).isTrue();
+        assertThat(stringForm.matcher("42").matches()).isTrue();
+        assertThat(stringForm.matcher("501").matches()).isFalse();
+        assertThat(stringForm.matcher("-501").matches()).isFalse();
+        assertThat(stringForm.matcher("5000").matches()).isFalse();
+    }
+
+    @Test
+    void jsonFormatPrintedDocumentValidates() throws Exception {
+        Account account = Account.newBuilder()
+                .setUsername("user_1")
+                .setAge(20)
+                .setBalance(999_999L)
+                .addRoles("admin")
+                .setExactVersion(5L)
+                .setLevel(2L)
+                .setOffsetMs(-250L)
+                .build();
+        assertThat(validate(account)).isEmpty();
+    }
+
+    @Test
+    void canonicalStringSpellingOutOfConstraintFailsValidation() throws Exception {
+        Account overBalance = Account.newBuilder()
+                .setUsername("user_1")
+                .setBalance(1_000_001L)
+                .build();
+        assertThat(validate(overBalance)).isNotEmpty();
+
+        Account wrongConst = Account.newBuilder()
+                .setUsername("user_1")
+                .setExactVersion(6L)
+                .build();
+        assertThat(validate(wrongConst)).isNotEmpty();
+
+        Account outOfRange = Account.newBuilder()
+                .setUsername("user_1")
+                .setOffsetMs(501L)
+                .build();
+        assertThat(validate(outOfRange)).isNotEmpty();
+
+        Account forbidden = Account.newBuilder()
+                .setUsername("user_1")
+                .setShard(4L)
+                .build();
+        assertThat(validate(forbidden)).isNotEmpty();
+    }
+
+    /** Validates the canonical JsonFormat printing of {@code account} against the schema. */
+    private static Set<ValidationMessage> validate(Account account) throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        String schemaJson = ProtoJsonSchemaGenerator.create().generateJson(Account.getDescriptor());
+        JsonSchema jsonSchema = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012)
+                .getSchema(json.readTree(schemaJson));
+        String document = JsonFormat.printer().print(account);
+        return jsonSchema.validate(json.readTree(document));
     }
 
     @Test

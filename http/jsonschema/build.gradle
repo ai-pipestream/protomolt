@@ -9,6 +9,8 @@ dependencies {
     implementation libs.jackson.databind
 
     testImplementation libs.protobuf.java.util
+    // Validates JsonFormat-printed documents against the generated schemas in tests.
+    testImplementation 'com.networknt:json-schema-validator:1.5.9'
 }
 
 protobuf {

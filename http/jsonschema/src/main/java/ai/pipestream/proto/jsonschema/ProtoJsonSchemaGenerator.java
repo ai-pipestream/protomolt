@@ -308,7 +308,11 @@ public final class ProtoJsonSchemaGenerator {
             return switch (field.getJavaType()) {
                 case STRING -> c.string().map(Generation::stringOverlay)
                         .orElseGet(LinkedHashMap::new);
-                case INT, LONG -> c.integral().map(Generation::integralOverlay)
+                // 64-bit integers are printed as JSON strings by JsonFormat, so their
+                // constraints must cover both accepted spellings; 32-bit stay numeric.
+                case INT -> c.integral().map(n -> integralOverlay(n, false))
+                        .orElseGet(LinkedHashMap::new);
+                case LONG -> c.integral().map(n -> integralOverlay(n, true))
                         .orElseGet(LinkedHashMap::new);
                 case FLOAT, DOUBLE -> c.floating().map(Generation::floatingOverlay)
                         .orElseGet(LinkedHashMap::new);
@@ -398,21 +402,92 @@ public final class ProtoJsonSchemaGenerator {
             };
         }
 
-        private static Map<String, Object> integralOverlay(IntegralConstraints n) {
+        /**
+         * Constraint keywords for an integral field. For 64-bit fields ({@code bothSpellings}),
+         * JsonFormat prints the value as a JSON string and accepts both the numeric and the
+         * string spelling, so every constraint must match both forms: const/in/not_in list the
+         * two spellings side by side (the way {@code nameAndNumber} handles enums), and range
+         * bounds become an {@code anyOf} of numeric keywords and a decimal-range pattern.
+         */
+        private static Map<String, Object> integralOverlay(
+                IntegralConstraints n, boolean bothSpellings) {
+            if (!bothSpellings) {
+                Map<String, Object> o = new LinkedHashMap<>();
+                n.constant().ifPresent(v -> o.put("const", integral(n, v)));
+                n.gte().ifPresent(v -> o.put("minimum", integral(n, v)));
+                n.gt().ifPresent(v -> o.put("exclusiveMinimum", integral(n, v)));
+                n.lte().ifPresent(v -> o.put("maximum", integral(n, v)));
+                n.lt().ifPresent(v -> o.put("exclusiveMaximum", integral(n, v)));
+                if (!n.in().isEmpty()) {
+                    o.put("enum", n.in().stream().map(v -> integral(n, v)).toList());
+                }
+                if (!n.notIn().isEmpty()) {
+                    o.put("not", schemaOf(
+                            "enum", n.notIn().stream().map(v -> integral(n, v)).toList()));
+                }
+                return o;
+            }
+
             Map<String, Object> o = new LinkedHashMap<>();
-            n.constant().ifPresent(v -> o.put("const", integral(n, v)));
-            n.gte().ifPresent(v -> o.put("minimum", integral(n, v)));
-            n.gt().ifPresent(v -> o.put("exclusiveMinimum", integral(n, v)));
-            n.lte().ifPresent(v -> o.put("maximum", integral(n, v)));
-            n.lt().ifPresent(v -> o.put("exclusiveMaximum", integral(n, v)));
+            n.constant().ifPresent(v -> o.put("enum", spellings(n, v)));
             if (!n.in().isEmpty()) {
-                o.put("enum", n.in().stream().map(v -> integral(n, v)).toList());
+                List<Object> allowed = new ArrayList<>();
+                n.in().forEach(v -> allowed.addAll(spellings(n, v)));
+                merge(o, schemaOf("enum", allowed));
             }
             if (!n.notIn().isEmpty()) {
-                o.put("not", schemaOf(
-                        "enum", n.notIn().stream().map(v -> integral(n, v)).toList()));
+                List<Object> forbidden = new ArrayList<>();
+                n.notIn().forEach(v -> forbidden.addAll(spellings(n, v)));
+                o.put("not", schemaOf("enum", forbidden));
+            }
+
+            BigInteger lo = null;
+            BigInteger hi = null;
+            if (n.gte().isPresent()) {
+                lo = big(n, n.gte().getAsLong());
+            }
+            if (n.gt().isPresent()) {
+                BigInteger candidate = big(n, n.gt().getAsLong()).add(BigInteger.ONE);
+                lo = lo == null ? candidate : lo.max(candidate);
+            }
+            if (n.lte().isPresent()) {
+                hi = big(n, n.lte().getAsLong());
+            }
+            if (n.lt().isPresent()) {
+                BigInteger candidate = big(n, n.lt().getAsLong()).subtract(BigInteger.ONE);
+                hi = hi == null ? candidate : hi.min(candidate);
+            }
+            if (lo != null || hi != null) {
+                if (n.unsigned() && lo == null) {
+                    lo = BigInteger.ZERO; // unsigned fields are implicitly bounded below
+                }
+                Map<String, Object> numeric = new LinkedHashMap<>();
+                numeric.put("type", "integer");
+                n.gte().ifPresent(v -> numeric.put("minimum", integral(n, v)));
+                n.gt().ifPresent(v -> numeric.put("exclusiveMinimum", integral(n, v)));
+                n.lte().ifPresent(v -> numeric.put("maximum", integral(n, v)));
+                n.lt().ifPresent(v -> numeric.put("exclusiveMaximum", integral(n, v)));
+                Map<String, Object> stringForm = schemaOf(
+                        "type", "string",
+                        "pattern", DecimalRangePattern.range(lo, hi));
+                merge(o, schemaOf("anyOf", List.of(numeric, stringForm)));
             }
             return o;
+        }
+
+        /** Both accepted JSON spellings of a 64-bit integer: number and decimal string. */
+        private static List<Object> spellings(IntegralConstraints rules, long value) {
+            return List.of(integral(rules, value), decimal(rules, value));
+        }
+
+        private static String decimal(IntegralConstraints rules, long value) {
+            return rules.unsigned() ? Long.toUnsignedString(value) : Long.toString(value);
+        }
+
+        private static BigInteger big(IntegralConstraints rules, long value) {
+            return rules.unsigned()
+                    ? new BigInteger(Long.toUnsignedString(value))
+                    : BigInteger.valueOf(value);
         }
 
         /** Renders an unsigned 64-bit value that overflows long as a BigInteger. */
