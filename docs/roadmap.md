@@ -117,18 +117,16 @@ how Confluent judges protobuf schemas; JSON and source rule layers are
 opt-in. This is the write-gate for the registry server below. See
 [Compatibility checking](compatibility.md).
 
-**4. The registry server.** A new `registry/` module group where a Git
-repository is the storage — commits are versions, branches are compatibility
-scopes — fronted by two APIs: the Confluent subjects protocol (instant
-cross-language client ecosystem; Kafka serdes in every major language work
-unchanged) and a native API for what that protocol cannot express (compiled
-descriptor sets, per-file metadata, index shapes). Built on the existing
-`servers/*` hosts and `http/*` plumbing. The schema publishers double as
-federation: the registry can mirror subjects out to Apicurio or Confluent, so
-adopting it never means abandoning an existing registry. Serving compiled
-`FileDescriptorSet`s natively is the gRPC differentiator — build-time
-consumers use the gatherer, runtime consumers use the loaders, and both speak
-descriptor sets end to end.
+**4. The registry server — first cut done.** The `registry/` modules store
+schemas in a Git repository (one commit per registration, per-subject
+compatibility configuration, cross-process locking) behind the Confluent
+subjects protocol, with writes gated by `CompatibilityWriteGate` and a
+native endpoint serving compiled `FileDescriptorSet`s — the gRPC
+differentiator. The acceptance test is the dogfood: our own publisher and
+loader round-trip through it. See [The registry](registry.md). Still open
+in this milestone: authentication, federation (mirroring subjects out to
+Apicurio/Confluent through the publishers), branch-per-scope workflows, and
+Maven-repository artifact publication.
 
 **4a. An indexing shape language.** Per-field hints cover the common case,
 but two problems are structurally beyond field annotations: one-to-many

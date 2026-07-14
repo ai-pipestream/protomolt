@@ -1,0 +1,9 @@
+description = 'Schema registry core: subject/version store SPI and the git-backed implementation'
+
+dependencies {
+    api project(':protomolt-proto-sources')
+    api project(':protomolt-compat')
+
+    implementation libs.jgit
+    implementation libs.jackson.databind
+}

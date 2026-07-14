@@ -1,0 +1,9 @@
+description = 'Schema registry server: Confluent subjects protocol and descriptor-set serving over the store'
+
+dependencies {
+    api project(':protomolt-registry')
+
+    implementation libs.jackson.databind
+
+    testImplementation project(':protomolt-schema-confluent')
+}

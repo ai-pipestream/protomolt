@@ -1,0 +1,57 @@
+package ai.pipestream.proto.registry.server;
+
+/**
+ * Configuration for {@link SchemaRegistryServer}.
+ *
+ * @param host             bind host
+ * @param port             bind port; {@code 0} picks an ephemeral port
+ *                         (see {@link SchemaRegistryServer#actualPort()})
+ * @param healthPath       liveness endpoint path
+ * @param nativePathPrefix prefix of the non-Confluent extras
+ *                         ({@code {prefix}/subjects/{subject}/descriptor-set})
+ * @param maxRequestBytes  maximum accepted request body size; larger bodies get 413
+ */
+public record SchemaRegistryServerConfig(
+        String host,
+        int port,
+        String healthPath,
+        String nativePathPrefix,
+        int maxRequestBytes) {
+
+    /** Default request body cap (16 MiB). */
+    public static final int DEFAULT_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
+
+    public SchemaRegistryServerConfig {
+        host = host == null || host.isBlank() ? "0.0.0.0" : host;
+        if (port < 0 || port > 65535) {
+            throw new IllegalArgumentException("port out of range: " + port);
+        }
+        healthPath = normalize(healthPath == null ? "/health" : healthPath);
+        nativePathPrefix = normalize(nativePathPrefix == null ? "/protomolt" : nativePathPrefix);
+        if (maxRequestBytes <= 0) {
+            throw new IllegalArgumentException("maxRequestBytes must be positive: " + maxRequestBytes);
+        }
+    }
+
+    /** {@code 0.0.0.0:8081} (the conventional Schema Registry port), default paths. */
+    public static SchemaRegistryServerConfig defaults() {
+        return new SchemaRegistryServerConfig("0.0.0.0", 8081, "/health", "/protomolt",
+                DEFAULT_MAX_REQUEST_BYTES);
+    }
+
+    public SchemaRegistryServerConfig withHost(String host) {
+        return new SchemaRegistryServerConfig(host, port, healthPath, nativePathPrefix, maxRequestBytes);
+    }
+
+    public SchemaRegistryServerConfig withPort(int port) {
+        return new SchemaRegistryServerConfig(host, port, healthPath, nativePathPrefix, maxRequestBytes);
+    }
+
+    private static String normalize(String path) {
+        String normalized = path.startsWith("/") ? path : "/" + path;
+        while (normalized.length() > 1 && normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
+    }
+}

@@ -82,7 +82,7 @@ public final class SchemaDiff {
             }
             MessageInfo newMsg = newIndex.messages.get(fqn);
             if (newMsg == null || newMsg.mapEntry()) {
-                changes.add(new SchemaChange("MESSAGE_REMOVED", fqn,
+                changes.add(new SchemaChange(ChangeRules.MESSAGE_REMOVED, fqn,
                         "message " + fqn, "",
                         "Message " + fqn + " was removed.", ALL));
                 continue;
@@ -91,7 +91,7 @@ public final class SchemaDiff {
         }
         for (Map.Entry<String, MessageInfo> entry : newIndex.messages.entrySet()) {
             if (!entry.getValue().mapEntry() && !oldIndex.messages.containsKey(entry.getKey())) {
-                changes.add(new SchemaChange("MESSAGE_ADDED", entry.getKey(),
+                changes.add(new SchemaChange(ChangeRules.MESSAGE_ADDED, entry.getKey(),
                         "", "message " + entry.getKey(),
                         "Message " + entry.getKey() + " was added.", INFO));
             }
@@ -124,7 +124,7 @@ public final class SchemaDiff {
                                          DescriptorProto newMsg, Index oldIndex,
                                          List<SchemaChange> changes) {
         String path = fqn + "." + oldField.getName();
-        changes.add(new SchemaChange("FIELD_REMOVED", path,
+        changes.add(new SchemaChange(ChangeRules.FIELD_REMOVED, path,
                 snippet(oldField, oldIndex), "",
                 "Field " + path + " (number " + oldField.getNumber() + ") was removed; old "
                         + "binary payloads still parse as unknown fields, but strict proto3 JSON "
@@ -133,7 +133,7 @@ public final class SchemaDiff {
         boolean numberReserved = isReservedNumber(newMsg, oldField.getNumber());
         boolean nameReserved = newMsg.getReservedNameList().contains(oldField.getName());
         if (!numberReserved && !nameReserved) {
-            changes.add(new SchemaChange("FIELD_REMOVED_NOT_RESERVED", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_REMOVED_NOT_RESERVED, path,
                     snippet(oldField, oldIndex), "",
                     "Removed field " + path + " left number " + oldField.getNumber()
                             + " and name \"" + oldField.getName() + "\" unreserved; a future "
@@ -147,7 +147,7 @@ public final class SchemaDiff {
                                        Index newIndex, List<SchemaChange> changes) {
         String path = fqn + "." + newField.getName();
         if (isReservedNumber(oldMsg, newField.getNumber())) {
-            changes.add(new SchemaChange("RESERVED_NUMBER_REUSED", path,
+            changes.add(new SchemaChange(ChangeRules.RESERVED_NUMBER_REUSED, path,
                     reservedRangeSnippet(oldMsg, newField.getNumber()), snippet(newField, newIndex),
                     "Field " + path + " reuses number " + newField.getNumber()
                             + ", which the old schema reserved.",
@@ -155,20 +155,20 @@ public final class SchemaDiff {
                             Impact.JSON_BACKWARD, Impact.JSON_FORWARD)));
         }
         if (oldMsg.getReservedNameList().contains(newField.getName())) {
-            changes.add(new SchemaChange("RESERVED_NAME_REUSED", path,
+            changes.add(new SchemaChange(ChangeRules.RESERVED_NAME_REUSED, path,
                     "reserved \"" + newField.getName() + "\"", snippet(newField, newIndex),
                     "Field " + path + " reuses name \"" + newField.getName()
                             + "\", which the old schema reserved.",
                     JSON_BOTH));
         }
         if (!newMsgInfo.proto3() && newField.getLabel() == Label.LABEL_REQUIRED) {
-            changes.add(new SchemaChange("FIELD_REQUIRED_ADDED", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_REQUIRED_ADDED, path,
                     "", snippet(newField, newIndex),
                     "Required field " + path + " was added; old payloads lack it, so the new "
                             + "schema cannot read them.",
                     Set.of(Impact.WIRE_BACKWARD, Impact.SOURCE)));
         } else {
-            changes.add(new SchemaChange("FIELD_ADDED", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_ADDED, path,
                     "", snippet(newField, newIndex),
                     "Field " + path + " (number " + newField.getNumber() + ") was added.",
                     INFO));
@@ -181,7 +181,7 @@ public final class SchemaDiff {
                                   List<SchemaChange> changes) {
         String path = fqn + "." + newField.getName();
         if (!oldField.getName().equals(newField.getName())) {
-            changes.add(new SchemaChange("FIELD_NAME_CHANGED", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_NAME_CHANGED, path,
                     oldField.getName() + " = " + oldField.getNumber(),
                     newField.getName() + " = " + newField.getNumber(),
                     "Field number " + newField.getNumber() + " in " + fqn + " was renamed from "
@@ -189,7 +189,7 @@ public final class SchemaDiff {
                             + "; the wire format is unaffected but the JSON payload key changes.",
                     JSON_BOTH_SOURCE));
         } else if (!effectiveJsonName(oldField).equals(effectiveJsonName(newField))) {
-            changes.add(new SchemaChange("FIELD_JSON_NAME_CHANGED", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_JSON_NAME_CHANGED, path,
                     "json_name = \"" + effectiveJsonName(oldField) + "\"",
                     "json_name = \"" + effectiveJsonName(newField) + "\"",
                     "Field " + path + " changed its JSON name from \""
@@ -217,7 +217,7 @@ public final class SchemaDiff {
             return;
         }
         if (oldEntry != null || newEntry != null) {
-            changes.add(new SchemaChange("FIELD_MAP_ENTRY_CHANGED", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_MAP_ENTRY_CHANGED, path,
                     snippet(oldField, oldIndex), snippet(newField, newIndex),
                     "Field " + path + " changed between a map and a repeated message; presence "
                             + "of last-key-wins map semantics and the JSON shape (object vs "
@@ -233,7 +233,7 @@ public final class SchemaDiff {
             String oldFqn = typeFqn(oldField);
             String newFqn = typeFqn(newField);
             if (!oldFqn.equals(newFqn)) {
-                changes.add(new SchemaChange("FIELD_MESSAGE_TYPE_CHANGED", path,
+                changes.add(new SchemaChange(ChangeRules.FIELD_MESSAGE_TYPE_CHANGED, path,
                         snippet(oldField, oldIndex), snippet(newField, newIndex),
                         "Field " + path + " changed message type from " + oldFqn + " to "
                                 + newFqn + ".",
@@ -245,7 +245,7 @@ public final class SchemaDiff {
             String oldFqn = typeFqn(oldField);
             String newFqn = typeFqn(newField);
             if (!oldFqn.equals(newFqn)) {
-                changes.add(new SchemaChange("FIELD_ENUM_TYPE_CHANGED", path,
+                changes.add(new SchemaChange(ChangeRules.FIELD_ENUM_TYPE_CHANGED, path,
                         snippet(oldField, oldIndex), snippet(newField, newIndex),
                         "Field " + path + " changed enum type from " + oldFqn + " to "
                                 + newFqn + ".",
@@ -259,7 +259,7 @@ public final class SchemaDiff {
         String before = snippet(oldField, oldIndex);
         String after = snippet(newField, newIndex);
         if (oldType == Type.TYPE_BYTES && newType == Type.TYPE_STRING) {
-            changes.add(new SchemaChange("FIELD_TYPE_CHANGED", path, before, after,
+            changes.add(new SchemaChange(ChangeRules.FIELD_TYPE_CHANGED, path, before, after,
                     "Field " + path + " changed from bytes to string; old payloads may contain "
                             + "non-UTF-8 bytes the new schema cannot read.",
                     Set.of(Impact.WIRE_BACKWARD, Impact.JSON_BACKWARD, Impact.JSON_FORWARD,
@@ -268,14 +268,14 @@ public final class SchemaDiff {
         }
         if (wireGroup(oldType) == wireGroup(newType)
                 || (oldType == Type.TYPE_STRING && newType == Type.TYPE_BYTES)) {
-            changes.add(new SchemaChange("FIELD_TYPE_CHANGED_COMPATIBLE", path, before, after,
+            changes.add(new SchemaChange(ChangeRules.FIELD_TYPE_CHANGED_COMPATIBLE, path, before, after,
                     "Field " + path + " changed from " + typeName(oldField) + " to "
                             + typeName(newField) + "; the wire encoding is interchangeable but "
                             + "the JSON representation changes.",
                     JSON_BOTH_SOURCE));
             return;
         }
-        changes.add(new SchemaChange("FIELD_TYPE_CHANGED", path, before, after,
+        changes.add(new SchemaChange(ChangeRules.FIELD_TYPE_CHANGED, path, before, after,
                 "Field " + path + " changed from " + typeName(oldField) + " to "
                         + typeName(newField) + ", which are not wire-compatible.",
                 ALL));
@@ -313,21 +313,21 @@ public final class SchemaDiff {
         String before = snippet(oldField, oldIndex);
         String after = snippet(newField, newIndex);
         if (oldRepeated != newRepeated) {
-            changes.add(new SchemaChange("FIELD_LABEL_CHANGED", path, before, after,
+            changes.add(new SchemaChange(ChangeRules.FIELD_LABEL_CHANGED, path, before, after,
                     "Field " + path + " changed between repeated and singular.", ALL));
             return;
         }
         boolean oldRequired = oldField.getLabel() == Label.LABEL_REQUIRED;
         boolean newRequired = newField.getLabel() == Label.LABEL_REQUIRED;
         if (oldRequired && !newRequired) {
-            changes.add(new SchemaChange("FIELD_LABEL_CHANGED", path, before, after,
+            changes.add(new SchemaChange(ChangeRules.FIELD_LABEL_CHANGED, path, before, after,
                     "Field " + path + " changed from required to optional; new writers may omit "
                             + "it, which old readers reject.",
                     Set.of(Impact.WIRE_FORWARD)));
             return;
         }
         if (!oldRequired && newRequired) {
-            changes.add(new SchemaChange("FIELD_LABEL_CHANGED", path, before, after,
+            changes.add(new SchemaChange(ChangeRules.FIELD_LABEL_CHANGED, path, before, after,
                     "Field " + path + " changed from optional to required; old payloads may omit "
                             + "it, which the new schema rejects.",
                     Set.of(Impact.WIRE_BACKWARD)));
@@ -335,7 +335,7 @@ public final class SchemaDiff {
         }
         if (oldMsg.proto3() && newMsg.proto3()
                 && oldField.getProto3Optional() != newField.getProto3Optional()) {
-            changes.add(new SchemaChange("FIELD_PRESENCE_CHANGED", path, before, after,
+            changes.add(new SchemaChange(ChangeRules.FIELD_PRESENCE_CHANGED, path, before, after,
                     "Field " + path + " changed between implicit and explicit presence; the wire "
                             + "and JSON formats are unaffected but generated accessors change.",
                     Set.of(Impact.SOURCE)));
@@ -350,19 +350,19 @@ public final class SchemaDiff {
         String oldOneof = realOneofName(oldField, oldMsg);
         String newOneof = realOneofName(newField, newMsg);
         if (oldOneof == null && newOneof != null) {
-            changes.add(new SchemaChange("FIELD_MOVED_INTO_ONEOF", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_MOVED_INTO_ONEOF, path,
                     oldField.getName(), "oneof " + newOneof + " { " + newField.getName() + " }",
                     "Field " + path + " moved into oneof " + newOneof
                             + "; setting a sibling now clears it.",
                     WIRE_BOTH_SOURCE));
         } else if (oldOneof != null && newOneof == null) {
-            changes.add(new SchemaChange("FIELD_MOVED_OUT_OF_ONEOF", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_MOVED_OUT_OF_ONEOF, path,
                     "oneof " + oldOneof + " { " + oldField.getName() + " }", newField.getName(),
                     "Field " + path + " moved out of oneof " + oldOneof
                             + "; its presence semantics change.",
                     WIRE_BOTH_SOURCE));
         } else if (oldOneof != null && !oldOneof.equals(newOneof)) {
-            changes.add(new SchemaChange("FIELD_MOVED_INTO_ONEOF", path,
+            changes.add(new SchemaChange(ChangeRules.FIELD_MOVED_INTO_ONEOF, path,
                     "oneof " + oldOneof + " { " + oldField.getName() + " }",
                     "oneof " + newOneof + " { " + newField.getName() + " }",
                     "Field " + path + " moved from oneof " + oldOneof + " into oneof " + newOneof
@@ -377,7 +377,7 @@ public final class SchemaDiff {
         Set<String> newOneofs = realOneofNames(newMsg);
         for (String name : oldOneofs) {
             if (!newOneofs.contains(name)) {
-                changes.add(new SchemaChange("ONEOF_REMOVED", fqn + "." + name,
+                changes.add(new SchemaChange(ChangeRules.ONEOF_REMOVED, fqn + "." + name,
                         "oneof " + name, "",
                         "Oneof " + fqn + "." + name + " was removed.",
                         Set.of(Impact.SOURCE)));
@@ -387,7 +387,7 @@ public final class SchemaDiff {
             if (!oldOneofs.contains(name)) {
                 // Members that already existed are flagged FIELD_MOVED_INTO_ONEOF by the field
                 // diff; a brand-new oneof made only of new fields is purely additive.
-                changes.add(new SchemaChange("ONEOF_ADDED", fqn + "." + name,
+                changes.add(new SchemaChange(ChangeRules.ONEOF_ADDED, fqn + "." + name,
                         "", "oneof " + name,
                         "Oneof " + fqn + "." + name + " was added.", INFO));
             }
@@ -431,7 +431,7 @@ public final class SchemaDiff {
                 }
             }
             if (!covered) {
-                changes.add(new SchemaChange("RESERVED_RANGE_REMOVED", fqn,
+                changes.add(new SchemaChange(ChangeRules.RESERVED_RANGE_REMOVED, fqn,
                         reservedRangeText(range), "",
                         "Message " + fqn + " no longer reserves " + reservedRangeText(range)
                                 + "; a future reuse would corrupt old payloads.",
@@ -472,7 +472,7 @@ public final class SchemaDiff {
             String fqn = entry.getKey();
             EnumDescriptorProto newEnum = newIndex.enums.get(fqn);
             if (newEnum == null) {
-                changes.add(new SchemaChange("ENUM_REMOVED", fqn,
+                changes.add(new SchemaChange(ChangeRules.ENUM_REMOVED, fqn,
                         "enum " + fqn, "",
                         "Enum " + fqn + " was removed.", ALL));
             } else {
@@ -481,7 +481,7 @@ public final class SchemaDiff {
         }
         for (String fqn : newIndex.enums.keySet()) {
             if (!oldIndex.enums.containsKey(fqn)) {
-                changes.add(new SchemaChange("ENUM_ADDED", fqn,
+                changes.add(new SchemaChange(ChangeRules.ENUM_ADDED, fqn,
                         "", "enum " + fqn,
                         "Enum " + fqn + " was added.", INFO));
             }
@@ -498,7 +498,7 @@ public final class SchemaDiff {
         for (EnumValueDescriptorProto oldValue : oldByName.values()) {
             EnumValueDescriptorProto newValue = newByName.get(oldValue.getName());
             if (newValue != null && newValue.getNumber() != oldValue.getNumber()) {
-                changes.add(new SchemaChange("ENUM_VALUE_NUMBER_CHANGED",
+                changes.add(new SchemaChange(ChangeRules.ENUM_VALUE_NUMBER_CHANGED,
                         fqn + "." + oldValue.getName(),
                         oldValue.getName() + " = " + oldValue.getNumber(),
                         newValue.getName() + " = " + newValue.getNumber(),
@@ -511,7 +511,7 @@ public final class SchemaDiff {
             EnumValueDescriptorProto newValue = newByNumber.get(oldValue.getNumber());
             if (newValue == null) {
                 if (!newByName.containsKey(oldValue.getName())) { // renumber already reported
-                    changes.add(new SchemaChange("ENUM_VALUE_REMOVED",
+                    changes.add(new SchemaChange(ChangeRules.ENUM_VALUE_REMOVED,
                             fqn + "." + oldValue.getName(),
                             oldValue.getName() + " = " + oldValue.getNumber(), "",
                             "Enum value " + fqn + "." + oldValue.getName() + " was removed; the "
@@ -521,7 +521,7 @@ public final class SchemaDiff {
             } else if (!oldValue.getName().equals(newValue.getName())
                     && !newByName.containsKey(oldValue.getName())
                     && !oldByName.containsKey(newValue.getName())) {
-                changes.add(new SchemaChange("ENUM_VALUE_NAME_CHANGED",
+                changes.add(new SchemaChange(ChangeRules.ENUM_VALUE_NAME_CHANGED,
                         fqn + "." + newValue.getName(),
                         oldValue.getName() + " = " + oldValue.getNumber(),
                         newValue.getName() + " = " + newValue.getNumber(),
@@ -534,7 +534,7 @@ public final class SchemaDiff {
         for (EnumValueDescriptorProto newValue : newByNumber.values()) {
             if (!oldByNumber.containsKey(newValue.getNumber())
                     && !oldByName.containsKey(newValue.getName())) {
-                changes.add(new SchemaChange("ENUM_VALUE_ADDED",
+                changes.add(new SchemaChange(ChangeRules.ENUM_VALUE_ADDED,
                         fqn + "." + newValue.getName(),
                         "", newValue.getName() + " = " + newValue.getNumber(),
                         "Enum value " + fqn + "." + newValue.getName() + " was added.", INFO));
@@ -549,7 +549,7 @@ public final class SchemaDiff {
             String fqn = entry.getKey();
             ServiceDescriptorProto newService = newIndex.services.get(fqn);
             if (newService == null) {
-                changes.add(new SchemaChange("SERVICE_REMOVED", fqn,
+                changes.add(new SchemaChange(ChangeRules.SERVICE_REMOVED, fqn,
                         "service " + fqn, "",
                         "Service " + fqn + " was removed; old clients still call it.",
                         Set.of(Impact.WIRE_FORWARD, Impact.SOURCE)));
@@ -559,7 +559,7 @@ public final class SchemaDiff {
         }
         for (String fqn : newIndex.services.keySet()) {
             if (!oldIndex.services.containsKey(fqn)) {
-                changes.add(new SchemaChange("SERVICE_ADDED", fqn,
+                changes.add(new SchemaChange(ChangeRules.SERVICE_ADDED, fqn,
                         "", "service " + fqn,
                         "Service " + fqn + " was added.", INFO));
             }
@@ -579,14 +579,14 @@ public final class SchemaDiff {
             String path = fqn + "." + oldMethod.getName();
             MethodDescriptorProto newMethod = newMethods.get(oldMethod.getName());
             if (newMethod == null) {
-                changes.add(new SchemaChange("METHOD_REMOVED", path,
+                changes.add(new SchemaChange(ChangeRules.METHOD_REMOVED, path,
                         methodSnippet(oldMethod), "",
                         "Method " + path + " was removed; old clients still call it.",
                         Set.of(Impact.WIRE_FORWARD, Impact.SOURCE)));
                 continue;
             }
             if (!stripDot(oldMethod.getInputType()).equals(stripDot(newMethod.getInputType()))) {
-                changes.add(new SchemaChange("METHOD_REQUEST_TYPE_CHANGED", path,
+                changes.add(new SchemaChange(ChangeRules.METHOD_REQUEST_TYPE_CHANGED, path,
                         methodSnippet(oldMethod), methodSnippet(newMethod),
                         "Method " + path + " changed request type from "
                                 + stripDot(oldMethod.getInputType()) + " to "
@@ -594,7 +594,7 @@ public final class SchemaDiff {
                         WIRE_BOTH_SOURCE));
             }
             if (!stripDot(oldMethod.getOutputType()).equals(stripDot(newMethod.getOutputType()))) {
-                changes.add(new SchemaChange("METHOD_RESPONSE_TYPE_CHANGED", path,
+                changes.add(new SchemaChange(ChangeRules.METHOD_RESPONSE_TYPE_CHANGED, path,
                         methodSnippet(oldMethod), methodSnippet(newMethod),
                         "Method " + path + " changed response type from "
                                 + stripDot(oldMethod.getOutputType()) + " to "
@@ -603,7 +603,7 @@ public final class SchemaDiff {
             }
             if (oldMethod.getClientStreaming() != newMethod.getClientStreaming()
                     || oldMethod.getServerStreaming() != newMethod.getServerStreaming()) {
-                changes.add(new SchemaChange("METHOD_STREAMING_CHANGED", path,
+                changes.add(new SchemaChange(ChangeRules.METHOD_STREAMING_CHANGED, path,
                         methodSnippet(oldMethod), methodSnippet(newMethod),
                         "Method " + path + " changed its streaming shape.",
                         WIRE_BOTH_SOURCE));
@@ -611,7 +611,7 @@ public final class SchemaDiff {
         }
         for (MethodDescriptorProto newMethod : newService.getMethodList()) {
             if (!oldNames.contains(newMethod.getName())) {
-                changes.add(new SchemaChange("METHOD_ADDED", fqn + "." + newMethod.getName(),
+                changes.add(new SchemaChange(ChangeRules.METHOD_ADDED, fqn + "." + newMethod.getName(),
                         "", methodSnippet(newMethod),
                         "Method " + fqn + "." + newMethod.getName() + " was added.", INFO));
             }
