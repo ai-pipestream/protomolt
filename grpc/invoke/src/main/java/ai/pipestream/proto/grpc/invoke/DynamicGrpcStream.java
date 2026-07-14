@@ -31,6 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class DynamicGrpcStream implements AutoCloseable {
 
+    private static final long POLL_SLICE_NANOS = TimeUnit.MILLISECONDS.toNanos(50);
+
     private final LinkedBlockingQueue<DynamicMessage> buffer = new LinkedBlockingQueue<>();
     private final AtomicInteger outstanding = new AtomicInteger();
     private volatile ClientCallStreamObserver<DynamicMessage> call;
@@ -101,7 +103,9 @@ public final class DynamicGrpcStream implements AutoCloseable {
                 break;
             }
             try {
-                next = buffer.poll(remaining, TimeUnit.NANOSECONDS);
+                // Wait in short slices: a terminal status set by onError/onCompleted must
+                // unblock a waiting take() promptly, and nothing interrupts a queue poll.
+                next = buffer.poll(Math.min(remaining, POLL_SLICE_NANOS), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;

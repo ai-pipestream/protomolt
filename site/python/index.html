@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ProtoMolt tutorial: reflect a gRPC server, generate the Python message modules on demand, and call it with plain grpcio. No protoc, no grpcio-tools, no checked-in stubs.">
+    <title>Python clients without protoc | ProtoMolt</title>
+    <style>
+        :root {
+            --bg: #fbfbf9;
+            --surface: #ffffff;
+            --ink: #1c1e23;
+            --ink-soft: #4a4e57;
+            --ink-faint: #7a7f8a;
+            --rule: #e5e4df;
+            --accent: #34495e;
+            --accent-soft: #eef1f4;
+            --link: #2f5d78;
+            --merged: #4a7c59;
+            --open: #9a6a3a;
+            --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+            --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--sans);
+            line-height: 1.65;
+            color: var(--ink);
+            background: var(--bg);
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+        }
+
+        a { color: var(--link); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+        /* Header */
+        header {
+            border-bottom: 1px solid var(--rule);
+            background: var(--bg);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .header-inner {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .brand {
+            font-family: var(--serif);
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--ink);
+            letter-spacing: -0.01em;
+        }
+        .brand:hover { text-decoration: none; }
+        nav.top a {
+            color: var(--ink-soft);
+            font-size: 0.9rem;
+            margin-left: 20px;
+        }
+        nav.top a:hover { color: var(--ink); }
+
+        /* Hero */
+        .hero { padding: 64px 0 36px; border-bottom: 1px solid var(--rule); }
+        .eyebrow {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--ink-faint);
+            margin-bottom: 14px;
+        }
+        .hero h1 {
+            font-family: var(--serif);
+            font-size: 2.1rem;
+            line-height: 1.18;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 18px;
+        }
+        .hero .mission {
+            font-size: 1.1rem;
+            color: var(--ink-soft);
+            max-width: 42em;
+        }
+        .pillrow { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 10px; }
+        .pill {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            color: var(--ink-soft);
+            background: var(--surface);
+            border: 1px solid var(--rule);
+            border-radius: 4px;
+            padding: 5px 10px;
+        }
+
+        /* Article body */
+        article { padding: 44px 0 20px; }
+        article p { color: var(--ink-soft); margin-bottom: 16px; max-width: 46em; }
+        article ul { margin: 0 0 16px 1.2em; color: var(--ink-soft); }
+        article li { margin: 6px 0; }
+        article code {
+            font-family: var(--mono);
+            font-size: 0.86em;
+            background: var(--accent-soft);
+            padding: 1px 5px;
+            border-radius: 3px;
+        }
+        pre.code {
+            font-family: var(--mono);
+            font-size: 0.83rem;
+            line-height: 1.6;
+            color: var(--ink);
+            background: var(--surface);
+            border: 1px solid var(--rule);
+            border-radius: 8px;
+            padding: 16px 18px;
+            margin: 12px 0 20px;
+            overflow-x: auto;
+        }
+        pre.code code { background: none; padding: 0; font-size: 1em; }
+        pre.code .cm { color: var(--ink-faint); }
+        pre.out {
+            border-left: 3px solid var(--accent);
+            background: var(--accent-soft);
+        }
+        .out-label {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--ink-faint);
+            margin: -8px 0 6px;
+        }
+
+        /* Steps */
+        .step {
+            padding: 36px 0 12px;
+            border-top: 1px solid var(--rule);
+            margin-top: 24px;
+        }
+        .step-head {
+            display: flex;
+            align-items: baseline;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+        .step-num {
+            flex: none;
+            font-family: var(--serif);
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #fff;
+            background: var(--accent);
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform: translateY(6px);
+        }
+        .step h2 {
+            font-family: var(--serif);
+            font-size: 1.45rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+        .step h3 { font-size: 1rem; font-weight: 650; margin: 20px 0 6px; }
+
+        .fork {
+            background: var(--accent-soft);
+            border: 1px solid #dbe2e8;
+            border-radius: 8px;
+            padding: 18px 22px;
+            margin: 18px 0 20px;
+        }
+        .fork p { margin-bottom: 0; font-size: 0.95rem; }
+
+        .aside {
+            border-left: 3px solid var(--open);
+            background: #faf6ee;
+            border-radius: 0 8px 8px 0;
+            padding: 16px 20px;
+            margin: 20px 0;
+        }
+        .aside h3 { font-size: 0.95rem; font-weight: 650; margin-bottom: 6px; }
+        .aside p { font-size: 0.92rem; margin-bottom: 8px; }
+        .aside p:last-child { margin-bottom: 0; }
+
+        /* Landing section */
+        .landing {
+            padding: 40px 0 8px;
+            border-top: 1px solid var(--rule);
+            margin-top: 28px;
+        }
+        .landing h2 {
+            font-family: var(--serif);
+            font-size: 1.55rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            margin-bottom: 12px;
+        }
+        .actions { margin: 26px 0 8px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+        .btn {
+            display: inline-block;
+            font-family: var(--sans);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #fff;
+            background: var(--accent);
+            border: none;
+            border-radius: 6px;
+            padding: 10px 18px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .btn:hover { background: #2a3b4d; text-decoration: none; }
+        .repo-link { font-family: var(--mono); font-size: 0.85rem; }
+
+        /* Footer */
+        footer { padding: 40px 0 56px; border-top: 1px solid var(--rule); margin-top: 40px; }
+        footer p { color: var(--ink-faint); font-size: 0.9rem; }
+
+        @media (max-width: 620px) {
+            .hero h1 { font-size: 1.7rem; }
+            nav.top a { margin-left: 14px; }
+            .step-head { gap: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-inner">
+            <a href="../" class="brand">Pipestream AI <span style="color: var(--ink-faint); font-weight: 400;">/ ProtoMolt / tutorial</span></a>
+            <nav class="top">
+                <a href="../">ProtoMolt</a>
+                <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/tutorials/python.md">In the repo</a>
+                <a href="https://github.com/ai-pipestream/protomolt">GitHub</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="wrap">
+                <p class="eyebrow">Tutorial</p>
+                <h1>Python clients without protoc</h1>
+                <p class="mission">
+                    From <em>&ldquo;there&rsquo;s a gRPC server at this address&rdquo;</em> to
+                    <em>&ldquo;my Python code calls it natively&rdquo;</em> &mdash; no protoc
+                    installed, no grpcio-tools, no generated stubs checked in. ProtoMolt discovers
+                    the schema and mints the Python message modules; your side needs two pip
+                    packages. Every command and output below ran against a live server.
+                </p>
+                <div class="pillrow">
+                    <span class="pill">pip install grpcio requests</span>
+                    <span class="pill">reflect &rarr; generate &rarr; call</span>
+                    <span class="pill">real outputs, not mockups</span>
+                </div>
+            </div>
+        </section>
+
+        <article>
+            <div class="wrap">
+                <p>
+                    The target here is ProtoMolt&rsquo;s own gRPC service, so one process is both
+                    the toolkit and the demo target &mdash; but nothing is specific to it. Any
+                    reflection-enabled server works identically, and servers without reflection
+                    work from a registered schema instead.
+                </p>
+
+                <div class="step" id="step-1">
+                    <div class="step-head">
+                        <span class="step-num">1</span>
+                        <h2>Start ProtoMolt</h2>
+                    </div>
+                    <pre class="code"><code>docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo</code></pre>
+                    <p>
+                        <code>--demo</code> seeds a sample order-management schema, so every call
+                        below has material to work with.
+                    </p>
+                </div>
+
+                <div class="step" id="step-2">
+                    <div class="step-head">
+                        <span class="step-num">2</span>
+                        <h2>Reflect the server</h2>
+                    </div>
+                    <p>Its address is all we know:</p>
+                    <pre class="code"><code>import requests
+
+BASE = "http://localhost:8080"
+
+def verb(name, body):
+    r = requests.post(f"{BASE}/grpc-json/ProtoMoltService/{name}", json=body)
+    r.raise_for_status()
+    return r.json()
+
+reflected = verb("Reflect", {"target": "localhost:9090"})
+print(reflected["services"])</code></pre>
+                    <p class="out-label">output</p>
+                    <pre class="code out"><code>['ai.pipestream.protomolt.v1.ProtoMoltService', 'grpc.reflection.v1.ServerReflection']</code></pre>
+                </div>
+
+                <div class="step" id="step-3">
+                    <div class="step-head">
+                        <span class="step-num">3</span>
+                        <h2>Generate the Python message modules</h2>
+                    </div>
+                    <p>
+                        The reflected descriptor set feeds the code generator, which runs
+                        protoc&rsquo;s own Python generator as WebAssembly on the server:
+                    </p>
+                    <pre class="code"><code>import pathlib
+
+generated = verb("GenerateStubs", {
+    "schema": {"descriptorSetBase64": reflected["descriptorSetBase64"]},
+    "generators": ["python"],
+})
+
+out = pathlib.Path("gen")
+for f in generated["files"]:
+    path = out / f["name"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f["content"])</code></pre>
+                    <p class="out-label">output</p>
+                    <pre class="code out"><code>gen/ai/pipestream/protomolt/v1/protomolt_service_pb2.py</code></pre>
+                    <p>Real <code>protoc --python_out</code> output, from a server, on demand.</p>
+                </div>
+
+                <div class="step" id="step-4">
+                    <div class="step-head">
+                        <span class="step-num">4</span>
+                        <h2>Call the server with plain grpcio</h2>
+                    </div>
+                    <p>
+                        <code>grpcio</code> can invoke any method given the path and the message
+                        classes &mdash; the <code>*_pb2_grpc.py</code> convenience stubs are
+                        optional sugar, not a requirement:
+                    </p>
+                    <pre class="code"><code>import sys
+sys.path.insert(0, "gen")
+
+import grpc
+from ai.pipestream.protomolt.v1 import protomolt_service_pb2 as pb2
+
+channel = grpc.insecure_channel("localhost:9090")
+list_types = channel.unary_unary(
+    "/ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes",
+    request_serializer=pb2.ListTypesRequest.SerializeToString,
+    response_deserializer=pb2.ListTypesResponse.FromString,
+)
+
+response = list_types(pb2.ListTypesRequest(filter="demo.shop"))
+print([t.full_name for t in response.types])</code></pre>
+                    <p class="out-label">output</p>
+                    <pre class="code out"><code>['demo.shop.v1.Customer', 'demo.shop.v1.LineItem', 'demo.shop.v1.Order',
+ 'demo.shop.v1.Order.Status', 'demo.shop.v1.GetOrderRequest',
+ 'demo.shop.v1.ListOrdersRequest', 'demo.shop.v1.OrderService']</code></pre>
+                    <p>
+                        Native protobuf over gRPC, typed end to end, from Python &mdash; and the
+                        message classes were minted moments ago from a reflected schema.
+                    </p>
+                    <div class="aside">
+                        <h3>One honesty note on service stubs</h3>
+                        <p>
+                            protoc&rsquo;s built-in Python generator produces message modules
+                            (<code>*_pb2.py</code>); the <code>*_pb2_grpc.py</code> service stubs
+                            come from the separate <code>grpc_python</code> plugin, which ProtoMolt
+                            does not ship yet. The <code>channel.unary_unary(...)</code> pattern
+                            above needs only the message classes and is exactly what those stubs
+                            wrap.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="landing">
+                    <h2>Where you land</h2>
+                    <p>
+                        The same channel drives every verb: compile new protos through the typed
+                        surface, validate messages against declared rules, diff schema versions,
+                        render JSON Schema. All thirteen verbs speak the same envelopes whether
+                        you arrive over gRPC, REST, or MCP.
+                    </p>
+                    <div class="actions">
+                        <a class="btn" href="https://github.com/ai-pipestream/protomolt">Clone ProtoMolt &rarr;</a>
+                        <a class="repo-link" href="https://github.com/ai-pipestream/protomolt/blob/main/docs/tutorials/python.md">this tutorial in the repo</a>
+                        <a class="repo-link" href="../openvino/">the OpenVINO tutorial</a>
+                    </div>
+                </div>
+            </div>
+        </article>
+    </main>
+
+    <footer>
+        <div class="wrap">
+            <p>ProtoMolt is MIT-licensed open source from <a href="../../">Pipestream AI</a>.
+            <a href="../">ProtoMolt overview</a> &middot;
+            <a href="https://github.com/ai-pipestream/protomolt">GitHub</a> &middot;
+            <a href="https://github.com/ai-pipestream/protomolt/tree/main/docs">Documentation</a></p>
+        </div>
+    </footer>
+</body>
+</html>
