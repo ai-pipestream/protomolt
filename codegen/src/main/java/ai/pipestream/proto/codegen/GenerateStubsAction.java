@@ -22,8 +22,9 @@ import java.util.Set;
  * protoc installation. What quarkus-grpc-zero does for a build, this does as a registry
  * operation: descriptors in, generated source files out.
  *
- * <p>Generators are protoc's own, running as WebAssembly: {@code java}, {@code kotlin}, and
- * {@code python} message code, and {@code grpc-java} service stubs. Generator-reported failures return
+ * <p>Generators are protoc's own, running as WebAssembly: {@code java}, {@code kotlin},
+ * {@code python}, {@code cpp}, {@code csharp}, {@code ruby}, {@code php}, and {@code objc}
+ * message code, and {@code grpc-java} service stubs. Generator-reported failures return
  * {@code ok: false} with protoc's message; malformed input is an {@code invalid-input} error.</p>
  */
 public final class GenerateStubsAction implements ProtoAction {
@@ -36,8 +37,8 @@ public final class GenerateStubsAction implements ProtoAction {
     @Override
     public String description() {
         return "Generates source code from a schema with protoc-as-WebAssembly, no native "
-                + "toolchain: 'java', 'kotlin', and 'python' message code, 'grpc-java' service "
-                + "stubs. Returns the generated files as {name, content}. Combine 'java' and "
+                + "toolchain: java, kotlin, python, cpp, csharp, ruby, php, and objc message code, "
+                + "'grpc-java' service stubs. Returns the generated files as {name, content}. Combine 'java' and "
                 + "'grpc-java' for a complete Java gRPC client.";
     }
 
@@ -57,7 +58,7 @@ public final class GenerateStubsAction implements ProtoAction {
         generators.put("description", "Generators to run, in order; default [\"java\"].");
         generators.putObject("items")
                 .put("type", "string")
-                .putPOJO("enum", List.of("java", "kotlin", "grpc-java", "python"));
+                .putPOJO("enum", List.of("java", "kotlin", "grpc-java", "python", "cpp", "csharp", "ruby", "php", "objc"));
         generators.put("minItems", 1);
         ObjectNode files = properties.putObject("files");
         files.put("type", "array");
@@ -156,8 +157,14 @@ public final class GenerateStubsAction implements ProtoAction {
                 case "kotlin" -> plugins.add(WasmProtoc.Plugin.KOTLIN);
                 case "grpc-java" -> plugins.add(WasmProtoc.Plugin.GRPC_JAVA);
                 case "python" -> plugins.add(WasmProtoc.Plugin.PYTHON);
+                case "cpp" -> plugins.add(WasmProtoc.Plugin.CPP);
+                case "csharp" -> plugins.add(WasmProtoc.Plugin.CSHARP);
+                case "ruby" -> plugins.add(WasmProtoc.Plugin.RUBY);
+                case "php" -> plugins.add(WasmProtoc.Plugin.PHP);
+                case "objc" -> plugins.add(WasmProtoc.Plugin.OBJC);
                 default -> throw invalidInput("Unknown generator '" + name
-                        + "'; supported: java, kotlin, grpc-java, python", "/generators");
+                        + "'; supported: java, kotlin, grpc-java, python, cpp, csharp, ruby, php, objc",
+                        "/generators");
             }
         }
         return plugins;

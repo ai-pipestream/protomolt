@@ -25,8 +25,8 @@ import java.util.function.Function;
 /**
  * protoc's code generators running as WebAssembly inside the JVM: a {@code CodeGeneratorRequest}
  * goes in on stdin, a {@code CodeGeneratorResponse} comes back on stdout, exactly the protoc
- * plugin protocol, with no native toolchain anywhere. The bundled module carries protoc's Java,
- * Kotlin, and Python generators plus the grpc-java plugin.
+ * plugin protocol, with no native toolchain anywhere. The bundled module carries protoc's Java, Kotlin,
+ * Python, C++, C#, Ruby, PHP, and Objective-C generators plus the grpc-java plugin.
  *
  * <p>The WebAssembly module and the execution approach come from
  * <a href="https://github.com/ai-pipestream/protobuf4j">protobuf4j</a> (Apache-2.0), which
@@ -40,7 +40,12 @@ public final class WasmProtoc {
         JAVA("java"),
         KOTLIN("kotlin"),
         GRPC_JAVA("grpc-java"),
-        PYTHON("python");
+        PYTHON("python"),
+        CPP("cpp"),
+        CSHARP("csharp"),
+        RUBY("ruby"),
+        PHP("php"),
+        OBJC("objc");
 
         private final String wrapperArg;
 

@@ -27,8 +27,8 @@ and responses as proto3 JSON. The service comes from the same schema-source
 convention every action uses, so reading a subject's resource and passing its
 text as `sources` makes any registered service callable. gRPC status failures
 return `ok: false` with the status name; only malformed input is an error. And
-`generate-stubs` from `protomolt-codegen`: protoc's Java, Kotlin, and Python
-generators plus the grpc-java plugin, compiled to WebAssembly and run inside the JVM, so
+`generate-stubs` from `protomolt-codegen`: protoc's Java, Kotlin, Python, C++,
+C#, Ruby, PHP, and Objective-C generators plus the grpc-java plugin, compiled to WebAssembly and run inside the JVM, so
 an agent can produce a complete, compilable gRPC client for any schema with no
 protoc installation on either side. What quarkus-grpc-zero does for a build,
 this does as a live call. With

@@ -99,11 +99,29 @@ class GenerateStubsActionTest {
     }
 
     @Test
+    void everyLanguageGeneratorProducesFiles() throws Exception {
+        var expectations = java.util.Map.of(
+                "cpp", ".pb.cc",
+                "csharp", ".cs",
+                "ruby", "_pb.rb",
+                "php", ".php",
+                "objc", ".pbobjc.m");
+        for (var entry : expectations.entrySet()) {
+            ObjectNode result = action.execute(input(entry.getKey()), ActionContext.create());
+            assertThat(result.get("ok").asBoolean())
+                    .as("generator %s", entry.getKey()).isTrue();
+            assertThat(names(result))
+                    .as("generator %s files", entry.getKey())
+                    .anySatisfy(name -> assertThat(name).endsWith(entry.getValue()));
+        }
+    }
+
+    @Test
     void unknownGeneratorIsInvalidInput() {
         assertThatThrownBy(() -> action.execute(input("rust"), ActionContext.create()))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
-                    assertThat(e.getMessage()).contains("java, kotlin, grpc-java, python");
+                    assertThat(e.getMessage()).contains("java, kotlin, grpc-java, python, cpp, csharp, ruby, php, objc");
                 });
     }
 
