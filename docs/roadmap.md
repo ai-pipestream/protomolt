@@ -155,10 +155,12 @@ action catalog as MCP tools (the manifest is already the MCP tool shape)
 and a git-backed registry as MCP resources, over a hand-rolled JSON-RPC
 2.0 stdio transport: plain Java, Jackson, no framework. Next increments:
 a Streamable HTTP mount on the registry server, thin Spring AI / Quarkus
-MCP host adapters over the same catalog, a `grpc-invoke` verb (dynamic
-calls against live gRPC services from registry descriptors), and
-`generate-stubs` via protoc-as-WASM, turning build-time codegen into a
-live registry operation.
+MCP host adapters over the same catalog, and `generate-stubs` via protoc-as-WASM, turning build-time codegen
+into a live registry operation. The `grpc-invoke` verb is done:
+`protomolt-grpc-invoke` calls unary and server-streaming methods on live
+servers straight from descriptors (dynamic marshallers, no stubs), with
+metadata, deadlines, and a response cap that cancels open-ended streams
+cleanly.
 
 **5. A web console.** Every server host already serves `openapi.json`, and
 `MappingHelper` exists specifically to feed schema-browsing UIs. A bundled,

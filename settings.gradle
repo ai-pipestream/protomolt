@@ -50,6 +50,9 @@ project(':protomolt-registry-server').projectDir = file('registry/server')
 include 'protomolt-mcp'
 project(':protomolt-mcp').projectDir = file('mcp/core')
 
+include 'protomolt-grpc-invoke'
+project(':protomolt-grpc-invoke').projectDir = file('grpc/invoke')
+
 include 'protomolt-mapper-core'
 project(':protomolt-mapper-core').projectDir = file('mapper/core')
 

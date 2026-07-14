@@ -20,7 +20,13 @@ stdio loop, tests, and future transports all drive it the same way.
 mcp/core/build/install/protomolt-mcp/bin/protomolt-mcp [--registry-git <path>]
 ```
 
-Without arguments the server exposes the ten catalog verbs as tools. With
+Without arguments the server exposes the ten catalog verbs as tools, plus
+`grpc-invoke` from `protomolt-grpc-invoke`: call any unary or server-streaming
+method on a live gRPC server, driven entirely by descriptors, with the request
+and responses as proto3 JSON. The service comes from the same schema-source
+convention every action uses, so reading a subject's resource and passing its
+text as `sources` makes any registered service callable. gRPC status failures
+return `ok: false` with the status name; only malformed input is an error. With
 `--registry-git`, the git-backed registry at the path is served as resources:
 
 | URI | Contents |
@@ -65,6 +71,5 @@ part; nothing needs rewriting to move between hosts.
 
 - [Actions](actions.md) — the verb catalog this server exposes
 - [The registry](registry.md) — the store behind the resource URIs
-- [Roadmap](roadmap.md) — `grpc-invoke` (dynamic calls against live gRPC
-  services) and `generate-stubs` (protoc-as-WASM client generation) extend
-  this surface next
+- [Roadmap](roadmap.md) — `generate-stubs` (protoc-as-WASM client
+  generation) and registry-backed type resolution extend this surface next

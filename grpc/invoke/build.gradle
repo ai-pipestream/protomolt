@@ -1,0 +1,15 @@
+description = 'Dynamic gRPC invocation from descriptors: call any unary or server-streaming method with no generated stubs'
+
+dependencies {
+    api project(':protomolt-actions')
+    api libs.grpc.api
+    api libs.protobuf.java
+
+    implementation project(':protomolt-json')
+    implementation libs.grpc.stub
+
+    runtimeOnly libs.grpc.netty.shaded
+
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.grpc.inprocess
+}

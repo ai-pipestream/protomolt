@@ -7,6 +7,7 @@ description = 'MCP server over the action catalog and registry: JSON-RPC 2.0 on 
 dependencies {
     api project(':protomolt-actions')
     api project(':protomolt-registry')
+    api project(':protomolt-grpc-invoke')
 }
 
 application {
