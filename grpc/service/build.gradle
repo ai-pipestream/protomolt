@@ -6,6 +6,7 @@ dependencies {
     api libs.protobuf.java
 
     implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-gather-git')
     implementation project(':protomolt-grpc-invoke')
     implementation project(':protomolt-codegen')
     implementation libs.protobuf.java.util

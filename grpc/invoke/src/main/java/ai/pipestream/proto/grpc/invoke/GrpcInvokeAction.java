@@ -37,14 +37,19 @@ public final class GrpcInvokeAction implements ProtoAction {
     private static final int DEFAULT_DEADLINE_MS = 15_000;
     private static final int DEFAULT_MAX_RESPONSES = 64;
 
-    private final Function<String, ManagedChannel> channelFactory;
+    private final ChannelFactory channelFactory;
 
     public GrpcInvokeAction() {
-        this(target -> ManagedChannelBuilder.forTarget(target).usePlaintext().build());
+        this(ChannelFactory.standard());
     }
 
     /** Visible for tests and custom transports: maps a target string to a channel. */
     public GrpcInvokeAction(Function<String, ManagedChannel> channelFactory) {
+        this((target, tls) -> channelFactory.apply(target));
+    }
+
+    /** Full transport control: the factory sees the verb's {@code tls} input. */
+    public GrpcInvokeAction(ChannelFactory channelFactory) {
         this.channelFactory = channelFactory;
     }
 
@@ -93,6 +98,10 @@ public final class GrpcInvokeAction implements ProtoAction {
                 .put("type", "integer")
                 .put("description", "Cap on collected server-streaming responses; default "
                         + DEFAULT_MAX_RESPONSES + ".");
+        properties.putObject("tls")
+                .put("type", "boolean")
+                .put("default", false)
+                .put("description", "Connect with TLS (system trust roots); plaintext by default.");
         ArrayNode required = schema.putArray("required");
         required.add("target");
         required.add("method");
@@ -133,7 +142,8 @@ public final class GrpcInvokeAction implements ProtoAction {
         ObjectNode result = context.objectMapper().createObjectNode();
         result.put("method", method.getFullName());
         result.put("methodType", DynamicGrpcCalls.methodType(method).name());
-        ManagedChannel channel = channelFactory.apply(target);
+        boolean tls = input.path("tls").asBoolean(false);
+        ManagedChannel channel = channelFactory.open(target, tls);
         try {
             List<DynamicMessage> responses = DynamicGrpcCalls.call(
                     channel, method, request,

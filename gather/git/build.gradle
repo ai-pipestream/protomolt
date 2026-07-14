@@ -2,6 +2,7 @@ description = 'Git proto gatherer: clone/fetch repositories and stage proto tree
 
 dependencies {
     api project(':protomolt-gather')
+    api project(':protomolt-actions')
 
     implementation libs.jgit
 }

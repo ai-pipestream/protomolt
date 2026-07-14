@@ -65,6 +65,10 @@ service ProtoMoltService {
   // Generates client/message source code from a schema with protoc compiled
   // to WebAssembly — no native toolchain on the server.
   rpc GenerateStubs(GenerateStubsRequest) returns (GenerateStubsResponse);
+
+  // Gathers .proto sources from a git repository and compiles them — the
+  // lane for services that publish their contract instead of reflecting.
+  rpc GatherGit(GatherGitRequest) returns (GatherGitResponse);
 }
 
 // A schema source. Provide exactly one of 'type', 'sources', or
@@ -254,6 +258,8 @@ message ReflectRequest {
   string target = 1;
   // Default 15000.
   int32 deadline_ms = 2;
+  // Connect with TLS (system trust roots); plaintext by default.
+  bool tls = 3;
 }
 
 message ReflectResponse {
@@ -280,6 +286,8 @@ message GrpcInvokeRequest {
   int32 deadline_ms = 6;
   // Cap on collected server-streaming responses; default 64.
   int32 max_responses = 7;
+  // Connect with TLS (system trust roots); plaintext by default.
+  bool tls = 8;
 }
 
 message GrpcInvokeResponse {
@@ -319,4 +327,27 @@ message GenerateStubsResponse {
   // The generator that failed, when ok=false.
   string generator = 4;
   string error = 5;
+}
+
+message GatherGitRequest {
+  // Git repository URL (https or ssh).
+  string repo = 1;
+  // Branch, tag, or commit SHA; default 'main'.
+  string ref = 2;
+  // Specific files or directories relative to 'subdir'; default: every
+  // .proto under 'subdir'.
+  repeated string paths = 3;
+  // Directory import paths are relative to; default 'proto', '.' for root.
+  string subdir = 4;
+}
+
+message GatherGitResponse {
+  bool ok = 1;
+  // Why the gather or compile failed, when ok=false.
+  string error = 2;
+  repeated string files = 3;
+  // Source texts keyed by import path — registerable as registry subjects.
+  map<string, string> sources = 4;
+  // Usable directly as SchemaSource.descriptor_set_base64.
+  string descriptor_set_base64 = 5;
 }

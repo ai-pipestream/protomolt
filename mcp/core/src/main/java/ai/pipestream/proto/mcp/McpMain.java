@@ -3,6 +3,7 @@ package ai.pipestream.proto.mcp;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.codegen.GenerateStubsAction;
+import ai.pipestream.proto.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
@@ -47,7 +48,8 @@ public final class McpMain {
         ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create())
                 .register(new GrpcInvokeAction())
                 .register(new ReflectAction())
-                .register(new GenerateStubsAction());
+                .register(new GenerateStubsAction())
+                .register(new GatherGitAction());
         String version = McpMain.class.getPackage().getImplementationVersion();
         if (registryPath == null) {
             McpServer server = new McpServer(catalog, null,

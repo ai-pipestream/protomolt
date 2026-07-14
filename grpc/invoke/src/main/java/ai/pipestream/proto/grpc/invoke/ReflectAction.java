@@ -27,14 +27,19 @@ public final class ReflectAction implements ProtoAction {
 
     private static final int DEFAULT_DEADLINE_MS = 15_000;
 
-    private final Function<String, ManagedChannel> channelFactory;
+    private final ChannelFactory channelFactory;
 
     public ReflectAction() {
-        this(target -> ManagedChannelBuilder.forTarget(target).usePlaintext().build());
+        this(ChannelFactory.standard());
     }
 
     /** Visible for tests and custom transports: maps a target string to a channel. */
     public ReflectAction(Function<String, ManagedChannel> channelFactory) {
+        this((target, tls) -> channelFactory.apply(target));
+    }
+
+    /** Full transport control: the factory sees the verb's {@code tls} input. */
+    public ReflectAction(ChannelFactory channelFactory) {
         this.channelFactory = channelFactory;
     }
 
@@ -63,6 +68,10 @@ public final class ReflectAction implements ProtoAction {
         properties.putObject("deadlineMs")
                 .put("type", "integer")
                 .put("description", "Reflection deadline in milliseconds; default " + DEFAULT_DEADLINE_MS + ".");
+        properties.putObject("tls")
+                .put("type", "boolean")
+                .put("default", false)
+                .put("description", "Connect with TLS (system trust roots); plaintext by default.");
         schema.putArray("required").add("target");
         schema.put("additionalProperties", false);
         return schema;
@@ -85,7 +94,8 @@ public final class ReflectAction implements ProtoAction {
         }
 
         ObjectNode result = context.objectMapper().createObjectNode();
-        ManagedChannel channel = channelFactory.apply(target);
+        boolean tls = input.path("tls").asBoolean(false);
+        ManagedChannel channel = channelFactory.open(target, tls);
         try {
             ReflectionClient.Result discovered = ReflectionClient.discover(channel, deadlineMs);
             result.put("ok", true);
