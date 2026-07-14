@@ -1,6 +1,7 @@
 package ai.pipestream.proto.spring;
 
 import ai.pipestream.proto.cel.CelEvaluator;
+import ai.pipestream.proto.descriptors.DescriptorLoader;
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.json.ProtobufJsonTranscoder;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
@@ -97,6 +98,39 @@ class ProtoToolsAutoConfigurationTest {
                     assertThat(ctx).hasSingleBean(ProtoRestMethodRegistry.class);
                     assertThat(ctx).hasSingleBean(ProtoApiTokenValidator.class);
                     assertThat(ctx).hasSingleBean(ProtoRestGateway.class);
+                });
+    }
+
+    @Test
+    void applicationDescriptorLoaderBeansJoinTheRegistry() {
+        DescriptorLoader loader = new DescriptorLoader() {
+            @Override
+            public java.util.List<com.google.protobuf.Descriptors.FileDescriptor> loadDescriptors() {
+                return java.util.List.of(Struct.getDescriptor().getFile());
+            }
+
+            @Override
+            public com.google.protobuf.Descriptors.FileDescriptor loadDescriptor(String fileName) {
+                return Struct.getDescriptor().getFile();
+            }
+
+            @Override
+            public boolean isAvailable() {
+                return true;
+            }
+
+            @Override
+            public String getLoaderType() {
+                return "test loader";
+            }
+        };
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(ProtoToolsAutoConfiguration.class))
+                .withBean("customLoader", DescriptorLoader.class, () -> loader)
+                .run(ctx -> {
+                    DescriptorRegistry registry = ctx.getBean(DescriptorRegistry.class);
+                    registry.autoLoadDescriptors();
+                    assertThat(registry.isRegistered("google.protobuf.Struct")).isTrue();
                 });
     }
 

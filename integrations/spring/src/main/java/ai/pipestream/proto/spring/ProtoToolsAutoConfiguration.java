@@ -2,6 +2,7 @@ package ai.pipestream.proto.spring;
 
 import ai.pipestream.proto.cel.CelEvaluator;
 import ai.pipestream.proto.descriptors.ClasspathDescriptorLoader;
+import ai.pipestream.proto.descriptors.DescriptorLoader;
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.descriptors.GoogleDescriptorLoader;
 import ai.pipestream.proto.json.ProtobufJsonTranscoder;
@@ -13,6 +14,7 @@ import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 
 import java.util.Optional;
@@ -30,12 +32,19 @@ import java.util.Optional;
 @AutoConfiguration
 public class ProtoToolsAutoConfiguration {
 
+    /**
+     * Registry preloaded with the classpath loaders, plus every application-defined
+     * {@link DescriptorLoader} bean — so contributing a new descriptor source (a schema-registry
+     * loader, a {@code GatheringDescriptorLoader} over git/maven/jars) is just defining a bean,
+     * matching the Quarkus extension's behavior.
+     */
     @Bean
     @ConditionalOnMissingBean
-    public DescriptorRegistry descriptorRegistry() {
+    public DescriptorRegistry descriptorRegistry(ObjectProvider<DescriptorLoader> loaders) {
         DescriptorRegistry registry = new DescriptorRegistry();
         registry.addLoader(new GoogleDescriptorLoader());
         registry.addLoader(new ClasspathDescriptorLoader());
+        loaders.orderedStream().forEach(registry::addLoader);
         return registry;
     }
 
