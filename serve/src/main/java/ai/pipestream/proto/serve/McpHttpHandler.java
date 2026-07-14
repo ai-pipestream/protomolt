@@ -32,16 +32,33 @@ public final class McpHttpHandler implements HttpHandler {
     private static final String CONTENT_TYPE = "application/json; charset=utf-8";
 
     private final McpServer server;
+    private final byte[] apiToken;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public McpHttpHandler(McpServer server) {
+        this(server, null);
+    }
+
+    /**
+     * With a non-null {@code apiToken}, every request must present it as an
+     * {@code api_token} header or an {@code authorization} bearer credential; MCP clients
+     * pass it with {@code claude mcp add --transport http ... --header "api_token: ..."}.
+     */
+    public McpHttpHandler(McpServer server, String apiToken) {
         this.server = server;
+        this.apiToken = apiToken == null
+                ? null
+                : apiToken.getBytes(StandardCharsets.UTF_8);
     }
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         if (rejectedOrigin(exchange)) {
             write(exchange, 403, error(null, -32000, "Origin not allowed"));
+            return;
+        }
+        if (apiToken != null && !authorized(exchange)) {
+            write(exchange, 401, error(null, -32000, "Missing or invalid API token 'api_token'"));
             return;
         }
         if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
@@ -80,6 +97,20 @@ public final class McpHttpHandler implements HttpHandler {
         } else {
             write(exchange, 200, response.get());
         }
+    }
+
+    /** True when the request presents the shared secret (constant-time comparison). */
+    private boolean authorized(HttpExchange exchange) {
+        String presented = exchange.getRequestHeaders().getFirst("api_token");
+        if (presented == null) {
+            String authorization = exchange.getRequestHeaders().getFirst("authorization");
+            if (authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                presented = authorization.substring(7).trim();
+            }
+        }
+        return presented != null && !presented.isBlank()
+                && java.security.MessageDigest.isEqual(
+                        apiToken, presented.getBytes(StandardCharsets.UTF_8));
     }
 
     /** True when a browser-sent Origin header points anywhere but this machine. */

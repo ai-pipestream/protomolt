@@ -26,16 +26,28 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
         this.server = server;
     }
 
-    /** Starts the service on {@code port} (0 picks a free port). */
+    /** Starts the service on {@code port} (0 picks a free port), with no call credential. */
     public static ProtoMoltGrpcServer start(int port, ActionCatalog catalog) {
+        return start(port, catalog, null);
+    }
+
+    /**
+     * Starts the service on {@code port} (0 picks a free port). With a non-null
+     * {@code apiToken}, every call — reflection included — must present it as
+     * {@code api_token} metadata or an {@code authorization} bearer credential.
+     */
+    public static ProtoMoltGrpcServer start(int port, ActionCatalog catalog, String apiToken) {
         Objects.requireNonNull(catalog, "catalog");
         try {
-            Server server = ServerBuilder.forPort(port)
+            ServerBuilder<?> builder = ServerBuilder.forPort(port)
                     .addService(ProtoMoltGrpcService.definition(catalog))
-                    .addService(ProtoReflectionServiceV1.newInstance())
-                    .build()
-                    .start();
-            LOG.info("ProtoMoltService listening on port {} (reflection enabled)", server.getPort());
+                    .addService(ProtoReflectionServiceV1.newInstance());
+            if (apiToken != null) {
+                builder.intercept(new ApiTokenServerInterceptor(apiToken));
+            }
+            Server server = builder.build().start();
+            LOG.info("ProtoMoltService listening on port {} (reflection enabled{})",
+                    server.getPort(), apiToken != null ? ", api_token required" : "");
             return new ProtoMoltGrpcServer(server);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to start the gRPC server on port " + port, e);

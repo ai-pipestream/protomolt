@@ -34,12 +34,9 @@ cd protomolt
 ```
 
 The launcher is now at
-`mcp/core/build/install/protomolt-mcp/bin/protomolt-mcp`. Give it a Git
-directory to use as a registry (create an empty one to start):
-
-```shell
-git init --bare /srv/schemas.git
-```
+`mcp/core/build/install/protomolt-mcp/bin/protomolt-mcp`. Pick a directory
+for it to use as a registry — it does not need to exist; the store creates
+and initializes the Git repository on first use.
 
 ## 2. Try reflection first
 

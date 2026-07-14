@@ -10,6 +10,8 @@ import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.server.SchemaRegistryServer;
 import ai.pipestream.proto.registry.server.SchemaRegistryServerConfig;
+import ai.pipestream.proto.rest.ApiTokenRequirement;
+import ai.pipestream.proto.rest.ProtoApiTokenValidator;
 import ai.pipestream.proto.rest.ProtoRestGateway;
 import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
@@ -30,12 +32,20 @@ import java.nio.file.Path;
  */
 public final class ProtoMoltServe implements AutoCloseable {
 
-    /** Launcher options; a port of 0 picks a free port. */
+    /**
+     * Launcher options; a port of 0 picks a free port. A non-null {@code apiToken} guards
+     * every operational surface (gRPC calls, REST verbs, the MCP endpoint) with a shared
+     * secret; documentation surfaces (health, OpenAPI, Swagger UI) stay open.
+     */
     public record Options(String host, int grpcPort, int httpPort,
-                          Path registryGit, int registryPort) {
+                          Path registryGit, int registryPort, String apiToken) {
+
+        public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, null);
+        }
 
         public static Options defaults() {
-            return new Options("0.0.0.0", 9090, 8080, null, 8081);
+            return new Options("0.0.0.0", 9090, 8080, null, 8081, null);
         }
 
         static Options parse(String[] args) {
@@ -44,6 +54,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             int httpPort = 8080;
             Path registryGit = null;
             int registryPort = 8081;
+            String apiToken = System.getenv("PROTOMOLT_API_TOKEN");
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--host" -> host = requireValue(args, ++i);
@@ -51,9 +62,11 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--http-port" -> httpPort = Integer.parseInt(requireValue(args, ++i));
                     case "--registry-git" -> registryGit = Path.of(requireValue(args, ++i));
                     case "--registry-port" -> registryPort = Integer.parseInt(requireValue(args, ++i));
+                    case "--api-token" -> apiToken = requireValue(args, ++i);
                     case "--help", "-h" -> {
                         System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
-                                + "[--http-port <n>] [--registry-git <path> [--registry-port <n>]]");
+                                + "[--http-port <n>] [--registry-git <path> [--registry-port <n>]] "
+                                + "[--api-token <secret>]  (or PROTOMOLT_API_TOKEN)");
                         System.exit(0);
                     }
                     default -> {
@@ -62,7 +75,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                     }
                 }
             }
-            return new Options(host, grpcPort, httpPort, registryGit, registryPort);
+            if (apiToken != null && apiToken.isBlank()) {
+                apiToken = null;
+            }
+            return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken);
         }
 
         private static String requireValue(String[] args, int i) {
@@ -108,14 +124,19 @@ public final class ProtoMoltServe implements AutoCloseable {
                         .build();
             }
 
-            grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog);
+            grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog, options.apiToken());
 
             ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
-            ProtoMoltRestMount.register(methods, catalog);
+            ProtoMoltRestMount.register(methods, catalog, options.apiToken() == null
+                    ? null
+                    : ApiTokenRequirement.apiKeyHeader("api_token"));
             ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
                     .withHost(options.host())
                     .withPort(options.httpPort());
-            ProtoRestGateway gateway = new ProtoRestGateway(methods, context.transcoder());
+            ProtoRestGateway gateway = options.apiToken() == null
+                    ? new ProtoRestGateway(methods, context.transcoder())
+                    : new ProtoRestGateway(methods, context.transcoder(),
+                            ProtoApiTokenValidator.sharedSecret(options.apiToken()));
             String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
             McpServer mcp = new McpServer(catalog,
                     store != null ? new RegistryResources(store) : null,
@@ -124,7 +145,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
                             "/", config.restPathPrefix()))
                     .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
-                    .withContext("/mcp", new McpHttpHandler(mcp));
+                    .withContext("/mcp", new McpHttpHandler(mcp, options.apiToken()));
             int httpPort = http.start();
 
             int registryPort = -1;
@@ -203,6 +224,9 @@ public final class ProtoMoltServe implements AutoCloseable {
         if (serve.registryPort() >= 0) {
             System.out.printf("  Reg   http://%s:%d (Confluent protocol, git-backed)%n",
                     options.host(), serve.registryPort());
+        }
+        if (options.apiToken() != null) {
+            System.out.println("  Auth  api_token required on gRPC, REST, and MCP");
         }
         Runtime.getRuntime().addShutdownHook(new Thread(serve::close));
         serve.awaitTermination();

@@ -43,7 +43,8 @@ try (var server = ProtoMoltGrpcServer.start(9090, catalog)) {
 ./gradlew :protomolt-serve:installDist
 serve/build/install/protomolt-serve/bin/protomolt-serve \
     [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080] \
-    [--registry-git /srv/schemas.git [--registry-port 8081]]
+    [--registry-git /srv/schemas.git [--registry-port 8081]] \
+    [--api-token <secret>]
 ```
 
 ```
@@ -57,12 +58,33 @@ ProtoMolt serving:
 
 With `--registry-git`, the Confluent-protocol registry server joins the
 same process on its own port, so one binary serves schemas, verbs, and
-documentation together.
+documentation together. The path does not need to exist: the store creates
+and initializes the repository on first use, so first startup requires no
+`git init`.
 
 The `/mcp` endpoint is the [MCP server](mcp.md) on the streamable HTTP
 transport: any MCP client on the network becomes gRPC-aware with
 `claude mcp add --transport http protomolt http://host:8080/mcp` — no
 local install, and the registry resources ride along when mounted.
+
+### Authentication
+
+`--api-token <secret>` (or the `PROTOMOLT_API_TOKEN` environment variable)
+guards every operational surface with one shared secret, compared in
+constant time:
+
+- **gRPC** — every call, reflection included, must carry `api_token`
+  metadata or an `authorization: Bearer` credential
+  (`grpcurl -H 'api_token: ...'`).
+- **REST** — every `/grpc-json` method requires the `api_token` header and
+  answers 401 without it. The OpenAPI document declares the security
+  scheme, so Swagger UI's Authorize button works.
+- **MCP** — `/mcp` requires the same header:
+  `claude mcp add --transport http protomolt http://host:8080/mcp --header "api_token: ..."`.
+
+Documentation surfaces (`/health`, `/openapi.json`, `/docs`) stay open.
+Without the flag every surface is open — fine on a trusted network, not
+beyond it.
 
 ## The gRPC surface
 

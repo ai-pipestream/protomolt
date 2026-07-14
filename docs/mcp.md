@@ -44,6 +44,9 @@ every agent on the network gRPC-aware:
 
 ```shell
 claude mcp add --transport http protomolt http://host:8080/mcp
+# with the launcher's --api-token:
+claude mcp add --transport http protomolt http://host:8080/mcp \
+  --header "api_token: <secret>"
 ```
 
 The server core is stateless, so there is no session handshake to manage;

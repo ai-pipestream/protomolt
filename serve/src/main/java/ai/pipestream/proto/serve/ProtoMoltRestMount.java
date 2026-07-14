@@ -4,6 +4,7 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.grpc.service.CatalogBridge;
 import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
+import ai.pipestream.proto.rest.ApiTokenRequirement;
 import ai.pipestream.proto.rest.MalformedRequestException;
 import ai.pipestream.proto.rest.ProtoRestInvocationException;
 import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
@@ -22,8 +23,18 @@ public final class ProtoMoltRestMount {
     private ProtoMoltRestMount() {
     }
 
-    /** Mounts the thirteen verbs over {@code catalog} into {@code registry}. */
+    /** Mounts the thirteen verbs over {@code catalog} into {@code registry}, no token. */
     public static void register(ProtoRestMethodRegistry registry, ActionCatalog catalog) {
+        register(registry, catalog, null);
+    }
+
+    /**
+     * Mounts the thirteen verbs over {@code catalog} into {@code registry}. A non-null
+     * {@code apiToken} requirement is attached to every method (enforced by the gateway's
+     * validator and declared in the generated OpenAPI document).
+     */
+    public static void register(ProtoRestMethodRegistry registry, ActionCatalog catalog,
+                                ApiTokenRequirement apiToken) {
         ServiceDescriptor service = ProtoMoltServiceSchema.service();
         for (MethodDescriptor method : service.getMethods()) {
             registry.register(service, method, request -> {
@@ -37,7 +48,7 @@ public final class ProtoMoltRestMount {
                     // Client-repairable action failures map to 400 with the stable code.
                     throw new MalformedRequestException(e.code() + ": " + e.getMessage(), e);
                 }
-            }, null);
+            }, apiToken);
         }
     }
 }
