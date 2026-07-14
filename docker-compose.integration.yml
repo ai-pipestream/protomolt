@@ -52,3 +52,30 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+
+  # Live search engines for the index-module integration suites: the generated
+  # schemas/mappings are applied to real engines and queried back.
+  solr:
+    image: solr:9
+    ports:
+      - "18983:8983"
+    command: ["solr-precreate", "protomolt"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8983/solr/admin/info/system || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    ports:
+      - "19200:9200"
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30

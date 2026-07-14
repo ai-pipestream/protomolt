@@ -3,4 +3,6 @@ description = 'Solr document mapper plugin (ServiceLoader)'
 dependencies {
     api project(':protomolt-index-spi')
     api project(':protomolt-mapper-core')
+
+    testImplementation libs.jackson.databind
 }

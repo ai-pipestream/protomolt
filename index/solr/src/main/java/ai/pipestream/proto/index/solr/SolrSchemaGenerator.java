@@ -132,7 +132,7 @@ public final class SolrSchemaGenerator {
 
     private static String fieldTypeName(IndexFieldKind kind, String analyzer) {
         return switch (kind) {
-            case TEXT -> analyzer.isBlank() ? "text_general" : analyzer;
+            case TEXT -> textFieldType(analyzer);
             case KEYWORD -> "string";
             case INT32 -> "pint";
             case INT64 -> "plong";
@@ -144,6 +144,21 @@ public final class SolrSchemaGenerator {
             // flat documents: object-shaped values land as JSON strings
             case OBJECT, NESTED, UNSPECIFIED -> "string";
             default -> throw new IllegalArgumentException("no direct field type for " + kind);
+        };
+    }
+
+    /**
+     * Solr has no per-field analyzers; analysis lives on the field type. Well-known
+     * engine-neutral analyzer names map onto the {@code _default} configset's text types;
+     * anything else is taken verbatim as a field type name the deployment declares itself.
+     */
+    private static String textFieldType(String analyzer) {
+        return switch (analyzer) {
+            case "" -> "text_general";
+            case "standard" -> "text_general";
+            case "english" -> "text_en";
+            case "whitespace" -> "text_ws";
+            default -> analyzer;
         };
     }
 

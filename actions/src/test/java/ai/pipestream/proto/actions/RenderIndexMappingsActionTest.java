@@ -43,7 +43,8 @@ class RenderIndexMappingsActionTest {
         assertThat(result.has("copyFields")).isTrue();
         JsonNode fields = result.get("fields");
         JsonNode title = fieldNamed(fields, "title");
-        assertThat(title.get("type").asText()).isEqualTo("english");
+        // Solr analysis lives on the field type; 'english' maps to _default's text_en.
+        assertThat(title.get("type").asText()).isEqualTo("text_en");
         assertThat(fieldNamed(fields, "id").get("type").asText()).isEqualTo("string");
         assertThat(fieldNamed(fields, "count").get("type").asText()).isEqualTo("pint");
     }
