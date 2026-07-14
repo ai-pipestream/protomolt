@@ -13,6 +13,8 @@ dependencies {
 
     api project(':protomolt-descriptors')
     api project(':protomolt-helpers')
+    // Schema publishing SPI (SchemaPublisher, PublishOptions/Result) + ProtoSourceSet model.
+    implementation project(':protomolt-proto-sources')
     api libs.apicurio.registry.java.sdk
     implementation libs.apicurio.registry.protobuf.serde
     implementation libs.quarkus.arc
