@@ -154,4 +154,72 @@ class FormatsTest {
         assertThat(Formats.isHostAndPort("example.com:0080", true)).isFalse(); // leading zero
         assertThat(Formats.isHostAndPort("", false)).isFalse();
     }
+
+    @Test
+    void singleArgumentIpAcceptsEitherVersion() {
+        assertThat(Formats.isIp("192.168.0.1")).isTrue();
+        assertThat(Formats.isIp("::1")).isTrue();
+        assertThat(Formats.isIp("fe80::1%eth0")).isTrue();
+        assertThat(Formats.isIp("not-an-ip")).isFalse();
+        assertThat(Formats.isIp("")).isFalse();
+    }
+
+    @Test
+    void singleArgumentIpPrefixAcceptsEitherVersion() {
+        assertThat(Formats.isIpPrefix("192.168.0.0/24")).isTrue();
+        assertThat(Formats.isIpPrefix("192.168.0.1/24")).isTrue();  // host bits allowed
+        assertThat(Formats.isIpPrefix("2001:db8::/32")).isTrue();
+        assertThat(Formats.isIpPrefix("2001:db8::1/32")).isTrue();
+        assertThat(Formats.isIpPrefix("192.168.0.0")).isFalse();
+        assertThat(Formats.isIpPrefix("2001:db8::")).isFalse();
+    }
+
+    @Test
+    void ipWithPrefixLenIgnoresHostBits() {
+        assertThat(Formats.isIpWithPrefixLen("192.168.1.1/24", 4)).isTrue();
+        assertThat(Formats.isIpWithPrefixLen("192.168.1.1/24", 0)).isTrue();
+        assertThat(Formats.isIpWithPrefixLen("2001:db8::1/32", 6)).isTrue();
+        assertThat(Formats.isIpWithPrefixLen("192.168.1.1", 4)).isFalse();
+        assertThat(Formats.isIpWithPrefixLen("192.168.1.1/33", 4)).isFalse();
+    }
+
+    @Test
+    void address() {
+        assertThat(Formats.isAddress("example.com")).isTrue();       // hostname
+        assertThat(Formats.isAddress("192.168.0.1")).isTrue();       // IPv4
+        assertThat(Formats.isAddress("::1")).isTrue();               // IPv6
+        assertThat(Formats.isAddress("fe80::1%eth0")).isTrue();      // IPv6 with zone
+        assertThat(Formats.isAddress("localhost")).isTrue();
+
+        assertThat(Formats.isAddress("")).isFalse();
+        assertThat(Formats.isAddress("1.2.3.4.5")).isFalse();        // neither hostname nor IP
+        assertThat(Formats.isAddress("256.1.1.1")).isFalse();        // numeric TLD, bad octet
+        assertThat(Formats.isAddress("-x.example.com")).isFalse();
+        assertThat(Formats.isAddress("[::1]")).isFalse();            // brackets are not address syntax
+        assertThat(Formats.isAddress("example.com:80")).isFalse();   // ports are not addresses
+    }
+
+    @Test
+    void uuidFacades() {
+        assertThat(Formats.isUuid("123e4567-e89b-12d3-a456-426614174000")).isTrue();
+        assertThat(Formats.isUuid("123e4567e89b12d3a456426614174000")).isFalse();
+
+        assertThat(Formats.isTuuid("123e4567e89b12d3a456426614174000")).isTrue();
+        assertThat(Formats.isTuuid("123e4567-e89b-12d3-a456-426614174000")).isFalse();
+    }
+
+    @Test
+    void ulidFacade() {
+        assertThat(Formats.isUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV")).isTrue();
+        assertThat(Formats.isUlid("8ZZZZZZZZZZZZZZZZZZZZZZZZZ")).isFalse();
+    }
+
+    @Test
+    void protobufNameFacades() {
+        assertThat(Formats.isProtobufFqn("foo.bar.Baz")).isTrue();
+        assertThat(Formats.isProtobufFqn(".foo.bar.Baz")).isFalse();
+
+        assertThat(Formats.isProtobufDotFqn(".foo.bar.Baz")).isTrue();
+        assertThat(Formats.isProtobufDotFqn("foo.bar.Baz")).isFalse();
+    }
 }
