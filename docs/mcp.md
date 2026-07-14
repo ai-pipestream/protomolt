@@ -35,6 +35,23 @@ claude mcp add protomolt -- \
 Without `--registry-git` the server exposes the tools only. With it, the
 git-backed registry at the path is additionally served as resources.
 
+### Streamable HTTP
+
+The same server is also reachable over MCP's streamable HTTP transport, with
+no local install: [`protomolt-serve`](grpc-service.md) mounts it at
+`/mcp` next to the gRPC and REST surfaces, so one running process makes
+every agent on the network gRPC-aware:
+
+```shell
+claude mcp add --transport http protomolt http://host:8080/mcp
+```
+
+The server core is stateless, so there is no session handshake to manage;
+POST one JSON-RPC message, get one response (`202` for notifications).
+Server-initiated streams are not used, and browser requests from non-local
+origins are refused (the specification's DNS-rebinding guard). Registry
+resources ride along when the launcher mounts a registry.
+
 ## Tools
 
 | Tool | Does |

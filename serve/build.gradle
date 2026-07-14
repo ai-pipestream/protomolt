@@ -2,12 +2,13 @@ plugins {
     id 'application'
 }
 
-description = 'One-process launcher: ProtoMoltService over gRPC with reflection, the same verbs over JSON/REST with OpenAPI and Swagger UI, and an optional git-backed registry'
+description = 'One-process launcher: ProtoMoltService over gRPC with reflection, the same verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, and an optional git-backed registry'
 
 dependencies {
     api project(':protomolt-grpc-service')
 
     implementation project(':protomolt-json')
+    implementation project(':protomolt-mcp')
     implementation project(':protomolt-rest')
     implementation project(':protomolt-openapi')
     implementation project(':protomolt-server-jdk')

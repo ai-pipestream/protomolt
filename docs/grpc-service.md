@@ -52,11 +52,17 @@ ProtoMolt serving:
   REST  http://0.0.0.0:8080/grpc-json/ProtoMoltService/{Method}
   API   http://0.0.0.0:8080/openapi.json
   Docs  http://0.0.0.0:8080/docs
+  MCP   http://0.0.0.0:8080/mcp   (streamable HTTP)
 ```
 
 With `--registry-git`, the Confluent-protocol registry server joins the
 same process on its own port, so one binary serves schemas, verbs, and
 documentation together.
+
+The `/mcp` endpoint is the [MCP server](mcp.md) on the streamable HTTP
+transport: any MCP client on the network becomes gRPC-aware with
+`claude mcp add --transport http protomolt http://host:8080/mcp` — no
+local install, and the registry resources ride along when mounted.
 
 ## The gRPC surface
 
@@ -124,7 +130,7 @@ Two proto3 JSON semantics to know:
 | Surface | Module | Transport |
 |---|---|---|
 | Java | `protomolt-actions` | `catalog.execute(name, json)` |
-| MCP | `protomolt-mcp` | JSON-RPC over stdio, tools + resources |
+| MCP | `protomolt-mcp` | JSON-RPC over stdio or streamable HTTP (`/mcp`), tools + resources |
 | gRPC | `protomolt-grpc-service` | `ProtoMoltService`, reflection on |
 | REST | `protomolt-serve` | `/grpc-json`, OpenAPI, Swagger UI |
 

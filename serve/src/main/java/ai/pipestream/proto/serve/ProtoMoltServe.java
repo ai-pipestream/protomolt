@@ -4,6 +4,8 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
+import ai.pipestream.proto.mcp.McpServer;
+import ai.pipestream.proto.mcp.RegistryResources;
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.server.SchemaRegistryServer;
@@ -17,8 +19,9 @@ import java.nio.file.Path;
 
 /**
  * The one-process ProtoMolt server: {@code ProtoMoltService} over gRPC (reflection enabled),
- * the same thirteen verbs over JSON/REST with OpenAPI and Swagger UI, and optionally the
- * git-backed schema registry speaking the Confluent protocol.
+ * the same thirteen verbs over JSON/REST with OpenAPI and Swagger UI, the MCP server on
+ * streamable HTTP at {@code /mcp} (with registry resources when a registry is mounted), and
+ * optionally the git-backed schema registry speaking the Confluent protocol.
  *
  * <pre>
  * protomolt-serve [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080]
@@ -94,12 +97,19 @@ public final class ProtoMoltServe implements AutoCloseable {
         ActionContext context = ActionContext.create();
         ActionCatalog catalog = ProtoMoltCatalog.full(context);
 
-        ProtoMoltGrpcServer grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog);
-
+        ProtoMoltGrpcServer grpc = null;
         JdkProtoRestServer http = null;
         GitSchemaRegistryStore store = null;
         SchemaRegistryServer registry = null;
         try {
+            if (options.registryGit() != null) {
+                store = GitSchemaRegistryStore.builder()
+                        .repositoryDir(options.registryGit())
+                        .build();
+            }
+
+            grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog);
+
             ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
             ProtoMoltRestMount.register(methods, catalog);
             ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
@@ -107,17 +117,18 @@ public final class ProtoMoltServe implements AutoCloseable {
                     .withPort(options.httpPort());
             ProtoRestGateway gateway = new ProtoRestGateway(methods, context.transcoder());
             String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
+            McpServer mcp = new McpServer(catalog,
+                    store != null ? new RegistryResources(store) : null,
+                    "protomolt", version != null ? version : "dev");
             http = new JdkProtoRestServer(config, gateway,
                     new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
                             "/", config.restPathPrefix()))
-                    .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()));
+                    .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
+                    .withContext("/mcp", new McpHttpHandler(mcp));
             int httpPort = http.start();
 
             int registryPort = -1;
-            if (options.registryGit() != null) {
-                store = GitSchemaRegistryStore.builder()
-                        .repositoryDir(options.registryGit())
-                        .build();
+            if (store != null) {
                 registry = new SchemaRegistryServer(
                         SchemaRegistryServerConfig.defaults()
                                 .withPort(options.registryPort()),
@@ -129,11 +140,13 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (registry != null) {
                 registry.close();
             }
-            closeQuietly(store);
             if (http != null) {
                 http.close();
             }
-            grpc.close();
+            if (grpc != null) {
+                grpc.close();
+            }
+            closeQuietly(store);
             throw e;
         }
     }
@@ -185,6 +198,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                   REST  http://%1$s:%3$d/grpc-json/ProtoMoltService/{Method}
                   API   http://%1$s:%3$d/openapi.json
                   Docs  http://%1$s:%3$d/docs
+                  MCP   http://%1$s:%3$d/mcp   (streamable HTTP)
                 """, options.host(), serve.grpcPort(), serve.httpPort());
         if (serve.registryPort() >= 0) {
             System.out.printf("  Reg   http://%s:%d (Confluent protocol, git-backed)%n",
