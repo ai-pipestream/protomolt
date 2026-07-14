@@ -19,6 +19,11 @@ allprojects {
     version = findProperty('publishVersion') ?: rootProject.scmVersion.version
 }
 
+// The nmcp aggregation resolves its nmcp-tasks runtime from the root project.
+repositories {
+    mavenCentral()
+}
+
 // Maven Central Portal upload (org-wide credentials; releases are triggered by
 // the release-and-publish workflow). Aggregates every subproject's publications
 // into one portal deployment.
