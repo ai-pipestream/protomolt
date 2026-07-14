@@ -79,7 +79,7 @@ subprojects {
         }
     }
 
-    if (project.name != 'samples') {
+    if (!['samples', 'system-tests'].contains(project.name)) {
         apply plugin: 'maven-publish'
         apply plugin: 'signing'
 

@@ -1,0 +1,19 @@
+description = 'Unpublished end-to-end system tests exercising the toolkit across module boundaries'
+
+dependencies {
+    testImplementation project(':protomolt-descriptors')
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-gather')
+    testImplementation project(':protomolt-gather-git')
+    testImplementation project(':protomolt-compat')
+    testImplementation project(':protomolt-registry')
+    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-schema-confluent')
+    testImplementation project(':protomolt-protobuf-validation')
+    testImplementation project(':protomolt-json')
+    testImplementation project(':protomolt-jsonschema')
+    testImplementation project(':protomolt-index-spi')
+    testImplementation project(':protomolt-index-opensearch')
+    testImplementation libs.jackson.databind
+    testImplementation libs.jgit
+}

@@ -138,3 +138,6 @@ include 'protomolt-server-quarkus'
 project(':protomolt-server-quarkus').projectDir = file('servers/quarkus')
 
 include 'samples'
+
+include 'system-tests'
+project(':system-tests').projectDir = file('tests/system')
