@@ -8,6 +8,7 @@ dependencies {
     api project(':protomolt-actions')
     api project(':protomolt-registry')
     api project(':protomolt-grpc-invoke')
+    api project(':protomolt-codegen')
 }
 
 application {

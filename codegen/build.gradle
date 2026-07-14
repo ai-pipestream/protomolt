@@ -1,0 +1,12 @@
+description = 'Live code generation from descriptors: protoc and its Java/Kotlin/gRPC generators as WebAssembly, no native toolchain'
+
+dependencies {
+    api project(':protomolt-actions')
+    api libs.protobuf.java
+
+    implementation libs.chicory.runtime
+    implementation libs.chicory.wasi
+    implementation libs.chicory.compiler
+
+    testImplementation project(':protomolt-proto-sources')
+}

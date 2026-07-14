@@ -24,6 +24,7 @@ dependencies {
         api project(':protomolt-registry')
         api project(':protomolt-mcp')
         api project(':protomolt-grpc-invoke')
+        api project(':protomolt-codegen')
         api project(':protomolt-registry-server')
         api project(':protomolt-jsonschema')
         api project(':protomolt-protobuf-validation-protovalidate')

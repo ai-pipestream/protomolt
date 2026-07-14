@@ -9,6 +9,7 @@ quarkus = "3.37.2"
 axion-release = "1.21.2"
 nmcp = "1.6.1"
 grpc = "1.73.0"
+chicory = "1.7.5"
 lucene = "10.5.0"
 apicurio = "3.3.0"
 spring = "7.0.8"
@@ -29,6 +30,9 @@ grpc-api = { module = "io.grpc:grpc-api", version.ref = "grpc" }
 grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
 grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc" }
 grpc-inprocess = { module = "io.grpc:grpc-inprocess", version.ref = "grpc" }
+chicory-runtime = { module = "com.dylibso.chicory:runtime", version.ref = "chicory" }
+chicory-wasi = { module = "com.dylibso.chicory:wasi", version.ref = "chicory" }
+chicory-compiler = { module = "com.dylibso.chicory:compiler", version.ref = "chicory" }
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
 protobuf-java-util = { module = "com.google.protobuf:protobuf-java-util", version.ref = "protobuf" }
 cel = { module = "dev.cel:cel", version.ref = "cel" }

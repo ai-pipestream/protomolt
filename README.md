@@ -27,6 +27,7 @@ prefix; Java packages use the `ai.pipestream.proto.*` namespace (see
 | `actions/` | `actions` | Self-describing verb catalog (compile, validate, diff, check-compat, render, evaluate) for consoles and LLM tooling |
 | `mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
 | `grpc/` | `grpc-invoke` | Dynamic gRPC invocation from descriptors: call unary and server-streaming methods with no generated stubs |
+| `codegen/` | `codegen` | Live code generation: protoc's Java/Kotlin generators and the grpc-java plugin as WebAssembly, no native toolchain |
 | `mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
 | `protobuf/` | `protobuf-metadata`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; protovalidate dialect and conformance harness |
 | `schema/` | `schema-apicurio`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries |

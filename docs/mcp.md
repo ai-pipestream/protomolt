@@ -26,7 +26,12 @@ method on a live gRPC server, driven entirely by descriptors, with the request
 and responses as proto3 JSON. The service comes from the same schema-source
 convention every action uses, so reading a subject's resource and passing its
 text as `sources` makes any registered service callable. gRPC status failures
-return `ok: false` with the status name; only malformed input is an error. With
+return `ok: false` with the status name; only malformed input is an error. And
+`generate-stubs` from `protomolt-codegen`: protoc's Java and Kotlin generators
+plus the grpc-java plugin, compiled to WebAssembly and run inside the JVM, so
+an agent can produce a complete, compilable gRPC client for any schema with no
+protoc installation on either side. What quarkus-grpc-zero does for a build,
+this does as a live call. With
 `--registry-git`, the git-backed registry at the path is served as resources:
 
 | URI | Contents |
@@ -71,5 +76,5 @@ part; nothing needs rewriting to move between hosts.
 
 - [Actions](actions.md) — the verb catalog this server exposes
 - [The registry](registry.md) — the store behind the resource URIs
-- [Roadmap](roadmap.md) — `generate-stubs` (protoc-as-WASM client
-  generation) and registry-backed type resolution extend this surface next
+- [Roadmap](roadmap.md) — registry-backed type resolution and more
+  generator targets extend this surface next

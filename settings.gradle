@@ -53,6 +53,9 @@ project(':protomolt-mcp').projectDir = file('mcp/core')
 include 'protomolt-grpc-invoke'
 project(':protomolt-grpc-invoke').projectDir = file('grpc/invoke')
 
+include 'protomolt-codegen'
+project(':protomolt-codegen').projectDir = file('codegen')
+
 include 'protomolt-mapper-core'
 project(':protomolt-mapper-core').projectDir = file('mapper/core')
 

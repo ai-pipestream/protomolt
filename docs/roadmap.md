@@ -155,8 +155,13 @@ action catalog as MCP tools (the manifest is already the MCP tool shape)
 and a git-backed registry as MCP resources, over a hand-rolled JSON-RPC
 2.0 stdio transport: plain Java, Jackson, no framework. Next increments:
 a Streamable HTTP mount on the registry server, thin Spring AI / Quarkus
-MCP host adapters over the same catalog, and `generate-stubs` via protoc-as-WASM, turning build-time codegen
-into a live registry operation. The `grpc-invoke` verb is done:
+MCP host adapters over the same catalog, `generate-stubs` is also done: `protomolt-codegen` bundles protoc's
+Java and Kotlin generators and the grpc-java plugin compiled to
+WebAssembly (from protobuf4j, Apache-2.0), run in-JVM via Chicory, so
+descriptors become compilable client code as a live call with no
+native toolchain. Still open here: registry-backed type resolution in
+the MCP action context, and more generator targets as the wasm
+wrapper grows. The `grpc-invoke` verb is done:
 `protomolt-grpc-invoke` calls unary and server-streaming methods on live
 servers straight from descriptors (dynamic marshallers, no stubs), with
 metadata, deadlines, and a response cap that cancels open-ended streams

@@ -2,6 +2,7 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.codegen.GenerateStubsAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 
@@ -43,7 +44,8 @@ public final class McpMain {
         }
 
         ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create())
-                .register(new GrpcInvokeAction());
+                .register(new GrpcInvokeAction())
+                .register(new GenerateStubsAction());
         String version = McpMain.class.getPackage().getImplementationVersion();
         if (registryPath == null) {
             McpServer server = new McpServer(catalog, null,
