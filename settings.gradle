@@ -35,6 +35,9 @@ project(':protomolt-gather-git').projectDir = file('gather/git')
 include 'protomolt-gather-maven'
 project(':protomolt-gather-maven').projectDir = file('gather/maven')
 
+include 'protomolt-compat'
+project(':protomolt-compat').projectDir = file('compat')
+
 include 'protomolt-mapper-core'
 project(':protomolt-mapper-core').projectDir = file('mapper/core')
 

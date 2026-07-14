@@ -19,6 +19,7 @@ dependencies {
         api project(':protomolt-gather')
         api project(':protomolt-gather-git')
         api project(':protomolt-gather-maven')
+        api project(':protomolt-compat')
         api project(':protomolt-jsonschema')
         api project(':protomolt-protobuf-validation-protovalidate')
         api project(':protomolt-mapper-core')

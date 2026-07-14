@@ -22,6 +22,7 @@ prefix; Java packages use the `ai.pipestream.proto.*` namespace (see
 | `core/` | `descriptors`, `helpers`, `proto-sources` | `DescriptorRegistry` and loader SPI; `Any`/`Struct` handling, type conversion, message diff, schema hygiene checks; proto source-set model, runtime `.proto` compilation, publisher SPI |
 | `formats/` | `formats` | Zero-dependency RFC validators (email, hostname, IP, URI) backing the validation string formats |
 | `gather/` | `gather`, `gather-git`, `gather-maven` | Acquire `.proto` sources from directories, jars, Git repositories, and Maven coordinates; adapt any gatherer to a descriptor loader |
+| `compat/` | `compat` | Breaking-change detection: typed schema diffs and backward/forward/full compatibility policies |
 | `mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
 | `protobuf/` | `protobuf-metadata`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; protovalidate dialect and conformance harness |
 | `schema/` | `schema-apicurio`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries |
@@ -101,6 +102,8 @@ Each of these is covered in depth in the documentation below.
   Maven gatherers; the descriptor-loader adapter
 - [Publishing schemas](docs/publishing.md) — registering gathered sources
   with Apicurio and Confluent-compatible registries
+- [Compatibility checking](docs/compatibility.md) — breaking-change
+  detection with backward/forward/full policies
 - [Field mapping](docs/mapping.md) — text rule syntax, CEL filters and
   selectors
 - [Validation](docs/validation.md) — the rule surface, dialect SPI,

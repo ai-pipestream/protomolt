@@ -108,11 +108,14 @@ round-trip integration tests against live registries. See
 publishing descriptor-set artifacts to Maven repositories and committing to
 a Git backend — both belong to the registry milestone below.
 
-**3. Compatibility checking as a library.** Breaking-change detection
-currently exists only as `buf breaking` in CI. A registry must gate writes on
-compatibility programmatically (per-subject policies: backward, forward,
-full), either by shelling out to buf or implementing checks over
-`FileDescriptorProto` diffs.
+**3. Compatibility checking as a library — done.** `protomolt-compat`
+implements breaking-change detection over descriptor diffs: a typed change
+model with wire, JSON, and source impact classification, evaluated under
+the standard registry modes (backward, forward, full, and their transitive
+variants against version history). Wire semantics are the default, matching
+how Confluent judges protobuf schemas; JSON and source rule layers are
+opt-in. This is the write-gate for the registry server below. See
+[Compatibility checking](compatibility.md).
 
 **4. The registry server.** A new `registry/` module group where a Git
 repository is the storage — commits are versions, branches are compatibility
