@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package demo.shop.v1;
+
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// The schema seeded by `protomolt-serve --demo`: a small order-management
+// contract carrying validation rules, indexing hints, and metadata on its
+// fields, plus a service to point the gRPC verbs at. Every ProtoMolt verb
+// has something to say about this file.
+
+message Customer {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "A shop customer."
+    owner: "demo"
+  };
+
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {uuid: true}
+  }];
+
+  string email = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {email: true}},
+    (ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}
+  ];
+
+  string display_name = 3 [(ai.pipestream.proto.index.hints.v1.index) = {
+    type: INDEX_FIELD_TYPE_TEXT
+    analyzer: "standard"
+    sub_fields: {type: INDEX_FIELD_TYPE_KEYWORD, name: "raw"}
+  }];
+}
+
+message LineItem {
+  string sku = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {pattern: "^[A-Z]{3}-[0-9]{4}$"}
+  }];
+
+  int32 quantity = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    int32: {gte: 1, lte: 100}
+  }];
+
+  double unit_price = 3 [(ai.pipestream.proto.validate.v1.field) = {
+    double: {gt: 0}
+  }];
+}
+
+message Order {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "An order: the demo's central type."
+    owner: "demo"
+  };
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    PENDING = 1;
+    PAID = 2;
+    SHIPPED = 3;
+    CANCELLED = 4;
+  }
+
+  string id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
+  ];
+
+  Customer customer = 2 [(ai.pipestream.proto.validate.v1.field) = {required: true}];
+
+  repeated LineItem items = 3 [(ai.pipestream.proto.validate.v1.field) = {
+    repeated: {min_items: 1, max_items: 50}
+  }];
+
+  string notes = 4 [(ai.pipestream.proto.index.hints.v1.index) = {
+    type: INDEX_FIELD_TYPE_TEXT
+    analyzer: "english"
+  }];
+
+  google.protobuf.Timestamp created_at = 5 [(ai.pipestream.proto.index.hints.v1.index) = {
+    type: INDEX_FIELD_TYPE_DATE
+    sortable: true
+  }];
+
+  Status status = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {enum: {defined_only: true}},
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD, facetable: true}
+  ];
+}
+
+message GetOrderRequest {
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {uuid: true}
+  }];
+}
+
+message ListOrdersRequest {
+  int32 page_size = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    int32: {gte: 1, lte: 500}
+  }];
+}
+
+service OrderService {
+  // Fetch one order by id.
+  rpc GetOrder(GetOrderRequest) returns (Order);
+  // Stream orders; server streaming, so grpc-invoke's response cap has
+  // something to cut short.
+  rpc ListOrders(ListOrdersRequest) returns (stream Order);
+}

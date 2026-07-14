@@ -9,6 +9,10 @@ dependencies {
 
     implementation project(':protomolt-json')
     implementation project(':protomolt-mcp')
+    implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-protobuf-metadata')
+    implementation project(':protomolt-index-spi')
     implementation project(':protomolt-rest')
     implementation project(':protomolt-openapi')
     implementation project(':protomolt-server-jdk')

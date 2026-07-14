@@ -40,12 +40,20 @@ try (var server = ProtoMoltGrpcServer.start(9090, catalog)) {
 ## Running everything: protomolt-serve
 
 ```shell
+docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
+# or, from a release zip or a clone:
 ./gradlew :protomolt-serve:installDist
 serve/build/install/protomolt-serve/bin/protomolt-serve \
     [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080] \
     [--registry-git /srv/schemas.git [--registry-port 8081]] \
-    [--api-token <secret>]
+    [--api-token <secret>] [--demo]
 ```
+
+`--demo` seeds a sample order-management schema (validation rules, indexing
+hints, metadata, a service) into a temp-directory registry and registers its
+types, so `{"type": "demo.shop.v1.Order"}` resolves on every verb the moment
+the process is up — Swagger's try-it, grpcurl, and MCP all have material
+with zero setup.
 
 ```
 ProtoMolt serving:

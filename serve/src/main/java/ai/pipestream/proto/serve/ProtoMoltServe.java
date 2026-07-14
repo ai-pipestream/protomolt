@@ -38,14 +38,19 @@ public final class ProtoMoltServe implements AutoCloseable {
      * secret; documentation surfaces (health, OpenAPI, Swagger UI) stay open.
      */
     public record Options(String host, int grpcPort, int httpPort,
-                          Path registryGit, int registryPort, String apiToken) {
+                          Path registryGit, int registryPort, String apiToken, boolean demo) {
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
-            this(host, grpcPort, httpPort, registryGit, registryPort, null);
+            this(host, grpcPort, httpPort, registryGit, registryPort, null, false);
+        }
+
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, false);
         }
 
         public static Options defaults() {
-            return new Options("0.0.0.0", 9090, 8080, null, 8081, null);
+            return new Options("0.0.0.0", 9090, 8080, null, 8081, null, false);
         }
 
         static Options parse(String[] args) {
@@ -55,6 +60,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             Path registryGit = null;
             int registryPort = 8081;
             String apiToken = System.getenv("PROTOMOLT_API_TOKEN");
+            boolean demo = false;
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--host" -> host = requireValue(args, ++i);
@@ -63,10 +69,11 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--registry-git" -> registryGit = Path.of(requireValue(args, ++i));
                     case "--registry-port" -> registryPort = Integer.parseInt(requireValue(args, ++i));
                     case "--api-token" -> apiToken = requireValue(args, ++i);
+                    case "--demo" -> demo = true;
                     case "--help", "-h" -> {
                         System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
                                 + "[--http-port <n>] [--registry-git <path> [--registry-port <n>]] "
-                                + "[--api-token <secret>]  (or PROTOMOLT_API_TOKEN)");
+                                + "[--api-token <secret>]  (or PROTOMOLT_API_TOKEN) [--demo]");
                         System.exit(0);
                     }
                     default -> {
@@ -78,7 +85,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (apiToken != null && apiToken.isBlank()) {
                 apiToken = null;
             }
-            return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken);
+            return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo);
         }
 
         private static String requireValue(String[] args, int i) {
@@ -118,10 +125,22 @@ public final class ProtoMoltServe implements AutoCloseable {
         GitSchemaRegistryStore store = null;
         SchemaRegistryServer registry = null;
         try {
-            if (options.registryGit() != null) {
+            Path registryGit = options.registryGit();
+            if (registryGit == null && options.demo()) {
+                // Demo mode always has a registry; an unnamed one lives in a temp directory.
+                try {
+                    registryGit = java.nio.file.Files.createTempDirectory("protomolt-demo-registry");
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException("Failed to create the demo registry directory", e);
+                }
+            }
+            if (registryGit != null) {
                 store = GitSchemaRegistryStore.builder()
-                        .repositoryDir(options.registryGit())
+                        .repositoryDir(registryGit)
                         .build();
+            }
+            if (options.demo()) {
+                DemoSchemas.seed(context.registry(), store);
             }
 
             grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog, options.apiToken());
@@ -227,6 +246,16 @@ public final class ProtoMoltServe implements AutoCloseable {
         }
         if (options.apiToken() != null) {
             System.out.println("  Auth  api_token required on gRPC, REST, and MCP");
+        }
+        if (options.demo()) {
+            System.out.printf("""
+                    Demo schema seeded: subject %s (types demo.shop.v1.Order, Customer, ...)
+                      Try: curl -s -H 'content-type: application/json' \\
+                             -d '{"schema": {"type": "demo.shop.v1.Order"}}' \\
+                             http://%s:%d/grpc-json/ProtoMoltService/RenderJsonSchema
+                      Or open http://%s:%d/docs and call ValidateMessage on a demo.shop.v1.Order.
+                    """, DemoSchemas.SHOP_SUBJECT,
+                    options.host(), serve.httpPort(), options.host(), serve.httpPort());
         }
         Runtime.getRuntime().addShutdownHook(new Thread(serve::close));
         serve.awaitTermination();

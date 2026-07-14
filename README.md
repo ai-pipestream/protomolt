@@ -40,27 +40,41 @@ prefix; Java packages use the `ai.pipestream.proto.*` namespace (see
 
 ## Getting started
 
-Clone the repository, build it, and publish the artifacts to your local Maven
-repository:
+Run the whole server — gRPC with reflection, JSON/REST with Swagger UI, MCP,
+and a registry — in one container, with a sample schema seeded:
+
+```shell
+docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
+```
+
+Then exercise it (or just open http://localhost:8080/docs):
+
+```shell
+# Validate a message against the demo schema's declared rules:
+curl -s -H 'content-type: application/json' \
+  -d '{"schema": {"type": "demo.shop.v1.Order"}, "message": {"id": "not-a-uuid"}}' \
+  http://localhost:8080/grpc-json/ProtoMoltService/ValidateMessage
+
+# Any gRPC client sees a real, reflectable service:
+grpcurl -plaintext localhost:9090 list
+
+# Make an AI agent gRPC-aware with one command:
+claude mcp add --transport http protomolt http://localhost:8080/mcp
+```
+
+Prefer a process over a container? Every release attaches runnable
+`protomolt-serve` and `protomolt-mcp` zips (JRE 21+ is the only
+prerequisite), or build from a clone:
 
 ```shell
 git clone https://github.com/ai-pipestream/protomolt.git
 cd protomolt
-./gradlew build
-./gradlew publishToMavenLocal
+./gradlew :protomolt-serve:installDist
+serve/build/install/protomolt-serve/bin/protomolt-serve --demo
 ```
 
-The build runs the full test suite, including a protovalidate conformance
-gate. To see the toolkit working immediately, start the sample JSON/REST
-server and call it:
-
-```shell
-./gradlew :samples:runJsonRestServer
-curl -H 'api_token: secret' -H 'content-type: application/json' \
-  -d '{"name":"Ada"}' http://127.0.0.1:8080/grpc-json/Echo/echo
-```
-
-Then depend on the artifacts from `mavenLocal()`:
+To use the toolkit as a library, depend on the artifacts (or
+`./gradlew publishToMavenLocal` from a clone):
 
 ```groovy
 dependencies {
@@ -123,6 +137,8 @@ Each of these is covered in depth in the documentation below.
 - [Operating an OpenVINO server](docs/tutorials/openvino.md) — a full
   gRPC-agent walkthrough: reflect, register the KServe schema, introspect
   models, run a text → embedding inference
+- [Python clients without protoc](docs/tutorials/python.md) — reflect a
+  server, generate the `_pb2.py` modules, call it with plain grpcio
 - [Field mapping](docs/mapping.md) — text rule syntax, CEL filters and
   selectors
 - [Validation](docs/validation.md) — the rule surface, dialect SPI,

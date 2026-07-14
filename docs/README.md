@@ -30,6 +30,9 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 - [Operating an OpenVINO server](tutorials/openvino.md) — reflect, fall back to
   the KServe schema, introspect models, and run a text → embedding inference,
   all from an AI agent through the MCP server
+- [Python clients without protoc](tutorials/python.md) — reflect a server,
+  have ProtoMolt generate the `_pb2.py` modules, and call it with plain
+  grpcio; no protoc, no grpcio-tools
 
 ## Project direction
 
