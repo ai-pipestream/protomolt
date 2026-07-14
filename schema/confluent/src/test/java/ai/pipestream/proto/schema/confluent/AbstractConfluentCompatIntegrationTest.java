@@ -276,8 +276,11 @@ abstract class AbstractConfluentCompatIntegrationTest {
         assertThat(descriptors)
                 .anySatisfy(fd -> assertThat(fd.findMessageTypeByName("Person")).isNotNull());
 
-        // The registry may hold unrelated subjects (shared containers); find our Team schema.
+        // The registry may hold unrelated subjects (shared containers, and sibling test classes
+        // registering same-named types in parallel forks); pin to this run's subject, whose
+        // compiled root file is named after it.
         Descriptor team = descriptors.stream()
+                .filter(fd -> fd.getName().equals(teamSubject + ".proto"))
                 .map(fd -> fd.findMessageTypeByName("Team"))
                 .filter(java.util.Objects::nonNull)
                 .findFirst()
