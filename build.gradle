@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.axion.release)
+    alias(libs.plugins.nmcp.aggregation)
 }
 
 scmVersion {
@@ -18,6 +19,18 @@ allprojects {
     version = findProperty('publishVersion') ?: rootProject.scmVersion.version
 }
 
+// Maven Central Portal upload (org-wide credentials; releases are triggered by
+// the release-and-publish workflow). Aggregates every subproject's publications
+// into one portal deployment.
+nmcpAggregation {
+    centralPortal {
+        username = providers.environmentVariable('MAVEN_CENTRAL_USERNAME')
+        password = providers.environmentVariable('MAVEN_CENTRAL_PASSWORD')
+        publishingType = 'AUTOMATIC'
+    }
+    publishAllProjectsProbablyBreakingProjectIsolation()
+}
+
 tasks.register('bufLint', Exec) {
     group = 'verification'
     description = 'Run buf lint (STANDARD) on Pipestream protobuf standards'
@@ -34,6 +47,28 @@ tasks.register('bufLint', Exec) {
 tasks.register('check') {
     group = 'verification'
     dependsOn('bufLint')
+}
+
+// Central Portal validates license, developers, and scm on every pom.
+ext.commonPomMetadata = { pom ->
+    pom.url = 'https://github.com/ai-pipestream/protomolt'
+    pom.licenses {
+        license {
+            name = 'MIT License'
+            url = 'https://opensource.org/licenses/MIT'
+        }
+    }
+    pom.developers {
+        developer {
+            id = 'krickert'
+            email = 'krickert@pipestream.ai'
+        }
+    }
+    pom.scm {
+        connection = 'scm:git:https://github.com/ai-pipestream/protomolt.git'
+        developerConnection = 'scm:git:ssh://git@github.com/ai-pipestream/protomolt.git'
+        url = 'https://github.com/ai-pipestream/protomolt'
+    }
 }
 
 subprojects {
@@ -105,18 +140,7 @@ subprojects {
                             : project.name
                         // Lazy: module build scripts set `description` after this block runs.
                         description = providers.provider { project.description ?: 'ProtoMolt protobuf tooling' }
-                        url = 'https://github.com/ai-pipestream/protomolt'
-                        licenses {
-                            license {
-                                name = 'MIT License'
-                                url = 'https://opensource.org/licenses/MIT'
-                            }
-                        }
-                        scm {
-                            connection = 'scm:git:https://github.com/ai-pipestream/protomolt.git'
-                            developerConnection = 'scm:git:ssh://git@github.com/ai-pipestream/protomolt.git'
-                            url = 'https://github.com/ai-pipestream/protomolt'
-                        }
+                        commonPomMetadata(it)
                     }
                 }
                 if (project.name == 'bom') {
@@ -126,7 +150,7 @@ subprojects {
                         pom {
                             name = 'ProtoMolt BOM Catalog'
                             description = 'Gradle version catalog for ProtoMolt protobuf tools'
-                            url = 'https://github.com/ai-pipestream/protomolt'
+                            commonPomMetadata(it)
                         }
                     }
                 }

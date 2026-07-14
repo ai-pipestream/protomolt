@@ -100,3 +100,29 @@ to `main` and on pull requests:
 - **integration** — starts `docker-compose.integration.yml` (Apicurio, and
   a Confluent Schema Registry backed by Redpanda) and runs the
   live-registry integration suites, failing if any suite skips.
+
+## Releasing to Maven Central
+
+Releases are cut from the `Release and Publish` workflow
+(`.github/workflows/release-and-publish.yml`), triggered manually with a
+`patch`/`minor`/`major` bump. The workflow tags the release with Axion,
+runs the full build and test suite against the tagged version, then signs
+every module's publication and uploads them to Maven Central as one portal
+deployment (the `nmcp` aggregation). Versions are never hand-typed.
+
+Publication requires four credentials, provided as org-level secrets:
+`MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `GPG_PRIVATE_KEY`
+(ASCII-armored), and `GPG_PASSPHRASE`. Signing is guarded on their
+presence, so local builds and `publishToMavenLocal` never require them.
+
+The deployment bundle can be built and inspected locally without
+publishing:
+
+```shell
+./gradlew nmcpZipAggregation
+unzip -l build/nmcp/zip/aggregation.zip
+```
+
+A snapshot variant (`publishAggregationToCentralPortalSnapshots`) exists
+but is not wired into CI; Central's snapshot storage is quota-constrained,
+so snapshots are published deliberately, not on every merge.

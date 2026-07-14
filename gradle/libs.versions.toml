@@ -7,6 +7,7 @@ slf4j = "2.0.18"
 jackson = "2.22.1"
 quarkus = "3.37.2"
 axion-release = "1.21.2"
+nmcp = "1.6.1"
 lucene = "10.5.0"
 apicurio = "3.3.0"
 spring = "7.0.8"
@@ -60,5 +61,6 @@ maven-resolver-provider = { module = "org.apache.maven:maven-resolver-provider",
 
 [plugins]
 axion-release = { id = "pl.allegro.tech.build.axion-release", version.ref = "axion-release" }
+nmcp-aggregation = { id = "com.gradleup.nmcp.aggregation", version.ref = "nmcp" }
 quarkus-extension = { id = "io.quarkus.extension", version.ref = "quarkus" }
 protobuf = { id = "com.google.protobuf", version.ref = "protobuf-gradle" }
