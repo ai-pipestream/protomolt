@@ -26,7 +26,8 @@ prefix; Java packages use the `ai.pipestream.proto.*` namespace (see
 | `registry/` | `registry`, `registry-server` | Git-backed schema registry: subject/version store with compatibility-gated writes, served over the Confluent protocol |
 | `actions/` | `actions` | Self-describing verb catalog (compile, validate, diff, check-compat, render, evaluate) for consoles and LLM tooling |
 | `mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
-| `grpc/` | `grpc-invoke` | Dynamic gRPC invocation and server reflection from descriptors: call methods and discover schemas with no generated stubs |
+| `grpc/` | `grpc-invoke`, `grpc-service` | Dynamic gRPC invocation and server reflection from descriptors; the action catalog itself as a typed gRPC service, served descriptor-natively |
+| `serve/` | `serve` | One-process server: the gRPC service with reflection, the verbs over JSON/REST with OpenAPI and Swagger UI, optional registry |
 | `codegen/` | `codegen` | Live code generation: every libprotoc generator (8 languages) and the grpc-java plugin as WebAssembly, no native toolchain |
 | `mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
 | `protobuf/` | `protobuf-metadata`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; protovalidate dialect and conformance harness |
@@ -116,6 +117,9 @@ Each of these is covered in depth in the documentation below.
 - [MCP server](docs/mcp.md) — the catalog and registry over the Model
   Context Protocol for AI agents; reflect, invoke, and generate against any
   gRPC service
+- [The gRPC service](docs/grpc-service.md) — the catalog as
+  `ProtoMoltService`: typed RPCs with reflection, the same verbs over
+  JSON/REST with OpenAPI and Swagger UI, one launcher for all of it
 - [Operating an OpenVINO server](docs/tutorials/openvino.md) — a full
   gRPC-agent walkthrough: reflect, register the KServe schema, introspect
   models, run a text → embedding inference

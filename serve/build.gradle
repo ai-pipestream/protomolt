@@ -1,0 +1,27 @@
+plugins {
+    id 'application'
+}
+
+description = 'One-process launcher: ProtoMoltService over gRPC with reflection, the same verbs over JSON/REST with OpenAPI and Swagger UI, and an optional git-backed registry'
+
+dependencies {
+    api project(':protomolt-grpc-service')
+
+    implementation project(':protomolt-json')
+    implementation project(':protomolt-rest')
+    implementation project(':protomolt-openapi')
+    implementation project(':protomolt-server-jdk')
+    implementation project(':protomolt-registry')
+    implementation project(':protomolt-registry-server')
+    implementation libs.protobuf.java.util
+    implementation libs.swagger.ui
+
+    runtimeOnly libs.slf4j.simple
+
+    testImplementation project(':protomolt-grpc-invoke')
+    testImplementation libs.grpc.inprocess
+}
+
+application {
+    mainClass = 'ai.pipestream.proto.serve.ProtoMoltServe'
+}

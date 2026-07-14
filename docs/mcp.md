@@ -132,6 +132,7 @@ nothing needs rewriting to move between hosts.
 ## Related
 
 - [Actions](actions.md) — the verb catalog this server exposes
+- [The gRPC service](grpc-service.md) — the same thirteen verbs as typed RPCs and JSON/REST
 - [The registry](registry.md) — the store behind the resource URIs
 - [Operating an OpenVINO server](tutorials/openvino.md) — a full gRPC-agent walkthrough
 - [Roadmap](roadmap.md) — per-method dynamic tools and registry-backed type

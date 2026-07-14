@@ -1,0 +1,196 @@
+package ai.pipestream.proto.serve;
+
+import ai.pipestream.proto.actions.ActionCatalog;
+import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
+import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
+import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
+import ai.pipestream.proto.registry.GitSchemaRegistryStore;
+import ai.pipestream.proto.registry.server.SchemaRegistryServer;
+import ai.pipestream.proto.registry.server.SchemaRegistryServerConfig;
+import ai.pipestream.proto.rest.ProtoRestGateway;
+import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
+import ai.pipestream.proto.server.ProtoToolsServerConfig;
+import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
+
+import java.nio.file.Path;
+
+/**
+ * The one-process ProtoMolt server: {@code ProtoMoltService} over gRPC (reflection enabled),
+ * the same thirteen verbs over JSON/REST with OpenAPI and Swagger UI, and optionally the
+ * git-backed schema registry speaking the Confluent protocol.
+ *
+ * <pre>
+ * protomolt-serve [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080]
+ *                 [--registry-git /srv/schemas.git [--registry-port 8081]]
+ * </pre>
+ */
+public final class ProtoMoltServe implements AutoCloseable {
+
+    /** Launcher options; a port of 0 picks a free port. */
+    public record Options(String host, int grpcPort, int httpPort,
+                          Path registryGit, int registryPort) {
+
+        public static Options defaults() {
+            return new Options("0.0.0.0", 9090, 8080, null, 8081);
+        }
+
+        static Options parse(String[] args) {
+            String host = "0.0.0.0";
+            int grpcPort = 9090;
+            int httpPort = 8080;
+            Path registryGit = null;
+            int registryPort = 8081;
+            for (int i = 0; i < args.length; i++) {
+                switch (args[i]) {
+                    case "--host" -> host = requireValue(args, ++i);
+                    case "--grpc-port" -> grpcPort = Integer.parseInt(requireValue(args, ++i));
+                    case "--http-port" -> httpPort = Integer.parseInt(requireValue(args, ++i));
+                    case "--registry-git" -> registryGit = Path.of(requireValue(args, ++i));
+                    case "--registry-port" -> registryPort = Integer.parseInt(requireValue(args, ++i));
+                    case "--help", "-h" -> {
+                        System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
+                                + "[--http-port <n>] [--registry-git <path> [--registry-port <n>]]");
+                        System.exit(0);
+                    }
+                    default -> {
+                        System.err.println("unknown argument: " + args[i]);
+                        System.exit(2);
+                    }
+                }
+            }
+            return new Options(host, grpcPort, httpPort, registryGit, registryPort);
+        }
+
+        private static String requireValue(String[] args, int i) {
+            if (i >= args.length) {
+                System.err.println(args[i - 1] + " requires a value");
+                System.exit(2);
+            }
+            return args[i];
+        }
+    }
+
+    private final ProtoMoltGrpcServer grpc;
+    private final JdkProtoRestServer http;
+    private final GitSchemaRegistryStore registryStore;
+    private final SchemaRegistryServer registry;
+    private final int httpPort;
+    private final int registryPort;
+
+    private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http, int httpPort,
+                           GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
+                           int registryPort) {
+        this.grpc = grpc;
+        this.http = http;
+        this.httpPort = httpPort;
+        this.registryStore = registryStore;
+        this.registry = registry;
+        this.registryPort = registryPort;
+    }
+
+    /** Starts every configured surface; closing stops them all. */
+    public static ProtoMoltServe start(Options options) {
+        ActionContext context = ActionContext.create();
+        ActionCatalog catalog = ProtoMoltCatalog.full(context);
+
+        ProtoMoltGrpcServer grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog);
+
+        JdkProtoRestServer http = null;
+        GitSchemaRegistryStore store = null;
+        SchemaRegistryServer registry = null;
+        try {
+            ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
+            ProtoMoltRestMount.register(methods, catalog);
+            ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
+                    .withHost(options.host())
+                    .withPort(options.httpPort());
+            ProtoRestGateway gateway = new ProtoRestGateway(methods, context.transcoder());
+            String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
+            http = new JdkProtoRestServer(config, gateway,
+                    new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
+                            "/", config.restPathPrefix()))
+                    .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()));
+            int httpPort = http.start();
+
+            int registryPort = -1;
+            if (options.registryGit() != null) {
+                store = GitSchemaRegistryStore.builder()
+                        .repositoryDir(options.registryGit())
+                        .build();
+                registry = new SchemaRegistryServer(
+                        SchemaRegistryServerConfig.defaults()
+                                .withPort(options.registryPort()),
+                        store, catalog);
+                registryPort = registry.start();
+            }
+            return new ProtoMoltServe(grpc, http, httpPort, store, registry, registryPort);
+        } catch (RuntimeException e) {
+            if (registry != null) {
+                registry.close();
+            }
+            closeQuietly(store);
+            if (http != null) {
+                http.close();
+            }
+            grpc.close();
+            throw e;
+        }
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (Exception ignored) {
+                // best-effort teardown on a failed start
+            }
+        }
+    }
+
+    public int grpcPort() {
+        return grpc.port();
+    }
+
+    public int httpPort() {
+        return httpPort;
+    }
+
+    /** The registry port, or -1 when no registry is mounted. */
+    public int registryPort() {
+        return registryPort;
+    }
+
+    /** Blocks until the gRPC server terminates. */
+    public void awaitTermination() throws InterruptedException {
+        grpc.awaitTermination();
+    }
+
+    @Override
+    public void close() {
+        if (registry != null) {
+            registry.close();
+        }
+        closeQuietly(registryStore);
+        http.close();
+        grpc.close();
+    }
+
+    public static void main(String[] args) throws Exception {
+        Options options = Options.parse(args);
+        ProtoMoltServe serve = start(options);
+        System.out.printf("""
+                ProtoMolt serving:
+                  gRPC  %1$s:%2$d   ai.pipestream.protomolt.v1.ProtoMoltService (reflection on)
+                  REST  http://%1$s:%3$d/grpc-json/ProtoMoltService/{Method}
+                  API   http://%1$s:%3$d/openapi.json
+                  Docs  http://%1$s:%3$d/docs
+                """, options.host(), serve.grpcPort(), serve.httpPort());
+        if (serve.registryPort() >= 0) {
+            System.out.printf("  Reg   http://%s:%d (Confluent protocol, git-backed)%n",
+                    options.host(), serve.registryPort());
+        }
+        Runtime.getRuntime().addShutdownHook(new Thread(serve::close));
+        serve.awaitTermination();
+    }
+}

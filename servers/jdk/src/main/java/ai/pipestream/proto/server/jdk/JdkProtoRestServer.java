@@ -19,6 +19,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,6 +40,7 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
     private final ProtoToolsServerConfig config;
     private final ProtoRestGateway gateway;
     private final ProtoOpenApiGenerator openApiGenerator;
+    private final Map<String, com.sun.net.httpserver.HttpHandler> extraContexts = new LinkedHashMap<>();
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
     private volatile ExecutorService executor;
     private volatile String cachedOpenApiJson;
@@ -64,6 +66,19 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
         this.openApiGenerator = Objects.requireNonNull(openApiGenerator, "openApiGenerator");
     }
 
+    /**
+     * Mounts an additional handler at {@code path} (JDK prefix matching) when the server
+     * starts — e.g. a documentation UI next to the gateway. Call before {@link #start()}.
+     */
+    public JdkProtoRestServer withContext(String path, com.sun.net.httpserver.HttpHandler handler) {
+        if (httpServer.get() != null) {
+            throw new IllegalStateException("Server already started");
+        }
+        extraContexts.put(Objects.requireNonNull(path, "path"),
+                Objects.requireNonNull(handler, "handler"));
+        return this;
+    }
+
     @Override
     public String engineId() {
         return ENGINE_ID;
@@ -85,6 +100,7 @@ public final class JdkProtoRestServer implements ProtoRestServerHost {
             server.createContext(config.healthPath(), this::handleHealth);
             server.createContext(config.openApiPath(), this::handleOpenApi);
             server.createContext(config.restPathPrefix(), this::handleRest);
+            extraContexts.forEach(server::createContext);
             server.setExecutor(workerPool);
             server.start();
         } catch (Throwable t) {

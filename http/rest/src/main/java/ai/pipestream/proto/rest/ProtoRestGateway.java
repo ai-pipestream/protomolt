@@ -132,6 +132,10 @@ public final class ProtoRestGateway {
             throw e;
         } catch (ProtobufJsonException e) {
             throw e;
+        } catch (ProtoRestException e) {
+            // The gateway's own vocabulary (e.g. a MalformedRequestException thrown by an
+            // invoker for a client-repairable failure) keeps its status mapping.
+            throw e;
         } catch (RuntimeException e) {
             LOG.error("Invocation failed for {}/{}", serviceName, methodName, e);
             throw new ProtoRestInvocationException(

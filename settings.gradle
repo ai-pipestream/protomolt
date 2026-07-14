@@ -53,6 +53,12 @@ project(':protomolt-mcp').projectDir = file('mcp/core')
 include 'protomolt-grpc-invoke'
 project(':protomolt-grpc-invoke').projectDir = file('grpc/invoke')
 
+include 'protomolt-grpc-service'
+project(':protomolt-grpc-service').projectDir = file('grpc/service')
+
+include 'protomolt-serve'
+project(':protomolt-serve').projectDir = file('serve')
+
 include 'protomolt-codegen'
 project(':protomolt-codegen').projectDir = file('codegen')
 

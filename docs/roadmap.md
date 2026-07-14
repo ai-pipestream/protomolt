@@ -177,12 +177,25 @@ schema operable by an agent. Verified live against a real OpenVINO Model
 Server (KServe v2 gRPC): server and model metadata introspected over
 MCP, tensor contracts and all.
 
+The catalog is now also a gRPC service of itself:
+`protomolt-grpc-service` defines all thirteen verbs as typed RPCs
+(`ai.pipestream.protomolt.v1.ProtoMoltService`), compiles that `.proto`
+with the runtime's own compiler at startup, and serves it over dynamic
+messages with server reflection on — grpcurl and ProtoMolt's own
+`reflect` verb both discover it, and its `GrpcInvoke` RPC can operate
+another ProtoMolt server (the test suite pins this). `protomolt-serve`
+mounts the same descriptors on the JSON/REST gateway with a generated
+OpenAPI document and bundled Swagger UI, and optionally the git-backed
+registry, in one process. See [The gRPC service](grpc-service.md).
+
 **5. A web console.** Every server host already serves `openapi.json`, and
 `MappingHelper` exists specifically to feed schema-browsing UIs. A bundled,
 build-free console — schema browser, subject/version history, a try-it
 request panel — served as static assets from the same hosts would give the
 registry and gateway a common front end without adding a frontend toolchain
-to the build.
+to the build. The try-it panel exists today: `protomolt-serve` bundles
+Swagger UI at `/docs` over the generated OpenAPI document. The schema
+browser and version history remain open.
 
 **6. Cross-language project bootstrap.** With 1–4 in place, "cross-language
 out of the box" is mostly packaging: a project template (or plugin) where

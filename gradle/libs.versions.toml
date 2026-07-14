@@ -4,6 +4,7 @@ cel = "0.13.1"
 junit = "6.1.1"
 assertj = "3.27.7"
 slf4j = "2.0.18"
+swagger-ui = "5.25.3"
 jackson = "2.22.1"
 quarkus = "3.37.2"
 axion-release = "1.21.2"
@@ -43,6 +44,8 @@ junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+swagger-ui = { module = "org.webjars:swagger-ui", version.ref = "swagger-ui" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
 quarkus-arc = { module = "io.quarkus:quarkus-arc" }

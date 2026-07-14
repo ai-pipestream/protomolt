@@ -1,0 +1,139 @@
+# The gRPC service
+
+`protomolt-grpc-service` is the action catalog as a gRPC service, and
+`protomolt-serve` is the one-process server that mounts it everywhere at
+once: gRPC with server reflection, JSON/REST with a generated OpenAPI
+document, Swagger UI, and optionally the git-backed registry — the same
+thirteen verbs on every surface.
+
+The service is defined in protobuf, of course:
+`ai.pipestream.protomolt.v1.ProtoMoltService`, thirteen typed RPCs in
+[`protomolt_service.proto`](../grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto).
+Each request and response message is designed so its canonical proto3 JSON
+form is exactly the action's JSON envelope. That one decision makes every
+surface identical: a `CheckCompatRequest` over gRPC, the JSON body of
+`POST /grpc-json/ProtoMoltService/CheckCompat`, and the `check-compat` MCP
+tool input are the same document.
+
+## Served descriptor-natively
+
+The server does not compile the proto to stubs. At startup it compiles
+`protomolt_service.proto` with ProtoMolt's own runtime compiler, binds one
+dynamic-message handler per method, and attaches the compiled file
+descriptor so server reflection lists the service exactly as it would a
+stub-generated one. The tool that manages the format is defined in the
+format, served through its own machinery, and discoverable by its own
+`reflect` verb.
+
+```java
+var catalog = ProtoMoltCatalog.full(ActionContext.create());
+
+// Into your own grpc-java server:
+serverBuilder.addService(ProtoMoltGrpcService.definition(catalog));
+
+// Or standalone, reflection included:
+try (var server = ProtoMoltGrpcServer.start(9090, catalog)) {
+    server.awaitTermination();
+}
+```
+
+## Running everything: protomolt-serve
+
+```shell
+./gradlew :protomolt-serve:installDist
+serve/build/install/protomolt-serve/bin/protomolt-serve \
+    [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080] \
+    [--registry-git /srv/schemas.git [--registry-port 8081]]
+```
+
+```
+ProtoMolt serving:
+  gRPC  0.0.0.0:9090   ai.pipestream.protomolt.v1.ProtoMoltService (reflection on)
+  REST  http://0.0.0.0:8080/grpc-json/ProtoMoltService/{Method}
+  API   http://0.0.0.0:8080/openapi.json
+  Docs  http://0.0.0.0:8080/docs
+```
+
+With `--registry-git`, the Confluent-protocol registry server joins the
+same process on its own port, so one binary serves schemas, verbs, and
+documentation together.
+
+## The gRPC surface
+
+Reflection is on, so any gRPC client works with no schema in hand:
+
+```shell
+$ grpcurl -plaintext localhost:9090 list
+ai.pipestream.protomolt.v1.ProtoMoltService
+grpc.reflection.v1.ServerReflection
+
+$ grpcurl -plaintext -d '{"sources": {"shop/v1/order.proto":
+    "syntax = \"proto3\";\npackage shop.v1;\nmessage Order { string id = 1; }"}}' \
+    localhost:9090 ai.pipestream.protomolt.v1.ProtoMoltService/Compile
+{
+  "ok": true,
+  "files": ["shop/v1/order.proto"],
+  "descriptor_set_base64": "CjsKE3Nob3AvdjEvb3JkZXIucHJvdG8SB3Nob3Au..."
+}
+```
+
+Action failures map to gRPC statuses: client-repairable codes
+(`invalid-input`, `unknown-type`, …) become `INVALID_ARGUMENT`,
+`unknown-action` becomes `UNIMPLEMENTED`, and internal faults become
+`INTERNAL`. The status description carries `code: message`; trailers carry
+the stable code (`protomolt-error`) and, when present, the details document
+(`protomolt-error-details-bin`).
+
+And because the service is discoverable and stub-free, ProtoMolt operates
+itself: the `GrpcInvoke` RPC of one server can call the `ListTypes` RPC of
+another (or the `reflect` verb can discover it), using the service's own
+`.proto` as the schema — a case the test suite pins.
+
+## The REST surface
+
+Every RPC is `POST /grpc-json/ProtoMoltService/{Method}` with the same
+envelope as the JSON body:
+
+```shell
+$ curl -s -H 'content-type: application/json' \
+    -d '{"schema": {"sources": {"t.proto": "syntax = \"proto3\"; message T { int32 n = 1; }"}},
+         "message": {"n": 6}, "expression": "input.n * 7"}' \
+    http://localhost:8080/grpc-json/ProtoMoltService/EvalCel
+{
+  "result": 42.0,
+  "resultType": "int"
+}
+```
+
+`GET /openapi.json` documents all thirteen operations with schemas derived
+from the same descriptors, and `GET /docs` serves Swagger UI over that
+document — a browsable, try-it console with no frontend build. Action
+failures with client-repairable codes return 400 with the code in the body;
+internal faults return 500 with details kept server-side.
+
+Two proto3 JSON semantics to know:
+
+- Absent means default: a `false`/`0`/empty field may be omitted from
+  responses (standard proto3 JSON). `valid` missing means `false`.
+- `EvalCel` results ride a `google.protobuf.Value`, whose numbers are JSON
+  numbers (doubles) — `42.0` above. The `resultType` label preserves what
+  CEL actually produced.
+
+## One catalog, four surfaces
+
+| Surface | Module | Transport |
+|---|---|---|
+| Java | `protomolt-actions` | `catalog.execute(name, json)` |
+| MCP | `protomolt-mcp` | JSON-RPC over stdio, tools + resources |
+| gRPC | `protomolt-grpc-service` | `ProtoMoltService`, reflection on |
+| REST | `protomolt-serve` | `/grpc-json`, OpenAPI, Swagger UI |
+
+The registry server's native mount (`POST /protomolt/actions/{name}`)
+remains available where the registry is the primary surface.
+
+## Related
+
+- [Actions](actions.md) — the verbs and their envelopes
+- [MCP server](mcp.md) — the same catalog as agent tools
+- [REST gateway and servers](rest-gateway.md) — the gateway underneath the REST surface
+- [The registry](registry.md) — the optional third port

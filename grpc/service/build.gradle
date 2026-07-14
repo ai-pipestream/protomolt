@@ -1,0 +1,20 @@
+description = 'The action catalog as a gRPC service: every verb a typed RPC, served descriptor-natively with no generated stubs'
+
+dependencies {
+    api project(':protomolt-actions')
+    api libs.grpc.api
+    api libs.protobuf.java
+
+    implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-grpc-invoke')
+    implementation project(':protomolt-codegen')
+    implementation libs.protobuf.java.util
+    implementation libs.grpc.stub
+    implementation libs.grpc.services
+    implementation libs.grpc.protobuf
+
+    runtimeOnly libs.grpc.netty.shaded
+
+    testImplementation project(':protomolt-json')
+    testImplementation libs.grpc.inprocess
+}

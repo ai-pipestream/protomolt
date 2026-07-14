@@ -1,0 +1,322 @@
+// The ProtoMolt action catalog as a gRPC service.
+//
+// Every verb in the catalog is a typed RPC here. The canonical proto3 JSON
+// form of each message is exactly the action's JSON envelope, so the same
+// call works identically over gRPC, over the JSON/REST gateway, and as an
+// MCP tool.
+//
+// ProtoMolt serves this file descriptor-natively: the runtime compiles this
+// source with its own compiler and binds the service with dynamic messages.
+// There are no generated stubs on the server side; clients may generate
+// theirs with the GenerateStubs RPC below.
+syntax = "proto3";
+
+package ai.pipestream.protomolt.v1;
+
+import "google/protobuf/struct.proto";
+
+// The ProtoMolt toolkit: compile, introspect, validate, diff, render,
+// evaluate, map, reflect, invoke, and generate — one service.
+service ProtoMoltService {
+  // Compiles inline .proto sources to a serialized FileDescriptorSet.
+  // Compilation failures return ok=false with diagnostics, not an error.
+  rpc Compile(CompileRequest) returns (CompileResponse);
+
+  // Lists the types in a schema (or the shared registry when no schema is
+  // given) — the grounding verb: call it first to discover exact names.
+  rpc ListTypes(ListTypesRequest) returns (ListTypesResponse);
+
+  // Validates a message against the validation rules declared on its schema.
+  rpc ValidateMessage(ValidateMessageRequest) returns (ValidateMessageResponse);
+
+  // Reports every change between two schema versions as typed entries.
+  rpc DiffSchemas(DiffSchemasRequest) returns (DiffSchemasResponse);
+
+  // Checks the new schema against the old under a compatibility mode.
+  rpc CheckCompat(CheckCompatRequest) returns (CheckCompatResponse);
+
+  // Renders the JSON Schema (draft 2020-12) for a message type. The response
+  // is the schema document itself.
+  rpc RenderJsonSchema(RenderJsonSchemaRequest) returns (google.protobuf.Struct);
+
+  // Renders the search-index artifact for a message type from its indexing
+  // hints. The response shape is engine-specific (OpenSearch mappings, Solr
+  // schema pieces, or Lucene field specs).
+  rpc RenderIndexMappings(RenderIndexMappingsRequest) returns (google.protobuf.Struct);
+
+  // Evaluates a CEL expression against a message bound as 'input'.
+  rpc EvalCel(EvalCelRequest) returns (EvalCelResponse);
+
+  // Transforms a message with text mapping rules and/or CEL rules.
+  rpc MapMessage(MapMessageRequest) returns (MapMessageResponse);
+
+  // Extracts the declared metadata bag for a message type.
+  rpc ExtractMetadata(ExtractMetadataRequest) returns (ExtractMetadataResponse);
+
+  // Fetches a live gRPC server's schema over server reflection, given only
+  // its address. Servers without reflection return ok=false.
+  rpc Reflect(ReflectRequest) returns (ReflectResponse);
+
+  // Invokes a unary or server-streaming method on a live gRPC server with no
+  // generated stubs. gRPC status failures return ok=false with the status
+  // name rather than an error.
+  rpc GrpcInvoke(GrpcInvokeRequest) returns (GrpcInvokeResponse);
+
+  // Generates client/message source code from a schema with protoc compiled
+  // to WebAssembly — no native toolchain on the server.
+  rpc GenerateStubs(GenerateStubsRequest) returns (GenerateStubsResponse);
+}
+
+// A schema source. Provide exactly one of 'type', 'sources', or
+// 'descriptor_set_base64'; 'root' optionally names the entry file within
+// 'sources'.
+message SchemaSource {
+  // Fully qualified message name resolved from the shared descriptor
+  // registry, e.g. 'google.protobuf.Struct'.
+  string type = 1;
+
+  // Inline .proto files keyed by import path; compiled per call.
+  map<string, string> sources = 2;
+
+  // Optional entry file within 'sources'.
+  string root = 3;
+
+  // Base64-encoded serialized google.protobuf.FileDescriptorSet.
+  string descriptor_set_base64 = 4;
+}
+
+message CompileRequest {
+  // The .proto files to compile, keyed by import path.
+  map<string, string> sources = 1;
+}
+
+message CompileResponse {
+  bool ok = 1;
+  // Compiler diagnostics when ok=false.
+  repeated string errors = 2;
+  // Compiled file names when ok=true.
+  repeated string files = 3;
+  string descriptor_set_base64 = 4;
+}
+
+message ListTypesRequest {
+  // Optional; without it the shared descriptor registry is listed.
+  SchemaSource schema = 1;
+  // Case-insensitive substring filter on the fully qualified name.
+  string filter = 2;
+}
+
+message TypeField {
+  string name = 1;
+  int32 number = 2;
+  // Wire type, lowercase (e.g. 'string', 'int64', 'message').
+  string type = 3;
+  // Full name of the message or enum type, when applicable.
+  string type_name = 4;
+  string label = 5;
+}
+
+message TypeEntry {
+  string full_name = 1;
+  string file = 2;
+  // 'message', 'enum', or 'service'.
+  string kind = 3;
+  // Field shapes; present for messages.
+  repeated TypeField fields = 4;
+}
+
+message ListTypesResponse {
+  repeated TypeEntry types = 1;
+}
+
+message ValidateMessageRequest {
+  SchemaSource schema = 1;
+  // Fully qualified type to validate against; required unless the schema
+  // identifies a single message.
+  string type = 2;
+  // The message as canonical proto3 JSON.
+  google.protobuf.Struct message = 3;
+}
+
+message Violation {
+  string field = 1;
+  string rule = 2;
+  string rule_id = 3;
+  string message = 4;
+}
+
+message ValidateMessageResponse {
+  bool valid = 1;
+  repeated Violation violations = 2;
+}
+
+message DiffSchemasRequest {
+  SchemaSource old = 1;
+  SchemaSource new = 2;
+}
+
+message SchemaChange {
+  string rule_id = 1;
+  string path = 2;
+  string before = 3;
+  string after = 4;
+  string message = 5;
+  repeated string impacts = 6;
+}
+
+message DiffSchemasResponse {
+  repeated SchemaChange changes = 1;
+}
+
+message CheckCompatRequest {
+  SchemaSource old = 1;
+  SchemaSource new = 2;
+  // NONE, BACKWARD, FORWARD, FULL, or a _TRANSITIVE variant; defaults to
+  // BACKWARD.
+  string mode = 3;
+  bool include_json_rules = 4;
+  bool include_source_rules = 5;
+}
+
+message CheckCompatResponse {
+  bool compatible = 1;
+  string mode = 2;
+  repeated SchemaChange violations = 3;
+  repeated SchemaChange changes = 4;
+}
+
+message RenderJsonSchemaRequest {
+  SchemaSource schema = 1;
+  string type = 2;
+}
+
+message RenderIndexMappingsRequest {
+  SchemaSource schema = 1;
+  string type = 2;
+  // 'opensearch', 'solr', or 'lucene'.
+  string engine = 3;
+}
+
+message EvalCelRequest {
+  SchemaSource schema = 1;
+  string type = 2;
+  // The message bound as the CEL variable 'input', as proto3 JSON.
+  google.protobuf.Struct message = 3;
+  string expression = 4;
+}
+
+message EvalCelResponse {
+  google.protobuf.Value result = 1;
+  // A short type label: 'string', 'int', 'bool', 'list', 'map',
+  // 'message:<full.Name>', ...
+  string result_type = 2;
+}
+
+message CelRule {
+  // Optional boolean CEL gate; the rule is skipped when false.
+  string filter = 1;
+  // Optional CEL value expression written to 'target'.
+  string selector = 2;
+  string target = 3;
+  // Text rules applied when no selector is given.
+  repeated string fallback = 4;
+}
+
+message MapMessageRequest {
+  SchemaSource schema = 1;
+  string type = 2;
+  google.protobuf.Struct message = 3;
+  // Text rules applied in order: 'target = source.path',
+  // 'target += source.path', '-field.to.clear'.
+  repeated string rules = 4;
+  // CEL rules applied after 'rules'.
+  repeated CelRule cel_rules = 5;
+}
+
+message MapMessageResponse {
+  // The transformed message as proto3 JSON.
+  google.protobuf.Struct message = 1;
+}
+
+message ExtractMetadataRequest {
+  SchemaSource schema = 1;
+  string type = 2;
+}
+
+message ExtractMetadataResponse {
+  string type = 1;
+  // Flat bag keyed 'message.*' and 'field.<name>.*'.
+  google.protobuf.Struct metadata = 2;
+}
+
+message ReflectRequest {
+  // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
+  string target = 1;
+  // Default 15000.
+  int32 deadline_ms = 2;
+}
+
+message ReflectResponse {
+  bool ok = 1;
+  repeated string services = 2;
+  // Usable directly as SchemaSource.descriptor_set_base64.
+  string descriptor_set_base64 = 3;
+  int32 file_count = 4;
+  // Why reflection failed, when ok=false.
+  string error = 5;
+}
+
+message GrpcInvokeRequest {
+  string target = 1;
+  // Fully qualified 'package.Service/Method'.
+  string method = 2;
+  // Must declare the target service.
+  SchemaSource schema = 3;
+  // The request message as canonical proto3 JSON.
+  google.protobuf.Struct request = 4;
+  // Optional ASCII request headers.
+  map<string, string> metadata = 5;
+  // Default 15000.
+  int32 deadline_ms = 6;
+  // Cap on collected server-streaming responses; default 64.
+  int32 max_responses = 7;
+}
+
+message GrpcInvokeResponse {
+  string method = 1;
+  // UNARY or SERVER_STREAMING.
+  string method_type = 2;
+  bool ok = 3;
+  // The gRPC status name, 'OK' on success.
+  string status = 4;
+  // Response messages as proto3 JSON.
+  repeated google.protobuf.Struct responses = 5;
+  // Status detail, when the call failed.
+  string description = 6;
+}
+
+message GenerateStubsRequest {
+  SchemaSource schema = 1;
+  // 'java', 'kotlin', 'grpc-java', 'python', 'cpp', 'csharp', 'ruby', 'php',
+  // 'objc'; defaults to ['java'].
+  repeated string generators = 2;
+  // Proto file paths to generate for; defaults to every non-google file.
+  repeated string files = 3;
+  // Optional generator parameter, as protoc's --<gen>_opt.
+  string parameter = 4;
+}
+
+message GeneratedFile {
+  string name = 1;
+  string generator = 2;
+  string content = 3;
+}
+
+message GenerateStubsResponse {
+  bool ok = 1;
+  repeated GeneratedFile files = 2;
+  int32 file_count = 3;
+  // The generator that failed, when ok=false.
+  string generator = 4;
+  string error = 5;
+}
