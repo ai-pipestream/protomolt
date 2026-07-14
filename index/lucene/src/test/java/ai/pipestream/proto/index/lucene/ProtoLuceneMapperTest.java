@@ -17,11 +17,14 @@ import com.google.protobuf.Struct;
 import com.google.protobuf.TimestampProto;
 import com.google.protobuf.Value;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -348,9 +351,500 @@ class ProtoLuceneMapperTest {
     }
 
     @Test
+    void vectorSimilaritiesMapToLuceneFunctions() throws Exception {
+        Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
+        FieldDescriptor embedding = descriptor.findFieldByName("embedding");
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .addRepeatedField(embedding, 0.1f)
+                .addRepeatedField(embedding, 0.2f)
+                .build();
+        Map<ai.pipestream.proto.index.spi.VectorSimilarity, VectorSimilarityFunction> expected = Map.of(
+                ai.pipestream.proto.index.spi.VectorSimilarity.COSINE, VectorSimilarityFunction.COSINE,
+                ai.pipestream.proto.index.spi.VectorSimilarity.DOT_PRODUCT, VectorSimilarityFunction.DOT_PRODUCT,
+                ai.pipestream.proto.index.spi.VectorSimilarity.L2, VectorSimilarityFunction.EUCLIDEAN,
+                ai.pipestream.proto.index.spi.VectorSimilarity.MAX_INNER_PRODUCT,
+                VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT);
+
+        for (var entry : expected.entrySet()) {
+            IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                    new IndexingPlan.IndexedField("embedding", "embedding",
+                            ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
+                                    .vectorDims(2)
+                                    .vectorSimilarity(entry.getKey())
+                                    .build())));
+
+            Document doc = mapper.map(message, plan);
+
+            assertThat(doc.getFields("embedding")).hasSize(1);
+            assertThat(doc.getFields("embedding")[0].fieldType().vectorSimilarityFunction())
+                    .as("similarity %s", entry.getKey())
+                    .isEqualTo(entry.getValue());
+        }
+    }
+
+    @Test
+    void byteVectorFromRepeatedInt32BuildsKnnByteField() throws Exception {
+        Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_INT32);
+        FieldDescriptor embedding = descriptor.findFieldByName("embedding");
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .addRepeatedField(embedding, 1)
+                .addRepeatedField(embedding, -2)
+                .addRepeatedField(embedding, 127)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("embedding", "embedding",
+                        ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
+                                .vectorDims(3)
+                                .vectorElementType(ai.pipestream.proto.index.spi.VectorElementType.BYTE)
+                                .vectorSimilarity(ai.pipestream.proto.index.spi.VectorSimilarity.DOT_PRODUCT)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("embedding")).hasSize(1);
+        assertThat(doc.getFields("embedding")[0])
+                .isInstanceOf(org.apache.lucene.document.KnnByteVectorField.class);
+        var field = (org.apache.lucene.document.KnnByteVectorField) doc.getFields("embedding")[0];
+        assertThat(field.vectorValue()).containsExactly((byte) 1, (byte) -2, (byte) 127);
+        assertThat(field.fieldType().vectorSimilarityFunction())
+                .isEqualTo(VectorSimilarityFunction.DOT_PRODUCT);
+    }
+
+    @Test
+    void byteVectorFromBytesFieldBuildsKnnByteField() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_BYTES);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("embedding"),
+                        com.google.protobuf.ByteString.copyFrom(new byte[]{5, 6, 7}))
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("embedding", "embedding",
+                        ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
+                                .vectorDims(3)
+                                .vectorElementType(ai.pipestream.proto.index.spi.VectorElementType.BYTE)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("embedding")).hasSize(1);
+        var field = (org.apache.lucene.document.KnnByteVectorField) doc.getFields("embedding")[0];
+        assertThat(field.vectorValue()).containsExactly((byte) 5, (byte) 6, (byte) 7);
+    }
+
+    @Test
+    void subFieldsEmitAdditionalIndexableFields() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("title", FieldDescriptorProto.Type.TYPE_STRING);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("title"), "Hello")
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("title", "title",
+                        ResolvedFieldHint.builder(IndexFieldKind.TEXT)
+                                .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""))
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        // main text field plus one indexed-only keyword companion named "title.raw"
+        assertThat(doc.get("title")).isEqualTo("Hello");
+        assertThat(doc.getFields("title.raw")).hasSize(1);
+        assertThat(doc.getFields("title.raw")[0].stringValue()).isEqualTo("Hello");
+        assertThat(doc.getFields("title.raw")[0].fieldType().tokenized()).isFalse();
+        assertThat(doc.getFields("title.raw")[0].fieldType().stored()).isFalse();
+    }
+
+    @Test
+    void sortableAndFacetableKeywordAddDocValues() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("status", FieldDescriptorProto.Type.TYPE_STRING);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("status"), "open")
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("status", "status",
+                        ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
+                                .sortable(true)
+                                .facetable(true)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        List<DocValuesType> docValues = Arrays.stream(doc.getFields("status"))
+                .map(field -> field.fieldType().docValuesType())
+                .filter(type -> type != DocValuesType.NONE)
+                .toList();
+        assertThat(docValues).containsExactlyInAnyOrder(DocValuesType.SORTED, DocValuesType.SORTED_SET);
+    }
+
+    @Test
+    void sortableAndFacetableNumericsAddNumericDocValues() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("count", FieldDescriptorProto.Type.TYPE_INT64);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("count"), 42L)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("count", "count",
+                        ResolvedFieldHint.builder(IndexFieldKind.INT64)
+                                .sortable(true)
+                                .facetable(true)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        List<DocValuesType> docValues = Arrays.stream(doc.getFields("count"))
+                .map(field -> field.fieldType().docValuesType())
+                .filter(type -> type != DocValuesType.NONE)
+                .toList();
+        assertThat(docValues).containsExactlyInAnyOrder(DocValuesType.NUMERIC, DocValuesType.SORTED_NUMERIC);
+    }
+
+    @Test
+    void sortableFloatAndDoubleAddTypedDocValues() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("score", FieldDescriptorProto.Type.TYPE_DOUBLE);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("score"), 2.5d)
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("score", "score",
+                        ResolvedFieldHint.builder(IndexFieldKind.DOUBLE)
+                                .sortable(true)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        List<DocValuesType> docValues = Arrays.stream(doc.getFields("score"))
+                .map(field -> field.fieldType().docValuesType())
+                .filter(type -> type != DocValuesType.NONE)
+                .toList();
+        assertThat(docValues).containsExactly(DocValuesType.NUMERIC);
+    }
+
+    @Test
+    void nullValueSubstitutesMissingField() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("status", FieldDescriptorProto.Type.TYPE_STRING);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("status", "status",
+                        ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
+                                .nullValue("unknown")
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.get("status")).isEqualTo("unknown");
+    }
+
+    @Test
+    void missingFieldWithoutNullValueStaysAbsent() throws Exception {
+        Descriptor descriptor = singularFieldDescriptor("status", FieldDescriptorProto.Type.TYPE_STRING);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("status", "status",
+                        ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+
+        assertThat(mapper.map(message, plan).getFields("status")).isEmpty();
+    }
+
+    @Test
+    void mapModeFlattenEmitsOneFieldPerKey() throws Exception {
+        IndexingPlan plan = mapPlan(ai.pipestream.proto.index.spi.MapMode.FLATTEN);
+
+        Document doc = mapper.map(labelsMessage(), plan);
+
+        assertThat(doc.get("labels.env")).isEqualTo("prod");
+        assertThat(doc.get("labels.team")).isEqualTo("search");
+        assertThat(doc.getFields("labels")).isEmpty();
+    }
+
+    @Test
+    void mapModeEntriesEmitsOneJsonObjectPerEntry() throws Exception {
+        IndexingPlan plan = mapPlan(ai.pipestream.proto.index.spi.MapMode.ENTRIES);
+
+        Document doc = mapper.map(labelsMessage(), plan);
+
+        List<String> entries = Arrays.stream(doc.getFields("labels"))
+                .map(IndexableField::stringValue)
+                .toList();
+        assertThat(entries).containsExactly(
+                "{\"key\":\"env\",\"value\":\"prod\"}",
+                "{\"key\":\"team\",\"value\":\"search\"}");
+    }
+
+    @Test
+    void mapModeJsonEmitsWholeMapJsonEvenOnScalarHint() throws Exception {
+        Descriptor descriptor = mapFieldDescriptor();
+        // an explicit mode wins for any hinted kind, not just OBJECT/NESTED
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("labels", "labels",
+                        ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
+                                .mapMode(ai.pipestream.proto.index.spi.MapMode.JSON)
+                                .build())));
+
+        Document doc = mapper.map(labelsMessage(), plan);
+
+        assertThat(doc.getFields("labels")).hasSize(1);
+        assertThat(doc.get("labels")).isEqualTo("{\"env\":\"prod\",\"team\":\"search\"}");
+    }
+
+    @Test
+    void mapModeSkipEmitsNothing() throws Exception {
+        IndexingPlan plan = mapPlan(ai.pipestream.proto.index.spi.MapMode.SKIP);
+
+        Document doc = mapper.map(labelsMessage(), plan);
+
+        assertThat(doc.getFields()).isEmpty();
+    }
+
+    @Test
+    void intRangeFromGteLteBoundsBuildsIntRange() throws Exception {
+        Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
+        DynamicMessage message = rangeMessage(descriptor, 3, 9);
+        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.INT_RANGE);
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("pages")).hasSize(1);
+        org.apache.lucene.document.IntRange range =
+                (org.apache.lucene.document.IntRange) doc.getFields("pages")[0];
+        assertThat(range.getMin(0)).isEqualTo(3);
+        assertThat(range.getMax(0)).isEqualTo(9);
+    }
+
+    @Test
+    void longRangeFromMinMaxBoundsBuildsLongRange() throws Exception {
+        Descriptor descriptor = rangeDescriptor("min", "max", FieldDescriptorProto.Type.TYPE_INT64);
+        DynamicMessage message = rangeMessage(descriptor, 10L, 20L);
+        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.LONG_RANGE);
+
+        Document doc = mapper.map(message, plan);
+
+        org.apache.lucene.document.LongRange range =
+                (org.apache.lucene.document.LongRange) doc.getFields("pages")[0];
+        assertThat(range.getMin(0)).isEqualTo(10L);
+        assertThat(range.getMax(0)).isEqualTo(20L);
+    }
+
+    @Test
+    void floatRangeBuildsFloatRange() throws Exception {
+        Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_FLOAT);
+        DynamicMessage message = rangeMessage(descriptor, 0.5f, 1.5f);
+        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.FLOAT_RANGE);
+
+        Document doc = mapper.map(message, plan);
+
+        org.apache.lucene.document.FloatRange range =
+                (org.apache.lucene.document.FloatRange) doc.getFields("pages")[0];
+        assertThat(range.getMin(0)).isEqualTo(0.5f);
+        assertThat(range.getMax(0)).isEqualTo(1.5f);
+    }
+
+    @Test
+    void doubleRangeBuildsDoubleRange() throws Exception {
+        Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_DOUBLE);
+        DynamicMessage message = rangeMessage(descriptor, 0.25d, 0.75d);
+        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.DOUBLE_RANGE);
+
+        Document doc = mapper.map(message, plan);
+
+        org.apache.lucene.document.DoubleRange range =
+                (org.apache.lucene.document.DoubleRange) doc.getFields("pages")[0];
+        assertThat(range.getMin(0)).isEqualTo(0.25d);
+        assertThat(range.getMax(0)).isEqualTo(0.75d);
+    }
+
+    @Test
+    void dateRangeFromTimestampBoundsBuildsLongRangeOfEpochMillis() throws Exception {
+        Descriptor descriptor = timestampRangeDescriptor();
+        DynamicMessage message = timestampRangeMessage(descriptor, 1_700_000_000L, 1_700_000_100L);
+        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.DATE_RANGE);
+
+        Document doc = mapper.map(message, plan);
+
+        org.apache.lucene.document.LongRange range =
+                (org.apache.lucene.document.LongRange) doc.getFields("pages")[0];
+        assertThat(range.getMin(0)).isEqualTo(1_700_000_000_000L);
+        assertThat(range.getMax(0)).isEqualTo(1_700_000_100_000L);
+    }
+
+    @Test
+    void dateRangeHonoursSecondsResolution() throws Exception {
+        Descriptor descriptor = timestampRangeDescriptor();
+        DynamicMessage message = timestampRangeMessage(descriptor, 1_700_000_000L, 1_700_000_100L);
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("pages", "pages",
+                        ResolvedFieldHint.builder(IndexFieldKind.DATE_RANGE)
+                                .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        org.apache.lucene.document.LongRange range =
+                (org.apache.lucene.document.LongRange) doc.getFields("pages")[0];
+        assertThat(range.getMin(0)).isEqualTo(1_700_000_000L);
+        assertThat(range.getMax(0)).isEqualTo(1_700_000_100L);
+    }
+
+    @Test
+    void rangeWithoutResolvableBoundsThrowsMappingException() throws Exception {
+        Descriptor descriptor = rangeDescriptor("low", "high", FieldDescriptorProto.Type.TYPE_INT32);
+        DynamicMessage message = rangeMessage(descriptor, 1, 2);
+        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.INT_RANGE);
+
+        assertThatThrownBy(() -> mapper.map(message, plan))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("(gte,lte) or (min,max)");
+    }
+
+    @Test
+    void dateResolutionSecondsEmitsEpochSeconds() throws Exception {
+        Descriptor descriptor = timestampDescriptor();
+        FieldDescriptor created = descriptor.findFieldByName("created");
+        Descriptor tsDescriptor = created.getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(created, DynamicMessage.newBuilder(tsDescriptor)
+                        .setField(tsDescriptor.findFieldByName("seconds"), 1_700_000_000L)
+                        .setField(tsDescriptor.findFieldByName("nanos"), 500_000_000)
+                        .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("created", "created",
+                        ResolvedFieldHint.builder(IndexFieldKind.DATE)
+                                .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        List<Long> stored = Arrays.stream(doc.getFields("created"))
+                .filter(field -> field.fieldType().stored())
+                .map(field -> field.numericValue().longValue())
+                .toList();
+        assertThat(stored).containsExactly(1_700_000_000L);
+    }
+
+    @Test
     void emptyProjectionsYieldEmptyDocument() throws Exception {
         assertThat(mapper.map(Struct.getDefaultInstance(), List.<ProtoLuceneMapper.FieldProjection>of()).getFields()).isEmpty();
         assertThat(mapper.map(Struct.getDefaultInstance(), (List<ProtoLuceneMapper.FieldProjection>) null).getFields()).isEmpty();
+    }
+
+    /** Explicit-mode plan over {@link #mapFieldDescriptor()} with an OBJECT hint. */
+    private static IndexingPlan mapPlan(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
+        Descriptor descriptor = mapFieldDescriptor();
+        return new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("labels", "labels",
+                        ResolvedFieldHint.builder(IndexFieldKind.OBJECT).mapMode(mode).build())));
+    }
+
+    private static DynamicMessage labelsMessage() throws Exception {
+        Descriptor descriptor = mapFieldDescriptor();
+        FieldDescriptor labels = descriptor.findFieldByName("labels");
+        Descriptor entryType = labels.getMessageType();
+        return DynamicMessage.newBuilder(descriptor)
+                .addRepeatedField(labels, DynamicMessage.newBuilder(entryType)
+                        .setField(entryType.findFieldByName("key"), "env")
+                        .setField(entryType.findFieldByName("value"), "prod")
+                        .build())
+                .addRepeatedField(labels, DynamicMessage.newBuilder(entryType)
+                        .setField(entryType.findFieldByName("key"), "team")
+                        .setField(entryType.findFieldByName("value"), "search")
+                        .build())
+                .build();
+    }
+
+    private static IndexingPlan rangePlan(Descriptor descriptor, IndexFieldKind rangeKind) {
+        return new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
+    }
+
+    private static DynamicMessage rangeMessage(Descriptor descriptor, Object lower, Object upper) {
+        FieldDescriptor pages = descriptor.findFieldByName("pages");
+        Descriptor boundsType = pages.getMessageType();
+        List<FieldDescriptor> bounds = boundsType.getFields();
+        return DynamicMessage.newBuilder(descriptor)
+                .setField(pages, DynamicMessage.newBuilder(boundsType)
+                        .setField(bounds.get(0), lower)
+                        .setField(bounds.get(1), upper)
+                        .build())
+                .build();
+    }
+
+    private static DynamicMessage timestampRangeMessage(
+            Descriptor descriptor, long lowerSeconds, long upperSeconds) {
+        FieldDescriptor pages = descriptor.findFieldByName("pages");
+        Descriptor boundsType = pages.getMessageType();
+        Descriptor tsType = boundsType.getFields().get(0).getMessageType();
+        return DynamicMessage.newBuilder(descriptor)
+                .setField(pages, DynamicMessage.newBuilder(boundsType)
+                        .setField(boundsType.getFields().get(0), DynamicMessage.newBuilder(tsType)
+                                .setField(tsType.findFieldByName("seconds"), lowerSeconds)
+                                .build())
+                        .setField(boundsType.getFields().get(1), DynamicMessage.newBuilder(tsType)
+                                .setField(tsType.findFieldByName("seconds"), upperSeconds)
+                                .build())
+                        .build())
+                .build();
+    }
+
+    private static Descriptor rangeDescriptor(
+            String lowerName, String upperName, FieldDescriptorProto.Type boundType) throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("range_" + lowerName + "_" + boundType.name().toLowerCase() + ".proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Bounds")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName(lowerName)
+                                .setNumber(1)
+                                .setType(boundType)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName(upperName)
+                                .setNumber(2)
+                                .setType(boundType)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("RangeDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("pages")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RangeDoc");
+    }
+
+    private static Descriptor timestampRangeDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("ts_range.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/timestamp.proto")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Bounds")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("gte")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Timestamp")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("lte")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Timestamp")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("RangeDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("pages")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[]{TimestampProto.getDescriptor()})
+                .findMessageTypeByName("RangeDoc");
     }
 
     private static Descriptor singularFieldDescriptor(String fieldName, FieldDescriptorProto.Type type) throws Exception {

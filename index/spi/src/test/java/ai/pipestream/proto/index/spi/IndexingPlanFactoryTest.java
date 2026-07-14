@@ -11,7 +11,10 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Struct;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class IndexingPlanFactoryTest {
 
@@ -89,6 +92,308 @@ class IndexingPlanFactoryTest {
         IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(Struct.getDescriptor());
         assertThat(plan.fields()).isNotEmpty();
         assertThat(plan.find("fields")).isPresent();
+    }
+
+    @Test
+    void infersDateForTimestampBinaryForBytesAndNeverVector() throws Exception {
+        Descriptor descriptor = inferenceDescriptor();
+        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(descriptor);
+
+        assertThat(plan.find("created")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.DATE);
+        assertThat(plan.find("digest")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.BINARY);
+        // VECTOR is explicit-only: a repeated float field infers FLOAT
+        assertThat(plan.find("embedding")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.FLOAT);
+    }
+
+    @Test
+    void richProtoOptionHintResolvesEveryAttribute() throws Exception {
+        Descriptor descriptor = richHintedDescriptor();
+        IndexingPlanFactory factory = new IndexingPlanFactory(
+                new ProtoOptionsIndexingHintSource().orElse(new InferringIndexingHintSource()));
+        IndexingPlan plan = factory.create(descriptor);
+
+        ResolvedFieldHint hint = plan.find("embedding").orElseThrow().hint();
+        assertThat(hint.type()).isEqualTo(IndexFieldKind.VECTOR);
+        assertThat(hint.vectorDims()).isEqualTo(3);
+        assertThat(hint.vectorSimilarity()).isEqualTo(VectorSimilarity.L2);
+        assertThat(hint.vectorElementType()).isEqualTo(VectorElementType.BYTE);
+        assertThat(hint.hnswParams()).isEqualTo(new ResolvedFieldHint.HnswParams(16, 200));
+        assertThat(hint.subFields()).containsExactly(
+                new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", "keyword_analyzer"));
+        assertThat(hint.analyzerOverride()).contains("english");
+        assertThat(hint.searchAnalyzerOverride()).contains("english_search");
+        assertThat(hint.nullValue()).isEqualTo("none");
+        assertThat(hint.skipIfMissing()).isFalse();
+        assertThat(hint.sortable()).isTrue();
+        assertThat(hint.facetable()).isTrue();
+        assertThat(hint.mapMode()).isEqualTo(MapMode.JSON);
+        assertThat(hint.dateFormatOverride()).contains("epoch_millis");
+        assertThat(hint.dateResolution()).isEqualTo(DateResolution.SECONDS);
+        assertThat(hint.engineParams("opensearch")).containsOnly(Map.entry("engine", "faiss"));
+    }
+
+    @Test
+    void catalogRichHintOverridesProtoOptions() throws Exception {
+        Descriptor descriptor = hintedDescriptor(); // proto option: name "custom_title", stored=false
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put(descriptor.getFullName(), "title", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
+                        .sortable(true)
+                        .engineParams(Map.of("solr.omitNorms", "true"))
+                        .build());
+        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+
+        IndexingPlan.IndexedField title = plan.find("title").orElseThrow();
+        // catalog wins wholesale: proto-option name/stored do not leak through
+        assertThat(title.fieldName()).isEqualTo("title");
+        assertThat(title.type()).isEqualTo(IndexFieldKind.KEYWORD);
+        assertThat(title.hint().sortable()).isTrue();
+        assertThat(title.hint().engineParams("solr")).containsOnly(Map.entry("omitNorms", "true"));
+    }
+
+    @Test
+    void unspecifiedTypeMergeKeepsRichAttributes() throws Exception {
+        Descriptor descriptor = sampleDescriptor();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put(descriptor.getFullName(), "title",
+                        new ResolvedFieldHint(IndexFieldKind.UNSPECIFIED, true, true, "", 0).toBuilder()
+                                .sortable(true)
+                                .analyzer("english")
+                                .nullValue("n/a")
+                                .build());
+        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+
+        ResolvedFieldHint hint = plan.find("title").orElseThrow().hint();
+        // type comes from inference; the rich attributes survive the merge
+        assertThat(hint.type()).isEqualTo(IndexFieldKind.TEXT);
+        assertThat(hint.sortable()).isTrue();
+        assertThat(hint.analyzerOverride()).contains("english");
+        assertThat(hint.nullValue()).isEqualTo("n/a");
+    }
+
+    @Test
+    void rangeHintResolvesGteLteBounds() throws Exception {
+        Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("pages", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
+        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+
+        // the range field stays a single plan entry: bounds are not expanded into dotted paths
+        assertThat(plan.find("pages")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.INT_RANGE);
+        assertThat(plan.find("pages.gte")).isEmpty();
+    }
+
+    @Test
+    void rangeHintResolvesMinMaxBounds() throws Exception {
+        Descriptor descriptor = rangeDescriptor("min", "max", FieldDescriptorProto.Type.TYPE_INT64);
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("pages", ResolvedFieldHint.of(IndexFieldKind.LONG_RANGE));
+        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+
+        assertThat(plan.find("pages")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.LONG_RANGE);
+    }
+
+    @Test
+    void rangeHintWithMismatchedBoundTypesThrowsWithPath() throws Exception {
+        // gte/lte exist but are int32 while the hint demands DOUBLE_RANGE
+        Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("pages", ResolvedFieldHint.of(IndexFieldKind.DOUBLE_RANGE));
+
+        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexingPlanException.class)
+                .hasMessageContaining("DOUBLE_RANGE")
+                .hasMessageContaining("pages");
+    }
+
+    @Test
+    void rangeHintWithoutBoundPairThrowsWithPath() throws Exception {
+        Descriptor descriptor = rangeDescriptor("low", "high", FieldDescriptorProto.Type.TYPE_INT32);
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("pages", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
+
+        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexingPlanException.class)
+                .hasMessageContaining("(gte,lte) or (min,max)")
+                .hasMessageContaining("pages");
+    }
+
+    @Test
+    void rangeHintOnScalarFieldThrowsWithPath() throws Exception {
+        Descriptor descriptor = sampleDescriptor();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("page_count", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
+
+        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexingPlanException.class)
+                .hasMessageContaining("singular message field")
+                .hasMessageContaining("page_count");
+    }
+
+    @Test
+    void nestedRangeErrorCarriesDottedPath() throws Exception {
+        Descriptor descriptor = nestedRangeDescriptor();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                // TEXT on the intermediate message expands it into dotted paths
+                .put("inner", ResolvedFieldHint.of(IndexFieldKind.TEXT))
+                .put("pages", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
+
+        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexingPlanException.class)
+                .hasMessageContaining("inner.pages");
+    }
+
+    @Test
+    void unparsableNullValueThrowsWithPath() throws Exception {
+        Descriptor descriptor = sampleDescriptor();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("page_count", ResolvedFieldHint.builder(IndexFieldKind.INT32)
+                        .nullValue("not-a-number")
+                        .build());
+
+        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexingPlanException.class)
+                .hasMessageContaining("null_value")
+                .hasMessageContaining("page_count");
+    }
+
+    private static Descriptor inferenceDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("inference_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/timestamp.proto")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("InferenceDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("created")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Timestamp")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("digest")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_BYTES)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("embedding")
+                                .setNumber(3)
+                                .setType(FieldDescriptorProto.Type.TYPE_FLOAT)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
+                .build();
+        return FileDescriptor.buildFrom(
+                        file, new FileDescriptor[]{com.google.protobuf.TimestampProto.getDescriptor()})
+                .findMessageTypeByName("InferenceDoc");
+    }
+
+    private static Descriptor richHintedDescriptor() throws Exception {
+        DescriptorProtos.FieldOptions embeddingOptions = DescriptorProtos.FieldOptions.newBuilder()
+                .setExtension(IndexingHintsProto.index, FieldIndexHint.newBuilder()
+                        .setType(ai.pipestream.proto.index.hints.IndexFieldType.INDEX_FIELD_TYPE_VECTOR)
+                        .setVectorDims(3)
+                        .setVectorSimilarity(ai.pipestream.proto.index.hints.VectorSimilarity.VECTOR_SIMILARITY_L2)
+                        .setVectorElementType(
+                                ai.pipestream.proto.index.hints.VectorElementType.VECTOR_ELEMENT_TYPE_BYTE)
+                        .setHnsw(ai.pipestream.proto.index.hints.HnswParams.newBuilder()
+                                .setM(16)
+                                .setEfConstruction(200))
+                        .addSubFields(ai.pipestream.proto.index.hints.SubFieldHint.newBuilder()
+                                .setType(ai.pipestream.proto.index.hints.IndexFieldType.INDEX_FIELD_TYPE_KEYWORD)
+                                .setName("raw")
+                                .setAnalyzer("keyword_analyzer"))
+                        .setAnalyzer("english")
+                        .setSearchAnalyzer("english_search")
+                        .setNullValue("none")
+                        .setSkipIfMissing(false)
+                        .setSortable(true)
+                        .setFacetable(true)
+                        .setMapMode(ai.pipestream.proto.index.hints.MapMode.MAP_MODE_JSON)
+                        .setDateFormat("epoch_millis")
+                        .setDateResolution(ai.pipestream.proto.index.hints.DateResolution.DATE_RESOLUTION_SECONDS)
+                        .putEngineParams("opensearch.engine", "faiss")
+                        .build())
+                .build();
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("rich_hinted_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("RichHintedDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("embedding")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_FLOAT)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)
+                                .setOptions(embeddingOptions)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RichHintedDoc");
+    }
+
+    private static Descriptor rangeDescriptor(
+            String lowerName, String upperName, FieldDescriptorProto.Type boundType) throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("range_" + lowerName + "_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Bounds")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName(lowerName)
+                                .setNumber(1)
+                                .setType(boundType)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName(upperName)
+                                .setNumber(2)
+                                .setType(boundType)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("RangeDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("pages")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RangeDoc");
+    }
+
+    private static Descriptor nestedRangeDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("nested_range_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Bounds")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("low")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_INT32)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Inner")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("pages")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Outer")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("inner")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Inner")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Outer");
     }
 
     private static Descriptor hintedDescriptor() throws Exception {

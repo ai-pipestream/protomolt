@@ -1,9 +1,13 @@
 package ai.pipestream.proto.index.lucene;
 
+import ai.pipestream.proto.index.spi.DateResolution;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.MapMode;
+import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
+import ai.pipestream.proto.index.spi.VectorElementType;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -22,15 +26,27 @@ import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.document.DoubleDocValuesField;
 import org.apache.lucene.document.DoublePoint;
+import org.apache.lucene.document.DoubleRange;
+import org.apache.lucene.document.FloatDocValuesField;
 import org.apache.lucene.document.FloatPoint;
+import org.apache.lucene.document.FloatRange;
 import org.apache.lucene.document.IntPoint;
+import org.apache.lucene.document.IntRange;
+import org.apache.lucene.document.KnnByteVectorField;
 import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.document.LongRange;
+import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.SortedDocValuesField;
+import org.apache.lucene.document.SortedNumericDocValuesField;
+import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.NumericUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +55,28 @@ import java.util.Objects;
 
 /**
  * Lucene document mapper driven by an {@link IndexingPlan} (descriptor indexing hints).
+ *
+ * <p>Hint semantics specific to Lucene:
+ * <ul>
+ *   <li><b>Multi-fields</b>: each {@link ResolvedFieldHint.SubField} emits additional
+ *       indexed-only {@code IndexableField}s named {@code field.sub} (same convention as
+ *       OpenSearch).</li>
+ *   <li><b>Analyzers</b>: this mapper cannot instantiate analyzers from names — hints carry
+ *       them into {@link LuceneFieldSpecs}, and consumers apply them at IndexWriter level
+ *       (e.g. {@code PerFieldAnalyzerWrapper}).</li>
+ *   <li><b>Sortable / facetable</b>: emitted as docValues alongside the indexed field —
+ *       {@code SortedDocValuesField} / {@code SortedSetDocValuesField} for string kinds,
+ *       {@code NumericDocValuesField} / {@code SortedNumericDocValuesField} for numeric kinds.</li>
+ *   <li><b>Maps</b>: with {@code map_mode} unset, OBJECT/NESTED-hinted map fields keep the
+ *       whole-map JSON string (Lucene documents are flat). Explicit modes: FLATTEN emits one
+ *       keyword field per key named {@code field.key}, ENTRIES one {@code {key,value}} JSON
+ *       string per entry, JSON the whole-map string, SKIP nothing.</li>
+ *   <li><b>Ranges</b>: singular bounds messages become single-dimension
+ *       {@code IntRange}/{@code LongRange}/{@code FloatRange}/{@code DoubleRange} fields
+ *       (DATE_RANGE is a {@code LongRange} of epoch values per the hint's resolution).</li>
+ *   <li><b>Dates</b>: Timestamp values are emitted numerically as epoch millis, or epoch
+ *       seconds under {@code DATE_RESOLUTION_SECONDS}.</li>
+ * </ul>
  */
 public final class ProtoLuceneMapper implements SearchEngineIndexer {
     public static final String ENGINE_ID = "lucene";
@@ -76,12 +114,16 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         Objects.requireNonNull(plan, "plan");
         Document document = new Document();
         for (IndexingPlan.IndexedField field : plan.indexable()) {
-            if (hasUnsetIntermediate(message, field.path())) {
-                continue; // unset optional parent: no value for this field, not a mapping error
-            }
-            Object value = fieldMapper.getValue(message, field.path(), includeDefaults);
+            Object value = hasUnsetIntermediate(message, field.path())
+                    ? null // unset optional parent: no value for this field, not a mapping error
+                    : fieldMapper.getValue(message, field.path(), includeDefaults);
             if (value == null) {
-                continue;
+                // null_value substitutes for missing fields; otherwise absent stays absent
+                // (skip_if_missing=false has no Lucene shape — documents cannot hold nulls).
+                value = field.hint().missingSubstitute().orElse(null);
+                if (value == null) {
+                    continue;
+                }
             }
             add(document, field, value);
         }
@@ -123,19 +165,27 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
             ResolvedFieldHint hint,
             Object value) throws MappingException {
         IndexFieldKind kind = hint.type();
-        boolean stored = hint.stored();
-        boolean indexed = hint.indexed();
 
-        // Whole-value shapes first: vectors and map fields must not be split per element.
+        // Whole-value shapes first: vectors, ranges and map fields must not be split per element.
         if (kind == IndexFieldKind.VECTOR) {
             addVector(document, name, path, hint, value);
             return;
         }
-        if (isMapEntryList(value)
-                && (kind == IndexFieldKind.OBJECT || kind == IndexFieldKind.NESTED
-                        || kind == IndexFieldKind.UNSPECIFIED)) {
-            addJsonText(document, name, mapJson((List<?>) value, path), stored, indexed);
+        if (kind.isRange()) {
+            addRange(document, name, path, hint, value);
             return;
+        }
+        if (isMapEntryList(value)) {
+            MapMode mode = hint.mapMode();
+            if (mode == null && (kind == IndexFieldKind.OBJECT || kind == IndexFieldKind.NESTED
+                    || kind == IndexFieldKind.UNSPECIFIED)) {
+                mode = MapMode.JSON; // engine default: Lucene documents are flat
+            }
+            if (mode != null) {
+                addMap(document, name, path, hint, (List<?>) value, mode);
+                return;
+            }
+            // scalar-hinted map without an explicit mode: fall through to per-entry handling
         }
         if (value instanceof List<?> values) {
             for (Object element : values) {
@@ -143,6 +193,23 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
             }
             return;
         }
+        addScalar(document, name, path, hint, value);
+        for (ResolvedFieldHint.SubField sub : hint.subFields()) {
+            // indexed-only companions; the parent field carries storage and docValues
+            addScalar(document, name + "." + sub.name(), path,
+                    new ResolvedFieldHint(sub.type(), false, true, "", 0), value);
+        }
+    }
+
+    private static void addScalar(
+            Document document,
+            String name,
+            String path,
+            ResolvedFieldHint hint,
+            Object value) throws MappingException {
+        IndexFieldKind kind = hint.type();
+        boolean stored = hint.stored();
+        boolean indexed = hint.indexed();
         org.apache.lucene.document.Field.Store store =
                 stored ? org.apache.lucene.document.Field.Store.YES : org.apache.lucene.document.Field.Store.NO;
 
@@ -160,34 +227,38 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
             return;
         }
         if (isTimestampMessage(value)) {
-            long millis = timestampMillis((MessageOrBuilder) value);
+            long epoch = timestampValue((MessageOrBuilder) value, hint.dateResolution());
             if (indexed) {
-                document.add(new LongPoint(name, millis));
+                document.add(new LongPoint(name, epoch));
             }
             if (stored) {
-                document.add(new StoredField(name, millis));
+                document.add(new StoredField(name, epoch));
             }
+            addLongDocValues(document, name, hint, epoch);
             return;
         }
 
         switch (kind) {
             case TEXT -> {
+                String stringValue = String.valueOf(value);
                 if (indexed) {
-                    document.add(new TextField(name, String.valueOf(value), store));
+                    document.add(new TextField(name, stringValue, store));
                 } else if (stored) {
-                    document.add(new StoredField(name, String.valueOf(value)));
+                    document.add(new StoredField(name, stringValue));
                 }
+                addStringDocValues(document, name, hint, stringValue);
             }
             case DATE -> {
                 if (value instanceof Number number) {
-                    // numeric date values are epoch millis
-                    long millis = number.longValue();
+                    // numeric date values are already in engine units (epoch millis by default)
+                    long epoch = number.longValue();
                     if (indexed) {
-                        document.add(new LongPoint(name, millis));
+                        document.add(new LongPoint(name, epoch));
                     }
                     if (stored) {
-                        document.add(new StoredField(name, millis));
+                        document.add(new StoredField(name, epoch));
                     }
+                    addLongDocValues(document, name, hint, epoch);
                 } else {
                     String stringValue = String.valueOf(value);
                     if (indexed) {
@@ -195,6 +266,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                     } else if (stored) {
                         document.add(new StoredField(name, stringValue));
                     }
+                    addStringDocValues(document, name, hint, stringValue);
                 }
             }
             case KEYWORD, BOOLEAN -> {
@@ -206,6 +278,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                 } else if (stored) {
                     document.add(new StoredField(name, stringValue));
                 }
+                addStringDocValues(document, name, hint, stringValue);
             }
             case INT32 -> {
                 int v = requireNumber(value, name, path, kind).intValue();
@@ -215,6 +288,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                 if (stored) {
                     document.add(new StoredField(name, v));
                 }
+                addLongDocValues(document, name, hint, v);
             }
             case INT64 -> {
                 long v = requireNumber(value, name, path, kind).longValue();
@@ -224,6 +298,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                 if (stored) {
                     document.add(new StoredField(name, v));
                 }
+                addLongDocValues(document, name, hint, v);
             }
             case FLOAT -> {
                 float v = requireNumber(value, name, path, kind).floatValue();
@@ -233,6 +308,12 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                 if (stored) {
                     document.add(new StoredField(name, v));
                 }
+                if (hint.sortable()) {
+                    document.add(new FloatDocValuesField(name, v));
+                }
+                if (hint.facetable()) {
+                    document.add(new SortedNumericDocValuesField(name, NumericUtils.floatToSortableInt(v)));
+                }
             }
             case DOUBLE -> {
                 double v = requireNumber(value, name, path, kind).doubleValue();
@@ -241,6 +322,12 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                 }
                 if (stored) {
                     document.add(new StoredField(name, v));
+                }
+                if (hint.sortable()) {
+                    document.add(new DoubleDocValuesField(name, v));
+                }
+                if (hint.facetable()) {
+                    document.add(new SortedNumericDocValuesField(name, NumericUtils.doubleToSortableLong(v)));
                 }
             }
             case BINARY -> throw new MappingException(
@@ -252,9 +339,132 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                         : String.valueOf(value);
                 addJsonText(document, name, text, stored, indexed);
             }
-            case VECTOR, SKIP -> {
-                // VECTOR is handled above; SKIP fields are filtered out of the plan.
+            case VECTOR, SKIP, INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> {
+                // VECTOR and ranges are handled above; SKIP fields are filtered out of the plan.
             }
+        }
+    }
+
+    /** Sortable → {@code SortedDocValuesField}; facetable → {@code SortedSetDocValuesField}. */
+    private static void addStringDocValues(
+            Document document, String name, ResolvedFieldHint hint, String value) {
+        if (hint.sortable()) {
+            document.add(new SortedDocValuesField(name, new BytesRef(value)));
+        }
+        if (hint.facetable()) {
+            document.add(new SortedSetDocValuesField(name, new BytesRef(value)));
+        }
+    }
+
+    /** Sortable → {@code NumericDocValuesField}; facetable → {@code SortedNumericDocValuesField}. */
+    private static void addLongDocValues(
+            Document document, String name, ResolvedFieldHint hint, long value) {
+        if (hint.sortable()) {
+            document.add(new NumericDocValuesField(name, value));
+        }
+        if (hint.facetable()) {
+            document.add(new SortedNumericDocValuesField(name, value));
+        }
+    }
+
+    /** Single-dimension Lucene range field from a (gte,lte)/(min,max) bounds message. */
+    private static void addRange(
+            Document document, String name, String path, ResolvedFieldHint hint, Object value)
+            throws MappingException {
+        if (!(value instanceof MessageOrBuilder range)) {
+            throw new MappingException(
+                    "Field '" + name + "' is hinted " + hint.type() + " but the value is "
+                            + typeName(value) + ", not a bounds message", path);
+        }
+        RangeBounds bounds = RangeBounds.resolve(range.getDescriptorForType(), hint.type())
+                .orElseThrow(() -> new MappingException(
+                        "Message " + range.getDescriptorForType().getFullName()
+                                + " declares no (gte,lte) or (min,max) pair matching " + hint.type(), path));
+        Object lower = range.getField(bounds.lower());
+        Object upper = range.getField(bounds.upper());
+        switch (hint.type()) {
+            case INT_RANGE -> document.add(new IntRange(name,
+                    new int[]{((Number) lower).intValue()}, new int[]{((Number) upper).intValue()}));
+            case LONG_RANGE -> document.add(new LongRange(name,
+                    new long[]{((Number) lower).longValue()}, new long[]{((Number) upper).longValue()}));
+            case FLOAT_RANGE -> document.add(new FloatRange(name,
+                    new float[]{((Number) lower).floatValue()}, new float[]{((Number) upper).floatValue()}));
+            case DOUBLE_RANGE -> document.add(new DoubleRange(name,
+                    new double[]{((Number) lower).doubleValue()}, new double[]{((Number) upper).doubleValue()}));
+            case DATE_RANGE -> document.add(new LongRange(name,
+                    new long[]{dateBound(lower, hint.dateResolution())},
+                    new long[]{dateBound(upper, hint.dateResolution())}));
+            default -> throw new IllegalStateException("not a range kind: " + hint.type());
+        }
+    }
+
+    /** Epoch value from a Timestamp bound (per resolution) or a raw int64 bound (as-is). */
+    private static long dateBound(Object bound, DateResolution resolution) {
+        if (bound instanceof MessageOrBuilder timestamp) {
+            return timestampValue(timestamp, resolution);
+        }
+        return ((Number) bound).longValue();
+    }
+
+    private static void addMap(
+            Document document,
+            String name,
+            String path,
+            ResolvedFieldHint hint,
+            List<?> entries,
+            MapMode mode) throws MappingException {
+        switch (mode) {
+            case JSON -> addJsonText(document, name, mapJson(entries, path), hint.stored(), hint.indexed());
+            case ENTRIES -> {
+                for (Object element : entries) {
+                    addJsonText(document, name, entryJson((Message) element, path),
+                            hint.stored(), hint.indexed());
+                }
+            }
+            case FLATTEN -> {
+                // Dynamic keys: one keyword field per map key, named "<field>.<key>".
+                org.apache.lucene.document.Field.Store store = hint.stored()
+                        ? org.apache.lucene.document.Field.Store.YES
+                        : org.apache.lucene.document.Field.Store.NO;
+                for (Object element : entries) {
+                    Message entry = (Message) element;
+                    Descriptor descriptor = entry.getDescriptorForType();
+                    String key = String.valueOf(entry.getField(descriptor.findFieldByName("key")));
+                    Object entryValue = entry.getField(descriptor.findFieldByName("value"));
+                    String text = flattenedText(entryValue, path);
+                    if (hint.indexed()) {
+                        document.add(new StringField(name + "." + key, text, store));
+                    } else if (hint.stored()) {
+                        document.add(new StoredField(name + "." + key, text));
+                    }
+                }
+            }
+            case SKIP -> {
+                // hinted away: nothing to emit
+            }
+        }
+    }
+
+    private static String flattenedText(Object entryValue, String path) throws MappingException {
+        if (entryValue instanceof Message message) {
+            return messageJson(message, path);
+        }
+        if (entryValue instanceof EnumValueDescriptor ev) {
+            return ev.getName();
+        }
+        return String.valueOf(entryValue);
+    }
+
+    /** One {@code {key, value}} JSON object string per map entry. */
+    private static String entryJson(Message entry, String path) throws MappingException {
+        Descriptor descriptor = entry.getDescriptorForType();
+        ObjectNode object = JSON.createObjectNode();
+        object.set("key", jsonNode(entry.getField(descriptor.findFieldByName("key")), path));
+        object.set("value", jsonNode(entry.getField(descriptor.findFieldByName("value")), path));
+        try {
+            return JSON.writeValueAsString(object);
+        } catch (JsonProcessingException e) {
+            throw new MappingException("Failed to render map entry as JSON", e, path);
         }
     }
 
@@ -337,16 +547,33 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     private static void addVector(
             Document document, String name, String path, ResolvedFieldHint hint, Object value)
             throws MappingException {
-        float[] vector = toFloatVector(value);
-        if (vector != null && hint.vectorDims() > 0 && vector.length == hint.vectorDims()) {
-            document.add(new KnnFloatVectorField(name, vector));
+        var similarity = LuceneFieldSpecs.similarityFunction(hint.vectorSimilarity());
+        if (hint.vectorElementType() == VectorElementType.BYTE) {
+            byte[] vector = toByteVector(value);
+            if (vector != null && hint.vectorDims() > 0 && vector.length == hint.vectorDims()) {
+                document.add(new KnnByteVectorField(name, vector, similarity));
+                return;
+            }
+            vectorFallback(document, name, path, hint, value, vector == null ? -1 : vector.length);
             return;
         }
+        float[] vector = toFloatVector(value);
+        if (vector != null && hint.vectorDims() > 0 && vector.length == hint.vectorDims()) {
+            document.add(new KnnFloatVectorField(name, vector, similarity));
+            return;
+        }
+        vectorFallback(document, name, path, hint, value, vector == null ? -1 : vector.length);
+    }
+
+    /** Warns and stores the raw value as JSON when it cannot form a KNN vector field. */
+    private static void vectorFallback(
+            Document document, String name, String path, ResolvedFieldHint hint, Object value,
+            int actualLength) throws MappingException {
         LOG.warn("Field '{}' (path '{}') is hinted VECTOR with vectorDims={} but the value {} "
                         + "(length {}); storing it as JSON instead",
                 name, path, hint.vectorDims(),
-                vector == null ? "is not a repeated float/double" : "has a mismatched length",
-                vector == null ? "n/a" : vector.length);
+                actualLength < 0 ? "is not a numeric vector" : "has a mismatched length",
+                actualLength < 0 ? "n/a" : actualLength);
         if (hint.stored()) {
             try {
                 document.add(new StoredField(name, JSON.writeValueAsString(
@@ -375,6 +602,35 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     }
 
     /**
+     * Byte vector from a bytes value or a repeated int32/int64 value whose elements fit a
+     * signed byte, or {@code null} otherwise.
+     */
+    private static byte[] toByteVector(Object value) {
+        if (value instanceof ByteString bytes) {
+            return bytes.toByteArray();
+        }
+        if (value instanceof byte[] bytes) {
+            return bytes;
+        }
+        if (!(value instanceof List<?> values) || values.isEmpty()) {
+            return null;
+        }
+        byte[] vector = new byte[values.size()];
+        for (int i = 0; i < values.size(); i++) {
+            Object element = values.get(i);
+            if (!(element instanceof Integer || element instanceof Long)) {
+                return null;
+            }
+            long v = ((Number) element).longValue();
+            if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+                return null;
+            }
+            vector[i] = (byte) v;
+        }
+        return vector;
+    }
+
+    /**
      * Detects google.protobuf.Timestamp values by descriptor full name, so DynamicMessage
      * instances (registry-driven workflows) are recognised alongside generated {@link Timestamp}s.
      */
@@ -382,6 +638,12 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         return value instanceof MessageOrBuilder messageOrBuilder
                 && messageOrBuilder.getDescriptorForType().getFullName()
                         .equals(Timestamp.getDescriptor().getFullName());
+    }
+
+    /** Epoch millis or seconds (per resolution) from a Timestamp-shaped value. */
+    private static long timestampValue(MessageOrBuilder value, DateResolution resolution) {
+        long millis = timestampMillis(value);
+        return resolution == DateResolution.SECONDS ? millis / 1000L : millis;
     }
 
     /** Epoch millis from a value recognised by {@link #isTimestampMessage(Object)}. */

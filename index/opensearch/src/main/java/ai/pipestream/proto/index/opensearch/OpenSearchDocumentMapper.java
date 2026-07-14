@@ -4,6 +4,9 @@ import ai.pipestream.proto.helpers.TypeConverter;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.MapMode;
+import ai.pipestream.proto.index.spi.RangeBounds;
+import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,7 +33,21 @@ import java.util.Objects;
  * <p>Message values are converted through {@link JsonFormat}, so nested values take exactly
  * the shapes the NDJSON writer emits: nested maps become JSON objects, int64 becomes a string,
  * and Timestamps become ISO-8601 strings (consistent with the Solr mapper and compatible with
- * OpenSearch {@code date} mappings), including under a DATE hint.
+ * OpenSearch {@code date} mappings), including under a DATE hint. Dates are never emitted
+ * numerically here, so the hint's {@code date_resolution} does not apply.
+ *
+ * <p>Hint semantics specific to OpenSearch:
+ * <ul>
+ *   <li><b>Multi-fields</b>: index-time only — {@link OpenSearchMappingGenerator} declares
+ *       them under {@code fields} and OpenSearch derives {@code field.sub} from the single
+ *       document value, so this mapper never duplicates values.</li>
+ *   <li><b>Null handling</b>: a {@code null_value} substitute is emitted for missing fields;
+ *       {@code skip_if_missing=false} emits an explicit JSON {@code null} instead.</li>
+ *   <li><b>Maps</b>: {@code map_mode} unset defaults to FLATTEN (a JSON object with dynamic
+ *       keys); ENTRIES emits {@code [{key, value}]}, JSON one string, SKIP nothing.</li>
+ *   <li><b>Ranges</b>: bounds messages become {@code {gte, lte}} objects for the
+ *       {@code *_range} mapping types, whichever bound pair the message declares.</li>
+ * </ul>
  */
 public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
     public static final String ENGINE_ID = "opensearch";
@@ -77,15 +94,103 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
         Objects.requireNonNull(plan, "plan");
         Map<String, Object> document = new LinkedHashMap<>();
         for (IndexingPlan.IndexedField field : plan.indexable()) {
-            if (hasUnsetIntermediate(message, field.path())) {
-                continue; // unset optional parent: no value for this field, not a mapping error
+            ResolvedFieldHint hint = field.hint();
+            Object value = hasUnsetIntermediate(message, field.path())
+                    ? null // unset optional parent: no value for this field, not a mapping error
+                    : fieldMapper.getValue(message, field.path(), includeDefaults);
+            if (value == null) {
+                // null_value substitutes for missing fields; skip_if_missing=false emits
+                // an explicit JSON null; otherwise absent stays absent.
+                var substitute = hint.missingSubstitute();
+                if (substitute.isPresent()) {
+                    document.put(field.fieldName(), substitute.get());
+                } else if (!hint.skipIfMissing()) {
+                    document.put(field.fieldName(), null);
+                }
+                continue;
             }
-            Object value = fieldMapper.getValue(message, field.path(), includeDefaults);
-            if (value != null) {
-                document.put(field.fieldName(), coerce(value, field.path()));
+            if (hint.type().isRange()) {
+                document.put(field.fieldName(), rangeObject(value, hint, field.path()));
+                continue;
             }
+            if (isMapEntryList(value)) {
+                applyMap(document, field.fieldName(), (List<?>) value, hint, field.path());
+                continue;
+            }
+            document.put(field.fieldName(), coerce(value, field.path()));
         }
         return document;
+    }
+
+    /** {@code {gte, lte}} object for a {@code *_range} mapping, from a bounds message. */
+    private static Map<String, Object> rangeObject(Object value, ResolvedFieldHint hint, String path)
+            throws MappingException {
+        if (!(value instanceof Message range)) {
+            throw new MappingException(
+                    "Field is hinted " + hint.type() + " but the value is "
+                            + value.getClass().getName() + ", not a bounds message", path);
+        }
+        RangeBounds bounds = RangeBounds.resolve(range.getDescriptorForType(), hint.type())
+                .orElseThrow(() -> new MappingException(
+                        "Message " + range.getDescriptorForType().getFullName()
+                                + " declares no (gte,lte) or (min,max) pair matching " + hint.type(), path));
+        Map<String, Object> object = new LinkedHashMap<>();
+        object.put("gte", coerce(range.getField(bounds.lower()), path));
+        object.put("lte", coerce(range.getField(bounds.upper()), path));
+        return object;
+    }
+
+    private static void applyMap(
+            Map<String, Object> document,
+            String name,
+            List<?> entries,
+            ResolvedFieldHint hint,
+            String path) throws MappingException {
+        switch (hint.mapModeOr(MapMode.FLATTEN)) {
+            case FLATTEN -> document.put(name, flattenedMap(entries, path));
+            case ENTRIES -> {
+                List<Object> entryObjects = new ArrayList<>(entries.size());
+                for (Object element : entries) {
+                    Message entry = (Message) element;
+                    Descriptor descriptor = entry.getDescriptorForType();
+                    Map<String, Object> object = new LinkedHashMap<>();
+                    object.put("key", coerce(entry.getField(descriptor.findFieldByName("key")), path));
+                    object.put("value", coerce(entry.getField(descriptor.findFieldByName("value")), path));
+                    entryObjects.add(object);
+                }
+                document.put(name, entryObjects);
+            }
+            case JSON -> {
+                try {
+                    document.put(name, JSON.writeValueAsString(flattenedMap(entries, path)));
+                } catch (JsonProcessingException e) {
+                    throw new MappingException("Failed to render map field as JSON", e, path);
+                }
+            }
+            case SKIP -> {
+                // hinted away: nothing to emit
+            }
+        }
+    }
+
+    /** Dynamic-keys object for a whole protobuf map field. */
+    private static Map<String, Object> flattenedMap(List<?> entries, String path) throws MappingException {
+        Map<String, Object> flattened = new LinkedHashMap<>();
+        for (Object element : entries) {
+            Message entry = (Message) element;
+            Descriptor descriptor = entry.getDescriptorForType();
+            flattened.put(String.valueOf(entry.getField(descriptor.findFieldByName("key"))),
+                    coerce(entry.getField(descriptor.findFieldByName("value")), path));
+        }
+        return flattened;
+    }
+
+    /** True for the reflection value of a protobuf map field: a list of map-entry messages. */
+    private static boolean isMapEntryList(Object value) {
+        return value instanceof List<?> values
+                && !values.isEmpty()
+                && values.get(0) instanceof Message message
+                && message.getDescriptorForType().getOptions().getMapEntry();
     }
 
     /**

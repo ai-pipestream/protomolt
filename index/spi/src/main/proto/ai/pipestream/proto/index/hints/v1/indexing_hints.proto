@@ -26,6 +26,69 @@ enum IndexFieldType {
   INDEX_FIELD_TYPE_OBJECT = 11;
   INDEX_FIELD_TYPE_NESTED = 12;
   INDEX_FIELD_TYPE_SKIP = 13;
+  // Range types apply to singular message fields whose type declares exactly one
+  // matching bound pair named (gte, lte) or (min, max).
+  INDEX_FIELD_TYPE_INT_RANGE = 14;
+  INDEX_FIELD_TYPE_LONG_RANGE = 15;
+  INDEX_FIELD_TYPE_FLOAT_RANGE = 16;
+  INDEX_FIELD_TYPE_DOUBLE_RANGE = 17;
+  INDEX_FIELD_TYPE_DATE_RANGE = 18;
+}
+
+// KNN similarity function (Lucene VectorSimilarityFunction, OpenSearch space_type,
+// Solr similarityFunction). Unspecified defaults to cosine.
+enum VectorSimilarity {
+  VECTOR_SIMILARITY_UNSPECIFIED = 0;
+  VECTOR_SIMILARITY_COSINE = 1;
+  VECTOR_SIMILARITY_DOT_PRODUCT = 2;
+  VECTOR_SIMILARITY_L2 = 3;
+  VECTOR_SIMILARITY_MAX_INNER_PRODUCT = 4;
+}
+
+// KNN element encoding. Unspecified defaults to float32.
+enum VectorElementType {
+  VECTOR_ELEMENT_TYPE_UNSPECIFIED = 0;
+  VECTOR_ELEMENT_TYPE_FLOAT32 = 1;
+  VECTOR_ELEMENT_TYPE_BYTE = 2;
+}
+
+// How map<K,V> fields land in engine documents. Unspecified keeps the engine's
+// documented default (OpenSearch: FLATTEN; Lucene/Solr document their flat-shape defaults).
+enum MapMode {
+  MAP_MODE_UNSPECIFIED = 0;
+  // Dynamic keys: one engine field/property per map key.
+  MAP_MODE_FLATTEN = 1;
+  // Nested [{key, value}] entries.
+  MAP_MODE_ENTRIES = 2;
+  // The whole map serialized to one JSON string field.
+  MAP_MODE_JSON = 3;
+  MAP_MODE_SKIP = 4;
+}
+
+// Numeric emission unit for google.protobuf.Timestamp values, where engines emit
+// dates numerically (Lucene points/docValues). Unspecified defaults to millis.
+enum DateResolution {
+  DATE_RESOLUTION_UNSPECIFIED = 0;
+  DATE_RESOLUTION_MILLIS = 1;
+  DATE_RESOLUTION_SECONDS = 2;
+}
+
+// Engine-neutral HNSW graph tuning; engines map these onto their native knobs
+// (OpenSearch method.parameters, Solr hnswMaxConnections / hnswBeamWidth).
+message HnswParams {
+  optional int32 m = 1;
+  optional int32 ef_construction = 2;
+}
+
+// Additional index-time representation of the same value — the classic
+// "index once as text, again as keyword" pattern.
+message SubFieldHint {
+  IndexFieldType type = 1;
+  // Sub-field suffix; engines join it to the parent name using their own
+  // convention (OpenSearch "field.sub", Solr "field_sub").
+  string name = 2;
+  // Engine-interpreted analyzer name for this sub-field.
+  string analyzer = 3;
 }
 
 message FieldIndexHint {
@@ -35,6 +98,27 @@ message FieldIndexHint {
   // Override the index field name; empty = use proto field name.
   string name = 4;
   int32 vector_dims = 5;
+  VectorSimilarity vector_similarity = 6;
+  VectorElementType vector_element_type = 7;
+  HnswParams hnsw = 8;
+  repeated SubFieldHint sub_fields = 9;
+  // Engine-interpreted analyzer names; Lucene consumers apply them at IndexWriter level.
+  optional string analyzer = 10;
+  optional string search_analyzer = 11;
+  // Substitute emitted when the field is unset, coerced to the hinted type.
+  optional string null_value = 12;
+  // Default true: unset fields are simply absent. null_value overrides skipping.
+  optional bool skip_if_missing = 13;
+  // Emit docValues (Lucene docValues fields, OpenSearch doc_values, Solr docValues).
+  optional bool sortable = 14;
+  optional bool facetable = 15;
+  MapMode map_mode = 16;
+  // Engine-side date format hint, carried into schema generation.
+  optional string date_format = 17;
+  DateResolution date_resolution = 18;
+  // Per-engine escape hatch keyed by engine id with dot-suffixed keys,
+  // e.g. "opensearch.index_options". Unknown keys are ignored.
+  map<string, string> engine_params = 19;
 }
 
 extend google.protobuf.FieldOptions {

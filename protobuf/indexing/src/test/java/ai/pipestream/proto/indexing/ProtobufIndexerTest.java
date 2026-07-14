@@ -2,6 +2,8 @@ package ai.pipestream.proto.indexing;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.indexing.testdata.IndexableDoc;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
@@ -23,6 +25,38 @@ class ProtobufIndexerTest {
                 .isEqualTo(IndexFieldKind.TEXT);
         assertThat(plan.find("page_count")).get().extracting(f -> f.type())
                 .isEqualTo(IndexFieldKind.INT32);
+    }
+
+    @Test
+    void planCarriesRichHintsFromCompiledOptions() {
+        ProtobufIndexer indexer = ProtobufIndexer.defaults(null);
+        IndexingPlan plan = indexer.plan(IndexableDoc.getDescriptor());
+
+        ResolvedFieldHint embedding = plan.find("embedding").orElseThrow().hint();
+        assertThat(embedding.type()).isEqualTo(IndexFieldKind.VECTOR);
+        assertThat(embedding.vectorDims()).isEqualTo(3);
+        assertThat(embedding.vectorSimilarity()).isEqualTo(VectorSimilarity.DOT_PRODUCT);
+        assertThat(embedding.hnswParams()).isEqualTo(new ResolvedFieldHint.HnswParams(16, 100));
+        assertThat(embedding.engineParams("opensearch")).containsEntry("mode", "on_disk");
+
+        ResolvedFieldHint category = plan.find("category").orElseThrow().hint();
+        assertThat(category.type()).isEqualTo(IndexFieldKind.TEXT);
+        assertThat(category.analyzerOverride()).contains("english");
+        assertThat(category.sortable()).isTrue();
+        assertThat(category.nullValue()).isEqualTo("uncategorized");
+        assertThat(category.subFields()).containsExactly(
+                new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""));
+    }
+
+    @Test
+    void rangeHintResolvesBoundsFromCompiledMessage() {
+        ProtobufIndexer indexer = ProtobufIndexer.defaults(null);
+        IndexingPlan plan = indexer.plan(IndexableDoc.getDescriptor());
+
+        // the range field stays one entry (never expanded into page_span.gte / page_span.lte)
+        assertThat(plan.find("page_span")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.INT_RANGE);
+        assertThat(plan.find("page_span.gte")).isEmpty();
     }
 
     @Test

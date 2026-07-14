@@ -31,4 +31,34 @@ message IndexableDoc {
       int32: { gte: 0 }
     }
   ];
+
+  repeated float embedding = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_VECTOR
+      vector_dims: 3
+      vector_similarity: VECTOR_SIMILARITY_DOT_PRODUCT
+      hnsw: { m: 16, ef_construction: 100 }
+      engine_params: [{ key: "opensearch.mode", value: "on_disk" }]
+    }
+  ];
+
+  string category = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      analyzer: "english"
+      sortable: true
+      null_value: "uncategorized"
+      sub_fields: [{ type: INDEX_FIELD_TYPE_KEYWORD, name: "raw" }]
+    }
+  ];
+
+  PageSpan page_span = 6 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_INT_RANGE }
+  ];
+}
+
+// Bounds message for INT_RANGE hints: the (gte, lte) pair resolves as the range bounds.
+message PageSpan {
+  int32 gte = 1;
+  int32 lte = 2;
 }

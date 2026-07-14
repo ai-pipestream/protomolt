@@ -186,6 +186,288 @@ class SolrDocumentMapperTest {
         assertThatThrownBy(() -> mapper.map(message, plan)).isInstanceOf(MappingException.class);
     }
 
+    @Test
+    void nullValueSubstitutesMissingField() throws Exception {
+        Descriptor descriptor = boolDocDescriptor();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("archived", "archived",
+                        ResolvedFieldHint.builder(IndexFieldKind.BOOLEAN).nullValue("false").build())));
+
+        // the substitute is coerced to the hinted type: a boolean, not the string "false"
+        assertThat(mapper.map(message, plan)).containsEntry("archived", false);
+    }
+
+    @Test
+    void skipIfMissingFalseStillSkipsWithoutSubstitute() throws Exception {
+        Descriptor descriptor = boolDocDescriptor();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("archived", "archived",
+                        ResolvedFieldHint.builder(IndexFieldKind.BOOLEAN).skipIfMissing(false).build())));
+
+        // Solr documents cannot hold explicit nulls
+        assertThat(mapper.map(message, plan)).doesNotContainKey("archived");
+    }
+
+    @Test
+    void mapModeDefaultsToEntryJsonStrings() throws Exception {
+        Map<String, Object> doc = mapper.map(labelsMessage(), mapPlan(null));
+
+        assertThat(doc.get("labels")).isEqualTo(List.of(
+                "{\"key\":\"env\",\"value\":\"prod\"}",
+                "{\"key\":\"team\",\"value\":\"search\"}"));
+    }
+
+    @Test
+    void mapModeFlattenEmitsUnderscoreKeyFields() throws Exception {
+        Map<String, Object> doc = mapper.map(labelsMessage(),
+                mapPlan(ai.pipestream.proto.index.spi.MapMode.FLATTEN));
+
+        assertThat(doc).containsEntry("labels_env", "prod").containsEntry("labels_team", "search");
+        assertThat(doc).doesNotContainKey("labels");
+    }
+
+    @Test
+    void mapModeJsonEmitsOneJsonString() throws Exception {
+        Map<String, Object> doc = mapper.map(labelsMessage(),
+                mapPlan(ai.pipestream.proto.index.spi.MapMode.JSON));
+
+        assertThat(doc.get("labels")).isEqualTo("{\"env\":\"prod\",\"team\":\"search\"}");
+    }
+
+    @Test
+    void mapModeSkipOmitsField() throws Exception {
+        Map<String, Object> doc = mapper.map(labelsMessage(),
+                mapPlan(ai.pipestream.proto.index.spi.MapMode.SKIP));
+
+        assertThat(doc).isEmpty();
+    }
+
+    @Test
+    void intRangeFromGteLteBoundsEmitsMinMaxFields() throws Exception {
+        Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
+        Map<String, Object> doc = mapper.map(
+                rangeMessage(descriptor, 3, 9), rangePlan(descriptor, IndexFieldKind.INT_RANGE));
+
+        assertThat(doc).containsEntry("pages_min", 3).containsEntry("pages_max", 9);
+        assertThat(doc).doesNotContainKey("pages");
+    }
+
+    @Test
+    void longRangeFromMinMaxBoundsEmitsMinMaxFields() throws Exception {
+        Descriptor descriptor = rangeDescriptor("min", "max", FieldDescriptorProto.Type.TYPE_INT64);
+        Map<String, Object> doc = mapper.map(
+                rangeMessage(descriptor, 10L, 20L), rangePlan(descriptor, IndexFieldKind.LONG_RANGE));
+
+        assertThat(doc).containsEntry("pages_min", 10L).containsEntry("pages_max", 20L);
+    }
+
+    @Test
+    void floatAndDoubleRangesEmitNumericBounds() throws Exception {
+        Descriptor floats = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_FLOAT);
+        assertThat(mapper.map(rangeMessage(floats, 0.5f, 1.5f),
+                rangePlan(floats, IndexFieldKind.FLOAT_RANGE)))
+                .containsEntry("pages_min", 0.5f).containsEntry("pages_max", 1.5f);
+
+        Descriptor doubles = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_DOUBLE);
+        assertThat(mapper.map(rangeMessage(doubles, 0.25d, 0.75d),
+                rangePlan(doubles, IndexFieldKind.DOUBLE_RANGE)))
+                .containsEntry("pages_min", 0.25d).containsEntry("pages_max", 0.75d);
+    }
+
+    @Test
+    void dateRangeFromTimestampBoundsEmitsIso8601MinMax() throws Exception {
+        Descriptor descriptor = timestampRangeDescriptor();
+        Map<String, Object> doc = mapper.map(
+                timestampRangeMessage(descriptor, 1_700_000_000L, 1_700_000_100L),
+                rangePlan(descriptor, IndexFieldKind.DATE_RANGE));
+
+        assertThat(doc).containsEntry("pages_min", "2023-11-14T22:13:20Z")
+                .containsEntry("pages_max", "2023-11-14T22:15:00Z");
+    }
+
+    @Test
+    void rangeWithoutResolvableBoundsThrowsMappingException() throws Exception {
+        Descriptor descriptor = rangeDescriptor("low", "high", FieldDescriptorProto.Type.TYPE_INT32);
+
+        assertThatThrownBy(() -> mapper.map(
+                rangeMessage(descriptor, 1, 2), rangePlan(descriptor, IndexFieldKind.INT_RANGE)))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("(gte,lte) or (min,max)");
+    }
+
+    @Test
+    void dateResolutionDoesNotChangeIso8601Emission() throws Exception {
+        Descriptor descriptor = timestampDescriptor();
+        FieldDescriptor created = descriptor.findFieldByName("created");
+        Descriptor tsDescriptor = created.getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(created, DynamicMessage.newBuilder(tsDescriptor)
+                        .setField(tsDescriptor.findFieldByName("seconds"), 1_700_000_000L)
+                        .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("created", "created",
+                        ResolvedFieldHint.builder(IndexFieldKind.DATE)
+                                .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
+                                .build())));
+
+        // resolution applies only where dates are emitted numerically; documents stay ISO-8601
+        assertThat(mapper.map(message, plan)).containsEntry("created", "2023-11-14T22:13:20Z");
+    }
+
+    private IndexingPlan mapPlan(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
+        Descriptor descriptor = mapFieldDescriptor();
+        return new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("labels", "labels",
+                        ResolvedFieldHint.builder(IndexFieldKind.OBJECT).mapMode(mode).build())));
+    }
+
+    private static DynamicMessage labelsMessage() throws Exception {
+        Descriptor descriptor = mapFieldDescriptor();
+        FieldDescriptor labels = descriptor.findFieldByName("labels");
+        Descriptor entryType = labels.getMessageType();
+        return DynamicMessage.newBuilder(descriptor)
+                .addRepeatedField(labels, DynamicMessage.newBuilder(entryType)
+                        .setField(entryType.findFieldByName("key"), "env")
+                        .setField(entryType.findFieldByName("value"), "prod")
+                        .build())
+                .addRepeatedField(labels, DynamicMessage.newBuilder(entryType)
+                        .setField(entryType.findFieldByName("key"), "team")
+                        .setField(entryType.findFieldByName("value"), "search")
+                        .build())
+                .build();
+    }
+
+    private static IndexingPlan rangePlan(Descriptor descriptor, IndexFieldKind rangeKind) {
+        return new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
+    }
+
+    private static DynamicMessage rangeMessage(Descriptor descriptor, Object lower, Object upper) {
+        FieldDescriptor pages = descriptor.findFieldByName("pages");
+        Descriptor boundsType = pages.getMessageType();
+        return DynamicMessage.newBuilder(descriptor)
+                .setField(pages, DynamicMessage.newBuilder(boundsType)
+                        .setField(boundsType.getFields().get(0), lower)
+                        .setField(boundsType.getFields().get(1), upper)
+                        .build())
+                .build();
+    }
+
+    private static DynamicMessage timestampRangeMessage(
+            Descriptor descriptor, long lowerSeconds, long upperSeconds) {
+        FieldDescriptor pages = descriptor.findFieldByName("pages");
+        Descriptor boundsType = pages.getMessageType();
+        Descriptor tsType = boundsType.getFields().get(0).getMessageType();
+        return DynamicMessage.newBuilder(descriptor)
+                .setField(pages, DynamicMessage.newBuilder(boundsType)
+                        .setField(boundsType.getFields().get(0), DynamicMessage.newBuilder(tsType)
+                                .setField(tsType.findFieldByName("seconds"), lowerSeconds)
+                                .build())
+                        .setField(boundsType.getFields().get(1), DynamicMessage.newBuilder(tsType)
+                                .setField(tsType.findFieldByName("seconds"), upperSeconds)
+                                .build())
+                        .build())
+                .build();
+    }
+
+    private static Descriptor mapFieldDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("map_doc.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("MapDoc")
+                        .addNestedType(DescriptorProto.newBuilder()
+                                .setName("LabelsEntry")
+                                .setOptions(com.google.protobuf.DescriptorProtos.MessageOptions.newBuilder()
+                                        .setMapEntry(true))
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("key")
+                                        .setNumber(1)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("value")
+                                        .setNumber(2)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("labels")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.MapDoc.LabelsEntry")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("MapDoc");
+    }
+
+    private static Descriptor rangeDescriptor(
+            String lowerName, String upperName, FieldDescriptorProto.Type boundType) throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("range_" + lowerName + "_" + boundType.name().toLowerCase() + ".proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Bounds")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName(lowerName)
+                                .setNumber(1)
+                                .setType(boundType)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName(upperName)
+                                .setNumber(2)
+                                .setType(boundType)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("RangeDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("pages")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RangeDoc");
+    }
+
+    private static Descriptor timestampRangeDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("ts_range.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/timestamp.proto")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Bounds")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("gte")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Timestamp")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("lte")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Timestamp")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("RangeDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("pages")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(
+                        file, new FileDescriptor[]{com.google.protobuf.TimestampProto.getDescriptor()})
+                .findMessageTypeByName("RangeDoc");
+    }
+
     private static Descriptor boolDocDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("bool_doc.proto")

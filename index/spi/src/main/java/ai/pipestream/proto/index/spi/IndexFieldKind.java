@@ -18,5 +18,18 @@ public enum IndexFieldKind {
     VECTOR,
     OBJECT,
     NESTED,
-    SKIP
+    SKIP,
+    INT_RANGE,
+    LONG_RANGE,
+    FLOAT_RANGE,
+    DOUBLE_RANGE,
+    DATE_RANGE;
+
+    /** True for the range kinds, which apply to singular message fields with bound pairs. */
+    public boolean isRange() {
+        return switch (this) {
+            case INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> true;
+            default -> false;
+        };
+    }
 }
