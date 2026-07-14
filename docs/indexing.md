@@ -1,0 +1,124 @@
+# Search indexing
+
+The index modules project protobuf messages into search engines. The design
+separates three concerns: *hints* say how a field should be indexed, a
+*plan* resolves hints for a concrete message type, and *engine plugins*
+interpret the plan for a specific backend. NDJSON output is engine-agnostic
+and does not interpret hints at all.
+
+| Artifact | Role |
+|---|---|
+| `protomolt-index-spi` | Plan model, hint sources, engine SPI, the hints `.proto` |
+| `protomolt-index-ndjson` | Message → NDJSON lines (including bulk-index pairs) |
+| `protomolt-index-lucene` | Lucene `Document` mapping |
+| `protomolt-index-opensearch` | OpenSearch document-map mapping |
+| `protomolt-index-solr` | Solr document-map mapping |
+| `protomolt-protobuf-indexing` | Facade chaining optional validation → plan → NDJSON |
+
+## Indexing hints
+
+Hints are protobuf `FieldOptions` extensions that bake into the descriptor,
+so plain `protoc` or the protobuf Gradle plugin is all the code generation
+required. The `.proto` ships inside `protomolt-index-spi` (and is available
+on the classpath as a resource):
+
+```protobuf
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+
+message Doc {
+  string doc_id = 1 [(ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }];
+  string title  = 2 [(ai.pipestream.proto.index.hints.v1.index) = {
+    type: INDEX_FIELD_TYPE_TEXT
+    analyzer: "english"
+    sub_fields: [{ name: "raw", type: INDEX_FIELD_TYPE_KEYWORD }]
+  }];
+  repeated float embedding = 3 [(ai.pipestream.proto.index.hints.v1.index) = {
+    type: INDEX_FIELD_TYPE_VECTOR
+    vector_dims: 768
+    vector_similarity: VECTOR_SIMILARITY_COSINE
+    hnsw: { m: 16, ef_construction: 128 }
+  }];
+}
+```
+
+### The hint surface
+
+| Concern | Hint fields | Notes |
+|---|---|---|
+| Core | `type`, `name`, `stored`, `indexed` | `TEXT` vs `KEYWORD` distinguishes analyzed from exact-match strings |
+| Vectors | `vector_dims`, `vector_similarity` (cosine, dot product, L2, max inner product), `vector_element_type` (float32, byte), `hnsw { m, ef_construction }` | Lucene emits `Knn(Float\|Byte)VectorField` with the similarity function; OpenSearch/Solr carry the parameters into schema generation |
+| Multi-fields | `sub_fields` | The classic text-plus-keyword pattern; named `field.sub` (OpenSearch) / `field_sub` (Solr) |
+| Text analysis | `analyzer`, `search_analyzer` | Engine-interpreted names, carried into the plan and schema generation |
+| Missing values | `null_value`, `skip_if_missing` | `null_value` substitutes a typed value when the field is unset |
+| Sorting/faceting | `sortable`, `facetable` | Doc values in Lucene/Solr terms, `doc_values` in OpenSearch |
+| Ranges | `INDEX_FIELD_TYPE_{INT,LONG,FLOAT,DOUBLE,DATE}_RANGE` | Applies to a message field with `(gte, lte)` or `(min, max)` scalar pairs; misuse is a planning error carrying the field path |
+| Maps | `map_mode` | `FLATTEN` (dynamic keys), `ENTRIES` (key/value entries), `JSON` (one serialized field), `SKIP` |
+| Dates | `date_format`, `date_resolution` (millis, seconds) | Controls `Timestamp` emission and schema-level formats |
+| Escape hatch | `engine_params` | `map<string,string>` with engine-scoped keys, e.g. `opensearch.index_options`; carried verbatim into schema generation |
+
+All of this is expressible programmatically through
+`CatalogIndexingHintSource` and the `ResolvedFieldHint` builder for schemas
+you cannot annotate.
+
+### Engine schema generation
+
+Each engine plugin can generate its schema artifact from an `IndexingPlan`,
+so index setup and document mapping come from the same declaration:
+
+- `OpenSearchMappingGenerator` — mappings JSON, including `knn_vector`
+  (dimension, space type, HNSW method), multi-fields, `doc_values`,
+  `null_value`, date formats, and `*_range` types.
+- `SolrSchemaGenerator` — managed-schema field and fieldType definitions,
+  including `DenseVectorField` types and copyField rules for sub-fields.
+- `LuceneFieldSpecs` — Lucene has no schema file; this is a typed per-field
+  report (doc-values type, vector encoding and similarity, analyzers) that
+  consumers apply at `IndexWriter` level.
+
+Hints do not have to live in the schema. `IndexingHintSource` is a
+functional interface resolving a hint per field, and sources compose with
+`orElse`:
+
+- `ProtoOptionsIndexingHintSource` — reads the descriptor options above
+- `CatalogIndexingHintSource` — programmatic side-car hints keyed by
+  `messageFullName.fieldName`, for schemas you cannot annotate
+- `InferringIndexingHintSource` — infers a sensible field kind from the
+  protobuf type when nothing else matches
+
+## Plans and engines
+
+`IndexingPlanFactory` walks a descriptor with the configured hint sources
+and produces an `IndexingPlan`: the indexable fields, their resolved kinds,
+and their paths (nested messages expand to dotted paths unless marked as
+object/nested). Engine plugins implement `SearchEngineIndexerProvider` and
+are discovered via `ServiceLoader`:
+
+```java
+ExtensionRegistry extensions = ExtensionRegistry.newInstance();
+ProtoOptionsIndexingHintSource.registerExtensions(extensions);
+// parse the FileDescriptorSet / build descriptors with that registry
+
+var plan = IndexingPlanFactory.defaults(new CatalogIndexingHintSource()).create(desc);
+var engines = SearchEngineIndexers.createAll(new IndexerContext(fieldMapper));
+engines.get("lucene").map(message, plan);
+engines.get("opensearch").map(message, plan);
+
+new ProtoNdjsonWriter().writeBulkIndex(bulk, "docs", id, message);
+```
+
+As with the other descriptor-option standards, register the hint extensions
+before parsing descriptor sets, or the options arrive as unknown fields.
+
+## The validate-then-index facade
+
+`ProtobufIndexer` in `protomolt-protobuf-indexing` chains the pieces for the
+common case — optionally validate, then plan, then emit NDJSON:
+
+```java
+var indexer = ProtobufIndexer.defaults(
+    ProtoValidator.forMessageType(doc.getDescriptorForType()));
+indexer.plan(doc.getDescriptorForType());
+indexer.toNdjsonLine(doc);   // validates first when a validator is configured
+```
+
+Validation and indexing remain independent standards; chain them only when
+you want the gate.
