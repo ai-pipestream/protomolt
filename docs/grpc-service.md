@@ -103,7 +103,14 @@ constant time:
   scheme, so Swagger UI's Authorize button works.
 - **MCP** — `/mcp` requires the same header:
   `claude mcp add --transport http protomolt http://host:8080/mcp --header "api_token: ..."`.
+- **Registry** — when mounted, every registry route requires the same
+  header or bearer credential; only its `/health` stays open.
+- **Console** — disabled in token mode (503 with the reason): a browser
+  cannot hold the process's shared secret, and a half-secured console
+  would be worse than none. Run without a token on a trusted network to
+  use it.
 
+`--host` constrains every listener — HTTP, gRPC, and the registry alike.
 Documentation surfaces (`/health`, `/openapi.json`, `/docs`) stay open.
 Without the flag every surface is open — fine on a trusted network, not
 beyond it.

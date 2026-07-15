@@ -253,6 +253,53 @@ subjects, and consumers in any language pull from the registry API or from
 Git directly. JVM consumers get the full toolkit; others get standard
 protobuf artifacts.
 
+## Hardening backlog
+
+The 2026-07-15 architecture review (disposition in
+`docs/reviews/2026-07-15-architecture-review-response.md`) fixed the concrete
+defects the same day; these are the remaining design efforts, in rough priority
+order. They strengthen contracts the toolkit already implies rather than adding
+features.
+
+1. **Authorization scopes.** The shared token now covers every listener; the
+   next step is separating authentication from authorization: scopes such as
+   schema-read, schema-write, chain-execute, and outbound-action-execute, plus
+   a route-enumeration test proving each route's requirement.
+2. **Console session flow.** A server-side session (or backend-for-frontend)
+   so the console works in token mode without a browser ever holding the
+   process secret. Until then the console is disabled in token mode.
+3. **Metadata propagation contract for shapes.** Classify field options as
+   transferable, contextual, derived, or prohibited for every shape operation
+   (projection, merge, join, inference); detect conflicting sensitivity,
+   validation, and indexing policy during merges; record provenance for
+   derived fields. Cross-module tests prove a sensitive field stays sensitive
+   through every derivation.
+4. **Execution and outbound-network budgets.** Per-action timeouts and
+   concurrency quotas; Git clone size/depth/wall-clock limits under policy;
+   outbound scheme/host/port allowlists with resolved-address re-checks; and
+   one `ChannelPolicy` shared by chains, reflection, invocation, and gather so
+   every outbound channel obeys the same trust configuration
+   (`ChainRunner.ChannelFactory` is the seam to generalize).
+5. **Transactional Git registry writes.** Build commits through JGit plumbing
+   (blobs, trees, commit, atomic ref advance) instead of working-tree writes,
+   with fault-injection tests at each boundary and documented crash-recovery
+   expectations.
+6. **MCP protocol conformance.** A connection/session state machine
+   (initialize, initialized, cancellation, shutdown), fixtures per protocol
+   revision, and regular runs against the official MCP inspector.
+7. **API lifecycle.** Stability annotations (stable / evolving / experimental /
+   internal), package docs on stable entry points, a published compatibility
+   policy for Java APIs, protobuf options, stored registry formats, REST
+   routes, and action envelopes — enforced with japicmp or Revapi once a
+   first release exists to compare against.
+8. **WASM protoc provenance.** A reproducible build script pinned to upstream
+   revisions, checksum verification during the build, and a provenance record
+   for the embedded compiler binary.
+9. **Sensitive-field vectorization policy.** An explicit opt-in before an
+   `encrypt`-classed field's content may feed an embedding pipeline, so the
+   documented neighborhood/inversion trade-off is a deliberate deployment
+   decision rather than a default.
+
 ## Assessment
 
 With items 1 and 2 complete, ProtoMolt reads from and writes to every

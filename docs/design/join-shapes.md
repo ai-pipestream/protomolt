@@ -115,9 +115,10 @@ surface with scoped source paths.
   the join is ours: open two flow-controlled `DynamicGrpcStream`s, match
   pairwise (zip) or by key within a bounded buffer, emit the joined shape.
   Flow control comes free — each side is only requested as it drains, so
-  a fast stream cannot flood a slow one; bounded buffers plus a wait
-  budget make memory explicit, and unmatched entries expire by policy
-  (drop, emit-partial, or fail). This is a planned phase, not yet built.
+  a fast stream cannot flood a slow one, and bounded buffers make memory
+  explicit. Implemented as `StreamJoiner` (exact semantics under Phasing
+  below); richer unmatched-entry policies (emit-partial, fail-on-drop)
+  remain future options.
 - **Connect transforms** — a record's key and value messages joined into
   the value (the smallest useful join); `GrpcEnrich` as the lookup join
   where the other side lives behind a service.
@@ -149,11 +150,16 @@ alongside the stream-join phase.
    joiner — plus the `synthesize-shape` / `join-messages` verbs on every
    surface.
 2. **Stream joins** (implemented): `StreamJoiner` — zip and keyed joins
-   over two flow-controlled `DynamicGrpcStream`s, matched symmetrically
-   (each arrival probes the other side's buffer immediately), bounded
-   per-side buffers dropping oldest on overflow, output built through the
-   standard scoped rules. A Connect source emitting a joined stream
-   remains open.
+   over two flow-controlled `DynamicGrpcStream`s. Exact semantics:
+   matching is symmetric and immediate (each arrival probes the other
+   side's buffer); completed joins wait in their own queue, so a caller
+   taking few results never strands a matched pair; per-side buffers are
+   bounded and evict the oldest *unmatched* entry by true arrival order;
+   duplicate keys queue FIFO; a message whose key path cannot be read is
+   dropped (it can never match); key paths are validated at construction
+   (existence, singular scalar, same type on both sides). Output is built
+   through the standard scoped rules. A Connect source emitting a joined
+   stream remains open.
 3. **Schema-declared keys**: the metadata option and its adoption by
    stream joins and the connectors.
 4. **Registry registration of derived shapes** as a first-class flow

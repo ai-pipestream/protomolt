@@ -194,5 +194,8 @@ undecodable value or a runtime evaluation failure does: `fail` (default),
 sensitivity classes (`ai.pipestream.proto.meta.v1.field.sensitivity`):
 declare `pii` once in the proto and every topic this transform touches
 honors it — `classes` (default `pii`) picks what to mask, `strategy`
-picks `remove` or `redact` (strings become `***`). Recursion covers
-nested and repeated messages.
+picks `remove`, `redact` (strings become `***`), `encrypt`, or `decrypt`
+(AES-GCM with the base64 `key`, a `PASSWORD`-typed config; ciphertext is
+bound to its field, so values pasted elsewhere refuse to decrypt).
+Recursion covers nested and repeated messages and message-valued map
+entries; a class on a map field masks every entry's value.
