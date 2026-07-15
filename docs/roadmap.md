@@ -220,9 +220,22 @@ type through a validate-resolve-emit flow — the clash report (same name,
 different type or cardinality) is computed from descriptors alone, the
 caller decides each clash (rename with source prefixes, prefer one side,
 or override a coalesce), and one move then emits the merged proto with
-its defined-join and defined-union rulesets. Planned next per the design:
-keyed joins over two gRPC server streams with bounded buffers, and a
-schema-declared key option.
+its defined-join and defined-union rulesets. The static half of that
+story is `check-rules`: mapping rules and CEL checked against descriptors
+without executing (filters must type-check to bool), with an optional
+dry run over sample messages.
+
+The [chain manager](design/chain-manager.md) shipped its phase 1:
+`protomolt-chain` runs inline chains — serial unary gRPC calls whose
+requests are mapped from the chain input and every prior step's response,
+with boolean gates, nested deadlines, optional response validation, and
+fail-fast errors carrying the step name — and `check-chain` verifies all
+of it statically, so a chain that checks clean cannot fail on a type
+error at run time. The console gained the merge workbench at
+`/console/schema-registry/merge`: pick two types, decide clashes, and
+register the merged schema with its mappings in one move. Planned next
+per the designs: named chains in the registry, keyed joins over two gRPC
+server streams with bounded buffers, and a schema-declared key option.
 
 **5. A web console.** Every server host already serves `openapi.json`, and
 `MappingHelper` exists specifically to feed schema-browsing UIs. A bundled,

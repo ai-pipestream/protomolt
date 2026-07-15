@@ -1,7 +1,10 @@
 # The chain manager (design)
 
-Status: design. Nothing here is implemented yet; this document exists so the
-implementation starts from settled decisions.
+Status: phase 1 implemented (`protomolt-chain`: the runner, the verifier,
+and the `run-chain`/`check-chain` verbs — inline chains, serial unary,
+fail-fast, nested deadlines, `when` gates, response validation). Phases 2+
+(named chains in the registry, terminal streaming steps, retries,
+compensation) remain design.
 
 ## What it is
 
@@ -108,7 +111,9 @@ The pieces are deliberately the existing pieces:
 Expressions and mapping sources see a chain-scoped context:
 
 - `input` — the chain's input message;
-- `steps.<name>` — each completed step's response message.
+- each completed step's response, bound directly under the step's name
+  (step names are validated identifiers, so `tokenize.ids` reads exactly
+  like any scoped source path — one dialect everywhere).
 
 Every step's request mapping may read from *any* of them, not just the
 previous hop. That makes joins ordinary: call two lookup services in

@@ -36,6 +36,9 @@ repair strategies, which matters when the caller is a model.
 | `synthesize-shape` | Derive a join/union output type (envelope, projection, or oneof union) from named sources; returns registrable proto source and implied rules |
 | `join-messages` | Join named source messages into an authored target or a synthesized shape with scoped rules and CEL |
 | `merge-schemas` | Merge two or more message types into one new type: clash report, caller-decided resolutions, then merged proto + join/union rulesets in one move |
+| `check-rules` | Statically validate mapping rules and CEL (filters must be bool) against descriptors; sample messages upgrade the check to a dry run |
+| `run-chain` | Execute an inline chain: serial unary gRPC calls, each request mapped from the chain input and prior steps' responses |
+| `check-chain` | Verify a chain without running it: methods, step scopes, gates, and every mapping type-checked |
 | `extract-metadata` | The declared metadata bag for a type |
 
 Wherever an action takes a schema it accepts exactly one of three forms —
