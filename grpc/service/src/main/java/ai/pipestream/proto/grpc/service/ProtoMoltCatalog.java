@@ -48,6 +48,7 @@ public final class ProtoMoltCatalog {
                 .register(new GenerateStubsAction())
                 .register(new GatherGitAction(gatherCacheRoot))
                 .register(new RunChainAction(new ChainRunner(), chains))
-                .register(new CheckChainAction());
+                .register(new CheckChainAction())
+                .register(new ai.pipestream.proto.emit.okf.EmitOkfAction());
     }
 }

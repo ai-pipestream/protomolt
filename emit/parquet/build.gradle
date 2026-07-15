@@ -1,0 +1,16 @@
+description = 'Parquet renderer: descriptor-driven columnar files from protobuf messages, no generated classes and no native Hadoop'
+
+dependencies {
+    api project(':protomolt-emit')
+    api libs.protobuf.java
+
+    implementation libs.parquet.hadoop
+    // The Hadoop *API* jar only — the Configuration and codec types parquet-hadoop
+    // references, without a Hadoop runtime or filesystem.
+    implementation libs.hadoop.client.api
+
+    testImplementation project(':protomolt-proto-sources')
+    // The example Group reader used to verify round-trips materializes a Hadoop
+    // Configuration; the writer under test never does.
+    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
+}

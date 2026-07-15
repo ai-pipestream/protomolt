@@ -4,10 +4,10 @@
 `protomolt-serve` is the one-process server that mounts it everywhere at
 once: gRPC with server reflection, JSON/REST with a generated OpenAPI
 document, Swagger UI, and optionally the git-backed registry — the same
-twenty-two verbs on every surface.
+twenty-three verbs on every surface.
 
 The service is defined in protobuf, of course:
-`ai.pipestream.protomolt.v1.ProtoMoltService`, twenty-two typed RPCs in
+`ai.pipestream.protomolt.v1.ProtoMoltService`, twenty-three typed RPCs in
 [`protomolt_service.proto`](../grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto).
 Each request and response message is designed so its canonical proto3 JSON
 form is exactly the action's JSON envelope. That one decision makes every
@@ -162,7 +162,7 @@ $ curl -s -H 'content-type: application/json' \
 }
 ```
 
-`GET /openapi.json` documents all twenty-two operations with schemas derived
+`GET /openapi.json` documents all twenty-three operations with schemas derived
 from the same descriptors, and `GET /docs` serves Swagger UI over that
 document — a browsable, try-it console with no frontend build. Action
 failures with client-repairable codes return 400 with the code in the body;

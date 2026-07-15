@@ -1,0 +1,10 @@
+description = 'Open Knowledge Format renderer: descriptor sets and registry stores as OKF v0.1 knowledge bundles, plus the emit-okf verb'
+
+dependencies {
+    api project(':protomolt-emit')
+    api project(':protomolt-actions')
+
+    implementation project(':protomolt-protobuf-metadata')
+    implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-registry')
+}

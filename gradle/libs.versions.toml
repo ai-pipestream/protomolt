@@ -24,6 +24,8 @@ micronaut = "4.9.4"
 protobuf-gradle = "0.10.0"
 wire = "5.5.1"
 jgit = "7.3.0.202506031305-r"
+parquet = "1.15.2"
+hadoop = "3.4.1"
 maven-resolver = "1.9.24"
 maven = "3.9.11"
 
@@ -73,6 +75,8 @@ micronaut-http-server-netty = { module = "io.micronaut:micronaut-http-server-net
 micronaut-inject = { module = "io.micronaut:micronaut-inject", version.ref = "micronaut" }
 wire-schema = { module = "com.squareup.wire:wire-schema", version.ref = "wire" }
 jimfs = { module = "com.google.jimfs:jimfs", version = "1.3.1" }
+parquet-hadoop = { module = "org.apache.parquet:parquet-hadoop", version.ref = "parquet" }
+hadoop-client-api = { module = "org.apache.hadoop:hadoop-client-api", version.ref = "hadoop" }
 jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
 maven-resolver-supplier = { module = "org.apache.maven.resolver:maven-resolver-supplier", version.ref = "maven-resolver" }
 maven-resolver-provider = { module = "org.apache.maven:maven-resolver-provider", version.ref = "maven" }

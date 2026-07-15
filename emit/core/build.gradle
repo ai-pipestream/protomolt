@@ -1,0 +1,5 @@
+description = 'Emit SPI: bundles of rendered files and the sinks that deliver them (directory, git, zip)'
+
+dependencies {
+    implementation libs.jgit
+}

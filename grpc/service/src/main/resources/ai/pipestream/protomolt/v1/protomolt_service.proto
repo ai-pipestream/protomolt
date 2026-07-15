@@ -103,6 +103,11 @@ service ProtoMoltService {
   // Gathers .proto sources from a git repository and compiles them — the
   // lane for services that publish their contract instead of reflecting.
   rpc GatherGit(GatherGitRequest) returns (GatherGitResponse);
+
+  // Renders a schema as an Open Knowledge Format (OKF v0.1) bundle: markdown
+  // concept documents with YAML frontmatter for every message, enum, and
+  // service, cross-linked into the knowledge graph agents and catalogs read.
+  rpc EmitOkf(EmitOkfRequest) returns (EmitOkfResponse);
 }
 
 // A schema source. Provide exactly one of 'type', 'sources', or
@@ -384,6 +389,22 @@ message GatherGitResponse {
   map<string, string> sources = 4;
   // Usable directly as SchemaSource.descriptor_set_base64.
   string descriptor_set_base64 = 5;
+}
+
+message EmitOkfRequest {
+  SchemaSource schema = 1;
+  // Heading of the bundle's root index.md; default 'Schema knowledge bundle'.
+  string title = 2;
+}
+
+message EmitOkfResponse {
+  bool ok = 1;
+  string error = 2;
+  int32 file_count = 3;
+  // Every bundle file: markdown text keyed by bundle-relative path.
+  map<string, string> files = 4;
+  // The same bundle as one zip archive.
+  string zip_base64 = 5;
 }
 
 // A named source type (and, for joins, its message) in shape order; the

@@ -7,6 +7,7 @@ dependencies {
 
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-gather-git')
+    implementation project(':protomolt-emit-okf')
     implementation project(':protomolt-chain')
     implementation project(':protomolt-grpc-invoke')
     implementation project(':protomolt-codegen')

@@ -42,6 +42,7 @@ repair strategies, which matters when the caller is a model.
 | `infer-schema` | Struct-to-proto: reverse-engineer a message type from JSON sample documents; returns registrable source + descriptor set |
 | `mask-message` | Mask fields by their schema-declared sensitivity classes: remove, redact, or encrypt/decrypt (AES-GCM, field-bound versioned envelope), recursively including map values |
 | `extract-metadata` | The declared metadata bag for a type |
+| `emit-okf` | Render a schema as an Open Knowledge Format (OKF v0.1) bundle: linked markdown concept documents for every message, enum, and service, inline plus zipped |
 
 Wherever an action takes a schema it accepts exactly one of three forms —
 `{"type": "fully.qualified.Name"}` (resolved from the context's descriptor

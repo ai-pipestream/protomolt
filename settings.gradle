@@ -31,6 +31,12 @@ project(':protomolt-gather').projectDir = file('gather/core')
 
 include 'protomolt-gather-git'
 project(':protomolt-gather-git').projectDir = file('gather/git')
+include 'protomolt-emit'
+project(':protomolt-emit').projectDir = file('emit/core')
+include 'protomolt-emit-okf'
+project(':protomolt-emit-okf').projectDir = file('emit/okf')
+include 'protomolt-emit-parquet'
+project(':protomolt-emit-parquet').projectDir = file('emit/parquet')
 
 include 'protomolt-gather-maven'
 project(':protomolt-gather-maven').projectDir = file('gather/maven')
