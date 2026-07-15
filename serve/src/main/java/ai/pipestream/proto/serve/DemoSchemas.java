@@ -49,6 +49,37 @@ final class DemoSchemas {
      * {@code store} is non-null, also registers the schema (and the option schemas it
      * imports) as registry subjects.
      */
+    /**
+     * Stores the demo chain: compile inline sources on this very server, then list the
+     * compiled types — two of the server's own verbs composed into one typed call, so the
+     * console's chains page has something real to open and run.
+     */
+    static void seedChain(GitSchemaRegistryStore store, int grpcPort) {
+        try {
+            String schema = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writeValueAsString(
+                            ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema.protoSource());
+            String chain = """
+                    {"name": "compile-and-list",
+                     "schema": {"sources": {"%s": %s}},
+                     "inputType": "ai.pipestream.protomolt.v1.CompileRequest",
+                     "steps": [
+                       {"name": "compiled", "target": "127.0.0.1:%d",
+                        "method": "ai.pipestream.protomolt.v1.ProtoMoltService/Compile",
+                        "rules": ["sources = input.sources"]},
+                       {"name": "types", "target": "127.0.0.1:%d",
+                        "method": "ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes",
+                        "rules": ["schema.descriptor_set_base64 = compiled.descriptor_set_base64"]}
+                     ]}
+                    """.formatted(
+                    ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema.RESOURCE_PATH,
+                    schema, grpcPort, grpcPort);
+            store.putChain("compile-and-list", chain);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to seed the demo chain", e);
+        }
+    }
+
     static void seed(DescriptorRegistry descriptors, GitSchemaRegistryStore store) {
         ProtoSourceSet.Builder sources = ProtoSourceSet.builder();
         for (String path : OPTION_SUBJECTS) {

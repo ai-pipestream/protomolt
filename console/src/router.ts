@@ -16,6 +16,11 @@ export const router = createRouter({
           component: () => import('./views/SubjectsView.vue'),
         },
         {
+          path: 'chains',
+          name: 'schema-registry-chains',
+          component: () => import('./views/ChainsView.vue'),
+        },
+        {
           path: 'merge',
           name: 'schema-registry-merge',
           component: () => import('./views/MergeWorkbenchView.vue'),

@@ -58,6 +58,11 @@ export function routerForTests(): Router {
         name: 'schema-registry-merge',
         component: { template: '<div />' },
       },
+      {
+        path: '/schema-registry/chains',
+        name: 'schema-registry-chains',
+        component: { template: '<div />' },
+      },
       { path: '/:pathMatch(.*)*', component: { template: '<div />' } },
     ],
   })

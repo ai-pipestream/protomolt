@@ -36,6 +36,14 @@
       </template>
 
       <v-btn
+        prepend-icon="mdi-link-variant"
+        variant="tonal"
+        size="small"
+        class="mr-2"
+        :to="{ name: 'schema-registry-chains' }"
+      >Chains</v-btn>
+
+      <v-btn
         prepend-icon="mdi-set-merge"
         variant="tonal"
         size="small"

@@ -159,6 +159,11 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
 
             grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog, options.apiToken());
+            if (options.demo() && store != null) {
+                // The demo chain composes this server's own verbs, so it needs the bound
+                // gRPC port - seeded here rather than with the schemas.
+                DemoSchemas.seedChain(store, grpc.port());
+            }
 
             // The registry starts before HTTP so the console's same-origin proxy
             // (/api/protomolt) knows the port it bridges to.
