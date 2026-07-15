@@ -3,7 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 // Subjects may contain slashes ("example/person.proto"); links are built
 // with encodeURIComponent and the catch-all decodes on match.
 export const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', redirect: '/schema-registry' },
     {

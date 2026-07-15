@@ -15,8 +15,11 @@ npm run build        # static bundle in dist/
 ```
 
 The dev server proxies `/api/protomolt/*` to the registry, so the app is
-same-origin in development; a production deployment serves `dist/` behind
-any reverse proxy that does the same.
+same-origin in development. In production the app is served by
+`protomolt-serve` itself at `/console`: build `dist/` first and the serve
+build bundles it, with the same-origin API bridges provided by the server
+(`/api/protomolt` to the in-process registry, `/api/serve` to the verbs).
+Any reverse proxy that mirrors those paths works too.
 
 ## Provenance
 

@@ -11,6 +11,8 @@ const registry = process.env.PROTOMOLT_REGISTRY_URL ?? 'http://localhost:8081'
 const serve = process.env.PROTOMOLT_SERVE_URL ?? 'http://localhost:8080'
 
 export default defineConfig({
+  // Served at /console by protomolt-serve (and any reverse proxy that mirrors it).
+  base: '/console/',
   plugins: [vue()],
   resolve: {
     alias: {

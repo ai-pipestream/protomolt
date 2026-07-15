@@ -35,6 +35,28 @@ jobs:
         if: github.event_name == 'pull_request'
         run: buf breaking --against ".git#branch=origin/${{ github.base_ref }}"
 
+  # The console is a standalone vite app; its tests and production build run
+  # here so a broken bundle fails CI even though the JVM build does not need it.
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install, test, build
+        run: |
+          npm ci
+          npm test
+          npm run build
+
   # Scores the validation executor against buf's own protovalidate-conformance
   # binary, so the documented full-suite pass rate is enforced on every push,
   # not just measured once.

@@ -145,6 +145,17 @@ public final class ProtoMoltServe implements AutoCloseable {
 
             grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog, options.apiToken());
 
+            // The registry starts before HTTP so the console's same-origin proxy
+            // (/api/protomolt) knows the port it bridges to.
+            int registryPort = -1;
+            if (store != null) {
+                registry = new SchemaRegistryServer(
+                        SchemaRegistryServerConfig.defaults()
+                                .withPort(options.registryPort()),
+                        store, catalog);
+                registryPort = registry.start();
+            }
+
             ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
             ProtoMoltRestMount.register(methods, catalog, options.apiToken() == null
                     ? null
@@ -160,21 +171,21 @@ public final class ProtoMoltServe implements AutoCloseable {
             McpServer mcp = new McpServer(catalog,
                     store != null ? new RegistryResources(store) : null,
                     "protomolt", version != null ? version : "dev");
+            int boundRegistryPort = registryPort;
+            int[] selfPort = {-1};
             http = new JdkProtoRestServer(config, gateway,
                     new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
                             "/", config.restPathPrefix()))
                     .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
-                    .withContext("/mcp", new McpHttpHandler(mcp, options.apiToken()));
+                    .withContext("/mcp", new McpHttpHandler(mcp, options.apiToken()))
+                    .withContext("/console", new ConsoleHandler())
+                    .withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
+                            () -> boundRegistryPort,
+                            "no registry is running; start with --registry-git or --demo"))
+                    .withContext("/api/serve", new ApiProxyHandler("/api/serve",
+                            () -> selfPort[0], "server is still starting"));
             int httpPort = http.start();
-
-            int registryPort = -1;
-            if (store != null) {
-                registry = new SchemaRegistryServer(
-                        SchemaRegistryServerConfig.defaults()
-                                .withPort(options.registryPort()),
-                        store, catalog);
-                registryPort = registry.start();
-            }
+            selfPort[0] = httpPort;
             return new ProtoMoltServe(grpc, http, httpPort, store, registry, registryPort);
         } catch (RuntimeException e) {
             if (registry != null) {

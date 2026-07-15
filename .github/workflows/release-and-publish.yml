@@ -70,6 +70,18 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: ./gradlew publishAggregationToCentralPortal --no-daemon --console=plain
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Build the console
+        run: |
+          cd console
+          npm ci
+          npm run build
+
       - name: Build runnable distributions
         run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip :protomolt-connect:connectPluginZip --no-daemon
 

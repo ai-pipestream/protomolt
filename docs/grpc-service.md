@@ -39,6 +39,14 @@ try (var server = ProtoMoltGrpcServer.start(9090, catalog)) {
 
 ## Running everything: protomolt-serve
 
+When the console has been built (`cd console && npm ci && npm run build`)
+before `protomolt-serve`, its bundle rides inside the jar and is served at
+`/console` — the schema-registry browser, type explorer, and
+connect-a-service wizard, same-origin with the verbs. The server bridges
+`/api/protomolt/*` to the in-process registry and `/api/serve/*` back onto
+its own REST mount, so the app needs no configuration. Docker images and
+release zips ship with the console bundled.
+
 ```shell
 docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
 # or, from a release zip or a clone:

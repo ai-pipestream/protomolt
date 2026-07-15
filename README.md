@@ -49,7 +49,8 @@ and a registry — in one container, with a sample schema seeded:
 docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
 ```
 
-Then exercise it (or just open http://localhost:8080/docs):
+Then exercise it (or open the console at http://localhost:8080/console —
+Swagger UI lives at http://localhost:8080/docs):
 
 ```shell
 # Validate a message against the demo schema's declared rules:
