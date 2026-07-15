@@ -104,6 +104,17 @@ subprojects {
             maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
         }
 
+        // -PtestJdk=21 runs every test JVM on that Java version, proving the declared
+        // runtime baseline actually works - compiling with --release 21 alone does not.
+        if (findProperty('testJdk')) {
+            tasks.withType(Test).configureEach {
+                javaLauncher = javaToolchains.launcherFor {
+                    languageVersion = JavaLanguageVersion.of(
+                            Integer.parseInt(findProperty('testJdk').toString()))
+                }
+            }
+        }
+
         // Generated protobuf sources have no javadoc tags; keep doclint useful but quiet.
         tasks.withType(Javadoc).configureEach {
             options.addStringOption('Xdoclint:all,-missing', '-quiet')

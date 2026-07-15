@@ -7,8 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Compilation is pinned to --release 21, but that alone does not prove the declared
+  # Java 21 runtime baseline: this matrix runs every test JVM on 21 and on the current
+  # JDK (the build itself always runs on the toolchain JDK).
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test-jdk: ['21', '25']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,7 +24,9 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: |
+            ${{ matrix.test-jdk }}
+            25
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -26,7 +35,7 @@ jobs:
           setup_only: true
 
       - name: Build and test
-        run: ./gradlew build --console=plain
+        run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
       - name: Buf lint
         run: buf lint
@@ -51,10 +60,11 @@ jobs:
           cache: npm
           cache-dependency-path: console/package-lock.json
 
-      - name: Install, test, build
+      - name: Install, test, typecheck, build
         run: |
           npm ci
           npm test
+          npm run typecheck
           npm run build
 
   # Scores the validation executor against buf's own protovalidate-conformance

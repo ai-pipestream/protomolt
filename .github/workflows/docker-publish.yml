@@ -73,4 +73,6 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=ProtoMolt one-process server: gRPC, REST/OpenAPI/Swagger, MCP, registry
-            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}

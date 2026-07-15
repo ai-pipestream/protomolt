@@ -1,8 +1,10 @@
-# Cuts a versioned release: axion tags v<semver>, the full build and test suite
-# runs against the tagged version, and all module publications are signed and
-# uploaded to Maven Central in one portal deployment. Versioning is CICD-driven
-# (release_type bump only, no hand-typed version), matching the other
-# pipestream release workflows.
+# Cuts a versioned release. Everything is verified BEFORE the tag exists: the full JVM
+# build and test suite, the console's tests, typecheck, and production build. Only then
+# does axion tag v<semver>, and all module publications are signed and uploaded to Maven
+# Central in one portal deployment from that same verified commit. Versioning is
+# CICD-driven (release_type bump only, no hand-typed version), matching the other
+# pipestream release workflows. A late failure can no longer leave a public tag or
+# Central artifacts behind for a release that never finished verifying.
 name: Release and Publish
 
 on:
@@ -40,6 +42,27 @@ jobs:
         with:
           setup_only: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      # ---- verify everything, tag nothing -------------------------------------------
+
+      - name: Console tests, typecheck, and production build
+        run: |
+          cd console
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build
+
+      - name: Full JVM build and test suite
+        run: ./gradlew build --no-daemon --console=plain
+
+      # ---- the commit is good; now make it a release --------------------------------
+
       - name: Map release_type to axion incrementer
         id: inc
         run: |
@@ -59,9 +82,6 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Released version: $V"
 
-      - name: Build and test
-        run: ./gradlew build --no-daemon --console=plain
-
       - name: Publish signed artifacts to Maven Central
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
@@ -69,18 +89,6 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: ./gradlew publishAggregationToCentralPortal --no-daemon --console=plain
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: console/package-lock.json
-
-      - name: Build the console
-        run: |
-          cd console
-          npm ci
-          npm run build
 
       - name: Build runnable distributions
         run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip :protomolt-connect:connectPluginZip --no-daemon

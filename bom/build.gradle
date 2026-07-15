@@ -13,6 +13,8 @@ catalog {
 dependencies {
     constraints {
         api project(':protomolt-descriptors')
+        api project(':protomolt-shapes')
+        api project(':protomolt-chain')
         api project(':protomolt-helpers')
         api project(':protomolt-formats')
         api project(':protomolt-proto-sources')
@@ -59,4 +61,34 @@ dependencies {
         api project(':protomolt-rest')
         api project(':protomolt-openapi')
     }
+}
+
+// Modules that publish but are deliberately NOT constrained by the BOM. Everything else
+// published must appear above - checkBomCompleteness fails the build otherwise, so a new
+// module cannot be omitted by accident.
+def deliberatelyUnconstrained = [
+        'bom',                                          // the platform itself
+        'samples', 'system-tests',                      // never published
+        'protomolt-protobuf-validation-conformance',    // conformance executor, not a library
+]
+
+tasks.register('checkBomCompleteness') {
+    description = 'Fails when a published module is missing from the BOM constraints'
+    group = 'verification'
+    def moduleNames = rootProject.subprojects.collect { it.name }
+    doLast {
+        def constrained = configurations.api.dependencyConstraints.collect { it.name } as Set
+        def missing = moduleNames.findAll {
+            !deliberatelyUnconstrained.contains(it) && !constrained.contains(it)
+        }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Published modules missing from the BOM: ${missing}. "
+                    + "Constrain them in bom/build.gradle or add them to "
+                    + "deliberatelyUnconstrained with a reason.")
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('checkBomCompleteness')
 }
