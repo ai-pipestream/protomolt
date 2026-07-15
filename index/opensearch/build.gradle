@@ -5,4 +5,5 @@ dependencies {
     api project(':protomolt-mapper-core')
 
     testImplementation libs.jackson.databind
+    testImplementation project(':protomolt-protobuf-metadata')
 }

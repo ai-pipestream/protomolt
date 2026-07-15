@@ -109,6 +109,9 @@ final class TestFixtures {
                                 .setType(IndexFieldType.INDEX_FIELD_TYPE_KEYWORD)
                                 .setName("raw"))
                         .build())
+                .setExtension(ai.pipestream.proto.meta.MetadataProto.field,
+                        ai.pipestream.proto.meta.FieldMeta.newBuilder()
+                                .setSensitivity("pii").build())
                 .build();
         FieldOptions idOptions = FieldOptions.newBuilder()
                 .setExtension(IndexingHintsProto.index, FieldIndexHint.newBuilder()

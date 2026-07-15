@@ -220,4 +220,98 @@ class OpenSearchLiveIntegrationTest {
                         ? FieldDescriptorProto.Label.LABEL_REPEATED
                         : FieldDescriptorProto.Label.LABEL_OPTIONAL);
     }
+
+    /**
+     * The secure-search pattern: content is AES-GCM ciphertext in a store-only container
+     * ({@code index: false} — exactly what render-index-mappings emits for an encrypted
+     * class), while the embedding computed from the plaintext is the only searchable
+     * representation. Semantic search works; the engine cannot read, and refuses to
+     * search, the text; only the key holder decrypts what comes back.
+     */
+    @Test
+    @Order(9)
+    void encryptedContentIsVectorSearchableAndKeyRecoverable() throws Exception {
+        String secure = "it-secure-" + UUID.randomUUID().toString().substring(0, 8);
+        send("PUT", "/" + secure, Map.of(
+                "settings", Map.of("index.knn", true),
+                "mappings", Map.of("properties", Map.of(
+                        "content", Map.of("type", "keyword", "index", false,
+                                "doc_values", false),
+                        "embedding", Map.of("type", "knn_vector", "dimension", 3)))));
+        try {
+            Descriptor note = sensitiveNoteDescriptor();
+            String plaintext = "patient responded well to the treatment";
+            DynamicMessage message = DynamicMessage.newBuilder(note)
+                    .setField(note.findFieldByName("content"), plaintext)
+                    .build();
+            byte[] key = new byte[32];
+            ai.pipestream.proto.meta.SensitivityMasker.MaskResult sealed =
+                    ai.pipestream.proto.meta.SensitivityMasker.mask(message,
+                            java.util.Set.of("pii"),
+                            ai.pipestream.proto.meta.SensitivityMasker.Strategy.ENCRYPT, key);
+            String ciphertext = (String) sealed.message()
+                    .getField(note.findFieldByName("content"));
+            assertThat(ciphertext).isNotEqualTo(plaintext);
+
+            send("POST", "/" + secure + "/_doc/n-1?refresh=true", Map.of(
+                    "content", ciphertext,
+                    "embedding", List.of(0.9, 0.1, 0.0)));
+
+            // Semantic search over the embedding finds the note...
+            JsonNode hits = send("POST", "/" + secure + "/_search", Map.of(
+                    "query", Map.of("knn", Map.of("embedding", Map.of(
+                            "vector", List.of(0.88, 0.12, 0.0), "k", 1)))))
+                    .path("hits").path("hits");
+            assertThat(hits).hasSize(1);
+            String stored = hits.get(0).path("_source").path("content").asText();
+            assertThat(stored).isEqualTo(ciphertext).isNotEqualTo(plaintext);
+
+            // ...while the engine refuses to search the ciphertext container at all.
+            HttpResponse<String> refused = HTTP.send(HttpRequest.newBuilder(
+                            URI.create(BASE + "/" + secure + "/_search"))
+                            .header("content-type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(
+                                    "{\"query\": {\"term\": {\"content\": \"patient\"}}}"))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(refused.statusCode()).isEqualTo(400);
+            assertThat(refused.body()).contains("not indexed");
+
+            // Only the key recovers the text.
+            DynamicMessage recovered = (DynamicMessage)
+                    ai.pipestream.proto.meta.SensitivityMasker.mask(sealed.message(),
+                            java.util.Set.of("pii"),
+                            ai.pipestream.proto.meta.SensitivityMasker.Strategy.DECRYPT, key)
+                            .message();
+            assertThat(recovered.getField(note.findFieldByName("content")))
+                    .isEqualTo(plaintext);
+        } finally {
+            HTTP.send(HttpRequest.newBuilder(URI.create(BASE + "/" + secure))
+                    .DELETE().build(), HttpResponse.BodyHandlers.discarding());
+        }
+    }
+
+    /** content [sensitivity=pii] — options built directly, as runtime schemas carry them. */
+    private static Descriptor sensitiveNoteDescriptor() throws Exception {
+        var contentOptions = com.google.protobuf.DescriptorProtos.FieldOptions.newBuilder()
+                .setExtension(ai.pipestream.proto.meta.MetadataProto.field,
+                        ai.pipestream.proto.meta.FieldMeta.newBuilder()
+                                .setSensitivity("pii").build())
+                .build();
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("it/secure_note.proto")
+                .setPackage("it.secure")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Note")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("content").setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)
+                                .setOptions(contentOptions)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[]{
+                ai.pipestream.proto.meta.MetadataProto.getDescriptor(),
+        }).findMessageTypeByName("Note");
+    }
 }

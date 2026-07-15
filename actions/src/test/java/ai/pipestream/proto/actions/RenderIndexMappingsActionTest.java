@@ -37,6 +37,30 @@ class RenderIndexMappingsActionTest {
     }
 
     @Test
+    void sensitivityRendersSecurityFragmentAndEncryptedContainers() throws Exception {
+        // mask: the field stays searchable; the security plugin hashes it at query time.
+        ObjectNode masked = catalog.execute("render-index-mappings", obj("""
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                 "sensitivity": {"mask": ["pii"]}}
+                """));
+        assertThat(masked.get("security").get("maskedFields"))
+                .extracting(JsonNode::asText).containsExactly("title");
+        assertThat(masked.get("mappings").get("properties").get("title")
+                .get("type").asText()).isEqualTo("text");
+
+        // encrypt: the field becomes a store-only ciphertext container.
+        ObjectNode encrypted = catalog.execute("render-index-mappings", obj("""
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                 "sensitivity": {"encrypt": ["pii"], "exclude": ["secret"]}}
+                """));
+        JsonNode title = encrypted.get("mappings").get("properties").get("title");
+        assertThat(title.get("type").asText()).isEqualTo("keyword");
+        assertThat(title.get("index").asBoolean()).isFalse();
+        assertThat(title.get("doc_values").asBoolean()).isFalse();
+        assertThat(encrypted.get("security").get("fls")).isEmpty();
+    }
+
+    @Test
     void solrSchemaHonorsHintsAndInference() throws Exception {
         ObjectNode result = render("solr");
         assertThat(result.has("fieldTypes")).isTrue();

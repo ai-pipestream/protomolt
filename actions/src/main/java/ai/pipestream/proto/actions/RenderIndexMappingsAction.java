@@ -41,6 +41,13 @@ final class RenderIndexMappingsAction implements ProtoAction {
         engines.add("opensearch");
         engines.add("solr");
         engines.add("lucene");
+        ObjectNode sensitivityProp = properties.putObject("sensitivity");
+        sensitivityProp.put("type", "object");
+        sensitivityProp.put("description", "OpenSearch only: apply schema-declared "
+                + "sensitivity classes — {\"encrypt\": [...]} renders those fields as "
+                + "store-only ciphertext containers (index: false), {\"mask\": [...]} and "
+                + "{\"exclude\": [...]} emit a security-plugin role fragment "
+                + "(masked_fields / fls). The response becomes {mappings, security}.");
         ActionJson.required(schema, "schema", "engine");
         schema.put("additionalProperties", false);
         return schema;
@@ -57,7 +64,11 @@ final class RenderIndexMappingsAction implements ProtoAction {
             case "opensearch" -> {
                 ObjectNode mappings = context.objectMapper()
                         .valueToTree(new OpenSearchMappingGenerator().generate(plan));
-                yield mappings;
+                ObjectNode sensitivity = Inputs.optionalObject(input, "sensitivity");
+                yield sensitivity == null
+                        ? mappings
+                        : opensearchWithSensitivity(mappings, plan, descriptor,
+                                sensitivity, context);
             }
             case "solr" -> solr(plan, context);
             case "lucene" -> lucene(plan, context);
@@ -65,6 +76,83 @@ final class RenderIndexMappingsAction implements ProtoAction {
                     "Unknown engine '" + engine + "'; expected one of opensearch, solr, lucene",
                     "/engine");
         };
+    }
+
+    /**
+     * Applies schema-declared sensitivity to the OpenSearch artifacts. Classes listed
+     * under {@code encrypt} become store-only ciphertext containers ({@code index: false}
+     * — the engine cannot search what it cannot read, and refuses to try); {@code mask}
+     * and {@code exclude} become a security-plugin role fragment ({@code masked_fields}
+     * hash values at query time, {@code fls} exclusions hide fields outright).
+     */
+    private static ObjectNode opensearchWithSensitivity(ObjectNode mappings, IndexingPlan plan,
+                                                        com.google.protobuf.Descriptors.Descriptor descriptor,
+                                                        ObjectNode sensitivity,
+                                                        ActionContext context)
+            throws ActionException {
+        java.util.List<String> mask = classes(sensitivity, "mask");
+        java.util.List<String> exclude = classes(sensitivity, "exclude");
+        java.util.List<String> encrypt = classes(sensitivity, "encrypt");
+        ObjectNode properties = (ObjectNode) mappings.get("properties");
+        ArrayNode maskedFields = context.objectMapper().createArrayNode();
+        ArrayNode fls = context.objectMapper().createArrayNode();
+        for (IndexingPlan.IndexedField field : plan.indexable()) {
+            String cls = sensitivityOf(descriptor, field.path());
+            if (cls.isEmpty()) {
+                continue;
+            }
+            if (encrypt.contains(cls) && properties != null
+                    && properties.has(field.fieldName())) {
+                ObjectNode container = context.objectMapper().createObjectNode();
+                container.put("type", "keyword");
+                container.put("index", false);
+                container.put("doc_values", false);
+                properties.set(field.fieldName(), container);
+            }
+            if (mask.contains(cls)) {
+                maskedFields.add(field.fieldName());
+            }
+            if (exclude.contains(cls)) {
+                fls.add("~" + field.fieldName());
+            }
+        }
+        ObjectNode output = context.objectMapper().createObjectNode();
+        output.set("mappings", mappings);
+        ObjectNode security = output.putObject("security");
+        security.set("maskedFields", maskedFields);
+        security.set("fls", fls);
+        return output;
+    }
+
+    private static java.util.List<String> classes(ObjectNode sensitivity, String key)
+            throws ActionException {
+        ArrayNode node = Inputs.optionalArray(sensitivity, key);
+        return node == null ? java.util.List.of()
+                : Inputs.stringElements(node, "/sensitivity/" + key);
+    }
+
+    private static String sensitivityOf(com.google.protobuf.Descriptors.Descriptor descriptor,
+                                        String path) {
+        com.google.protobuf.Descriptors.Descriptor current = descriptor;
+        String[] segments = path.split("\\.");
+        for (int i = 0; i < segments.length; i++) {
+            com.google.protobuf.Descriptors.FieldDescriptor field =
+                    current.findFieldByName(segments[i]);
+            if (field == null) {
+                return "";
+            }
+            if (i == segments.length - 1) {
+                return ai.pipestream.proto.meta.DescriptorMetadata.field(field)
+                        .map(meta -> meta.getSensitivity())
+                        .orElse("");
+            }
+            if (field.getJavaType()
+                    != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) {
+                return "";
+            }
+            current = field.getMessageType();
+        }
+        return "";
     }
 
     private static ObjectNode solr(IndexingPlan plan, ActionContext context) {

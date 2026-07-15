@@ -122,3 +122,38 @@ indexer.toNdjsonLine(doc);   // validates first when a validator is configured
 
 Validation and indexing remain independent standards; chain them only when
 you want the gate.
+
+
+## Sensitivity in the index
+
+`render-index-mappings` (OpenSearch) accepts a `sensitivity` object that
+applies the schema's declared sensitivity classes
+(`ai.pipestream.proto.meta.v1.field.sensitivity`) to the search layer:
+
+- `{"encrypt": ["pii"]}` — those fields render as store-only ciphertext
+  containers (`"type": "keyword", "index": false, "doc_values": false`).
+  Pair with the masker's `encrypt` strategy: the document carries AES-GCM
+  ciphertext the engine cannot read — and refuses to search — while the
+  kNN embedding computed from the plaintext stays fully searchable.
+  Semantic search over content the engine never sees in the clear; only
+  key holders decrypt what comes back.
+
+  **Know the boundary — this is not encryption of the search itself.**
+  The text is cryptographically protected, but the vector is derived from
+  the plaintext and leaks through two channels: *neighborhood* (clustering
+  reveals what documents are about and which are alike, no key needed)
+  and *inversion* (for known embedding models, published attacks
+  reconstruct approximate text from the vector). Treat the vectors as
+  confidential in their own right — index-level access control and
+  encryption at rest are part of the design, not optional extras. What
+  this buys concretely: a leaked `_source`, backup, or over-broad reader
+  yields ciphertext, and verbatim text never exists inside the engine.
+- `{"mask": ["pii"]}` and `{"exclude": ["secret"]}` — emitted as a
+  security-plugin role fragment (`masked_fields` hashes values at query
+  time; `fls` entries like `~field` hide fields outright). Apply the
+  fragment to reader roles on a security-enabled cluster.
+
+With `sensitivity` present the response becomes `{mappings, security}`.
+The live integration suite proves the encrypted-store pattern end to end
+against a real OpenSearch: index the ciphertext, find it by vector,
+watch the engine refuse a term search on it, decrypt with the key.
