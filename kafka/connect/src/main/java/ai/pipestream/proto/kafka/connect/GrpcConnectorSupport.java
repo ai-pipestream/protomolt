@@ -1,12 +1,16 @@
 package ai.pipestream.proto.kafka.connect;
 
+import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
+import com.google.protobuf.ExtensionRegistry;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.errors.ConnectException;
 
 import java.util.Base64;
@@ -15,9 +19,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * What the sink and source connectors share: resolving a {@code package.Service/Method}
- * against a configured descriptor set, building the channel, and the plugin version. The
- * config key names referenced in error messages are identical across both connectors.
+ * What the connectors and transforms share: linking a configured descriptor set (with
+ * ProtoMolt's validation options readable, not unknown fields), resolving a
+ * {@code package.Service/Method} or message type against it, building the channel, and the
+ * plugin version. The config key names referenced in error messages are identical across
+ * all of them.
  */
 final class GrpcConnectorSupport {
 
@@ -37,6 +43,51 @@ final class GrpcConnectorSupport {
         return builder.build();
     }
 
+    /**
+     * Parses and links the configured descriptor set. The parse registers the validation
+     * option extensions so declared rules are readable by {@code ProtoValidator}, not
+     * unknown fields.
+     */
+    static List<FileDescriptor> linkedFiles(String descriptorSetBase64) {
+        FileDescriptorSet set;
+        try {
+            ExtensionRegistry extensions = ExtensionRegistry.newInstance();
+            ValidationResult.registerExtensions(extensions);
+            set = FileDescriptorSet.parseFrom(
+                    Base64.getDecoder().decode(descriptorSetBase64), extensions);
+        } catch (Exception e) {
+            throw new ConnectException("'schema.descriptor.set.base64' is not a base64 "
+                    + "serialized FileDescriptorSet: " + e.getMessage(), e);
+        }
+        return link(set);
+    }
+
+    /** Finds a message type (nested types included) across the linked files. */
+    static Descriptor messageType(List<FileDescriptor> files, String fullName) {
+        for (FileDescriptor file : files) {
+            Descriptor found = findMessage(file, fullName);
+            if (found != null) {
+                return found;
+            }
+        }
+        throw new ConfigException("Message type '" + fullName
+                + "' not found in the configured descriptor set");
+    }
+
+    private static Descriptor findMessage(FileDescriptor file, String fullName) {
+        String pkg = file.getPackage();
+        if (!pkg.isEmpty() && !fullName.startsWith(pkg + ".")) {
+            return null;
+        }
+        String relative = pkg.isEmpty() ? fullName : fullName.substring(pkg.length() + 1);
+        String[] parts = relative.split("\\.");
+        Descriptor current = file.findMessageTypeByName(parts[0]);
+        for (int i = 1; current != null && i < parts.length; i++) {
+            current = current.findNestedTypeByName(parts[i]);
+        }
+        return current;
+    }
+
     static MethodDescriptor resolveMethod(String descriptorSetBase64, String qualified) {
         int slash = qualified.indexOf('/');
         if (slash <= 0 || slash == qualified.length() - 1) {
@@ -46,14 +97,7 @@ final class GrpcConnectorSupport {
         String serviceName = qualified.substring(0, slash);
         String methodName = qualified.substring(slash + 1);
 
-        FileDescriptorSet set;
-        try {
-            set = FileDescriptorSet.parseFrom(Base64.getDecoder().decode(descriptorSetBase64));
-        } catch (Exception e) {
-            throw new ConnectException("'schema.descriptor.set.base64' is not a base64 "
-                    + "serialized FileDescriptorSet: " + e.getMessage(), e);
-        }
-        for (FileDescriptor file : link(set)) {
+        for (FileDescriptor file : linkedFiles(descriptorSetBase64)) {
             Descriptors.ServiceDescriptor service = file.findServiceByName(
                     serviceName.contains(".")
                             ? serviceName.substring(serviceName.lastIndexOf('.') + 1)

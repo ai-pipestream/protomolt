@@ -8,6 +8,7 @@ dependencies {
 
     implementation project(':protomolt-json')
     implementation project(':protomolt-mapper-cel')
+    implementation project(':protomolt-protobuf-validation')
     implementation libs.protobuf.java.util
 
     runtimeOnly libs.grpc.netty.shaded
@@ -17,4 +18,15 @@ dependencies {
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.protobuf
     testImplementation libs.grpc.stub
+}
+
+// One plugin.path directory: the connector jar plus its runtime dependencies
+// (the Connect framework itself is compileOnly and stays out).
+tasks.register('connectPluginZip', Zip) {
+    description = 'Packages the Kafka Connect plugin as a plugin.path-ready zip'
+    group = 'distribution'
+    archiveBaseName = 'protomolt-connect-plugin'
+    from tasks.named('jar')
+    from configurations.runtimeClasspath
+    into 'protomolt-connect'
 }

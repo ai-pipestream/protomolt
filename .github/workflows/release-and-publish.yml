@@ -71,7 +71,7 @@ jobs:
         run: ./gradlew publishAggregationToCentralPortal --no-daemon --console=plain
 
       - name: Build runnable distributions
-        run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip --no-daemon
+        run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip :protomolt-connect:connectPluginZip --no-daemon
 
       - name: Create GitHub release with runnable zips
         env:
@@ -80,7 +80,8 @@ jobs:
           V="${{ steps.ver.outputs.version }}"
           gh release create "v$V" --title "ProtoMolt $V" --generate-notes \
             "serve/build/distributions/protomolt-serve-$V.zip#protomolt-serve $V (run bin/protomolt-serve, JRE 21+)" \
-            "mcp/core/build/distributions/protomolt-mcp-$V.zip#protomolt-mcp $V (run bin/protomolt-mcp, JRE 21+)"
+            "mcp/core/build/distributions/protomolt-mcp-$V.zip#protomolt-mcp $V (run bin/protomolt-mcp, JRE 21+)" \
+            "kafka/connect/build/distributions/protomolt-connect-plugin-$V.zip#protomolt-connect $V (Kafka Connect plugin, unzip onto plugin.path)"
 
   docker:
     needs: release

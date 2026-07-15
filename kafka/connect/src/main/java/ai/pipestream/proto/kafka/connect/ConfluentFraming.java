@@ -16,6 +16,11 @@ final class ConfluentFraming {
 
     /** The message bytes after the frame. */
     static byte[] payload(byte[] framed) {
+        return Arrays.copyOfRange(framed, payloadOffset(framed), framed.length);
+    }
+
+    /** Where the message bytes start — everything before is the reusable frame prefix. */
+    static int payloadOffset(byte[] framed) {
         if (framed.length < 6 || framed[0] != 0) {
             throw new DataException("Not Confluent wire format: expected a zero magic byte "
                     + "and a schema id prefix");
@@ -31,7 +36,7 @@ final class ConfluentFraming {
                 position += varintLength(framed, position);
             }
         }
-        return Arrays.copyOfRange(framed, position, framed.length);
+        return position;
     }
 
     private static long readVarint(byte[] bytes, int position) {

@@ -194,7 +194,11 @@ readiness-aware client-streaming call — and `protomolt-connect` builds a
 Kafka Connect plugin on them: a sink that drives any unary or
 client-streaming gRPC method from topics, and a source that feeds topics
 from a server stream, resumable across restarts via CEL-extracted tokens
-stored as Connect offsets. See [Kafka Connect](kafka-connect.md).
+stored as Connect offsets. Alongside them, three protobuf-aware Single
+Message Transforms (validate against declared rules with DLQ-ready
+violation headers, reshape with mapping rules, filter by CEL predicate)
+drop into any Connect pipeline, and a plugin zip rides along with
+releases. See [Kafka Connect](kafka-connect.md).
 
 **5. A web console.** Every server host already serves `openapi.json`, and
 `MappingHelper` exists specifically to feed schema-browsing UIs. A bundled,

@@ -12,8 +12,11 @@ services in both directions, descriptor-native with no generated stubs:
   (Watch-style) stream is consumed indefinitely with a bounded buffer, and a
   CEL-extracted resume token stored as the Connect offset lets the
   subscription pick up where Kafka left off after a restart.
+- **Three protobuf-aware transforms** — `ValidateMessage`, `MapMessage`,
+  and `CelFilter` — that drop into *any* connector's pipeline, not just
+  these two, and understand the records where stock SMTs see bytes.
 
-Both connectors are configured with a serialized
+Everything is configured with a serialized
 `google.protobuf.FileDescriptorSet` — no proto files on the worker, no code
 generation, no rebuild when the schema changes. The classes live in
 `ai.pipestream.proto.kafka.connect`.
@@ -33,17 +36,16 @@ connectors take:
 ## Installation
 
 Kafka Connect loads plugins from directories on the worker's `plugin.path`.
-Place the `protomolt-connect` jar and its runtime dependencies together in
-one such directory:
+The build packages a ready-made layout — the connector jar and its runtime
+dependencies, with the worker-provided Connect framework kept out:
 
 ```bash
-./gradlew :protomolt-connect:jar
-# copy kafka/connect/build/libs/protomolt-connect-*.jar plus its runtime
-# dependencies into <plugin.path>/protomolt-connect/
+./gradlew :protomolt-connect:connectPluginZip
+unzip kafka/connect/build/distributions/protomolt-connect-plugin-*.zip \
+      -d /opt/kafka/plugins/
 ```
 
-The Connect framework itself (`connect-api`) is provided by the worker and
-is not bundled.
+Releases attach the same zip as `protomolt-connect-plugin-<version>.zip`.
 
 ## The sink
 
@@ -143,3 +145,47 @@ after `reconnect.backoff.ms`; any other status fails the task. Everything
 that can be validated — the method's shape, the request template, the token
 field path, the CEL expressions (type-checked against the stream's message
 type) — is validated at connector start, not first poll.
+
+## The transforms
+
+Three Single Message Transforms make protobuf records first-class in any
+Connect pipeline — theirs or ours. All three share the schema configuration
+(`schema.descriptor.set.base64`, `message.type`, and `value.format`:
+`protobuf`, `confluent`, or `json`), pass tombstones through untouched, and
+validate everything validatable — including compiling and type-checking the
+CEL expressions against the message type — at configure time.
+
+```json
+"transforms": "validate,route",
+"transforms.validate.type": "ai.pipestream.proto.kafka.connect.ValidateMessage",
+"transforms.validate.schema.descriptor.set.base64": "CvQBCg9zaG9w...",
+"transforms.validate.message.type": "shop.v1.Order",
+"transforms.route.type": "ai.pipestream.proto.kafka.connect.CelFilter",
+"transforms.route.schema.descriptor.set.base64": "CvQBCg9zaG9w...",
+"transforms.route.message.type": "shop.v1.Order",
+"transforms.route.expression": "input.region == 'us-east' && input.qty > 0"
+```
+
+**`ValidateMessage`** checks each value against the validation rules
+declared on its schema (`ai.pipestream.proto.validate.v1` options) — the
+rules travel inside the descriptor set, so the worker enforces exactly what
+the schema authors declared. Valid records pass through untouched. For
+invalid ones, `on.invalid` selects: `fail` (the default — the worker's
+`errors.tolerance` then decides between failing, skipping, and the
+dead-letter queue), `drop`, or `header` — pass the record through with the
+violations as a JSON array (field, rule, ruleId, message) in the
+`header.name` header (default `protomolt.violations`), ready for a
+downstream router.
+
+**`MapMessage`** reshapes values in place with ProtoMolt's mapping rules:
+`rules` takes text rules (`note = details.summary`, `-internal_field`), and
+`cel.rules.json` takes a JSON array of CEL rules
+`{"filter"?, "selector"?, "target", "fallback"?}` evaluated with the
+current message bound as `input`. The message type is unchanged, so
+Confluent-framed values keep their original frame — the schema id stays
+true — and JSON values come back as the same Java type they arrived as.
+
+**`CelFilter`** keeps records for which a boolean CEL expression over the
+decoded message is true and drops the rest. `on.error` decides what an
+undecodable value or a runtime evaluation failure does: `fail` (default),
+`keep`, or `drop`.
