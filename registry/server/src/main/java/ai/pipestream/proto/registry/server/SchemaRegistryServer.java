@@ -353,6 +353,8 @@ public final class SchemaRegistryServer implements AutoCloseable {
                             + String.join("; ", e.violations()));
         } catch (ReferenceNotFoundException e) {
             writeError(exchange, 422, 42201, e.getMessage());
+        } catch (ai.pipestream.proto.registry.ReferenceConflictException e) {
+            writeError(exchange, 422, 42201, e.getMessage());
         } catch (InvalidSchemaException e) {
             writeError(exchange, 422, 42201, e.getMessage());
         }

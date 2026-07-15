@@ -58,13 +58,24 @@ public final class StoredSchemaSources {
                                 Map<String, String> files, Set<String> visited)
             throws ReferenceNotFoundException {
         for (SchemaReference reference : references) {
-            if (files.containsKey(reference.name())
-                    || !visited.add(reference.subject() + ":" + reference.version())) {
-                continue; // already resolved under this import path / already visited
-            }
             StoredSchema stored = store.version(reference.subject(), reference.version())
                     .orElseThrow(() -> new ReferenceNotFoundException(reference));
-            collect(store, stored.references(), files, visited);
+            String existing = files.get(reference.name());
+            if (existing != null) {
+                // The import path is taken. Identical content is a legitimate shared
+                // dependency; different content would make compilation depend on
+                // traversal order - refuse loudly instead of silently picking a winner.
+                if (!existing.equals(stored.schemaText())) {
+                    throw new ReferenceConflictException(reference.name(), reference);
+                }
+                continue;
+            }
+            // Traversal identity (subject:version) is tracked separately from emitted
+            // import paths: one stored schema referenced under two names materializes
+            // under both, but its own references are only walked once.
+            if (visited.add(reference.subject() + ":" + reference.version())) {
+                collect(store, stored.references(), files, visited);
+            }
             files.put(reference.name(), stored.schemaText());
         }
     }
