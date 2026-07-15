@@ -158,7 +158,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                 DemoSchemas.seed(context.registry(), store);
             }
 
-            grpc = ProtoMoltGrpcServer.start(options.grpcPort(), catalog, options.apiToken());
+            grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
+                    options.apiToken());
             if (options.demo() && store != null) {
                 // The demo chain composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
@@ -169,9 +170,13 @@ public final class ProtoMoltServe implements AutoCloseable {
             // (/api/protomolt) knows the port it bridges to.
             int registryPort = -1;
             if (store != null) {
+                // The registry listener honors the same bind address and shared secret as
+                // every other surface - one process, one security boundary.
                 registry = new SchemaRegistryServer(
                         SchemaRegistryServerConfig.defaults()
-                                .withPort(options.registryPort()),
+                                .withHost(options.host())
+                                .withPort(options.registryPort())
+                                .withApiToken(options.apiToken()),
                         store, catalog);
                 registryPort = registry.start();
             }
@@ -197,13 +202,27 @@ public final class ProtoMoltServe implements AutoCloseable {
                     new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
                             "/", config.restPathPrefix()))
                     .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
-                    .withContext("/mcp", new McpHttpHandler(mcp, options.apiToken()))
-                    .withContext("/console", new ConsoleHandler())
-                    .withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
-                            () -> boundRegistryPort,
-                            "no registry is running; start with --registry-git or --demo"))
-                    .withContext("/api/serve", new ApiProxyHandler("/api/serve",
-                            () -> selfPort[0], "server is still starting"));
+                    .withContext("/mcp", new McpHttpHandler(mcp, options.apiToken()));
+            if (options.apiToken() == null) {
+                http.withContext("/console", new ConsoleHandler())
+                        .withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
+                                () -> boundRegistryPort,
+                                "no registry is running; start with --registry-git or --demo"))
+                        .withContext("/api/serve", new ApiProxyHandler("/api/serve",
+                                () -> selfPort[0], "server is still starting"));
+            } else {
+                // A browser cannot hold the process's shared secret, so a token-mode
+                // console would be a half-open door: some calls 401, registry writes
+                // silently open. Disable the whole surface with an explicit answer
+                // instead of serving a partially secured interface.
+                DisabledSurfaceHandler disabled = new DisabledSurfaceHandler(
+                        "the console is disabled when --api-token is set; use the gRPC, "
+                                + "REST, or MCP surface with the token, or run without one "
+                                + "on a trusted network");
+                http.withContext("/console", disabled)
+                        .withContext("/api/protomolt", disabled)
+                        .withContext("/api/serve", disabled);
+            }
             int httpPort = http.start();
             selfPort[0] = httpPort;
             return new ProtoMoltServe(grpc, http, httpPort, store, registry, registryPort);
@@ -296,8 +315,14 @@ public final class ProtoMoltServe implements AutoCloseable {
             System.out.printf("  Reg   http://%s:%d (Confluent protocol, git-backed)%n",
                     options.host(), serve.registryPort());
         }
-        if (options.apiToken() != null) {
-            System.out.println("  Auth  api_token required on gRPC, REST, and MCP");
+        if (options.apiToken() == null) {
+            System.out.printf("  UI    http://%s:%d/console%n", options.host(), serve.httpPort());
+        } else {
+            System.out.println("  Auth  api_token required on gRPC, REST, MCP"
+                    + (serve.registryPort() >= 0 ? ", and the registry" : "")
+                    + " (health, OpenAPI, and docs stay open)");
+            System.out.println("  UI    console disabled in token mode (a browser cannot "
+                    + "hold the shared secret)");
         }
         if (options.demo()) {
             System.out.printf("""

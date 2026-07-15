@@ -10,13 +10,17 @@ package ai.pipestream.proto.registry.server;
  * @param nativePathPrefix prefix of the non-Confluent extras
  *                         ({@code {prefix}/subjects/{subject}/descriptor-set})
  * @param maxRequestBytes  maximum accepted request body size; larger bodies get 413
+ * @param apiToken         shared secret required on every request except the health
+ *                         endpoint ({@code api_token} header or bearer credential);
+ *                         {@code null} serves unauthenticated
  */
 public record SchemaRegistryServerConfig(
         String host,
         int port,
         String healthPath,
         String nativePathPrefix,
-        int maxRequestBytes) {
+        int maxRequestBytes,
+        String apiToken) {
 
     /** Default request body cap (16 MiB). */
     public static final int DEFAULT_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
@@ -31,20 +35,33 @@ public record SchemaRegistryServerConfig(
         if (maxRequestBytes <= 0) {
             throw new IllegalArgumentException("maxRequestBytes must be positive: " + maxRequestBytes);
         }
+        apiToken = apiToken == null || apiToken.isBlank() ? null : apiToken;
+    }
+
+    public SchemaRegistryServerConfig(String host, int port, String healthPath,
+                                      String nativePathPrefix, int maxRequestBytes) {
+        this(host, port, healthPath, nativePathPrefix, maxRequestBytes, null);
     }
 
     /** {@code 0.0.0.0:8081} (the conventional Schema Registry port), default paths. */
     public static SchemaRegistryServerConfig defaults() {
         return new SchemaRegistryServerConfig("0.0.0.0", 8081, "/health", "/protomolt",
-                DEFAULT_MAX_REQUEST_BYTES);
+                DEFAULT_MAX_REQUEST_BYTES, null);
     }
 
     public SchemaRegistryServerConfig withHost(String host) {
-        return new SchemaRegistryServerConfig(host, port, healthPath, nativePathPrefix, maxRequestBytes);
+        return new SchemaRegistryServerConfig(host, port, healthPath, nativePathPrefix,
+                maxRequestBytes, apiToken);
     }
 
     public SchemaRegistryServerConfig withPort(int port) {
-        return new SchemaRegistryServerConfig(host, port, healthPath, nativePathPrefix, maxRequestBytes);
+        return new SchemaRegistryServerConfig(host, port, healthPath, nativePathPrefix,
+                maxRequestBytes, apiToken);
+    }
+
+    public SchemaRegistryServerConfig withApiToken(String apiToken) {
+        return new SchemaRegistryServerConfig(host, port, healthPath, nativePathPrefix,
+                maxRequestBytes, apiToken);
     }
 
     private static String normalize(String path) {

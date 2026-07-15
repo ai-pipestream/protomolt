@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -34,6 +36,8 @@ import java.util.Optional;
  * Quarkus MCP hosts can register the same catalog through their own programmatic APIs.</p>
  */
 public final class McpServer {
+
+    private static final Logger LOG = LoggerFactory.getLogger(McpServer.class);
 
     /** Latest protocol revision this server implements. */
     public static final String PROTOCOL_VERSION = "2025-06-18";
@@ -118,8 +122,12 @@ public final class McpServer {
         } catch (IllegalArgumentException e) {
             return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_PARAMS, e.getMessage()));
         } catch (Exception e) {
+            // Exception class names and messages can leak paths, targets, or upstream
+            // detail; the wire gets a correlation id, the log gets the stack trace.
+            String correlationId = java.util.UUID.randomUUID().toString();
+            LOG.error("MCP request '{}' failed, correlation id {}", method, correlationId, e);
             return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INTERNAL_ERROR,
-                    e.getClass().getSimpleName() + ": " + e.getMessage()));
+                    "Internal error (correlation id " + correlationId + ")"));
         }
     }
 

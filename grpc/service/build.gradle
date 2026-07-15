@@ -15,7 +15,7 @@ dependencies {
     implementation libs.grpc.services
     implementation libs.grpc.protobuf
 
-    runtimeOnly libs.grpc.netty.shaded
+    implementation libs.grpc.netty.shaded
 
     testImplementation project(':protomolt-json')
     testImplementation libs.grpc.inprocess

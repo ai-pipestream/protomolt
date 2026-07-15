@@ -144,4 +144,50 @@ class McpServerTest {
         JsonNode response = respond(request(9, "resources/read", params));
         assertThat(response.get("error").get("code").asInt()).isEqualTo(-32002);
     }
+
+    @Test
+    void internalErrorsNeverEchoExceptionDetail() {
+        ActionCatalog exploding = ActionCatalog.defaults(ActionContext.create())
+                .replace(new ai.pipestream.proto.actions.ProtoAction() {
+                    @Override
+                    public String name() {
+                        return "compile";
+                    }
+
+                    @Override
+                    public String description() {
+                        return "Blows up with sensitive detail.";
+                    }
+
+                    @Override
+                    public ObjectNode inputSchema() {
+                        ObjectNode schema = mapper.createObjectNode();
+                        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
+                        schema.put("type", "object");
+                        schema.putObject("properties");
+                        return schema;
+                    }
+
+                    @Override
+                    public ObjectNode execute(ObjectNode input,
+                                              ActionContext context) {
+                        throw new IllegalStateException(
+                                "/secret/host/path credential=hunter2");
+                    }
+                });
+        McpServer boom = new McpServer(exploding, null, "protomolt-test", "0.0-test");
+
+        ObjectNode params = mapper.createObjectNode();
+        params.put("name", "compile");
+        params.set("arguments", mapper.createObjectNode());
+        ObjectNode response = boom.handle(request(42, "tools/call", params)).orElseThrow();
+
+        JsonNode error = response.get("error");
+        assertThat(error.get("code").asInt()).isEqualTo(-32603);
+        assertThat(error.get("message").asText())
+                .contains("correlation id")
+                .doesNotContain("hunter2")
+                .doesNotContain("secret")
+                .doesNotContain("IllegalStateException");
+    }
 }

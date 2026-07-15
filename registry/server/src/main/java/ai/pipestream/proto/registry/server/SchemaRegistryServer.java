@@ -19,6 +19,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -60,8 +62,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * references and non-PROTOBUF schema types), 42202 invalid version, 42203 invalid
  * compatibility level, 409 incompatible registration. Subject path segments are URL-decoded,
  * so import-path subjects containing slashes round-trip.</p>
+ *
+ * <p>With {@link SchemaRegistryServerConfig#apiToken()} set, every request except the health
+ * endpoint must present the shared secret as an {@code api_token} header or bearer
+ * credential — the registry carries writes and action execution, so it sits behind the same
+ * boundary as the other operational surfaces.</p>
  */
 public final class SchemaRegistryServer implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(SchemaRegistryServer.class);
 
     private static final String JSON_CONTENT_TYPE = "application/vnd.schemaregistry.v1+json";
     private static final String PROTOBUF_CONTENT_TYPE = "application/x-protobuf";
@@ -158,8 +167,21 @@ public final class SchemaRegistryServer implements AutoCloseable {
         } catch (RequestTooLargeException e) {
             writeError(exchange, 413, 413, e.getMessage());
         } catch (Exception e) {
-            writeError(exchange, 500, 50001, "Error in the backend datastore: " + e.getMessage());
+            internalError(exchange, "request handling failed", e);
         }
+    }
+
+    /**
+     * A 500 never carries backend detail — exception text can name filesystem paths, Git
+     * remotes, or upstream credentials. Clients get a correlation id; the id plus the full
+     * stack trace go to the server log.
+     */
+    private void internalError(HttpExchange exchange, String where, Exception e)
+            throws IOException {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        LOG.error("Internal error ({}), correlation id {}", where, correlationId, e);
+        writeError(exchange, 500, 50001,
+                "Error in the backend datastore (correlation id " + correlationId + ")");
     }
 
     private void route(HttpExchange exchange) throws Exception {
@@ -168,6 +190,12 @@ public final class SchemaRegistryServer implements AutoCloseable {
         if (config.healthPath().equals(rawPath)) {
             requireMethod(exchange, method, "GET", () -> writeJson(exchange, 200,
                     json.createObjectNode().put("status", "UP")));
+            return;
+        }
+        if (config.apiToken() != null && !authorized(exchange)) {
+            // The registry holds schema, config, and chain writes plus action execution:
+            // the same shared secret that guards gRPC/REST/MCP guards it, health excepted.
+            writeError(exchange, 401, 401, "Missing or invalid API token 'api_token'");
             return;
         }
         List<String> segments = decodeSegments(rawPath);
@@ -229,6 +257,21 @@ public final class SchemaRegistryServer implements AutoCloseable {
         } else {
             writeError(exchange, 404, 404, "HTTP 404 Not Found");
         }
+    }
+
+    /** True when the request presents the shared secret (constant-time comparison). */
+    private boolean authorized(HttpExchange exchange) {
+        String presented = exchange.getRequestHeaders().getFirst("api_token");
+        if (presented == null) {
+            String authorization = exchange.getRequestHeaders().getFirst("authorization");
+            if (authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                presented = authorization.substring(7).trim();
+            }
+        }
+        return presented != null && !presented.isBlank()
+                && java.security.MessageDigest.isEqual(
+                        config.apiToken().getBytes(StandardCharsets.UTF_8),
+                        presented.getBytes(StandardCharsets.UTF_8));
     }
 
     // ---------------------------------------------------------------- subjects protocol
@@ -411,7 +454,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
         try {
             writeJson(exchange, 200, json.valueToTree(gitStore.chains()));
         } catch (Exception e) {
-            writeError(exchange, 500, 50001, "Failed to list chains: " + e.getMessage());
+            internalError(exchange, "listing chains", e);
         }
     }
 
@@ -431,7 +474,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
         } catch (Exception e) {
-            writeError(exchange, 500, 50001, "Failed to read chain: " + e.getMessage());
+            internalError(exchange, "reading a chain", e);
         }
     }
 
@@ -473,7 +516,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
         } catch (IllegalArgumentException e) {
             writeError(exchange, 422, 42201, e.getMessage());
         } catch (Exception e) {
-            writeError(exchange, 500, 50001, "Failed to store chain: " + e.getMessage());
+            internalError(exchange, "storing a chain", e);
         }
     }
 
@@ -488,8 +531,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
             compiled = compiler.compile(StoredSchemaSources.resolve(store, latest.get()).sources());
         } catch (Exception e) {
             // Registered schemas are compile-verified; failure here is a store inconsistency.
-            writeError(exchange, 500, 50001, "Failed to compile subject " + subject
-                    + ": " + e.getMessage());
+            internalError(exchange, "compiling subject " + subject, e);
             return;
         }
         writeBytes(exchange, 200, PROTOBUF_CONTENT_TYPE,

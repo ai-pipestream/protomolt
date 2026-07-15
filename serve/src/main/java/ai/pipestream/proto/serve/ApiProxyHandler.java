@@ -26,6 +26,9 @@ final class ApiProxyHandler implements HttpHandler {
     private static final List<String> FORWARDED = List.of(
             "Content-Type", "Accept", "api_token", "Authorization");
 
+    /** Same cap as the REST hosts and the registry: nothing reads request bodies unbounded. */
+    private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
+
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
@@ -67,10 +70,19 @@ final class ApiProxyHandler implements HttpHandler {
             URI target = URI.create("http://127.0.0.1:" + port + path
                     + (query == null ? "" : "?" + query));
 
+            byte[] requestBody = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+            if (requestBody == null) {
+                byte[] body = ("{\"error\": \"request body exceeds " + MAX_BODY_BYTES
+                        + " bytes\"}").getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(413, body.length);
+                exchange.getResponseBody().write(body);
+                return;
+            }
             HttpRequest.Builder request = HttpRequest.newBuilder(target)
                     .timeout(Duration.ofSeconds(60))
-                    .method(exchange.getRequestMethod(), HttpRequest.BodyPublishers
-                            .ofByteArray(exchange.getRequestBody().readAllBytes()));
+                    .method(exchange.getRequestMethod(),
+                            HttpRequest.BodyPublishers.ofByteArray(requestBody));
             for (String header : FORWARDED) {
                 String value = exchange.getRequestHeaders().getFirst(header);
                 if (value != null) {

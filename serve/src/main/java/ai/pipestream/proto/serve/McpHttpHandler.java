@@ -30,6 +30,8 @@ public final class McpHttpHandler implements HttpHandler {
 
     private static final Set<String> LOCAL_ORIGIN_HOSTS = Set.of("localhost", "127.0.0.1", "[::1]");
     private static final String CONTENT_TYPE = "application/json; charset=utf-8";
+    /** Same cap as the REST hosts and the registry: nothing reads request bodies unbounded. */
+    private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
 
     private final McpServer server;
     private final byte[] apiToken;
@@ -67,9 +69,15 @@ public final class McpHttpHandler implements HttpHandler {
             write(exchange, 405, error(null, -32000, "Method not allowed"));
             return;
         }
+        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+        if (body == null) {
+            write(exchange, 413, error(null, -32000,
+                    "Request body exceeds " + MAX_BODY_BYTES + " bytes"));
+            return;
+        }
         JsonNode message;
         try {
-            message = mapper.readTree(exchange.getRequestBody());
+            message = mapper.readTree(body);
         } catch (IOException e) {
             write(exchange, 400, error(null, -32700, "Parse error"));
             return;
@@ -79,6 +87,11 @@ public final class McpHttpHandler implements HttpHandler {
             return;
         }
         if (message.isArray()) {
+            if (message.isEmpty()) {
+                // JSON-RPC 2.0: an empty batch is a single invalid-request error.
+                write(exchange, 400, error(null, -32600, "Invalid request: empty batch"));
+                return;
+            }
             // JSON-RPC batching exists in protocol revision 2025-03-26; answer in kind.
             ArrayNode responses = mapper.createArrayNode();
             for (JsonNode entry : message) {

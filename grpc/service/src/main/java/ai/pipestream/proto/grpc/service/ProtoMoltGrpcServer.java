@@ -37,9 +37,22 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
      * {@code api_token} metadata or an {@code authorization} bearer credential.
      */
     public static ProtoMoltGrpcServer start(int port, ActionCatalog catalog, String apiToken) {
+        return start(null, port, catalog, apiToken);
+    }
+
+    /**
+     * Starts the service bound to {@code host} (null, blank, or {@code 0.0.0.0} binds every
+     * interface) — the gRPC listener honors the same bind address as the HTTP surfaces.
+     */
+    public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
+                                            String apiToken) {
         Objects.requireNonNull(catalog, "catalog");
         try {
-            ServerBuilder<?> builder = ServerBuilder.forPort(port)
+            boolean wildcard = host == null || host.isBlank() || "0.0.0.0".equals(host);
+            ServerBuilder<?> builder = (wildcard
+                    ? ServerBuilder.forPort(port)
+                    : io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder.forAddress(
+                            new java.net.InetSocketAddress(host, port)))
                     .addService(ProtoMoltGrpcService.definition(catalog))
                     .addService(ProtoReflectionServiceV1.newInstance());
             if (apiToken != null) {
