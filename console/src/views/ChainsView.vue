@@ -138,10 +138,25 @@
                 {{ runResult.error }}
               </v-alert>
               <template v-else>
-                <div class="text-caption text-medium-emphasis mb-1">
-                  {{ runResult.outputType }}
+                <div class="d-flex align-center mb-1">
+                  <span class="text-caption text-medium-emphasis">{{ runResult.outputType }}</span>
+                  <v-spacer />
+                  <div class="d-flex ga-1">
+                    <v-btn size="x-small"
+                           :variant="resultView === 'typed' ? 'tonal' : 'outlined'"
+                           :disabled="!outputDesc"
+                           @click="resultView = 'typed'">Typed</v-btn>
+                    <v-btn size="x-small"
+                           :variant="resultView === 'json' ? 'tonal' : 'outlined'"
+                           @click="resultView = 'json'">JSON</v-btn>
+                  </div>
                 </div>
-                <pre class="output">{{ pretty(runResult.output) }}</pre>
+                <ProtoMessageView
+                  v-if="resultView === 'typed' && outputDesc"
+                  :desc="outputDesc"
+                  :value="runResult.output as JsonValue"
+                />
+                <pre v-else class="output">{{ pretty(runResult.output) }}</pre>
               </template>
             </template>
           </v-card-text>
@@ -153,7 +168,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import type { JsonValue } from '@bufbuild/protobuf'
+import ProtoMessageView from '../components/ProtoMessageView.vue'
 import { errorMessage } from '../services/api'
+import { registryFromDescriptorSet } from '../services/descriptorModel'
 import {
   chainSummary,
   checkChain,
@@ -168,6 +187,7 @@ import {
 } from '../services/chains'
 import { toast } from '../composables/useToast'
 
+const route = useRoute()
 const names = ref<string[]>([])
 const selected = ref<string | null>(null)
 const saveName = ref('')
@@ -181,6 +201,8 @@ const running = ref(false)
 const checkResult = ref<ChainCheck | null>(null)
 const findings = ref<ChainFinding[]>([])
 const runResult = ref<ChainRun | null>(null)
+const resultView = ref<'typed' | 'json'>('typed')
+const outputDesc = ref<import('@bufbuild/protobuf').DescMessage | null>(null)
 
 const parsed = computed<Record<string, unknown> | null>(() => {
   try {
@@ -193,7 +215,20 @@ const summary = computed(() => (parsed.value ? chainSummary(parsed.value) : ''))
 const inputType = computed(() =>
   parsed.value && typeof parsed.value.inputType === 'string' ? parsed.value.inputType : '')
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  // Deep links: ?chain=<name>&input=<json>&autorun — shareable, reproducible runs.
+  const query = route.query
+  if (typeof query.chain === 'string' && names.value.includes(query.chain)) {
+    await select(query.chain)
+  }
+  if (typeof query.input === 'string') {
+    runInput.value = query.input
+  }
+  if (query.autorun !== undefined && selected.value) {
+    await run()
+  }
+})
 
 async function load() {
   try {
@@ -264,14 +299,47 @@ async function run() {
   if (!selected.value) return
   running.value = true
   runResult.value = null
+  outputDesc.value = null
   try {
     const input = JSON.parse(runInput.value)
-    runResult.value = await runChain(selected.value, input)
+    const result = await runChain(selected.value, input)
+    runResult.value = result
     error.value = ''
+    if (result.ok && result.outputType) {
+      outputDesc.value = await resolveOutputDesc(result.outputType)
+      resultView.value = outputDesc.value ? 'typed' : 'json'
+    }
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
     running.value = false
+  }
+}
+
+/**
+ * The typed viewer needs the output type's descriptor: taken from the chain schema's
+ * descriptor set directly, or by compiling its inline sources through the serve bridge.
+ */
+async function resolveOutputDesc(outputType: string) {
+  try {
+    const schema = parsed.value?.schema as
+      | { descriptorSetBase64?: string; sources?: Record<string, string> }
+      | undefined
+    let base64 = schema?.descriptorSetBase64
+    if (!base64 && schema?.sources) {
+      const response = await fetch('/api/serve/grpc-json/ProtoMoltService/Compile', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sources: schema.sources }),
+      })
+      const compiled = await response.json()
+      if (compiled?.ok) base64 = compiled.descriptorSetBase64
+    }
+    if (!base64) return null
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+    return registryFromDescriptorSet(bytes).getMessage(outputType) ?? null
+  } catch {
+    return null
   }
 }
 
