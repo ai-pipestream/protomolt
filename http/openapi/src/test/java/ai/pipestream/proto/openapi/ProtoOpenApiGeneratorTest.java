@@ -63,6 +63,42 @@ class ProtoOpenApiGeneratorTest {
     }
 
     @Test
+    void specAndRouterShareOneRouteAndVerbModel() {
+        // The published contract must describe exactly what the hosts serve: the
+        // canonical {prefix}/{service}/{method} path, and the verbs the gateway itself
+        // will enforce via allowedHttpVerbs() - POST when nothing is declared.
+        ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
+        registry.register(ProtoRestMethod.builder("Plain", "Go", req -> req)
+                .requestType(Struct.class)
+                .build());
+        registry.register(ProtoRestMethod.builder("Declared", "Fetch", req -> req)
+                .requestType(Struct.class)
+                .httpMethods("GET", "POST")
+                .build());
+
+        Map<String, Object> doc = new ProtoOpenApiGenerator(
+                "Test API", "0.1.0", "http://localhost:8080", "/grpc-json")
+                .generate(registry);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> paths = (Map<String, Object>) doc.get("paths");
+
+        assertThat(paths.keySet()).containsExactlyInAnyOrder(
+                "/grpc-json/Plain/Go", "/grpc-json/Declared/Fetch");
+        for (ProtoRestMethod method : registry.all()) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> item = (Map<String, Object>) paths.get(
+                    "/grpc-json/" + method.serviceName() + "/" + method.methodName());
+            assertThat(item.keySet())
+                    .as("spec verbs for %s must be what the gateway enforces", method.routeKey())
+                    .containsExactlyInAnyOrderElementsOf(method.allowedHttpVerbs().stream()
+                            .map(String::toLowerCase).toList());
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> plain = (Map<String, Object>) paths.get("/grpc-json/Plain/Go");
+        assertThat(plain.keySet()).containsExactly("post");
+    }
+
+    @Test
     void registersDistinctSecuritySchemePerTokenConfig() {
         ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
         registry.register(ProtoRestMethod.builder("BearerService", "Ping", req -> req)

@@ -187,6 +187,30 @@ class ChainTest {
     }
 
     @Test
+    void skippedStepsBindDefaultsSoLaterReferencesStayWellDefined() throws Exception {
+        // The output mapping references 'embed' even though the gate skips it. The
+        // verifier accepts this, and the runner must honor the same contract: the
+        // skipped step's value is its output type's default instance, not an error.
+        ChainDefinition.Output output = new ChainDefinition.Output(
+                file.findMessageTypeByName("Embedding"),
+                List.of("source_text = input.text", "vector = embed.values"),
+                List.of());
+        ChainDefinition chain = definition("!input.skip_embed", output);
+        assertThat(new ChainVerifier().verify(chain)).isEmpty();
+
+        ChainRunner.Result result = runner.run(chain, text("hi", true));
+        Descriptor embedding = file.findMessageTypeByName("Embedding");
+        assertThat(result.output().getField(embedding.findFieldByName("source_text")))
+                .isEqualTo("hi");
+        @SuppressWarnings("unchecked")
+        List<Object> vector = (List<Object>) result.output()
+                .getField(embedding.findFieldByName("vector"));
+        assertThat(vector).isEmpty();
+        assertThat(result.steps()).extracting(ChainRunner.StepOutcome::skipped)
+                .containsExactly(false, true);
+    }
+
+    @Test
     void stepFailuresAreFailFastWithTheStepName() {
         fail.set(true);
         try {

@@ -26,10 +26,11 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Executes a chain: serial, fail-fast, deadline-bounded. Each step's request is built from
- * the scope (the chain {@code input} plus every executed step's response) with scoped text
+ * the scope (the chain {@code input} plus every prior step's response) with scoped text
  * rules and CEL (expressions also see {@code target}, the progressive request); a false
- * {@code when} gate skips the step; {@code validate} runs the response's declared rules
- * before proceeding. Nothing persists between calls — a chain execution lives inside one
+ * {@code when} gate skips the step, binding its name to the output type's default instance
+ * so later references stay well-defined; {@code validate} runs the response's declared
+ * rules before proceeding. Nothing persists between calls — a chain execution lives inside one
  * invocation, by design.
  */
 public final class ChainRunner {
@@ -103,6 +104,12 @@ public final class ChainRunner {
                                 "gate failed: " + e.getMessage(), e);
                     }
                     if (!go) {
+                        // A skipped step still binds its name: the well-defined default
+                        // instance of its output type. Later rules, gates, and the output
+                        // mapping see deterministic empty values - the same scope the
+                        // verifier checked - instead of an undeclared reference.
+                        values.put(step.name(), DynamicMessage
+                                .getDefaultInstance(step.method().getOutputType()));
                         outcomes.add(new StepOutcome(step.name(), true));
                         continue;
                     }

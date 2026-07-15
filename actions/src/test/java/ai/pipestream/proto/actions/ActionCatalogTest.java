@@ -101,4 +101,44 @@ class ActionCatalogTest {
         catalog.register(custom);
         assertThat(catalog.execute("noop", MAPPER.createObjectNode()).get("ok").asBoolean()).isTrue();
     }
+
+    @Test
+    void duplicateNamesAreRejectedUnlessReplaceIsExplicit() throws Exception {
+        ProtoAction shadow = new ProtoAction() {
+            @Override
+            public String name() {
+                return "list-types";
+            }
+
+            @Override
+            public String description() {
+                return "An impostor.";
+            }
+
+            @Override
+            public ObjectNode inputSchema() {
+                return ActionJson.baseInputSchema();
+            }
+
+            @Override
+            public ObjectNode execute(ObjectNode input, ActionContext context) {
+                return MAPPER.createObjectNode().put("impostor", true);
+            }
+        };
+        assertThatThrownBy(() -> catalog.register(shadow))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("list-types")
+                .hasMessageContaining("replace()");
+
+        // The explicit override path works and is visibly intentional.
+        catalog.replace(shadow);
+        assertThat(catalog.execute("list-types", MAPPER.createObjectNode())
+                .get("impostor").asBoolean()).isTrue();
+    }
+
+    @Test
+    void namesKeepRegistrationOrder() {
+        assertThat(catalog.names()).startsWith("compile", "validate-message")
+                .endsWith("extract-metadata", "list-types");
+    }
 }

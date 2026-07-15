@@ -14,8 +14,10 @@ import java.util.regex.Pattern;
  * unique identifiers (they become scope variables); every method must be unary; each step's
  * gate and request mapping is checked by {@link RuleChecker} against exactly the scope that
  * step will see ({@code input} plus every prior step's response); the output mapping is
- * checked against the full scope. A chain that verifies cannot fail on a type error at run
- * time — only on live-service behavior.
+ * checked against the full scope. A gated ({@code when}) step's output is legitimately in
+ * that scope because the runner binds a skipped step's name to its output type's default
+ * instance — the static scope and the runtime value map always agree. A chain that
+ * verifies cannot fail on a type error at run time — only on live-service behavior.
  */
 public final class ChainVerifier {
 

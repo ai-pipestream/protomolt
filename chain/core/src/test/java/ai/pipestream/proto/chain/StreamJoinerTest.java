@@ -38,8 +38,13 @@ class StreamJoinerTest {
             message Click { string user = 1; string page = 2; }
             message Profile { string user = 1; string plan = 2; }
             message Enriched { string user = 1; string page = 2; string plan = 3; }
-            service Clicks { rpc Watch(Subscribe) returns (stream Click); }
+            message Order { int64 id = 1; repeated string tags = 2; }
+            service Clicks {
+              rpc Watch(Subscribe) returns (stream Click);
+              rpc Get(Subscribe) returns (Click);
+            }
             service Profiles { rpc Watch(Subscribe) returns (stream Profile); }
+            service Orders { rpc Watch(Subscribe) returns (stream Order); }
             """;
 
     private static FileDescriptor file;
@@ -169,6 +174,64 @@ class StreamJoinerTest {
         assertThat(field(out.get(0), "user")).isEqualTo("u0");
         assertThat(field(out.get(0), "plan")).isEqualTo("plan0");
         assertThat(field(out.get(2), "plan")).isEqualTo("plan2");
+    }
+
+    @Test
+    void smallTakesNeverStrandMatchedPairs() throws Exception {
+        // A caller draining two at a time must still see every match: joins completed
+        // while the output was full wait in the ready queue instead of stranding both
+        // halves in the input buffers.
+        StreamJoiner join = open(StreamJoiner.Mode.KEYED, 6, true, 100);
+        List<DynamicMessage> all = new java.util.ArrayList<>();
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (all.size() < 6 && System.currentTimeMillis() < deadline) {
+            all.addAll(join.take(2, Duration.ofMillis(250)));
+        }
+        assertThat(all).hasSize(6);
+        assertThat(all).extracting(m -> field(m, "user")).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void sidesAreValidatedBeforeAnyStreamOpens() {
+        List<FileDescriptor> files = List.of(file);
+        Descriptor enriched = file.findMessageTypeByName("Enriched");
+        StreamJoiner.Side clicksByUser = new StreamJoiner.Side("click", channel,
+                ChainDefinition.resolveMethod(files, "sj.test.Clicks/Watch"),
+                subscribe(1, false), "user");
+
+        // Key types must agree across sides (string vs int64).
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new StreamJoiner(
+                StreamJoiner.Mode.KEYED, clicksByUser,
+                new StreamJoiner.Side("order", channel,
+                        ChainDefinition.resolveMethod(files, "sj.test.Orders/Watch"),
+                        subscribe(1, false), "id"),
+                10, enriched, List.of(), List.of()))
+                .hasMessageContaining("key types differ");
+
+        // The key path must exist and be singular.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new StreamJoiner(
+                StreamJoiner.Mode.KEYED, clicksByUser,
+                new StreamJoiner.Side("profile", channel,
+                        ChainDefinition.resolveMethod(files, "sj.test.Profiles/Watch"),
+                        subscribe(1, false), "nope"),
+                10, enriched, List.of(), List.of()))
+                .hasMessageContaining("no field 'nope'");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new StreamJoiner(
+                StreamJoiner.Mode.KEYED, clicksByUser,
+                new StreamJoiner.Side("order", channel,
+                        ChainDefinition.resolveMethod(files, "sj.test.Orders/Watch"),
+                        subscribe(1, false), "tags"),
+                10, enriched, List.of(), List.of()))
+                .hasMessageContaining("is repeated");
+
+        // Both methods must be server-streaming.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new StreamJoiner(
+                StreamJoiner.Mode.ZIP,
+                new StreamJoiner.Side("click", channel,
+                        ChainDefinition.resolveMethod(files, "sj.test.Clicks/Get"),
+                        subscribe(1, false), null),
+                clicksByUser, 10, enriched, List.of(), List.of()))
+                .hasMessageContaining("not server-streaming");
     }
 
     @Test

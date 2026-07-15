@@ -97,9 +97,11 @@ class MicronautProtoRestFacadeTest {
 
         assertThat(facade.invoke("POST", "RestrictedService", "PostOnly", "{}", Map.of(), Map.of()).status())
                 .isEqualTo(200);
-        // Undeclared verbs allow all standard verbs.
-        assertThat(facade.invoke("DELETE", "EchoService", "Echo", "{}", Map.of(), Map.of()).status())
-                .isEqualTo(200);
+        // Undeclared verbs default to POST only, matching the OpenAPI contract.
+        MicronautProtoRestFacade.Result viaDelete = facade.invoke(
+                "DELETE", "EchoService", "Echo", "{}", Map.of(), Map.of());
+        assertThat(viaDelete.status()).isEqualTo(405);
+        assertThat(viaDelete.headers()).containsEntry("Allow", "POST");
     }
 
     @Test

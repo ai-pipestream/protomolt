@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
+import java.util.List;
 
 /**
  * A framework-agnostic catalog of {@link ProtoAction}s: one registry of JSON-in/JSON-out verbs,
@@ -45,8 +45,25 @@ public final class ActionCatalog {
         return catalog;
     }
 
-    /** Registers (or replaces) an action under its {@link ProtoAction#name()}. */
+    /**
+     * Registers an action under its {@link ProtoAction#name()}.
+     *
+     * @throws IllegalStateException when the name is taken — a plugin or built-in silently
+     *         shadowing another action would change behavior by registration order; use
+     *         {@link #replace} when overriding is the intent
+     */
     public ActionCatalog register(ProtoAction action) {
+        String name = Objects.requireNonNull(action, "action").name();
+        ProtoAction existing = actions.putIfAbsent(name, action);
+        if (existing != null) {
+            throw new IllegalStateException("Action '" + name + "' is already registered ("
+                    + existing.getClass().getName() + "); use replace() to override it");
+        }
+        return this;
+    }
+
+    /** Deliberately replaces (or adds) an action — the explicit override path. */
+    public ActionCatalog replace(ProtoAction action) {
         actions.put(Objects.requireNonNull(action, "action").name(), action);
         return this;
     }
@@ -72,8 +89,8 @@ public final class ActionCatalog {
     }
 
     /** Registered action names, in registration order. */
-    public Set<String> names() {
-        return Set.copyOf(actions.keySet());
+    public List<String> names() {
+        return List.copyOf(actions.keySet());
     }
 
     /** The tool manifest: {@code [{name, description, inputSchema}, ...]}. */

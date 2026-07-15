@@ -21,12 +21,11 @@ import java.util.function.Function;
  * @param requestType generated request class, or empty for dynamic-only
  * @param invoker request message → response message
  * @param apiToken optional API token requirement
- * @param exposed metadata from {@link ProtoRestExposed} (path/summary/http methods)
- * @param path optional path override (takes precedence over {@link ProtoRestExposed#path()})
+ * @param exposed metadata from {@link ProtoRestExposed} (summary/http methods)
  * @param summary optional OpenAPI summary
  * @param description optional OpenAPI description
- * @param httpMethods declared HTTP verbs (uppercase); empty = unset, which the gateway treats
- *        as allowing all standard verbs (see {@link #allowedHttpVerbs()})
+ * @param httpMethods declared HTTP verbs (uppercase); empty = unset, which means POST only
+ *        (see {@link #allowedHttpVerbs()}) — the same default the OpenAPI document declares
  */
 public record ProtoRestMethod(
         String serviceName,
@@ -37,13 +36,12 @@ public record ProtoRestMethod(
         Function<Message, Message> invoker,
         Optional<ApiTokenRequirement> apiToken,
         Optional<ProtoRestExposed> exposed,
-        Optional<String> path,
         Optional<String> summary,
         Optional<String> description,
         String[] httpMethods) {
 
-    /** Verbs allowed when {@link #httpMethods()} is unset (backward-compatible default). */
-    public static final List<String> DEFAULT_HTTP_VERBS = List.of("GET", "POST", "PUT", "PATCH", "DELETE");
+    /** Verbs allowed when nothing is declared: POST, the verb of an RPC-shaped route. */
+    public static final List<String> DEFAULT_HTTP_VERBS = List.of("POST");
 
     public ProtoRestMethod {
         Objects.requireNonNull(serviceName, "serviceName");
@@ -52,7 +50,6 @@ public record ProtoRestMethod(
         requestType = requestType == null ? Optional.empty() : requestType;
         apiToken = apiToken == null ? Optional.empty() : apiToken;
         exposed = exposed == null ? Optional.empty() : exposed;
-        path = path == null ? Optional.empty() : path;
         summary = summary == null ? Optional.empty() : summary;
         description = description == null ? Optional.empty() : description;
         // Defensive copy, normalized to uppercase; empty means "unset".
@@ -71,11 +68,20 @@ public record ProtoRestMethod(
     }
 
     /**
-     * @return the verbs this method accepts: the declared {@link #httpMethods()}, or
-     *         {@link #DEFAULT_HTTP_VERBS} when none were declared
+     * The verbs this method accepts — the single source of truth for the gateway, every
+     * server host, and the OpenAPI document: the declared {@link #httpMethods()}, else the
+     * {@link ProtoRestExposed} declaration, else {@link #DEFAULT_HTTP_VERBS} (POST only).
      */
     public List<String> allowedHttpVerbs() {
-        return httpMethods.length == 0 ? DEFAULT_HTTP_VERBS : List.of(httpMethods);
+        if (httpMethods.length > 0) {
+            return List.of(httpMethods);
+        }
+        return exposed.map(ProtoRestExposed::httpMethods)
+                .filter(declared -> declared.length > 0)
+                .map(declared -> List.of(declared).stream()
+                        .map(m -> m.toUpperCase(Locale.ROOT))
+                        .toList())
+                .orElse(DEFAULT_HTTP_VERBS);
     }
 
     public String routeKey() {
@@ -98,7 +104,6 @@ public record ProtoRestMethod(
                 && invoker.equals(that.invoker)
                 && apiToken.equals(that.apiToken)
                 && exposed.equals(that.exposed)
-                && path.equals(that.path)
                 && summary.equals(that.summary)
                 && description.equals(that.description)
                 && Arrays.equals(httpMethods, that.httpMethods);
@@ -107,7 +112,7 @@ public record ProtoRestMethod(
     @Override
     public int hashCode() {
         int result = Objects.hash(serviceName, methodName, serviceDescriptor, methodDescriptor,
-                requestType, invoker, apiToken, exposed, path, summary, description);
+                requestType, invoker, apiToken, exposed, summary, description);
         return 31 * result + Arrays.hashCode(httpMethods);
     }
 
@@ -129,7 +134,6 @@ public record ProtoRestMethod(
         private Class<? extends Message> requestType;
         private ApiTokenRequirement apiToken;
         private ProtoRestExposed exposed;
-        private String path;
         private String summary;
         private String description;
         private String[] httpMethods = {};
@@ -170,11 +174,6 @@ public record ProtoRestMethod(
             return this;
         }
 
-        public Builder path(String path) {
-            this.path = path;
-            return this;
-        }
-
         public Builder summary(String summary) {
             this.summary = summary;
             return this;
@@ -200,7 +199,6 @@ public record ProtoRestMethod(
                     invoker,
                     Optional.ofNullable(apiToken),
                     Optional.ofNullable(exposed),
-                    Optional.ofNullable(path),
                     Optional.ofNullable(summary),
                     Optional.ofNullable(description),
                     httpMethods);

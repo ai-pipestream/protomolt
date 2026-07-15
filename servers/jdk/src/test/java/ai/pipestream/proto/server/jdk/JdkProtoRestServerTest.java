@@ -56,6 +56,7 @@ class JdkProtoRestServerTest {
                 .requestType(Struct.class)
                 .apiToken(ApiTokenRequirement.apiKeyHeader("api_token"))
                 .summary("Echo")
+                .httpMethods("GET", "POST", "PUT", "PATCH", "DELETE")
                 .build());
         registry.register(ProtoRestMethod.builder("RestrictedService", "PostOnly",
                         request -> Struct.getDefaultInstance())

@@ -19,10 +19,23 @@ import java.util.Set;
  *       cleared: a redacted number or bool would still leak by being plausible.</li>
  * </ul>
  *
- * <p>Recursion covers singular and repeated message fields, so a {@code pii}-classed field
- * three levels down is found. Requires descriptors whose options were parsed with the
- * metadata extensions registered ({@link DescriptorMetadata#registerExtensions}); options
- * left as unknown fields mask nothing.</p>
+ * <p>Recursion covers singular and repeated message fields <em>and message-valued map
+ * entries</em>, so a {@code pii}-classed field three levels down — or inside a map value —
+ * is found; map entries are reported as {@code field[key].nested}. A sensitivity class on a
+ * map field itself applies to every entry's value. Requires descriptors whose options were
+ * parsed with the metadata extensions registered
+ * ({@link DescriptorMetadata#registerExtensions}); options left as unknown fields mask
+ * nothing.</p>
+ *
+ * <h2>Encrypted values</h2>
+ *
+ * <p>{@code ENCRYPT} seals string/bytes values as AES-GCM in a versioned envelope:
+ * a format-version byte, a 12-byte random nonce, then ciphertext with a 128-bit tag. The
+ * value's identity — its containing message's full name and its field number — is bound as
+ * additional authenticated data, so ciphertext moved to a different field (or a different
+ * message type) refuses to decrypt. Ciphertext is therefore deliberately <em>not</em>
+ * portable across fields; re-encrypt under the destination field to move data. The version
+ * byte leaves room for future algorithms and key rotation without guessing.</p>
  */
 public final class SensitivityMasker {
 
@@ -39,8 +52,10 @@ public final class SensitivityMasker {
     }
 
     private static final String REDACTED = "***";
+    private static final byte ENVELOPE_VERSION = 1;
     private static final int GCM_NONCE_BYTES = 12;
     private static final int GCM_TAG_BITS = 128;
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
 
     /** The masked message plus which field paths were touched. */
     public record MaskResult(Message message, List<String> maskedPaths) {
@@ -90,7 +105,11 @@ public final class SensitivityMasker {
                 masked.add(path);
                 continue;
             }
-            if (field.isMapField() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+            if (field.isMapField()) {
+                maskMapValues(message, builder, field, classes, strategy, key, path, masked);
+                continue;
+            }
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
                 continue;
             }
             if (field.isRepeated()) {
@@ -108,12 +127,38 @@ public final class SensitivityMasker {
         return builder.build();
     }
 
+    /** Message values inside an (unannotated) map can still hold sensitive fields. */
+    private static void maskMapValues(Message message, Message.Builder builder,
+                                      FieldDescriptor field, Set<String> classes,
+                                      Strategy strategy, javax.crypto.SecretKey key,
+                                      String path, List<String> masked) {
+        FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
+        if (valueField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+            return;
+        }
+        FieldDescriptor keyField = field.getMessageType().findFieldByName("key");
+        int count = message.getRepeatedFieldCount(field);
+        for (int i = 0; i < count; i++) {
+            Message entry = (Message) message.getRepeatedField(field, i);
+            String entryPath = path + "[" + entry.getField(keyField) + "]";
+            Message maskedValue = maskMessage((Message) entry.getField(valueField),
+                    classes, strategy, key, entryPath, masked);
+            builder.setRepeatedField(field, i,
+                    entry.toBuilder().setField(valueField, maskedValue).build());
+        }
+    }
+
     private static void apply(Message.Builder builder, FieldDescriptor field,
                               Strategy strategy, javax.crypto.SecretKey key) {
-        boolean transformable = field.getJavaType() == FieldDescriptor.JavaType.STRING
-                || (field.getJavaType() == FieldDescriptor.JavaType.BYTE_STRING
-                        && (strategy == Strategy.ENCRYPT || strategy == Strategy.DECRYPT));
-        if (strategy == Strategy.REMOVE || !transformable) {
+        if (strategy == Strategy.REMOVE) {
+            builder.clearField(field);
+            return;
+        }
+        if (field.isMapField()) {
+            applyToMapEntries(builder, field, strategy, key);
+            return;
+        }
+        if (!transformable(field, strategy)) {
             // Ciphertext cannot live in an int64 and a redacted number would still look
             // plausible: everything non-transformable clears.
             builder.clearField(field);
@@ -131,6 +176,30 @@ public final class SensitivityMasker {
         }
     }
 
+    /** A sensitivity class on the map field itself masks every entry's value. */
+    private static void applyToMapEntries(Message.Builder builder, FieldDescriptor field,
+                                          Strategy strategy, javax.crypto.SecretKey key) {
+        FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
+        if (!transformable(valueField, strategy)) {
+            builder.clearField(field);
+            return;
+        }
+        int count = builder.getRepeatedFieldCount(field);
+        for (int i = 0; i < count; i++) {
+            Message entry = (Message) builder.getRepeatedField(field, i);
+            builder.setRepeatedField(field, i, entry.toBuilder()
+                    .setField(valueField, transform(entry.getField(valueField),
+                            valueField, strategy, key))
+                    .build());
+        }
+    }
+
+    private static boolean transformable(FieldDescriptor field, Strategy strategy) {
+        return field.getJavaType() == FieldDescriptor.JavaType.STRING
+                || (field.getJavaType() == FieldDescriptor.JavaType.BYTE_STRING
+                        && (strategy == Strategy.ENCRYPT || strategy == Strategy.DECRYPT));
+    }
+
     private static Object transform(Object value, FieldDescriptor field, Strategy strategy,
                                     javax.crypto.SecretKey key) {
         if (strategy == Strategy.REDACT) {
@@ -141,7 +210,7 @@ public final class SensitivityMasker {
                 ? ((String) value).getBytes(java.nio.charset.StandardCharsets.UTF_8)
                 : ((com.google.protobuf.ByteString) value).toByteArray();
         if (strategy == Strategy.ENCRYPT) {
-            byte[] boxed = seal(plain, key);
+            byte[] boxed = seal(plain, field, key);
             return isString
                     ? java.util.Base64.getEncoder().encodeToString(boxed)
                     : com.google.protobuf.ByteString.copyFrom(boxed);
@@ -149,40 +218,63 @@ public final class SensitivityMasker {
         byte[] boxed = isString
                 ? java.util.Base64.getDecoder().decode((String) value)
                 : plain;
-        byte[] opened = open(boxed, key);
+        byte[] opened = open(boxed, field, key);
         return isString
                 ? new String(opened, java.nio.charset.StandardCharsets.UTF_8)
                 : com.google.protobuf.ByteString.copyFrom(opened);
     }
 
-    /** AES-GCM: a fresh random nonce prefixed to the ciphertext. */
-    private static byte[] seal(byte[] plain, javax.crypto.SecretKey key) {
+    /**
+     * The AES-GCM additional authenticated data: the envelope version plus the value's
+     * identity. Binding the identity means a ciphertext pasted into another field — even a
+     * type-compatible one — fails to open instead of silently decrypting.
+     */
+    private static byte[] aad(FieldDescriptor field) {
+        String identity = field.getContainingType().getFullName() + "#" + field.getNumber();
+        byte[] name = identity.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] out = new byte[name.length + 1];
+        out[0] = ENVELOPE_VERSION;
+        System.arraycopy(name, 0, out, 1, name.length);
+        return out;
+    }
+
+    /** AES-GCM in the versioned envelope: version byte, fresh random nonce, ciphertext. */
+    private static byte[] seal(byte[] plain, FieldDescriptor field, javax.crypto.SecretKey key) {
         try {
             byte[] nonce = new byte[GCM_NONCE_BYTES];
-            java.security.SecureRandom.getInstanceStrong().nextBytes(nonce);
+            RANDOM.nextBytes(nonce);
             javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key,
                     new javax.crypto.spec.GCMParameterSpec(GCM_TAG_BITS, nonce));
+            cipher.updateAAD(aad(field));
             byte[] sealed = cipher.doFinal(plain);
-            byte[] out = new byte[nonce.length + sealed.length];
-            System.arraycopy(nonce, 0, out, 0, nonce.length);
-            System.arraycopy(sealed, 0, out, nonce.length, sealed.length);
+            byte[] out = new byte[1 + nonce.length + sealed.length];
+            out[0] = ENVELOPE_VERSION;
+            System.arraycopy(nonce, 0, out, 1, nonce.length);
+            System.arraycopy(sealed, 0, out, 1 + nonce.length, sealed.length);
             return out;
         } catch (Exception e) {
             throw new IllegalStateException("Encryption failed: " + e.getMessage(), e);
         }
     }
 
-    private static byte[] open(byte[] boxed, javax.crypto.SecretKey key) {
+    private static byte[] open(byte[] boxed, FieldDescriptor field, javax.crypto.SecretKey key) {
+        if (boxed.length < 1 + GCM_NONCE_BYTES + GCM_TAG_BITS / 8
+                || boxed[0] != ENVELOPE_VERSION) {
+            throw new IllegalArgumentException(
+                    "Decryption failed: not a recognized encrypted-value envelope");
+        }
         try {
             javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key,
-                    new javax.crypto.spec.GCMParameterSpec(GCM_TAG_BITS, boxed, 0,
+                    new javax.crypto.spec.GCMParameterSpec(GCM_TAG_BITS, boxed, 1,
                             GCM_NONCE_BYTES));
-            return cipher.doFinal(boxed, GCM_NONCE_BYTES, boxed.length - GCM_NONCE_BYTES);
+            cipher.updateAAD(aad(field));
+            return cipher.doFinal(boxed, 1 + GCM_NONCE_BYTES,
+                    boxed.length - 1 - GCM_NONCE_BYTES);
         } catch (Exception e) {
             throw new IllegalArgumentException(
-                    "Decryption failed: wrong key or tampered value", e);
+                    "Decryption failed: wrong key, wrong field, or tampered value", e);
         }
     }
 }

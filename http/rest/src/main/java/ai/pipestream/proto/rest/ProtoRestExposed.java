@@ -15,7 +15,11 @@ import java.lang.annotation.Target;
 @Target({ElementType.TYPE, ElementType.METHOD})
 public @interface ProtoRestExposed {
 
-    /** Optional path override; empty = derive from service/method names. */
+    /**
+     * On a type: renames the service segment of the {@code {service}/{method}} route.
+     * On a method: rejected at registration — hosts route only the canonical form, and a
+     * path the router does not serve must not exist in the contract.
+     */
     String path() default "";
 
     /**

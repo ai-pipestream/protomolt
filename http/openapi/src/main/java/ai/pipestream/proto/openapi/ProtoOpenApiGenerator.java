@@ -150,26 +150,14 @@ public final class ProtoOpenApiGenerator {
         }
     }
 
+    /** The canonical route — exactly what every server host serves, nothing else. */
     private String resolvePath(ProtoRestMethod method) {
-        if (method.path().isPresent() && !method.path().get().isBlank()) {
-            String custom = method.path().get();
-            return custom.startsWith("/") ? custom : pathPrefix + "/" + custom;
-        }
-        if (method.exposed().isPresent() && !method.exposed().get().path().isBlank()) {
-            String custom = method.exposed().get().path();
-            return custom.startsWith("/") ? custom : pathPrefix + "/" + custom;
-        }
         return pathPrefix + "/" + method.serviceName() + "/" + method.methodName();
     }
 
+    /** Delegates to the method's own resolution so the spec and the gateway agree. */
     private static String[] resolveHttpMethods(ProtoRestMethod method) {
-        if (method.httpMethods() != null && method.httpMethods().length > 0) {
-            return method.httpMethods();
-        }
-        return method.exposed()
-                .map(ProtoRestExposed::httpMethods)
-                .filter(m -> m.length > 0)
-                .orElse(new String[]{"POST"});
+        return method.allowedHttpVerbs().toArray(String[]::new);
     }
 
     private static Descriptor resolveRequestDescriptor(ProtoRestMethod method) {

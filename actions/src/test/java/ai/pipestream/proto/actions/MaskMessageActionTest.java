@@ -80,7 +80,7 @@ class MaskMessageActionTest {
         ((ObjectNode) tampered.get("message")).setAll((ObjectNode) sealed.get("message"));
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         catalog.execute("mask-message", tampered))
-                .hasMessageContaining("wrong key or tampered");
+                .hasMessageContaining("wrong key, wrong field, or tampered");
     }
 
     @Test

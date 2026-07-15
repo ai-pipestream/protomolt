@@ -93,7 +93,12 @@ public final class ProtoRestAnnotationRegistrar {
         ProtoRestExposed exposed = methodExposed;
         builder.exposed(exposed);
         if (!exposed.path().isBlank()) {
-            builder.path(exposed.path());
+            // No host routes per-method custom paths; registering one would publish an
+            // OpenAPI route that 404s. Fail at startup instead of lying in the contract.
+            throw new IllegalStateException("@ProtoRestExposed(path=...) on method "
+                    + type.getName() + "#" + method.getName() + " is not supported: methods "
+                    + "are served at {service}/{method}; use a class-level path to rename "
+                    + "the service segment");
         }
         if (!exposed.summary().isBlank()) {
             builder.summary(exposed.summary());

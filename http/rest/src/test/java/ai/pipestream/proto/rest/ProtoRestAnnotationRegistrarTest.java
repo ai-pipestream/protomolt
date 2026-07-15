@@ -76,10 +76,29 @@ class ProtoRestAnnotationRegistrarTest {
                 .containsExactly("PUT");
         assertThat(registry.find("Update", "patch").orElseThrow().httpMethods())
                 .containsExactly("PATCH");
-        // No declared verbs: the declaration stays empty and the gateway allows all
-        // standard verbs (backward compatible).
+        // No declared verbs: the declaration stays empty and the gateway allows POST
+        // only - the same default the OpenAPI document declares.
         assertThat(registry.find("Plain", "go").orElseThrow().httpMethods()).isEmpty();
         assertThat(registry.find("Plain", "go").orElseThrow().allowedHttpVerbs())
-                .isEqualTo(ProtoRestMethod.DEFAULT_HTTP_VERBS);
+                .isEqualTo(ProtoRestMethod.DEFAULT_HTTP_VERBS)
+                .containsExactly("POST");
+    }
+
+    static final class CustomPathService {
+        @ProtoRestExposed(path = "/fancy/route")
+        public Struct go(Struct request) {
+            return request;
+        }
+    }
+
+    @Test
+    void methodLevelCustomPathsAreRejectedAtStartup() {
+        // Hosts route only {service}/{method}; a per-method path would be published in
+        // the OpenAPI contract but 404 at runtime. Fail loudly instead.
+        ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        new ProtoRestAnnotationRegistrar(registry).register(new CustomPathService()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not supported");
     }
 }

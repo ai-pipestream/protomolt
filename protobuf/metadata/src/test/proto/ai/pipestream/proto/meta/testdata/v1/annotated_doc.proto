@@ -34,3 +34,24 @@ message AnnotatedDoc {
     sensitivity: "public"
   }];
 }
+
+// Fixtures for SensitivityMasker: sensitive scalars, maps in every position the
+// masker must reach, and message values nested inside maps.
+message SecretNote {
+  string body = 1 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+  string label = 2;
+}
+
+message MaskerDoc {
+  string name = 1;
+  string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+  bytes token = 3 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "secret"}];
+  map<string, string> plain_attrs = 4;
+  map<string, string> secret_attrs = 5
+      [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+  map<string, SecretNote> notes = 6;
+  map<string, MaskerDoc> children = 7;
+  repeated SecretNote entries = 8;
+  map<string, int64> counts = 9
+      [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+}

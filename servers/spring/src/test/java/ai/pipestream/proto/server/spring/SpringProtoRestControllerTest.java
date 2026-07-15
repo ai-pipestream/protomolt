@@ -46,6 +46,7 @@ class SpringProtoRestControllerTest {
                             .build();
                 })
                 .requestType(Struct.class)
+                .httpMethods("GET", "POST", "PUT", "PATCH", "DELETE")
                 .build());
         registry.register(ProtoRestMethod.builder("SecureService", "Ping", request ->
                         Struct.newBuilder()
