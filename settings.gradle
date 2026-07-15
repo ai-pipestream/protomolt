@@ -37,6 +37,8 @@ include 'protomolt-emit-okf'
 project(':protomolt-emit-okf').projectDir = file('emit/okf')
 include 'protomolt-emit-parquet'
 project(':protomolt-emit-parquet').projectDir = file('emit/parquet')
+include 'protomolt-msgraph'
+project(':protomolt-msgraph').projectDir = file('graph')
 
 include 'protomolt-gather-maven'
 project(':protomolt-gather-maven').projectDir = file('gather/maven')

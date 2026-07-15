@@ -1,0 +1,10 @@
+description = 'Microsoft Graph integration: OAuth2 (device code + client credentials), OneDrive/SharePoint files and list-item metadata, and Copilot connector ingestion over the external connections API - the agentless lane, no Windows agent required'
+
+dependencies {
+    api project(':protomolt-index-spi')
+    api libs.protobuf.java
+
+    implementation libs.jackson.databind
+
+    testImplementation project(':protomolt-proto-sources')
+}
