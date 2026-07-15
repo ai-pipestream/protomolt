@@ -10,3 +10,32 @@ dependencies {
 
     testImplementation project(':protomolt-proto-sources')
 }
+
+def embeddedWasm = layout.projectDirectory.file(
+        'src/main/resources/ai/pipestream/proto/codegen/protoc-wrapper-v4.wasm')
+def embeddedWasmChecksum = layout.projectDirectory.file(
+        'provenance/protoc-wrapper-v4.sha256')
+
+tasks.register('verifyEmbeddedWasm') {
+    group = 'verification'
+    description = 'Verify the embedded protoc wrapper against its recorded provenance checksum'
+    inputs.file(embeddedWasm)
+    inputs.file(embeddedWasmChecksum)
+
+    doLast {
+        String expected = embeddedWasmChecksum.asFile.text.trim().split(/\s+/)[0]
+        byte[] bytes = embeddedWasm.asFile.bytes
+        String actual = java.security.MessageDigest.getInstance('SHA-256')
+                .digest(bytes).encodeHex().toString()
+        if (actual != expected) {
+            throw new GradleException(
+                    "Embedded protoc wrapper checksum mismatch: expected ${expected}, got ${actual}. "
+                    + 'Rebuild it through codegen/provenance/rebuild-protoc-wrapper-v4.sh '
+                    + 'and review the provenance update.')
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn('verifyEmbeddedWasm')
+}

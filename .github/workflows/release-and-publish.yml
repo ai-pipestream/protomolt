@@ -61,6 +61,16 @@ jobs:
       - name: Full JVM build and test suite
         run: ./gradlew build --no-daemon --console=plain
 
+      # Exercise the release-only task graph and the final Dockerfile while the
+      # commit is still untagged. The tagged build below runs these tasks again
+      # to produce correctly versioned archives.
+      - name: Distribution and container preflight
+        run: |
+          ./gradlew :protomolt-serve:distZip :protomolt-serve:installDist \
+            :protomolt-mcp:distZip :protomolt-connect:connectPluginZip \
+            --no-daemon --console=plain
+          docker build --tag protomolt-serve:release-preflight serve
+
       # ---- the commit is good; now make it a release --------------------------------
 
       - name: Map release_type to axion incrementer
@@ -82,6 +92,9 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Released version: $V"
 
+      - name: Build runnable distributions
+        run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip :protomolt-connect:connectPluginZip --no-daemon
+
       - name: Publish signed artifacts to Maven Central
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
@@ -89,9 +102,6 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: ./gradlew publishAggregationToCentralPortal --no-daemon --console=plain
-
-      - name: Build runnable distributions
-        run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip :protomolt-connect:connectPluginZip --no-daemon
 
       - name: Create GitHub release with runnable zips
         env:

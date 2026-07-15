@@ -1,65 +1,85 @@
 description = 'Bill of materials for the Pipestream protobuf tools suite'
 
+// One supported publication inventory drives both the Maven BOM and the consumer-facing
+// Gradle catalog. Keeping it here prevents those two version-alignment surfaces from drifting.
+def supportedModules = [
+        'protomolt-descriptors',
+        'protomolt-shapes',
+        'protomolt-chain',
+        'protomolt-helpers',
+        'protomolt-formats',
+        'protomolt-proto-sources',
+        'protomolt-gather',
+        'protomolt-gather-git',
+        'protomolt-gather-maven',
+        'protomolt-compat',
+        'protomolt-actions',
+        'protomolt-registry',
+        'protomolt-mcp',
+        'protomolt-grpc-invoke',
+        'protomolt-grpc-service',
+        'protomolt-serve',
+        'protomolt-connect',
+        'protomolt-codegen',
+        'protomolt-registry-server',
+        'protomolt-jsonschema',
+        'protomolt-protobuf-validation-protovalidate',
+        'protomolt-mapper-core',
+        'protomolt-mapper-cel',
+        'protomolt-schema-apicurio',
+        'protomolt-schema-apicurio-deployment',
+        'protomolt-schema-confluent',
+        'protomolt-metadata',
+        'protomolt-protobuf-metadata',
+        'protomolt-protobuf-validation',
+        'protomolt-protobuf-indexing',
+        'protomolt-index-spi',
+        'protomolt-index-ndjson',
+        'protomolt-index-lucene',
+        'protomolt-index-opensearch',
+        'protomolt-index-solr',
+        'protomolt-quarkus',
+        'protomolt-quarkus-deployment',
+        'protomolt-spring',
+        'protomolt-server-common',
+        'protomolt-server-jdk',
+        'protomolt-server-vertx',
+        'protomolt-server-netty',
+        'protomolt-server-spring',
+        'protomolt-server-micronaut',
+        'protomolt-server-quarkus',
+        'protomolt-json',
+        'protomolt-rest',
+        'protomolt-openapi',
+]
+
 javaPlatform {
     allowDependencies()
 }
 
 catalog {
     versionCatalog {
-        from(files('../gradle/libs.versions.toml'))
+        version('protomolt', project.version.toString())
+        supportedModules.each { moduleName ->
+            String alias = moduleName.substring('protomolt-'.length())
+            library(alias, project.group.toString(), moduleName).versionRef('protomolt')
+        }
+        bundle('core', ['descriptors', 'helpers', 'proto-sources'])
+        bundle('schema-governance', ['compat', 'registry', 'registry-server'])
+        bundle('validation', ['protobuf-validation',
+                              'protobuf-validation-protovalidate'])
+        bundle('mapping', ['mapper-core', 'mapper-cel', 'metadata'])
+        bundle('dynamic-runtime', ['actions', 'grpc-invoke', 'grpc-service', 'serve'])
+        bundle('search', ['index-spi', 'index-ndjson', 'index-lucene',
+                          'index-opensearch', 'index-solr'])
     }
 }
 
 dependencies {
     constraints {
-        api project(':protomolt-descriptors')
-        api project(':protomolt-shapes')
-        api project(':protomolt-chain')
-        api project(':protomolt-helpers')
-        api project(':protomolt-formats')
-        api project(':protomolt-proto-sources')
-        api project(':protomolt-gather')
-        api project(':protomolt-gather-git')
-        api project(':protomolt-gather-maven')
-        api project(':protomolt-compat')
-        api project(':protomolt-actions')
-        api project(':protomolt-registry')
-        api project(':protomolt-mcp')
-        api project(':protomolt-grpc-invoke')
-        api project(':protomolt-grpc-service')
-        api project(':protomolt-serve')
-        api project(':protomolt-connect')
-        api project(':protomolt-codegen')
-        api project(':protomolt-registry-server')
-        api project(':protomolt-jsonschema')
-        api project(':protomolt-protobuf-validation-protovalidate')
-        api project(':protomolt-mapper-core')
-        api project(':protomolt-mapper-cel')
-        api project(':protomolt-schema-apicurio')
-        api project(':protomolt-schema-apicurio-deployment')
-        api project(':protomolt-schema-confluent')
-        api project(':protomolt-metadata')
-        api project(':protomolt-protobuf-metadata')
-        api project(':protomolt-protobuf-validation')
-        api project(':protomolt-protobuf-indexing')
-        api project(':protomolt-index-spi')
-        api project(':protomolt-index-ndjson')
-        api project(':protomolt-index-lucene')
-        api project(':protomolt-index-opensearch')
-        api project(':protomolt-index-solr')
-        api project(':protomolt-quarkus')
-        api project(':protomolt-quarkus-deployment')
-        api project(':protomolt-spring')
-        api project(':protomolt-server-common')
-        api project(':protomolt-server-jdk')
-        api project(':protomolt-server-vertx')
-        api project(':protomolt-server-netty')
-        api project(':protomolt-server-spring')
-        api project(':protomolt-server-micronaut')
-        api project(':protomolt-server-quarkus')
-        api project(':protomolt-json')
-        api project(':protomolt-rest')
-        api project(':protomolt-openapi')
+        supportedModules.each { moduleName ->
+            api project(":${moduleName}")
+        }
     }
 }
 
@@ -76,6 +96,7 @@ tasks.register('checkBomCompleteness') {
     description = 'Fails when a published module is missing from the BOM constraints'
     group = 'verification'
     def moduleNames = rootProject.subprojects.collect { it.name }
+    inputs.property('supportedModules', supportedModules)
     doLast {
         def constrained = configurations.api.dependencyConstraints.collect { it.name } as Set
         def missing = moduleNames.findAll {
@@ -89,6 +110,28 @@ tasks.register('checkBomCompleteness') {
     }
 }
 
+tasks.register('checkConsumerCatalog') {
+    description = 'Checks that the published version catalog represents ProtoMolt consumers'
+    group = 'verification'
+    dependsOn tasks.named('generateCatalogAsToml')
+    def generatedCatalog = layout.buildDirectory.file('version-catalog/libs.versions.toml')
+    inputs.file(generatedCatalog)
+    doLast {
+        String text = generatedCatalog.get().asFile.text
+        supportedModules.each { moduleName ->
+            if (!text.contains("name = \"${moduleName}\"")) {
+                throw new GradleException(
+                        "Consumer version catalog is missing ${moduleName}")
+            }
+        }
+        if (text.contains('org.junit') || text.contains('axion-release')) {
+            throw new GradleException(
+                    'Consumer version catalog leaked ProtoMolt build dependencies')
+        }
+    }
+}
+
 tasks.named('check') {
     dependsOn tasks.named('checkBomCompleteness')
+    dependsOn tasks.named('checkConsumerCatalog')
 }

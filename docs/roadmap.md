@@ -292,9 +292,12 @@ features.
    policy for Java APIs, protobuf options, stored registry formats, REST
    routes, and action envelopes — enforced with japicmp or Revapi once a
    first release exists to compare against.
-8. **WASM protoc provenance.** A reproducible build script pinned to upstream
-   revisions, checksum verification during the build, and a provenance record
-   for the embedded compiler binary.
+8. **Hermetic WASM protoc supply chain.** Source provenance, the exact
+   protobuf4j build commit, a rebuild script, component versions, and a
+   build-enforced binary checksum now live under `codegen/provenance`. Finish
+   this by digest-pinning the build image and downloaded archives, then audit
+   and package the required LICENSE/NOTICE attribution for every component in
+   the combined binary.
 9. **Sensitive-field vectorization policy.** An explicit opt-in before an
    `encrypt`-classed field's content may feed an embedding pipeline, so the
    documented neighborhood/inversion trade-off is a deliberate deployment

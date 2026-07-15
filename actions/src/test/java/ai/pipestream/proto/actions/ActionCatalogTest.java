@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
 
 import static ai.pipestream.proto.actions.TestFixtures.MAPPER;
 import static ai.pipestream.proto.actions.TestFixtures.obj;
@@ -140,5 +142,55 @@ class ActionCatalogTest {
     void namesKeepRegistrationOrder() {
         assertThat(catalog.names()).startsWith("compile", "validate-message")
                 .endsWith("extract-metadata", "list-types");
+    }
+
+    @Test
+    void registrationAndSnapshotsAreSafeUnderConcurrency() throws Exception {
+        int additions = 100;
+        try (var executor = Executors.newFixedThreadPool(12)) {
+            List<java.util.concurrent.Callable<Void>> tasks = new ArrayList<>();
+            for (int i = 0; i < additions; i++) {
+                int index = i;
+                tasks.add(() -> {
+                    catalog.register(noop("concurrent-" + index));
+                    catalog.names();
+                    catalog.list();
+                    return null;
+                });
+            }
+            for (var result : executor.invokeAll(tasks)) {
+                result.get();
+            }
+        }
+
+        assertThat(catalog.names()).hasSize(BUILT_INS.size() + additions);
+        assertThat(catalog.list()).hasSize(BUILT_INS.size() + additions);
+        for (int i = 0; i < additions; i++) {
+            assertThat(catalog.get("concurrent-" + i)).isNotNull();
+        }
+    }
+
+    private static ProtoAction noop(String name) {
+        return new ProtoAction() {
+            @Override
+            public String name() {
+                return name;
+            }
+
+            @Override
+            public String description() {
+                return "Concurrent test action.";
+            }
+
+            @Override
+            public ObjectNode inputSchema() {
+                return ActionJson.baseInputSchema();
+            }
+
+            @Override
+            public ObjectNode execute(ObjectNode input, ActionContext context) {
+                return MAPPER.createObjectNode().put("ok", true);
+            }
+        };
     }
 }

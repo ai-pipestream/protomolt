@@ -40,9 +40,9 @@ fixes, and are listed there with their intended shape.
 
 | # | Finding | Disposition |
 |---|---|---|
-| 15 | Tag and publish ran before full verification | **Fixed.** The release workflow runs console tests, typecheck, and build plus the full JVM suite before axion tags anything; snapshot publication gained the same gate. Environment approval and signed provenance are deferred. |
+| 15 | Tag and publish ran before full verification | **Fixed.** The release workflow runs console tests, typecheck, the full JVM suite, every runnable distribution task, and a build of the final non-root Docker image before axion tags anything. After tagging, correctly versioned distributions are staged before Maven publication; snapshot publication has the same code/test gate. Environment approval and signed release provenance are deferred. |
 | 16 | Image labeled MIT, ran as root, no health check | **Fixed.** Apache-2.0 label (plus OCI revision/version), dedicated non-root uid 10001, `/health`-based HEALTHCHECK via bash `/dev/tcp` (no curl layer). Verified locally: builds, starts `--demo`, reports healthy as 10001. Digest pinning deferred until update automation exists. |
-| 17 | BOM missing modules; catalog not consumer-facing | **Fixed** (BOM): `protomolt-shapes` and `protomolt-chain` constrained, and `checkBomCompleteness` (wired into `check`) fails the build when a published module is neither constrained nor deliberately excluded with a reason. A consumer-facing catalog with ProtoMolt aliases is deferred. |
+| 17 | BOM missing modules; catalog not consumer-facing | **Fixed.** One supported-module inventory drives both surfaces: the BOM constrains every published library, and `protomolt-bom-catalog` now contains ProtoMolt aliases and useful core, governance, validation, mapping, runtime, and search bundles instead of the project's internal build dependencies. `checkBomCompleteness` and `checkConsumerCatalog` fail the build on drift. |
 | 18 | CI gaps: no typecheck, one JDK, no API compat check | **Fixed** (first two): CI runs `vue-tsc` and a test-JDK matrix where `-PtestJdk=21` runs every test JVM on the declared Java 21 baseline. Binary-compatibility checking (japicmp/Revapi) starts making sense after the first release exists to compare against; deferred until then. |
 
 ## Priority 2 — API and architecture hardening
@@ -50,8 +50,8 @@ fixes, and are listed there with their intended shape.
 | # | Finding | Disposition |
 |---|---|---|
 | 19 | No API lifecycle / stability classification | **Deferred** — pre-1.0; see backlog. |
-| 20 | Action catalog silently replaced; misdocumented ordering | **Fixed.** `register()` rejects duplicates, `replace()` is the explicit override path, `names()` returns a `List` in true registration order. |
-| 21 | Embedded protoc WASM lacks provenance | **Deferred** — reproducible build script + checksum + provenance record; see backlog. |
+| 20 | Action catalog silently replaced; misdocumented ordering | **Fixed.** `register()` rejects duplicates, `replace()` is the explicit override path, `names()` returns a `List` in true registration order, and mutation plus snapshots are synchronized for hosts that install plugins while serving requests. |
+| 21 | Embedded protoc WASM lacks provenance | **Partially fixed.** The exact protobuf4j source/build commit, component versions, rebuild script, and binary SHA-256 are recorded under `codegen/provenance`; `check` enforces the checksum. A fully hermetic toolchain and the release attribution audit remain open. |
 | 22 | No centralized outbound gRPC channel policy | **Deferred** — `ChainRunner.ChannelFactory` is the existing seam to generalize; see backlog. |
 | 23 | Join/shape docs described unimplemented behavior | **Fixed.** `docs/design/join-shapes.md` now states the implemented joiner semantics exactly and marks richer unmatched-entry policies as future options. |
 | 24 | Encryption + vector indexing threat model | **Already documented** (docs/indexing.md names the neighborhood and inversion channels explicitly and treats vectors as confidential material). Policy checks that refuse unsafe sensitive-field vectorization without explicit authorization are deferred. |

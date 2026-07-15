@@ -5,14 +5,17 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.List;
 
 /**
  * A framework-agnostic catalog of {@link ProtoAction}s: one registry of JSON-in/JSON-out verbs,
  * mountable as HTTP endpoints or MCP tools. {@link #list()} is the machine-readable tool
- * manifest; {@link #execute(String, ObjectNode)} is the single dispatch point.
+ * manifest; {@link #execute(String, ObjectNode)} is the single dispatch point. Registration,
+ * replacement, and manifest snapshots are synchronized so a host that installs a plugin while
+ * serving requests cannot corrupt iteration order or expose a partial catalog update. Action
+ * execution itself runs outside that catalog monitor.
  */
 public final class ActionCatalog {
 
@@ -52,7 +55,7 @@ public final class ActionCatalog {
      *         shadowing another action would change behavior by registration order; use
      *         {@link #replace} when overriding is the intent
      */
-    public ActionCatalog register(ProtoAction action) {
+    public synchronized ActionCatalog register(ProtoAction action) {
         String name = Objects.requireNonNull(action, "action").name();
         ProtoAction existing = actions.putIfAbsent(name, action);
         if (existing != null) {
@@ -63,7 +66,7 @@ public final class ActionCatalog {
     }
 
     /** Deliberately replaces (or adds) an action — the explicit override path. */
-    public ActionCatalog replace(ProtoAction action) {
+    public synchronized ActionCatalog replace(ProtoAction action) {
         actions.put(Objects.requireNonNull(action, "action").name(), action);
         return this;
     }
@@ -73,7 +76,7 @@ public final class ActionCatalog {
      *
      * @throws ActionException {@code unknown-action} listing the available names
      */
-    public ProtoAction get(String name) throws ActionException {
+    public synchronized ProtoAction get(String name) throws ActionException {
         ProtoAction action = actions.get(name);
         if (action == null) {
             ObjectNode details = JsonNodeFactory.instance.objectNode();
@@ -89,12 +92,12 @@ public final class ActionCatalog {
     }
 
     /** Registered action names, in registration order. */
-    public List<String> names() {
+    public synchronized List<String> names() {
         return List.copyOf(actions.keySet());
     }
 
     /** The tool manifest: {@code [{name, description, inputSchema}, ...]}. */
-    public ArrayNode list() {
+    public synchronized ArrayNode list() {
         ArrayNode manifest = context.objectMapper().createArrayNode();
         for (ProtoAction action : actions.values()) {
             ObjectNode entry = manifest.addObject();
@@ -107,6 +110,7 @@ public final class ActionCatalog {
 
     /** Dispatches {@code input} to the named action with this catalog's context. */
     public ObjectNode execute(String name, ObjectNode input) throws ActionException {
+        // get() takes the catalog monitor only long enough to resolve a stable action reference.
         ProtoAction action = get(name);
         return action.execute(Inputs.requireEnvelope(input), context);
     }
