@@ -22,6 +22,41 @@ public final class DescriptorMetadata {
         MetadataProto.registerAllExtensions(Objects.requireNonNull(registry, "registry"));
     }
 
+    /**
+     * Materializes annotation-carried JSON names into real {@code json_name}s: the
+     * descriptor's own {@code json_name} does not survive every text round-trip (Wire's
+     * encoder drops it), but the {@code meta.v1} option does — so loaders call this after
+     * parsing a descriptor set (with the extensions registered) and fields regain the
+     * original keys their documents use.
+     */
+    public static com.google.protobuf.DescriptorProtos.FileDescriptorSet materializeJsonNames(
+            com.google.protobuf.DescriptorProtos.FileDescriptorSet set) {
+        var out = set.toBuilder();
+        for (var file : out.getFileBuilderList()) {
+            for (var message : file.getMessageTypeBuilderList()) {
+                materialize(message);
+            }
+        }
+        return out.build();
+    }
+
+    private static void materialize(
+            com.google.protobuf.DescriptorProtos.DescriptorProto.Builder message) {
+        for (var field : message.getFieldBuilderList()) {
+            if (!field.hasJsonName()
+                    && field.getOptions().hasExtension(MetadataProto.field)) {
+                String original = field.getOptions()
+                        .getExtension(MetadataProto.field).getJsonName();
+                if (!original.isEmpty()) {
+                    field.setJsonName(original);
+                }
+            }
+        }
+        for (var nested : message.getNestedTypeBuilderList()) {
+            materialize(nested);
+        }
+    }
+
     public static Optional<FieldMeta> field(FieldDescriptor field) {
         Objects.requireNonNull(field, "field");
         var options = field.getOptions();

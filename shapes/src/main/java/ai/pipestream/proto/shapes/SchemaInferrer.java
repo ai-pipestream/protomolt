@@ -39,13 +39,17 @@ public final class SchemaInferrer {
         }
         DescriptorProto.Builder message = inferMessage(
                 simpleName(fullName), samples, 0);
-        // Import struct.proto only when something actually fell back to Value.
-        boolean usesValue = usesValue(message);
-        return synthesizer.linkSynthetic(fullName, message,
-                usesValue
-                        ? List.of(Value.getDescriptor().getFile())
-                        : List.of(),
-                List.of());
+        // Import only what the shape actually uses: struct.proto for Value fallbacks,
+        // metadata.proto when sanitized keys carry the json_name annotation.
+        List<com.google.protobuf.Descriptors.FileDescriptor> dependencies =
+                new ArrayList<>();
+        if (usesValue(message)) {
+            dependencies.add(Value.getDescriptor().getFile());
+        }
+        if (usesMetaOption(message)) {
+            dependencies.add(ai.pipestream.proto.meta.MetadataProto.getDescriptor());
+        }
+        return synthesizer.linkSynthetic(fullName, message, dependencies, List.of());
     }
 
     private DescriptorProto.Builder inferMessage(String name, List<Struct> samples,
@@ -76,7 +80,14 @@ public final class SchemaInferrer {
                     .setNumber(number++)
                     .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL);
             if (!fieldName.equals(key)) {
+                // Both spellings: the real json_name (used directly by JSON parsers) and
+                // the meta.v1 annotation, which survives text round-trips that drop
+                // json_name and is materialized back by ProtoMolt loaders.
                 field.setJsonName(key);
+                field.getOptionsBuilder().setExtension(
+                        ai.pipestream.proto.meta.MetadataProto.field,
+                        ai.pipestream.proto.meta.FieldMeta.newBuilder()
+                                .setJsonName(key).build());
             }
             applyKind(field, kindOf(entry.getValue()), fieldName, entry.getValue(),
                     message, nestedNames, depth);
@@ -200,6 +211,21 @@ public final class SchemaInferrer {
             candidate = out + "_" + n++;
         }
         return candidate;
+    }
+
+    private static boolean usesMetaOption(DescriptorProto.Builder message) {
+        for (FieldDescriptorProto field : message.getFieldList()) {
+            if (field.getOptions().hasExtension(
+                    ai.pipestream.proto.meta.MetadataProto.field)) {
+                return true;
+            }
+        }
+        for (DescriptorProto.Builder nested : message.getNestedTypeBuilderList()) {
+            if (usesMetaOption(nested)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean usesValue(DescriptorProto.Builder message) {

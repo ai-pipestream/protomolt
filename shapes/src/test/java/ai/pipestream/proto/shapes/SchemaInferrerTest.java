@@ -84,15 +84,26 @@ class SchemaInferrerTest {
                 """;
         var shape = new SchemaInferrer().infer("inferred.v1.Event", List.of(struct(sample)));
 
-        // The emitted source recompiles on its own (no imports needed here).
+        // The emitted source recompiles (the annotation pulls in metadata.proto)...
+        String metadataProto = new String(getClass().getClassLoader()
+                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
+                .readAllBytes());
         var compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "meta")
                 .add(shape.file().getName(), shape.protoSource(), "inferred").build());
-        Descriptor recompiled = compiled.descriptorFor(shape.file().getName()).orElseThrow()
+        // ...and although Wire drops the descriptor's own json_name from source, the
+        // meta.v1 annotation survives and materializes it back — the full text
+        // round-trip keeps the original key.
+        var restored = ai.pipestream.proto.meta.DescriptorMetadata.materializeJsonNames(
+                com.google.protobuf.DescriptorProtos.FileDescriptorSet.parseFrom(
+                        compiled.descriptorSet().toByteArray(), metaExtensions()));
+        Descriptor recompiled = relink(restored, shape.file().getName())
                 .findMessageTypeByName("Event");
-        // Wire's encoder drops json_name on text recompilation; the linked descriptor
-        // set (the registrable artifact) carries it — asserted below on the shape.
-        assertThat(recompiled.findFieldByName("user_name")).isNotNull();
-        assertThat(shape.protoSource()).contains("json_name = \"user-name\"");
+        assertThat(recompiled.findFieldByName("user_name").getJsonName())
+                .isEqualTo("user-name");
+        assertThat(shape.protoSource())
+                .contains("json_name = \"user-name\"")
+                .contains("(ai.pipestream.proto.meta.v1.field) = {json_name: \"user-name\"}");
 
         // The very sample it was inferred from parses into the inferred type.
         DynamicMessage.Builder message = DynamicMessage.newBuilder(shape.type());
@@ -105,6 +116,44 @@ class SchemaInferrerTest {
         assertThat(address.getField(address.getDescriptorForType().findFieldByName("city")))
                 .isEqualTo("Springfield");
         assertThat(built.getField(shape.type().findFieldByName("user_name"))).isEqualTo("pat");
+    }
+
+    private static com.google.protobuf.ExtensionRegistry metaExtensions() {
+        var registry = com.google.protobuf.ExtensionRegistry.newInstance();
+        ai.pipestream.proto.meta.DescriptorMetadata.registerExtensions(registry);
+        return registry;
+    }
+
+    private static com.google.protobuf.Descriptors.FileDescriptor relink(
+            com.google.protobuf.DescriptorProtos.FileDescriptorSet set, String name)
+            throws Exception {
+        java.util.Map<String, com.google.protobuf.DescriptorProtos.FileDescriptorProto> byName =
+                new java.util.LinkedHashMap<>();
+        set.getFileList().forEach(proto -> byName.put(proto.getName(), proto));
+        java.util.Map<String, com.google.protobuf.Descriptors.FileDescriptor> built =
+                new java.util.LinkedHashMap<>();
+        for (var proto : set.getFileList()) {
+            build(proto, byName, built);
+        }
+        return built.get(name);
+    }
+
+    private static com.google.protobuf.Descriptors.FileDescriptor build(
+            com.google.protobuf.DescriptorProtos.FileDescriptorProto proto,
+            java.util.Map<String, com.google.protobuf.DescriptorProtos.FileDescriptorProto> byName,
+            java.util.Map<String, com.google.protobuf.Descriptors.FileDescriptor> built)
+            throws Exception {
+        var existing = built.get(proto.getName());
+        if (existing != null) {
+            return existing;
+        }
+        var deps = new com.google.protobuf.Descriptors.FileDescriptor[proto.getDependencyCount()];
+        for (int i = 0; i < proto.getDependencyCount(); i++) {
+            deps[i] = build(byName.get(proto.getDependency(i)), byName, built);
+        }
+        var file = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(proto, deps);
+        built.put(proto.getName(), file);
+        return file;
     }
 
     @Test

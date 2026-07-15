@@ -189,7 +189,10 @@ public final class SchemaResolver {
 
     private static FileDescriptorSet reparse(byte[] bytes, String pointer) throws ActionException {
         try {
-            return FileDescriptorSet.parseFrom(bytes, EXTENSIONS);
+            // Materializing meta.v1 json_name annotations restores original JSON keys
+            // that source-level round-trips drop from the descriptor's own json_name.
+            return DescriptorMetadata.materializeJsonNames(
+                    FileDescriptorSet.parseFrom(bytes, EXTENSIONS));
         } catch (InvalidProtocolBufferException e) {
             throw Inputs.invalidInput(
                     "Not a serialized google.protobuf.FileDescriptorSet: " + e.getMessage(), pointer);

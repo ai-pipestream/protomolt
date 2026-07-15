@@ -55,8 +55,8 @@ final class GrpcConnectorSupport {
             ExtensionRegistry extensions = ExtensionRegistry.newInstance();
             ValidationResult.registerExtensions(extensions);
             DescriptorMetadata.registerExtensions(extensions);
-            set = FileDescriptorSet.parseFrom(
-                    Base64.getDecoder().decode(descriptorSetBase64), extensions);
+            set = DescriptorMetadata.materializeJsonNames(FileDescriptorSet.parseFrom(
+                    Base64.getDecoder().decode(descriptorSetBase64), extensions));
         } catch (Exception e) {
             throw new ConnectException("'schema.descriptor.set.base64' is not a base64 "
                     + "serialized FileDescriptorSet: " + e.getMessage(), e);

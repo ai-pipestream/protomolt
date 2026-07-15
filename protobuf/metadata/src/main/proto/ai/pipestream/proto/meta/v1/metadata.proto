@@ -23,6 +23,11 @@ message FieldMeta {
   string sensitivity = 4;
   // Free-form labels for routing, policy, and extraction.
   map<string, string> labels = 5;
+  // The original JSON key this field was derived from (e.g. by infer-schema
+  // when sanitizing "user-name" to user_name). Unlike the descriptor's
+  // json_name, this survives every text round-trip; ProtoMolt loaders
+  // materialize it back into json_name when the descriptor lacks one.
+  string json_name = 6;
 }
 
 message MessageMeta {

@@ -23,20 +23,26 @@ public class RedactMessage<R extends ConnectRecord<R>> implements Transformation
 
     public static final String CLASSES = "classes";
     public static final String STRATEGY = "strategy";
+    public static final String KEY = "key";
 
     public static final ConfigDef CONFIG_DEF = ValueCodec.baseConfigDef()
             .define(CLASSES, ConfigDef.Type.LIST, List.of("pii"),
                     ConfigDef.Importance.HIGH,
                     "Sensitivity classes to mask, e.g. 'pii,secret'.")
             .define(STRATEGY, ConfigDef.Type.STRING, "remove",
-                    ConfigDef.CaseInsensitiveValidString.in("remove", "redact"),
+                    ConfigDef.CaseInsensitiveValidString.in(
+                            "remove", "redact", "encrypt", "decrypt"),
                     ConfigDef.Importance.MEDIUM,
-                    "'remove' clears masked fields; 'redact' turns strings into *** and "
-                            + "clears everything else.");
+                    "'remove' clears masked fields; 'redact' turns strings into ***; "
+                            + "'encrypt' seals string/bytes with AES-GCM (reversible only "
+                            + "with the key) and clears other types; 'decrypt' reverses.")
+            .define(KEY, ConfigDef.Type.PASSWORD, null, ConfigDef.Importance.MEDIUM,
+                    "Base64 AES key (16/24/32 bytes); required for encrypt/decrypt.");
 
     private ValueCodec codec;
     private Set<String> classes;
     private SensitivityMasker.Strategy strategy;
+    private byte[] key;
 
     @Override
     public void configure(Map<String, ?> props) {
@@ -45,6 +51,13 @@ public class RedactMessage<R extends ConnectRecord<R>> implements Transformation
         classes = new LinkedHashSet<>(config.getList(CLASSES));
         strategy = SensitivityMasker.Strategy.of(
                 config.getString(STRATEGY).toUpperCase(Locale.ROOT));
+        var password = config.getPassword(KEY);
+        key = password == null ? null : java.util.Base64.getDecoder().decode(password.value());
+        if ((strategy == SensitivityMasker.Strategy.ENCRYPT
+                || strategy == SensitivityMasker.Strategy.DECRYPT) && key == null) {
+            throw new org.apache.kafka.common.config.ConfigException(
+                    "'" + KEY + "' is required for strategy " + strategy);
+        }
     }
 
     @Override
@@ -53,7 +66,8 @@ public class RedactMessage<R extends ConnectRecord<R>> implements Transformation
             return record;
         }
         SensitivityMasker.MaskResult masked = SensitivityMasker.mask(
-                codec.decode(record.value(), "topic " + record.topic()), classes, strategy);
+                codec.decode(record.value(), "topic " + record.topic()), classes, strategy,
+                key);
         if (masked.maskedPaths().isEmpty()) {
             return record;
         }

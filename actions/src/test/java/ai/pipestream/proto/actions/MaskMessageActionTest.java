@@ -58,6 +58,32 @@ class MaskMessageActionTest {
     }
 
     @Test
+    void encryptRoundTripsWithTheKeyAndOnlyTheKey() throws Exception {
+        String key = java.util.Base64.getEncoder().encodeToString(new byte[16]);
+        ObjectNode sealed = catalog.execute("mask-message", maskInput(
+                "\"classes\": [\"pii\"], \"strategy\": \"encrypt\", \"key\": \"" + key + "\""));
+        String ciphertext = sealed.get("message").get("email").asText();
+        assertThat(ciphertext).isNotEqualTo("pat@example.com").isNotEmpty();
+
+        // Decrypt with the same key restores the original...
+        ObjectNode input = maskInput(
+                "\"classes\": [\"pii\"], \"strategy\": \"decrypt\", \"key\": \"" + key + "\"");
+        ((ObjectNode) input.get("message")).setAll((ObjectNode) sealed.get("message"));
+        ObjectNode opened = catalog.execute("mask-message", input);
+        assertThat(opened.get("message").get("email").asText()).isEqualTo("pat@example.com");
+
+        // ...and a wrong key fails loudly, never silently.
+        String wrong = java.util.Base64.getEncoder().encodeToString(
+                "0123456789abcdef".getBytes());
+        ObjectNode tampered = maskInput(
+                "\"classes\": [\"pii\"], \"strategy\": \"decrypt\", \"key\": \"" + wrong + "\"");
+        ((ObjectNode) tampered.get("message")).setAll((ObjectNode) sealed.get("message"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        catalog.execute("mask-message", tampered))
+                .hasMessageContaining("wrong key or tampered");
+    }
+
+    @Test
     void redactMarksStringsVisibly() throws Exception {
         ObjectNode result = catalog.execute("mask-message",
                 maskInput("\"classes\": [\"pii\", \"secret\"], \"strategy\": \"redact\""));

@@ -26,10 +26,11 @@ final class MaskMessageAction implements ProtoAction {
     public String description() {
         return "Masks fields whose declared sensitivity class "
                 + "(ai.pipestream.proto.meta.v1.field.sensitivity) is in 'classes' — e.g. "
-                + "pii, secret. Strategy 'remove' clears them; 'redact' turns strings into "
-                + "*** (visibly masked) and clears everything else. Recurses through nested "
-                + "and repeated messages. Returns the masked message and which field paths "
-                + "were touched.";
+                + "pii, secret. Strategies: 'remove' clears; 'redact' turns strings into "
+                + "***; 'encrypt' seals string/bytes values with AES-GCM (reversible only "
+                + "with the same key) and clears other types; 'decrypt' reverses encrypt "
+                + "and fails loudly on a wrong key. Recurses through nested and repeated "
+                + "messages. Returns the masked message and which field paths were touched.";
     }
 
     @Override
@@ -48,7 +49,12 @@ final class MaskMessageAction implements ProtoAction {
         classes.putObject("items").put("type", "string");
         properties.putObject("strategy")
                 .put("type", "string")
-                .put("description", "'remove' (default) or 'redact'.");
+                .put("description", "'remove' (default), 'redact', 'encrypt', or 'decrypt'.");
+        properties.putObject("key")
+                .put("type", "string")
+                .put("description", "Base64 AES key (16/24/32 bytes), required for "
+                        + "encrypt/decrypt. The caller's key — never stored, never in the "
+                        + "schema.");
         ActionJson.required(schema, "schema", "message", "classes");
         schema.put("additionalProperties", false);
         return schema;
@@ -72,8 +78,17 @@ final class MaskMessageAction implements ProtoAction {
                     ? SensitivityMasker.Strategy.REMOVE
                     : SensitivityMasker.Strategy.of(strategyName);
         } catch (IllegalArgumentException e) {
-            throw Inputs.invalidInput("'strategy' must be 'remove' or 'redact'; got '"
-                    + strategyName + "'", "/strategy");
+            throw Inputs.invalidInput("'strategy' must be remove, redact, encrypt, or "
+                    + "decrypt; got '" + strategyName + "'", "/strategy");
+        }
+        byte[] key = null;
+        String keyText = Inputs.optionalString(input, "key");
+        if (keyText != null) {
+            try {
+                key = java.util.Base64.getDecoder().decode(keyText);
+            } catch (IllegalArgumentException e) {
+                throw Inputs.invalidInput("'key' must be base64", "/key");
+            }
         }
         DynamicMessage message;
         try {
@@ -82,8 +97,12 @@ final class MaskMessageAction implements ProtoAction {
             throw Inputs.invalidInput("Message is not valid proto3 JSON for "
                     + descriptor.getFullName(), "/message");
         }
-        SensitivityMasker.MaskResult result =
-                SensitivityMasker.mask(message, classes, strategy);
+        SensitivityMasker.MaskResult result;
+        try {
+            result = SensitivityMasker.mask(message, classes, strategy, key);
+        } catch (IllegalArgumentException e) {
+            throw Inputs.invalidInput(e.getMessage(), "/key");
+        }
         ObjectNode output = context.objectMapper().createObjectNode();
         output.set("message", ActionJson.messageToJson(result.message(), context));
         ArrayNode masked = output.putArray("maskedFields");

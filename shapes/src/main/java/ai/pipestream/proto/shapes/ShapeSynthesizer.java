@@ -296,10 +296,25 @@ public final class ShapeSynthesizer {
             }
             out.append(typeKeyword(field)).append(' ').append(field.getName())
                     .append(" = ").append(field.getNumber());
-            // json_name is set only when a sanitized name must round-trip the original.
+            // json_name is set only when a sanitized name must round-trip the original;
+            // the meta.v1 annotation carries the same value through compilers that drop
+            // json_name from source (ProtoMolt loaders materialize it back).
+            java.util.List<String> brackets = new java.util.ArrayList<>();
             if (field.toProto().hasJsonName()) {
-                out.append(" [json_name = \"")
-                        .append(field.toProto().getJsonName()).append("\"]");
+                brackets.add("json_name = \"" + field.toProto().getJsonName() + "\"");
+            }
+            if (field.toProto().getOptions().hasExtension(
+                    ai.pipestream.proto.meta.MetadataProto.field)) {
+                String original = field.toProto().getOptions()
+                        .getExtension(ai.pipestream.proto.meta.MetadataProto.field)
+                        .getJsonName();
+                if (!original.isEmpty()) {
+                    brackets.add("(ai.pipestream.proto.meta.v1.field) = {json_name: \""
+                            + original + "\"}");
+                }
+            }
+            if (!brackets.isEmpty()) {
+                out.append(" [").append(String.join(", ", brackets)).append(']');
             }
             out.append(";\n");
         }

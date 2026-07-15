@@ -2,6 +2,7 @@ description = 'Joins, unions, and derived shapes: multi-source mapping scopes an
 
 dependencies {
     api project(':protomolt-mapper-cel')
+    implementation project(':protomolt-protobuf-metadata')
     api libs.protobuf.java
 
     testImplementation platform(libs.junit.bom)
