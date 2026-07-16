@@ -38,6 +38,13 @@ would, with no name-mapping fallback in the read path. (That id-stamping seam,
 `ProtoParquetSchemas.FieldIdResolver`, lives in the Parquet emitter and is
 usable by any other table format.)
 
+Each committed file carries **column metrics** — per-field lower and upper
+bounds, value counts, and null counts, keyed by those same stamped field ids —
+so query engines skip files that cannot match a predicate. The metrics are read
+from the Parquet footer already in memory, at the Thrift level, so the read
+stays **Hadoop-free** the way the emitter's write path is; a classloader-isolation
+test fails the build if it ever loads a Hadoop class.
+
 The round trip is enforced by test: files written here are read back through
 *Iceberg's* generic reader — nested structs, lists, maps, timestamps, JSON
 columns — so drift between the emitter's shapes and what Iceberg readers
@@ -73,7 +80,7 @@ to `HadoopFileIO`, which relies on `Subject.getSubject`, removed in JDK 24+
 ## Boundaries
 
 - One data file per `append` call; size your batches accordingly. Partitioned
-  tables, column-level metrics, and equality deletes are later phases.
+  tables and equality deletes are later phases.
 - Row data goes only where the catalog and its `FileIO` say — this module
   never picks a storage location, matching the toolkit's disk policy.
 - `iceberg-core` is the one heavyweight dependency, confined to this leaf
