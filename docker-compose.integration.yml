@@ -97,9 +97,14 @@ services:
     ports:
       - "19002:9001"
     environment:
-      GRAVITINO_ICEBERG_REST_WAREHOUSE: file:///tmp/protomolt-iceberg-warehouse
+      # Its own warehouse tree: sharing one with the reference catalog means two services
+      # (each its own container user) creating entries under the same root, which is a
+      # portability trap the two suites do not need to take.
+      GRAVITINO_ICEBERG_REST_WAREHOUSE: file:///tmp/protomolt-gravitino-warehouse
+      # A test fixture does not need the 1 GB default heap; the CI stack is already crowded.
+      GRAVITINO_MEM: "-Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m"
     volumes:
-      - /tmp/protomolt-iceberg-warehouse:/tmp/protomolt-iceberg-warehouse
+      - /tmp/protomolt-gravitino-warehouse:/tmp/protomolt-gravitino-warehouse
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9001/iceberg/v1/config || exit 1"]
       interval: 5s

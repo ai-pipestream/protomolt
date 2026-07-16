@@ -112,10 +112,13 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare the shared Iceberg warehouse volume
+      - name: Prepare the shared Iceberg warehouse volumes
         # The catalog container (uid 1000) and the test JVM (the runner user) share
-        # this tree; both must be able to create entries under it.
-        run: mkdir -p /tmp/protomolt-iceberg-warehouse/client && chmod -R 777 /tmp/protomolt-iceberg-warehouse
+        # these trees; both must be able to create entries under them. Gravitino gets
+        # its own so the two catalogs never contend for one root.
+        run: |
+          mkdir -p /tmp/protomolt-iceberg-warehouse/client /tmp/protomolt-gravitino-warehouse/client
+          chmod -R 777 /tmp/protomolt-iceberg-warehouse /tmp/protomolt-gravitino-warehouse
 
       - name: Start registries
         run: docker compose -f docker-compose.integration.yml up -d --wait
@@ -144,3 +147,12 @@ jobs:
       - name: Registry logs on failure
         if: failure()
         run: docker compose -f docker-compose.integration.yml logs
+
+      - name: Gravitino server log on failure
+        if: failure()
+        # Gravitino logs the server to a file rather than stdout, so `compose logs` shows
+        # only its start script; without this a failure there is undiagnosable from CI.
+        continue-on-error: true
+        run: |
+          docker compose -f docker-compose.integration.yml exec -T gravitino-iceberg-rest \
+            sh -c 'tail -200 logs/*.log' || true

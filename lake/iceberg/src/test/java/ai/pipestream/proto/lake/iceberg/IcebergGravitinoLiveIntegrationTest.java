@@ -117,7 +117,7 @@ class IcebergGravitinoLiveIntegrationTest {
 
         // A client-owned location: the catalog container and this JVM run as different users on
         // CI, and whoever owns the tree must be the data writer.
-        Path base = Path.of("/tmp/protomolt-iceberg-warehouse/client/gravitino-" + name);
+        Path base = Path.of("/tmp/protomolt-gravitino-warehouse/client/" + name);
         for (String dir : new String[]{"", "metadata", "data"}) {
             Path path = dir.isEmpty() ? base : base.resolve(dir);
             Files.createDirectories(path);
