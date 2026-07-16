@@ -1,0 +1,34 @@
+description = 'Kafka Connect Iceberg sink: topic records land as Iceberg table snapshots through ProtoMolt\'s descriptor-driven Parquet emitter - no generated stubs, no gRPC, no Hadoop'
+
+dependencies {
+    api project(':protomolt-iceberg')
+
+    // The Connect worker provides the framework at runtime; plugins must not bundle it.
+    compileOnly libs.kafka.connect.api
+
+    implementation libs.iceberg.core   // CatalogUtil.buildIcebergCatalog
+    implementation libs.slf4j.api
+    // Linking a descriptor set with the metadata extensions readable (partition hints,
+    // json_name), and decoding proto3 JSON record values.
+    implementation project(':protomolt-protobuf-metadata')
+    implementation libs.protobuf.java.util
+
+    testImplementation libs.kafka.connect.api
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.iceberg.data
+    testImplementation libs.iceberg.parquet
+    // iceberg-data's format registry insists on the ORC model class even for Parquet reads.
+    testRuntimeOnly 'org.apache.iceberg:iceberg-orc:1.11.0'
+    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
+}
+
+// One plugin.path directory: the connector jar plus its runtime dependencies
+// (the Connect framework itself is compileOnly and stays out).
+tasks.register('connectPluginZip', Zip) {
+    description = 'Packages the Kafka Connect Iceberg plugin as a plugin.path-ready zip'
+    group = 'distribution'
+    archiveBaseName = 'protomolt-connect-iceberg-plugin'
+    from tasks.named('jar')
+    from configurations.runtimeClasspath
+    into 'protomolt-connect-iceberg'
+}

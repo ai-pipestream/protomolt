@@ -26,6 +26,7 @@ def supportedModules = [
         'protomolt-grpc-service',
         'protomolt-serve',
         'protomolt-connect',
+        'protomolt-connect-iceberg',
         'protomolt-codegen',
         'protomolt-registry-server',
         'protomolt-jsonschema',

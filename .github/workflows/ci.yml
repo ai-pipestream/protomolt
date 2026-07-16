@@ -124,7 +124,7 @@ jobs:
         run: >
           ./gradlew :protomolt-schema-apicurio:test :protomolt-schema-confluent:test
           :protomolt-index-solr:test :protomolt-index-opensearch:test
-          :protomolt-iceberg:test :protomolt-iceberg-s3:test
+          :protomolt-iceberg:test :protomolt-iceberg-s3:test :protomolt-connect-iceberg:test
           --rerun-tasks --console=plain
 
       - name: Fail if any integration suite skipped
@@ -136,6 +136,7 @@ jobs:
             index/opensearch/build/test-results/test/TEST-*Integration*.xml \
             lake/iceberg/build/test-results/test/TEST-*Integration*.xml \
             lake/iceberg-s3/build/test-results/test/TEST-*Integration*.xml \
+            kafka/connect-iceberg/build/test-results/test/TEST-*Integration*.xml \
             | grep -o '[0-9]*' | paste -sd+ | bc)
           echo "skipped integration tests: $skipped"
           test "$skipped" -eq 0

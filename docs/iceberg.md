@@ -127,6 +127,37 @@ catalog whose warehouse is on it, both in `docker-compose.integration.yml` — o
 write, one read back through Iceberg, proving the whole lane on an object store
 rather than a filesystem.
 
+## Streaming in with Kafka Connect
+
+`protomolt-connect-iceberg` is a Kafka Connect sink: topic records land as Iceberg
+table rows, committed as snapshots through the same descriptor-driven emitter, with
+no generated stubs and no gRPC. Each `put` batch is one snapshot, so offsets advance
+only after the commit; delivery is at-least-once (a redelivered batch appends again,
+and Iceberg does not deduplicate).
+
+```properties
+connector.class=ai.pipestream.proto.kafka.connect.iceberg.IcebergSinkConnector
+topics=orders
+value.converter=org.apache.kafka.connect.converters.ByteArrayConverter
+schema.descriptor.set.base64=<base64 FileDescriptorSet>
+message.type=shop.v1.Order
+value.format=protobuf                        # or confluent, or json
+iceberg.table=lake.orders
+iceberg.partition=at:day,region:identity     # optional; applied only on create
+iceberg.catalog.name=lake
+iceberg.catalog.type=rest
+iceberg.catalog.uri=http://iceberg-rest:8181
+iceberg.catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO   # any catalog + FileIO
+```
+
+The descriptor set declares the row message (from `compile`/`reflect` or a registry
+endpoint) and `message.type` selects it; record values decode as raw `protobuf`
+bytes, `confluent` wire format, or proto3 `json`. Any catalog and `FileIO` Iceberg
+supports work through the `iceberg.catalog.*` passthrough, so the object-store
+escape hatch above applies here too. Undecodable values are `DataException`s the
+worker routes by its error tolerance; a failed commit is retriable, so the
+framework redelivers.
+
 ## Boundaries
 
 - One data file per partition per `append` call; size your batches accordingly.
