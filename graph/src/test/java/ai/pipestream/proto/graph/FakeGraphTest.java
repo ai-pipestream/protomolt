@@ -168,11 +168,7 @@ class FakeGraphTest {
 
     private static void respond(HttpExchange exchange, int status, String body)
             throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("content-type", "application/json");
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.close();
+        FakeGraphSupport.respond(exchange, status, body);
     }
 
     private static GraphClient client(String token) {
@@ -251,6 +247,9 @@ class FakeGraphTest {
                     assertThat(e.status()).isEqualTo(403);
                     assertThat(e.code()).isEqualTo("accessDenied");
                     assertThat(e.getMessage()).contains("Insufficient privileges");
+                    // The verbose probe lane prints this raw body so a tenant-provisioning
+                    // failure can be told apart from a genuine permissions denial.
+                    assertThat(e.body()).contains("accessDenied").contains("Insufficient privileges");
                 });
     }
 }

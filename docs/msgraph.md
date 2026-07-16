@@ -73,6 +73,39 @@ The `listItemFields` payload is exactly the data-rich JSON `infer-schema`
 reverse-engineers into a proto — SharePoint metadata becomes a typed,
 validatable, mappable message in one verb call.
 
+## Read to a typed schema
+
+`listItemFieldsOnly` returns just the `fields` object, ready to hand straight to
+`infer-schema` as one sample — read a folder's documents, infer one message from
+their columns:
+
+```java
+List<Struct> samples = new ArrayList<>();
+for (JsonNode child : files.children(driveId, "/Shared Documents").path("value")) {
+    ObjectNode fields = files.listItemFieldsOnly(driveId, child.path("id").asText());
+    if (!fields.isEmpty()) {
+        Struct.Builder sample = Struct.newBuilder();
+        JsonFormat.parser().merge(fields.toString(), sample);
+        samples.add(sample.build());
+    }
+}
+var shape = new SchemaInferrer().infer("sharepoint.v1.Documents", samples);
+System.out.println(shape.protoSource());
+```
+
+Integer columns become `int64`, multi-choice columns `repeated`, person and
+lookup columns nested messages; the exact SharePoint column names are preserved
+as `json_name`, so the inferred schema round-trips the very documents it was
+inferred from. The inferred message feeds back into `GraphSchemas.connectionSchema`
+to register the connection — SharePoint metadata in, a search schema out.
+
+The runnable sample does the whole live round trip:
+
+```shell
+./gradlew -q :samples:runGraphInferSchema \
+    -Ptenant=<tenant-id> -Pclient=<app-id> -Pfolder="/Shared Documents"
+```
+
 ## The connectors lane (agentless)
 
 ```java

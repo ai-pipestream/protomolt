@@ -27,11 +27,17 @@ public final class GraphClient {
     public static final class GraphApiException extends IOException {
         private final int status;
         private final String code;
+        private final String body;
 
         GraphApiException(int status, String code, String message) {
+            this(status, code, message, "");
+        }
+
+        GraphApiException(int status, String code, String message, String body) {
             super("Graph " + status + (code.isEmpty() ? "" : " (" + code + ")") + ": " + message);
             this.status = status;
             this.code = code;
+            this.body = body;
         }
 
         public int status() {
@@ -40,6 +46,11 @@ public final class GraphClient {
 
         public String code() {
             return code;
+        }
+
+        /** Graph's full error response body; {@code innerError} often names the real cause. */
+        public String body() {
+            return body;
         }
     }
 
@@ -138,7 +149,8 @@ public final class GraphClient {
             }
             if (status.equalsIgnoreCase("failed")) {
                 throw new GraphApiException(200, "operationFailed",
-                        operation.path("error").path("message").asText("operation failed"));
+                        operation.path("error").path("message").asText("operation failed"),
+                        operation.toString());
             }
             if (System.nanoTime() >= deadline) {
                 throw new GraphApiException(200, "operationTimeout",
@@ -191,7 +203,7 @@ public final class GraphClient {
         } catch (Exception ignored) {
             // not JSON; keep the raw body as the message
         }
-        return new GraphApiException(status, code, message);
+        return new GraphApiException(status, code, message, body == null ? "" : body);
     }
 
     static ObjectNode object() {

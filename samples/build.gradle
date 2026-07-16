@@ -3,6 +3,10 @@ description = 'Examples for Pipestream protobuf tools'
 dependencies {
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-server-jdk')
+    // Live SharePoint read -> infer-schema sample.
+    implementation project(':protomolt-msgraph')
+    implementation project(':protomolt-shapes')
+    implementation libs.protobuf.java.util
 }
 
 tasks.register('runCelMapping', JavaExec) {
@@ -18,4 +22,21 @@ tasks.register('runJsonRestServer', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'ai.pipestream.proto.samples.JsonRestServerSample'
     args = ['8080', 'secret']
+}
+
+tasks.register('runGraphInferSchema', JavaExec) {
+    group = 'application'
+    description = 'Live SharePoint read -> infer-schema: -Ptenant=... -Pclient=... [-Pfolder=...] [-Ptype=...] [-Plimit=...]'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'ai.pipestream.proto.samples.GraphInferSchemaSample'
+    doFirst {
+        def probeArgs = []
+        ['tenant', 'client', 'folder', 'type', 'limit'].each { name ->
+            def value = findProperty(name)
+            if (value) {
+                probeArgs += ["--${name}".toString(), value.toString()]
+            }
+        }
+        args probeArgs
+    }
 }

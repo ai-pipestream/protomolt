@@ -7,6 +7,9 @@ dependencies {
     implementation libs.jackson.databind
 
     testImplementation project(':protomolt-proto-sources')
+    // The read -> infer-schema demo: SharePoint list-item JSON becomes a typed proto.
+    testImplementation project(':protomolt-shapes')
+    testImplementation libs.protobuf.java.util
 }
 
 tasks.register('graphProbe', JavaExec) {
@@ -21,6 +24,10 @@ tasks.register('graphProbe', JavaExec) {
             if (value) {
                 probeArgs += ["--${name}".toString(), value.toString()]
             }
+        }
+        def verbose = findProperty('verbose')
+        if (verbose != null && !verbose.toString().equalsIgnoreCase('false')) {
+            probeArgs += '--verbose'
         }
         args probeArgs
     }

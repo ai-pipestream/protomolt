@@ -1,6 +1,7 @@
 package ai.pipestream.proto.graph;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
@@ -87,6 +88,27 @@ public final class GraphFiles {
             throws IOException, InterruptedException {
         return graph.get("/drives/" + driveId + "/items/" + itemId
                 + "/listItem?$expand=fields");
+    }
+
+    /**
+     * Just the list-item columns behind a document — the {@code fields} object out of
+     * {@link #listItemFields}, ready to hand straight to {@code infer-schema} as one sample.
+     * Returns an empty object when the item has no list item (a personal-OneDrive file that
+     * belongs to no document library), so a caller can sample a folder without null checks.
+     */
+    public ObjectNode listItemFieldsOnly(String driveId, String itemId)
+            throws IOException, InterruptedException {
+        JsonNode fields;
+        try {
+            fields = listItemFields(driveId, itemId).path("fields");
+        } catch (GraphClient.GraphApiException e) {
+            if (e.status() == 404) {
+                // A file with no backing list item (a plain personal-OneDrive file): no columns.
+                return JsonNodeFactory.instance.objectNode();
+            }
+            throw e;
+        }
+        return fields.isObject() ? (ObjectNode) fields : JsonNodeFactory.instance.objectNode();
     }
 
     /** Patches list-item columns; {@code fields} holds exactly the columns to change. */
