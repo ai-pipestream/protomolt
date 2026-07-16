@@ -127,6 +127,25 @@ catalog whose warehouse is on it, both in `docker-compose.integration.yml` — o
 write, one read back through Iceberg, proving the whole lane on an object store
 rather than a filesystem.
 
+## Apache Gravitino
+
+Because the sink speaks the Iceberg REST spec and nothing else, any catalog that
+implements it works — including [Apache Gravitino](https://gravitino.apache.org),
+whose Iceberg REST service turns a federated metadata lake into a catalog:
+
+```java
+catalog.initialize("gravitino", Map.of(
+        CatalogProperties.URI, "http://gravitino:9001/iceberg",
+        CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
+```
+
+That is the whole integration — no module, no adapter, no code path of its own.
+Gravitino serves the endpoint under `/iceberg` rather than the root, and its
+catalog backend defaults to `memory`, which makes it a stateless fixture.
+`IcebergGravitinoLiveIntegrationTest` runs the same `ensureTable`/`append` against
+the `gravitino-iceberg-rest` service in the integration stack and reads the rows
+back, so the interop is a test rather than a claim.
+
 ## Streaming in with Kafka Connect
 
 `protomolt-connect-iceberg` is a Kafka Connect sink: topic records land as Iceberg

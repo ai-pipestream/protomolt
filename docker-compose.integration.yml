@@ -5,6 +5,7 @@
 # Confluent Schema Registry: http://localhost:18781
 # Iceberg REST catalog:      http://localhost:18181
 # Iceberg REST catalog (S3):  http://localhost:18182  (warehouse on RustFS)
+# Gravitino Iceberg REST:    http://localhost:19002/iceberg
 # RustFS (S3 API):           http://localhost:19000
 services:
   apicurio:
@@ -86,6 +87,47 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+
+  # Apache Gravitino's Iceberg REST catalog service: the same lake lane pointed at a real
+  # metadata lake instead of the reference fixture. The catalog backend defaults to memory,
+  # which keeps the fixture stateless. Note the endpoint lives under /iceberg, not the root.
+  #
+  # The entrypoint drops one jar before starting, and the suite does not run without it.
+  # Gravitino 1.3.0 launches with a literal `libs/*` on the classpath, and the JVM expands
+  # that glob in an order it explicitly leaves unspecified: in practice, the order the
+  # filesystem lists the directory in. Two jars in libs/ carry an unrelocated
+  # com/fasterxml/jackson/core/util/BufferRecycler: jackson-core 2.21.3, and the aliyun
+  # bundle, which shades jackson-core 2.15.2 without relocating it. When the bundle wins the
+  # glob, jackson-databind 2.21.3 calls BufferRecycler.releaseToPool, which 2.15.2 does not
+  # have, and every createNamespace dies inside the event listener with a NoSuchMethodError.
+  # Which jar wins is a property of the host: jackson-core wins on a dev box and the bundle
+  # wins on a GitHub runner, so this failed only in CI. Removing the bundle leaves exactly
+  # one copy of the class, so the order stops deciding anything. This lane is file:// only,
+  # so the Aliyun OSS bundle is dead weight regardless.
+  gravitino-iceberg-rest:
+    image: apache/gravitino-iceberg-rest:1.3.0
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        rm -f /opt/gravitino-iceberg-rest-server/libs/gravitino-iceberg-aliyun-bundle-*.jar &&
+        exec /opt/gravitino-iceberg-rest-server/bin/start-iceberg-rest-server.sh
+    ports:
+      - "19002:9001"
+    environment:
+      # Its own warehouse tree: sharing one with the reference catalog means two services
+      # (each its own container user) creating entries under the same root, which is a
+      # portability trap the two suites do not need to take.
+      GRAVITINO_ICEBERG_REST_WAREHOUSE: file:///tmp/protomolt-gravitino-warehouse
+      # A test fixture does not need the 1 GB default heap; the CI stack is already crowded.
+      GRAVITINO_MEM: "-Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m"
+    volumes:
+      - /tmp/protomolt-gravitino-warehouse:/tmp/protomolt-gravitino-warehouse
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9001/iceberg/v1/config || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
 
   # RustFS: a fast, Apache-2.0, S3-compatible object store (a MinIO replacement) that
   # backs the S3FileIO escape-hatch suite. Single ephemeral volume - CI data is thrown
