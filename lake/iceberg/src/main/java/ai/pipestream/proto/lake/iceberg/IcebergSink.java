@@ -7,6 +7,7 @@ import com.google.protobuf.Message;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
@@ -76,9 +77,11 @@ public final class IcebergSink {
     }
 
     /**
-     * Appends one batch as one data file and commits the snapshot.
+     * Appends one batch as one data file and commits the snapshot. The data file carries
+     * column metrics (bounds, value and null counts) read from the Parquet footer, so query
+     * engines can prune it against predicates.
      *
-     * @return the committed data file (path, size, record count)
+     * @return the committed data file (path, size, record count, column metrics)
      */
     public static DataFile append(Table table, Descriptor descriptor,
                                   List<? extends Message> messages) throws IOException {
@@ -100,11 +103,13 @@ public final class IcebergSink {
             out.write(parquet);
         }
 
+        // Metrics come from the footer's own row count and per-column statistics; the record
+        // count they carry is authoritative, so it is not set separately.
         DataFile dataFile = DataFiles.builder(table.spec())
                 .withPath(location)
                 .withFormat(FileFormat.PARQUET)
                 .withFileSizeInBytes(parquet.length)
-                .withRecordCount(messages.size())
+                .withMetrics(IcebergMetrics.forParquet(parquet, MetricsConfig.forTable(table)))
                 .build();
         table.newAppend().appendFile(dataFile).commit();
         return dataFile;

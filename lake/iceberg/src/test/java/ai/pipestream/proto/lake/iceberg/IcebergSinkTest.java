@@ -14,6 +14,8 @@ import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.types.Conversions;
+import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -147,6 +149,27 @@ class IcebergSinkTest {
         assertThat(origin.getField("port")).isEqualTo(9001);
         assertThat(row.getField("at")).hasToString("2023-11-14T22:13:21Z");
         assertThat((String) row.getField("extra")).contains("\"origin\":\"probe\"");
+    }
+
+    @Test
+    void appendStampsColumnMetricsKeyedByFieldId() throws Exception {
+        Descriptor type = file.findMessageTypeByName("Event");
+        Table table = IcebergSink.ensureTable(catalog,
+                TableIdentifier.of("protomolt", "metrics"), type);
+        // event(i).count == i, so this batch spans count 5..9 - the range a reader prunes on.
+        DataFile dataFile = IcebergSink.append(table, type,
+                List.of(event(type, 5), event(type, 9)));
+
+        int countId = table.schema().findField("count").fieldId();
+        int idId = table.schema().findField("id").fieldId();
+        assertThat(dataFile.recordCount()).isEqualTo(2);
+        assertThat(dataFile.valueCounts()).containsEntry(countId, 2L);
+        // Bounds are keyed by the stamped field id and decode to the real min/max.
+        assertThat((Long) Conversions.fromByteBuffer(Types.LongType.get(),
+                dataFile.lowerBounds().get(countId))).isEqualTo(5L);
+        assertThat((Long) Conversions.fromByteBuffer(Types.LongType.get(),
+                dataFile.upperBounds().get(countId))).isEqualTo(9L);
+        assertThat(dataFile.lowerBounds()).containsKey(idId);
     }
 
     @Test

@@ -4,12 +4,17 @@ dependencies {
     api project(':protomolt-emit-parquet')
     api libs.iceberg.api
     implementation libs.iceberg.core
+    // Column metrics read from the Parquet footer on append (ParquetUtil); stays Hadoop-free.
+    implementation libs.iceberg.parquet
+    implementation libs.parquet.hadoop
+    // Hadoop appears only in parquet-hadoop method signatures; the footer read opens with a
+    // PlainParquetConfiguration and loads no Hadoop class (HadoopFreeMetricsTest proves it).
+    compileOnly libs.hadoop.client.api
 
     // Reading back what the sink wrote, to prove round trips - test-only weight.
     testImplementation project(':protomolt-proto-sources')
     testImplementation libs.protobuf.java.util
     testImplementation libs.iceberg.data
-    testImplementation libs.iceberg.parquet
     // iceberg-data's format registry insists on the ORC model class even for Parquet reads.
     testRuntimeOnly 'org.apache.iceberg:iceberg-orc:1.11.0'
     testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
