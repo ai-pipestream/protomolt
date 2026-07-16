@@ -116,7 +116,7 @@ class IcebergSinkTest {
         assertThat(table.properties()).containsKey("schema.name-mapping.default");
 
         DataFile first = IcebergSink.append(table, type,
-                List.of(event(type, 0), event(type, 1)));
+                List.of(event(type, 0), event(type, 1))).getFirst();
         assertThat(first.recordCount()).isEqualTo(2);
         IcebergSink.append(table, type, List.of(event(type, 2)));
 
@@ -152,13 +152,44 @@ class IcebergSinkTest {
     }
 
     @Test
+    void partitionedAppendWritesOneFilePerPartitionInOneSnapshot() throws Exception {
+        Descriptor type = file.findMessageTypeByName("Event");
+        Table table = IcebergSink.ensureTable(catalog,
+                TableIdentifier.of("protomolt", "partitioned"), type, null,
+                List.of(new IcebergPartitions.PartitionField("at", "day"),
+                        new IcebergPartitions.PartitionField("active", "identity")));
+        assertThat(table.spec().isPartitioned()).isTrue();
+
+        // active == (i % 2 == 0): events 0 and 2 land in one partition, event 1 in another.
+        List<DataFile> files = IcebergSink.append(table, type,
+                List.of(event(type, 0), event(type, 1), event(type, 2)));
+        assertThat(files).hasSize(2);
+        assertThat(files).extracting(DataFile::recordCount).containsExactlyInAnyOrder(2L, 1L);
+
+        table.refresh();
+        List<org.apache.iceberg.Snapshot> snapshots = new ArrayList<>();
+        table.snapshots().forEach(snapshots::add);
+        assertThat(snapshots).as("one snapshot for the whole batch").hasSize(1);
+
+        // A predicate on the partition column prunes to just the matching partition's rows.
+        List<Record> activeRows = new ArrayList<>();
+        try (CloseableIterable<Record> scan = IcebergGenerics.read(table)
+                .where(org.apache.iceberg.expressions.Expressions.equal("active", true))
+                .build()) {
+            scan.forEach(activeRows::add);
+        }
+        assertThat(activeRows).hasSize(2);
+        assertThat(activeRows).allSatisfy(r -> assertThat(r.getField("active")).isEqualTo(true));
+    }
+
+    @Test
     void appendStampsColumnMetricsKeyedByFieldId() throws Exception {
         Descriptor type = file.findMessageTypeByName("Event");
         Table table = IcebergSink.ensureTable(catalog,
                 TableIdentifier.of("protomolt", "metrics"), type);
         // event(i).count == i, so this batch spans count 5..9 - the range a reader prunes on.
         DataFile dataFile = IcebergSink.append(table, type,
-                List.of(event(type, 5), event(type, 9)));
+                List.of(event(type, 5), event(type, 9))).getFirst();
 
         int countId = table.schema().findField("count").fieldId();
         int idId = table.schema().findField("id").fieldId();

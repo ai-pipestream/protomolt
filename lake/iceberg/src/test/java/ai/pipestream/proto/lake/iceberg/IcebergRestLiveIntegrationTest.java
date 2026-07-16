@@ -135,7 +135,7 @@ class IcebergRestLiveIntegrationTest {
         Table table = IcebergSink.ensureTable(catalog, id, type, "file://" + base);
         try {
             org.apache.iceberg.DataFile first = IcebergSink.append(table, type,
-                    List.of(tick(type, 0), tick(type, 1)));
+                    List.of(tick(type, 0), tick(type, 1))).getFirst();
             // Column metrics survive the round trip through the REST catalog's commit.
             int priceId = table.schema().findField("price").fieldId();
             assertThat(first.upperBounds()).containsKey(priceId);

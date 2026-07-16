@@ -20,21 +20,20 @@ catalog.initialize("lake", Map.of("uri", "http://iceberg-rest:8181"));
 
 Table table = IcebergSink.ensureTable(catalog,
         TableIdentifier.of("protomolt", "events"), eventDescriptor);
-DataFile committed = IcebergSink.append(table, eventDescriptor, batchOfMessages);
+List<DataFile> committed = IcebergSink.append(table, eventDescriptor, batchOfMessages);
 ```
 
-`ensureTable` creates the table (unpartitioned) with a schema converted from
-the descriptor: every field optional (proto3 semantics), repeated fields as
-lists, maps as maps, nested messages as structs,
-`google.protobuf.Timestamp` as `timestamptz`, and the JSON well-known types
-(`Struct`/`Value`/`ListValue`) as JSON-carrying string columns. Recursive
-message types cannot exist in a table schema and are rejected with the cycle
-named.
+`ensureTable` creates the table with a schema converted from the descriptor:
+every field optional (proto3 semantics), repeated fields as lists, maps as maps,
+nested messages as structs, `google.protobuf.Timestamp` as `timestamptz`, and the
+JSON well-known types (`Struct`/`Value`/`ListValue`) as JSON-carrying string
+columns. Recursive message types cannot exist in a table schema and are rejected
+with the cycle named.
 
-`append` writes the batch as one Parquet file through the table's `FileIO`
-and commits it as a snapshot. The file schema carries **the table's own field
-ids**, stamped at write time — columns resolve the way a native Iceberg writer's
-would, with no name-mapping fallback in the read path. (That id-stamping seam,
+`append` writes the batch through the table's `FileIO` and commits it as one
+snapshot. The file schema carries **the table's own field ids**, stamped at write
+time — columns resolve the way a native Iceberg writer's would, with no
+name-mapping fallback in the read path. (That id-stamping seam,
 `ProtoParquetSchemas.FieldIdResolver`, lives in the Parquet emitter and is
 usable by any other table format.)
 
@@ -49,6 +48,29 @@ The round trip is enforced by test: files written here are read back through
 *Iceberg's* generic reader — nested structs, lists, maps, timestamps, JSON
 columns — so drift between the emitter's shapes and what Iceberg readers
 expect fails the build, not a production query.
+
+## Partitioning
+
+```java
+Table table = IcebergSink.ensureTable(catalog,
+        TableIdentifier.of("protomolt", "events"), eventDescriptor, null,
+        List.of(new IcebergPartitions.PartitionField("at", "day"),
+                new IcebergPartitions.PartitionField("region", "identity")));
+```
+
+Partition columns are given by name with a transform — `identity`,
+`year`/`month`/`day`/`hour` (on a timestamp source), `bucket[N]`, or
+`truncate[W]`. The spec is bound **by column name**, so it survives the fresh
+field ids a catalog assigns on creation, and a transform that does not fit its
+source (say `day` on a string) fails at `ensureTable`, not at write time.
+
+`append` then routes each message to its partition and writes one data file per
+partition the batch touches, all in a single snapshot; each file carries its
+partition value and its own column metrics. A descriptor can also declare its
+partitioning inline through the `iceberg.partition` field label, read with
+`IcebergPartitions.fromHints` (that label is a `map` value in the metadata option,
+so it must be compiled with `protoc` — ProtoMolt's own inline compiler does not
+yet parse map-typed custom options).
 
 ## Reading the lake's shape back
 
@@ -79,8 +101,8 @@ to `HadoopFileIO`, which relies on `Subject.getSubject`, removed in JDK 24+
 
 ## Boundaries
 
-- One data file per `append` call; size your batches accordingly. Partitioned
-  tables and equality deletes are later phases.
+- One data file per partition per `append` call; size your batches accordingly.
+  Equality deletes and v3 variant columns are later phases.
 - Row data goes only where the catalog and its `FileIO` say — this module
   never picks a storage location, matching the toolkit's disk policy.
 - `iceberg-core` is the one heavyweight dependency, confined to this leaf
