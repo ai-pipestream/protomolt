@@ -41,6 +41,8 @@ include 'protomolt-msgraph'
 project(':protomolt-msgraph').projectDir = file('graph')
 include 'protomolt-iceberg'
 project(':protomolt-iceberg').projectDir = file('lake/iceberg')
+include 'protomolt-iceberg-s3'
+project(':protomolt-iceberg-s3').projectDir = file('lake/iceberg-s3')
 
 include 'protomolt-gather-maven'
 project(':protomolt-gather-maven').projectDir = file('gather/maven')

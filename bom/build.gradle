@@ -17,6 +17,7 @@ def supportedModules = [
         'protomolt-emit-parquet',
         'protomolt-msgraph',
         'protomolt-iceberg',
+        'protomolt-iceberg-s3',
         'protomolt-compat',
         'protomolt-actions',
         'protomolt-registry',

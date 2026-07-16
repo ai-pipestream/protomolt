@@ -99,6 +99,34 @@ the data writer), and the client uses `LocalFileIO` — a plain-`java.nio`
 to `HadoopFileIO`, which relies on `Subject.getSubject`, removed in JDK 24+
 (JEP 486).
 
+## Object stores (S3)
+
+By default the sink writes wherever the catalog's `FileIO` points, which for a
+plain catalog is a local filesystem. `protomolt-iceberg-s3` is the opt-in escape
+hatch to any S3-compatible store — RustFS, SeaweedFS, Ceph, or AWS S3 — through
+Iceberg's own `S3FileIO`, with no Hadoop and no MinIO:
+
+```java
+Map<String, String> props = new HashMap<>(S3Catalogs.pathStyle(
+        "http://localhost:9000", "us-east-1", accessKeyId, secretAccessKey));
+props.put(CatalogProperties.URI, "http://localhost:8181");
+RESTCatalog catalog = new RESTCatalog();
+catalog.initialize("lake", props);   // tables now live on the object store
+```
+
+`S3Catalogs.pathStyle` sets `io-impl` to `S3FileIO`, the endpoint, path-style
+addressing, credentials, and the JDK HTTP client (the module ships
+`url-connection-client`, so Iceberg's default Apache client and Netty stay off the
+classpath). For real AWS S3, `S3Catalogs.awsRegion(region)` drops the endpoint and
+static credentials and lets the SDK's default provider chain supply them.
+`S3FileIO` is only the file plane; atomic commit stays with the catalog, so no
+store needs S3 conditional writes.
+
+The live suite runs against **RustFS** (an Apache-2.0 S3 store) plus a second REST
+catalog whose warehouse is on it, both in `docker-compose.integration.yml` — one
+write, one read back through Iceberg, proving the whole lane on an object store
+rather than a filesystem.
+
 ## Boundaries
 
 - One data file per partition per `append` call; size your batches accordingly.

@@ -1,0 +1,186 @@
+package ai.pipestream.proto.lake.iceberg.s3;
+
+import ai.pipestream.proto.lake.iceberg.IcebergSink;
+import ai.pipestream.proto.sources.CompiledProtos;
+import ai.pipestream.proto.sources.ProtoSourceCompiler;
+import ai.pipestream.proto.sources.ProtoSourceSet;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.DynamicMessage;
+import org.apache.iceberg.CatalogProperties;
+import org.apache.iceberg.DataFile;
+import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.data.IcebergGenerics;
+import org.apache.iceberg.data.Record;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.rest.RESTCatalog;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.BucketAlreadyExistsException;
+import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+/**
+ * The whole lane on an S3-compatible object store: an Iceberg REST catalog whose warehouse lives
+ * on RustFS through {@code S3FileIO} (both from docker-compose.integration.yml). Tables are
+ * created and committed over REST, the data files land on RustFS as {@code s3://} objects, and
+ * Iceberg's own reader gets every value back. Unlike the file:// suite there is no shared warehouse
+ * volume: the catalog container and this JVM each reach RustFS by URL and resolve the same keys.
+ * Skips when the stack is not running; CI runs it with the stack up and fails if it skipped.
+ */
+class IcebergS3LiveIntegrationTest {
+
+    private static final String CATALOG_URI = System.getProperty(
+            "protomolt.it.iceberg.rest.s3", "http://127.0.0.1:18182");
+    private static final String S3_ENDPOINT = System.getProperty(
+            "protomolt.it.rustfs", "http://127.0.0.1:19000");
+    private static final String BUCKET = "protomolt-lake";
+    private static final String REGION = "us-east-1";
+    private static final String ACCESS_KEY = "protomolt";
+    private static final String SECRET_KEY = "protomoltsecret";
+
+    private static final String PROTO = """
+            syntax = "proto3";
+            package lakes3.v1;
+            message Tick {
+              string symbol = 1;
+              double price = 2;
+              repeated string venues = 3;
+              Meta meta = 4;
+            }
+            message Meta { string source = 1; int64 sequence = 2; }
+            """;
+
+    private static FileDescriptor file;
+    private static RESTCatalog catalog;
+
+    @BeforeAll
+    static void start() throws Exception {
+        assumeTrue(reachable(), "S3 Iceberg catalog not reachable at " + CATALOG_URI
+                + "; start docker-compose.integration.yml to run this suite");
+        createBucket();
+        CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                .add("lakes3/v1/tick.proto", PROTO, "test").build());
+        file = compiled.descriptorFor("lakes3/v1/tick.proto").orElseThrow();
+
+        Map<String, String> props = new HashMap<>(
+                S3Catalogs.pathStyle(S3_ENDPOINT, REGION, ACCESS_KEY, SECRET_KEY));
+        props.put(CatalogProperties.URI, CATALOG_URI);
+        catalog = new RESTCatalog();
+        catalog.initialize("live-s3", props);
+        try {
+            catalog.createNamespace(Namespace.of("protomolt_s3"));
+        } catch (AlreadyExistsException ignored) {
+            // reruns share the namespace
+        }
+    }
+
+    @AfterAll
+    static void stop() throws Exception {
+        if (catalog != null) {
+            catalog.close();
+        }
+    }
+
+    private static boolean reachable() {
+        try (HttpClient http = HttpClient.newHttpClient()) {
+            return http.send(HttpRequest.newBuilder(URI.create(CATALOG_URI + "/v1/config"))
+                                    .GET().build(),
+                            HttpResponse.BodyHandlers.discarding())
+                    .statusCode() == 200;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** The warehouse bucket has to exist before the catalog writes metadata into it. */
+    private static void createBucket() {
+        try (S3Client s3 = S3Client.builder()
+                .endpointOverride(URI.create(S3_ENDPOINT))
+                .region(Region.of(REGION))
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)))
+                .forcePathStyle(true)
+                .httpClientBuilder(UrlConnectionHttpClient.builder())
+                .build()) {
+            try {
+                s3.createBucket(b -> b.bucket(BUCKET));
+            } catch (BucketAlreadyOwnedByYouException | BucketAlreadyExistsException ignored) {
+                // reruns share the bucket
+            }
+        }
+    }
+
+    private static DynamicMessage tick(Descriptor type, int i) {
+        Descriptor meta = file.findMessageTypeByName("Meta");
+        DynamicMessage.Builder builder = DynamicMessage.newBuilder(type)
+                .setField(type.findFieldByName("symbol"), "SYM" + i)
+                .setField(type.findFieldByName("price"), 100.0 + i)
+                .setField(type.findFieldByName("meta"), DynamicMessage.newBuilder(meta)
+                        .setField(meta.findFieldByName("source"), "s3-test")
+                        .setField(meta.findFieldByName("sequence"), (long) i)
+                        .build());
+        builder.addRepeatedField(type.findFieldByName("venues"), "NYSE");
+        return builder.build();
+    }
+
+    @Test
+    void appendsAndReadsBackThroughS3() throws Exception {
+        Descriptor type = file.findMessageTypeByName("Tick");
+        TableIdentifier id = TableIdentifier.of("protomolt_s3",
+                "ticks_" + Long.toUnsignedString(System.nanoTime(), 36));
+
+        Table table = IcebergSink.ensureTable(catalog, id, type);
+        try {
+            List<DataFile> files = IcebergSink.append(table, type,
+                    List.of(tick(type, 0), tick(type, 1)));
+            // The data file is an object on RustFS, not a local path.
+            assertThat(files.getFirst().location()).startsWith("s3://" + BUCKET + "/");
+            IcebergSink.append(table, type, List.of(tick(type, 2)));
+
+            table.refresh();
+            List<Snapshot> snapshots = new ArrayList<>();
+            table.snapshots().forEach(snapshots::add);
+            assertThat(snapshots).hasSize(2);
+
+            List<Record> rows = new ArrayList<>();
+            try (CloseableIterable<Record> scan = IcebergGenerics.read(table).build()) {
+                scan.forEach(rows::add);
+            }
+            assertThat(rows).hasSize(3);
+            rows.sort(Comparator.comparing(r -> (String) r.getField("symbol")));
+            Record row = rows.get(2);
+            assertThat(row.getField("symbol")).isEqualTo("SYM2");
+            assertThat(row.getField("price")).isEqualTo(102.0);
+            assertThat((List<?>) row.getField("venues")).first().isEqualTo("NYSE");
+            assertThat(((Record) row.getField("meta")).getField("sequence")).isEqualTo(2L);
+
+            assertThat(catalog.listTables(Namespace.of("protomolt_s3"))).contains(id);
+        } finally {
+            // On S3 the data files use the same credentials, so a purging drop is safe.
+            catalog.dropTable(id, true);
+        }
+    }
+}

@@ -1,0 +1,24 @@
+description = 'Object-store escape hatch for the Iceberg lane: wires Apache Iceberg S3FileIO so tables live on any S3-compatible store (RustFS, SeaweedFS, Ceph, AWS S3) instead of a local filesystem - no Hadoop, no MinIO'
+
+dependencies {
+    api project(':protomolt-iceberg')
+    api libs.iceberg.aws
+    implementation libs.iceberg.core
+    implementation platform(libs.awssdk.bom)
+    // S3FileIO's runtime needs: the S3 client (also used by the live test to make its
+    // bucket), the KMS model classes iceberg-aws's client factory references at class-load
+    // even when unused, and the lightest HTTP client (JDK HttpURLConnection - no Netty,
+    // no Apache HttpClient).
+    implementation libs.awssdk.s3
+    implementation libs.awssdk.kms
+    implementation libs.awssdk.sts
+    implementation libs.awssdk.url.connection.client
+
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.protobuf.java.util
+    testImplementation libs.iceberg.data
+    testImplementation libs.iceberg.parquet
+    // iceberg-data's format registry insists on the ORC model class even for Parquet reads.
+    testRuntimeOnly 'org.apache.iceberg:iceberg-orc:1.11.0'
+    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
+}

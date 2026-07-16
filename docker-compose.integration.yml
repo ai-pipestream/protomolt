@@ -4,6 +4,8 @@
 # Apicurio ccompat API:     http://localhost:18780/apis/ccompat/v7
 # Confluent Schema Registry: http://localhost:18781
 # Iceberg REST catalog:      http://localhost:18181
+# Iceberg REST catalog (S3):  http://localhost:18182  (warehouse on RustFS)
+# RustFS (S3 API):           http://localhost:19000
 services:
   apicurio:
     image: apicurio/apicurio-registry:3.0.13
@@ -79,6 +81,50 @@ services:
       CATALOG_WAREHOUSE: file:///tmp/protomolt-iceberg-warehouse
     volumes:
       - /tmp/protomolt-iceberg-warehouse:/tmp/protomolt-iceberg-warehouse
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8181/v1/config || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # RustFS: a fast, Apache-2.0, S3-compatible object store (a MinIO replacement) that
+  # backs the S3FileIO escape-hatch suite. Single ephemeral volume - CI data is thrown
+  # away on teardown. Pinned to a concrete tag: RustFS is pre-1.0, moving fast.
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.9
+    ports:
+      - "19000:9000"
+    environment:
+      RUSTFS_ACCESS_KEY: protomolt
+      RUSTFS_SECRET_KEY: protomoltsecret
+      RUSTFS_VOLUMES: /data/rustfs0
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  # A second Iceberg REST catalog whose warehouse lives on RustFS through S3FileIO, for
+  # the protomolt-iceberg-s3 suite. Unlike the file:// catalog above, nothing is shared on
+  # disk: the catalog (container, reaches rustfs:9000) and the test JVM (host, reaches
+  # localhost:19000) both resolve the same s3:// keys, each through its own endpoint.
+  iceberg-rest-s3:
+    image: apache/iceberg-rest-fixture:1.10.1
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    ports:
+      - "18182:8181"
+    environment:
+      CATALOG_WAREHOUSE: s3://protomolt-lake/warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://rustfs:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_ACCESS_KEY_ID: protomolt
+      AWS_SECRET_ACCESS_KEY: protomoltsecret
+      AWS_REGION: us-east-1
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8181/v1/config || exit 1"]
       interval: 5s
