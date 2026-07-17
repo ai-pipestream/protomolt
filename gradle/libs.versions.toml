@@ -51,6 +51,7 @@ assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 kafka-connect-api = { module = "org.apache.kafka:connect-api", version.ref = "kafka" }
+kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
 swagger-ui = { module = "org.webjars:swagger-ui", version.ref = "swagger-ui" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }

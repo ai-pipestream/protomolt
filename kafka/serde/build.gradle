@@ -1,0 +1,14 @@
+description = 'Kafka protobuf serde: the Confluent wire format, with the schema\'s own declared rules enforced on write'
+
+dependencies {
+    api libs.protobuf.java
+
+    // The application brings its own Kafka clients; a serde must not pin them.
+    compileOnly libs.kafka.clients
+
+    implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-protobuf-metadata')
+
+    testImplementation libs.kafka.clients
+    testImplementation project(':protomolt-proto-sources')
+}
