@@ -51,6 +51,7 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
     private SchemaIds schemaIds;
     private GeneratedMessages generated;
     private SerdeMetricsListener metrics;
+    private SerdeMapper mapper;
 
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
@@ -75,6 +76,8 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
         generated = new GeneratedMessages(files,
                 config.getBoolean(ProtoMoltSerdeConfig.GENERATED_CLASSES),
                 getClass().getClassLoader());
+        mapper = SerdeMapper.parse(config.getList(ProtoMoltSerdeConfig.MAP_ON_READ),
+                ProtoMoltSerdeConfig.MAP_ON_READ);
     }
 
     @Override
@@ -97,6 +100,17 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
         } catch (InvalidProtocolBufferException e) {
             throw new SerializationException("A record on " + topic + " is not a valid "
                     + type.getFullName() + ": " + e.getMessage(), e);
+        }
+        if (mapper != null) {
+            // Reshape before judging: validation and quality see what the application will.
+            // Only mapping failures are translated; anything else is a bug and propagates.
+            try {
+                message = mapper.apply(message);
+            } catch (ai.pipestream.proto.mapper.MappingException
+                     | ai.pipestream.proto.cel.CelEvaluationException e) {
+                throw new SerializationException("A mapping rule could not be applied to a "
+                        + type.getFullName() + " from " + topic + ": " + e.getMessage(), e);
+            }
         }
         if (validateOnRead) {
             ValidationResult result = validator.validate(message);

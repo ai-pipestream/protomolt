@@ -5,6 +5,8 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -26,6 +28,8 @@ import java.util.concurrent.ConcurrentMap;
  * registry that this application never compiled — quietly stays dynamic.</p>
  */
 final class GeneratedMessages {
+
+    private static final Logger LOG = LoggerFactory.getLogger(GeneratedMessages.class);
 
     private final List<FileDescriptor> packaged;
     private final boolean enabled;
@@ -66,14 +70,25 @@ final class GeneratedMessages {
         if (type == null) {
             return Optional.empty();
         }
+        String className = binaryClassName(type);
         try {
-            Class<?> clazz = Class.forName(binaryClassName(type), true, loader);
+            Class<?> clazz = Class.forName(className, true, loader);
             if (!Message.class.isAssignableFrom(clazz)) {
+                LOG.debug("{} exists but is not a protobuf Message; {} stays dynamic",
+                        className, fullName);
                 return Optional.empty();
             }
             return Optional.of((Message) clazz.getMethod("getDefaultInstance").invoke(null));
+        } catch (ClassNotFoundException e) {
+            // The expected case for descriptor-set-only deployments: no generated class exists.
+            LOG.debug("No generated class {} on the classpath; {} stays dynamic",
+                    className, fullName);
+            return Optional.empty();
         } catch (ReflectiveOperationException | LinkageError e) {
-            // Not on the classpath, or not loadable: DynamicMessage carries the record instead.
+            // The class exists but cannot be used - a version clash, say. Louder than the
+            // not-found case, because someone put that class there expecting it to be returned.
+            LOG.warn("Generated class {} could not be loaded; {} stays dynamic: {}",
+                    className, fullName, e.toString());
             return Optional.empty();
         }
     }

@@ -54,6 +54,7 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     private String subjectStrategy;
     private boolean isKey;
     private SerdeMetricsListener metrics;
+    private SerdeMapper mapper;
     // Packaged types by full name, resolved once per type; absent types marked by MISSING.
     private final ConcurrentMap<String, Descriptor> packagedByName = new ConcurrentHashMap<>();
     // Caller descriptors already proven byte-identical to their packaged schema (see below).
@@ -76,6 +77,8 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
                 config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
         subjectOverride = config.getString(ProtoMoltSerdeConfig.SUBJECT);
         subjectStrategy = config.getString(ProtoMoltSerdeConfig.SUBJECT_STRATEGY);
+        mapper = SerdeMapper.parse(config.getList(ProtoMoltSerdeConfig.MAP_ON_WRITE),
+                ProtoMoltSerdeConfig.MAP_ON_WRITE);
         this.isKey = isKey;
     }
 
@@ -92,6 +95,19 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
             return null;
         }
         Descriptor packaged = packagedTypeFor(topic, data);
+        if (mapper != null) {
+            // Normalize before judging: validation and quality see the mapped message, and the
+            // mapped message is what reaches the topic. Only mapping failures are translated;
+            // anything else is a bug and propagates untouched.
+            try {
+                data = mapper.apply(data);
+            } catch (ai.pipestream.proto.mapper.MappingException
+                     | ai.pipestream.proto.cel.CelEvaluationException e) {
+                throw new SerializationException("A mapping rule could not be applied to a "
+                        + packaged.getFullName() + " bound for " + topic + ": "
+                        + e.getMessage(), e);
+            }
+        }
         byte[] payload = data.toByteArray();
         Message contract = validateOnWrite || qualityOnWrite
                 ? asPackagedType(data, payload, packaged)

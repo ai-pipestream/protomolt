@@ -144,11 +144,43 @@ so the stamped id repairs itself without a restart.
 | `protomolt.quality.on.write` | `true` | Score declared quality dimensions before writing |
 | `protomolt.quality.on.read` | `false` | Score after deserializing (measure only) |
 | `protomolt.quality.min` | unset | Reject writes whose composite score falls below this |
+| `protomolt.map.on.write` | none | Mapping rules applied before validating and writing |
+| `protomolt.map.on.read` | none | Mapping rules applied right after parsing |
 
 Validating on read is off by default. A consumer usually cannot fix what a
 producer already wrote, and one that starts rejecting history on upgrade is
 worse than one that does not. Turn it on for topics whose producers do not all
 come through this serde, which is the only way invalid data gets in.
+
+## Mapping: the serde as a transformer
+
+An ordered list of mapping rules can run inside the serde — what Confluent's
+data contracts call migration rules, done with ProtoMolt's own
+[mapping machinery](mapping.md) instead of a second expression language:
+
+```properties
+protomolt.map.on.write=id = legacy_name, -scratch
+protomolt.map.on.read=display_name := input.legacy_name + ' (legacy)' if input.display_name == ''
+```
+
+Two rule forms share one ordered list. Text rules are exactly the mapping
+docs' (`target = source`, `target += source`, `-field`); CEL rules are
+`target := <selector>`, optionally followed by ` if <filter>`, with the
+current message bound as `input` (the filter separator is the last ` if ` in
+the entry).
+
+One flat-properties caveat: these are Kafka LIST configs, so entries in a
+properties file split on commas. A CEL expression that itself contains commas
+— `clamp(x, 0.0, 1.0)`, say — needs the config passed as an actual list
+(programmatic configuration, or any format that preserves list structure).
+
+Write-side rules run *before* validation and quality: a producer normalizes,
+and the contract judges the normalized message — which is also what reaches
+the topic. Read-side rules run right after parsing: a consumer reshapes
+records written before a schema moved, without waiting for producers to
+upgrade. Rules are the deployment's, not the schema's; a rule that cannot
+apply to a record fails that record loudly rather than being skipped, and a
+malformed rule fails at configure time.
 
 ## Metrics: the validator as a data-quality sensor
 

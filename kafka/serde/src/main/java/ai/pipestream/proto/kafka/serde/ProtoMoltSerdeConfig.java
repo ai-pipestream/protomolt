@@ -40,6 +40,10 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
     public static final String QUALITY_ON_READ = "protomolt.quality.on.read";
     /** Reject writes whose composite quality score falls below this. Unset means measure only. */
     public static final String QUALITY_MIN = "protomolt.quality.min";
+    /** Mapping rules applied to every message before validating and writing. */
+    public static final String MAP_ON_WRITE = "protomolt.map.on.write";
+    /** Mapping rules applied to every message right after parsing. */
+    public static final String MAP_ON_READ = "protomolt.map.on.read";
 
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
             .define(DESCRIPTOR_SET_RESOURCE, ConfigDef.Type.STRING, null,
@@ -104,7 +108,18 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
             .define(QUALITY_MIN, ConfigDef.Type.DOUBLE, null, ConfigDef.Importance.MEDIUM,
                     "Reject writes whose composite quality score falls below this threshold "
                             + "(0..1). Unset, quality is measured and reported but never "
-                            + "gates.");
+                            + "gates.")
+            .define(MAP_ON_WRITE, ConfigDef.Type.LIST, java.util.List.of(),
+                    ConfigDef.Importance.LOW,
+                    "Mapping rules applied in order to every message before it is validated "
+                            + "and written: text rules ('target = source', 'target += source', "
+                            + "'-field') or CEL rules ('target := <cel>' optionally followed "
+                            + "by ' if <cel>', with the message bound as 'input').")
+            .define(MAP_ON_READ, ConfigDef.Type.LIST, java.util.List.of(),
+                    ConfigDef.Importance.LOW,
+                    "The same rule forms, applied right after parsing - how a consumer "
+                            + "reshapes records written before a schema moved, without waiting "
+                            + "for producers to upgrade.");
 
     public ProtoMoltSerdeConfig(Map<?, ?> originals) {
         super(CONFIG_DEF, originals);
