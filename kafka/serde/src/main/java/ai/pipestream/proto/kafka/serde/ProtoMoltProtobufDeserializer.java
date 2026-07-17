@@ -48,14 +48,16 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
     private boolean validateOnRead;
     private SchemaIds schemaIds;
     private GeneratedMessages generated;
+    private SerdeMetricsListener metrics;
 
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         ProtoMoltSerdeConfig config = new ProtoMoltSerdeConfig(configs);
         List<FileDescriptor> files =
                 ProtoMoltProtobufSerializer.Descriptors.load(config, getClass().getClassLoader());
+        metrics = SerdeMetricsListeners.load(getClass().getClassLoader());
         schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
-                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS));
+                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
         String pinned = config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE);
         if (pinned == null && schemaIds == null) {
             throw new ConfigException(ProtoMoltSerdeConfig.MESSAGE_TYPE + " is required when no "
@@ -95,10 +97,14 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
         if (validateOnRead) {
             ValidationResult result = validator.validate(message);
             if (!result.valid()) {
+                metrics.onValidationRejected(topic, type.getFullName(), false,
+                        result.violations().stream()
+                                .map(ValidationResult.Violation::ruleId).toList());
                 throw new SerializationException("A record on " + topic + " violates the schema's "
                         + "declared rules: " + describe(result));
             }
         }
+        metrics.onDeserialized(topic, type.getFullName());
         return message;
     }
 
@@ -124,6 +130,7 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
                 : null;
         if (pinnedType == null) {
             if (written == null) {
+                metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_UNRESOLVED_ID);
                 throw new SerializationException("A record on " + topic + " carries schema id "
                         + schemaId + ", which the registry could not resolve; without a "
                         + "configured " + ProtoMoltSerdeConfig.MESSAGE_TYPE
@@ -133,6 +140,7 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
         }
         if (written != null) {
             if (!written.getFullName().equals(pinnedType.getFullName())) {
+                metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_WRONG_TYPE);
                 throw new SerializationException("A record on " + topic + " is a "
                         + written.getFullName() + " according to schema id " + schemaId
                         + ", but this deserializer is configured for " + pinnedType.getFullName()
@@ -141,6 +149,7 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
             return written;
         }
         if (!framedIndex.equals(pinnedIndexPath)) {
+            metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_WRONG_TYPE);
             throw new SerializationException("A record on " + topic + " points at message index "
                     + framedIndex + ", but this deserializer is configured for "
                     + pinnedType.getFullName() + " at index " + pinnedIndexPath

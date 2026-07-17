@@ -45,6 +45,7 @@ final class SchemaIds implements AutoCloseable {
 
     private final ConfluentSchemaRegistryLoader registry;
     private final long retryBackoffNanos;
+    private final SerdeMetricsListener metrics;
     private final AtomicBoolean warnedFallback = new AtomicBoolean();
     // Resolved subject ids, kept for the serde's lifetime; the frame is stamped once per subject.
     private final ConcurrentMap<String, OptionalInt> idsBySubject = new ConcurrentHashMap<>();
@@ -52,17 +53,20 @@ final class SchemaIds implements AutoCloseable {
     private final ConcurrentMap<String, Long> subjectRetryAt = new ConcurrentHashMap<>();
     private final ConcurrentMap<Integer, Long> schemaRetryAt = new ConcurrentHashMap<>();
 
-    private SchemaIds(ConfluentSchemaRegistryLoader registry, long retryBackoffMillis) {
+    private SchemaIds(ConfluentSchemaRegistryLoader registry, long retryBackoffMillis,
+                      SerdeMetricsListener metrics) {
         this.registry = registry;
         this.retryBackoffNanos = TimeUnit.MILLISECONDS.toNanos(retryBackoffMillis);
+        this.metrics = metrics;
     }
 
     /** @return null when no registry is configured, which is a supported way to run */
-    static SchemaIds create(String registryUrl, long retryBackoffMillis) {
+    static SchemaIds create(String registryUrl, long retryBackoffMillis,
+                            SerdeMetricsListener metrics) {
         return registryUrl == null || registryUrl.isBlank()
                 ? null
                 : new SchemaIds(new ConfluentSchemaRegistryLoader(URI.create(registryUrl.trim())),
-                        retryBackoffMillis);
+                        retryBackoffMillis, metrics);
     }
 
     /**
@@ -110,7 +114,7 @@ final class SchemaIds implements AutoCloseable {
             FileDescriptor file = registry.schemaById(schemaId);
             Descriptor message = ConfluentWireFormat.messageAt(file, indexPath);
             if (message == null) {
-                warnOnce("schema id " + schemaId + " has no message at index path " + indexPath);
+                fellBack("schema id " + schemaId + " has no message at index path " + indexPath);
             }
             return message;
         } catch (DescriptorLoadException e) {
@@ -139,7 +143,7 @@ final class SchemaIds implements AutoCloseable {
             FileDescriptor file = registry.schemaById(schemaId);
             Descriptor type = SerdeDescriptors.findMessage(file, fullName);
             if (type == null) {
-                warnOnce("the schema registered under id " + schemaId + " does not declare "
+                fellBack("the schema registered under id " + schemaId + " does not declare "
                         + fullName);
             }
             return type;
@@ -164,11 +168,17 @@ final class SchemaIds implements AutoCloseable {
     }
 
     private <K> void couldNotAnswer(ConcurrentMap<K, Long> retryAt, K key, String what) {
-        warnOnce(what);
+        fellBack(what);
         if (retryAt.size() >= MAX_TRACKED_FAILURES) {
             retryAt.clear();
         }
         retryAt.put(key, System.nanoTime() + retryBackoffNanos);
+    }
+
+    /** Every fallback event reaches metrics; the log line fires once (see warnOnce). */
+    private void fellBack(String what) {
+        warnOnce(what);
+        metrics.onRegistryFallback();
     }
 
     /** Once per serde: a per-record warning during an outage is its own incident. */

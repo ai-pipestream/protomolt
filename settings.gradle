@@ -77,6 +77,8 @@ include 'protomolt-connect-iceberg'
 project(':protomolt-connect-iceberg').projectDir = file('kafka/connect-iceberg')
 include 'protomolt-serde'
 project(':protomolt-serde').projectDir = file('kafka/serde')
+include 'protomolt-serde-micrometer'
+project(':protomolt-serde-micrometer').projectDir = file('kafka/serde-micrometer')
 
 include 'protomolt-codegen'
 project(':protomolt-codegen').projectDir = file('codegen')

@@ -28,6 +28,7 @@ def supportedModules = [
         'protomolt-connect',
         'protomolt-connect-iceberg',
         'protomolt-serde',
+        'protomolt-serde-micrometer',
         'protomolt-codegen',
         'protomolt-registry-server',
         'protomolt-jsonschema',

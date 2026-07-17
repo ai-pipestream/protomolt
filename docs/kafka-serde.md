@@ -147,6 +147,32 @@ producer already wrote, and one that starts rejecting history on upgrade is
 worse than one that does not. Turn it on for topics whose producers do not all
 come through this serde, which is the only way invalid data gets in.
 
+## Metrics: the validator as a data-quality sensor
+
+The serde is the choke point every record passes through, and it is already
+deciding what a data-quality dashboard wants to know. Drop
+`protomolt-serde-micrometer` on the classpath — nothing to configure, the
+serde discovers it — and every serde reports counters to Micrometer's global
+registry, which is where an instrumented application already points its
+Prometheus (or other) backend:
+
+| Meter | Tags | Counts |
+|---|---|---|
+| `protomolt.serde.records` | direction, topic, type | records written and read |
+| `protomolt.serde.rejections` | direction, topic, type | records refused for violating their rules |
+| `protomolt.serde.violations` | topic, type, rule | individual rule violations |
+| `protomolt.serde.refusals` | topic, reason | records refused on type identity |
+| `protomolt.serde.registry.fallbacks` | | lookups the packaged set answered instead |
+
+A rising `violations{rule="string.min_len"}` on one topic is a producer
+regression announcing itself — from inside the producer, with no sidecar and
+no extra pass over the data.
+
+Other metrics systems plug in the same way: implement `SerdeMetricsListener`
+(five methods, all defaulted) and register it via `META-INF/services`.
+Listeners observe, never participate — one that throws is logged once and
+costs no records.
+
 ## How this compares
 
 Against the two protobuf serdes people actually deploy:

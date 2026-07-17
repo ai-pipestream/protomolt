@@ -50,6 +50,7 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     private String subjectOverride;
     private String subjectStrategy;
     private boolean isKey;
+    private SerdeMetricsListener metrics;
     // Packaged types by full name, resolved once per type; absent types marked by MISSING.
     private final ConcurrentMap<String, Descriptor> packagedByName = new ConcurrentHashMap<>();
     // Caller descriptors already proven byte-identical to their packaged schema (see below).
@@ -64,8 +65,9 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
         configuredSchemaId = config.getInt(ProtoMoltSerdeConfig.SCHEMA_ID);
         validateOnWrite = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_WRITE);
         validator = ProtoValidator.create();
+        metrics = SerdeMetricsListeners.load(getClass().getClassLoader());
         schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
-                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS));
+                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
         subjectOverride = config.getString(ProtoMoltSerdeConfig.SUBJECT);
         subjectStrategy = config.getString(ProtoMoltSerdeConfig.SUBJECT_STRATEGY);
         this.isKey = isKey;
@@ -83,24 +85,30 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
         if (data == null) {
             return null;
         }
-        Descriptor packaged = packagedTypeFor(data);
+        Descriptor packaged = packagedTypeFor(topic, data);
         byte[] payload = data.toByteArray();
         if (validateOnWrite) {
             ValidationResult result = validator.validate(asPackagedType(data, payload, packaged));
             if (!result.valid()) {
+                metrics.onValidationRejected(topic, packaged.getFullName(), true,
+                        result.violations().stream()
+                                .map(ValidationResult.Violation::ruleId).toList());
                 throw new SerializationException("Message violates the schema's declared rules, "
                         + "so it was not written to " + topic + ": " + describe(result));
             }
         }
         Frame frame = frameFor(topic, packaged);
-        return ConfluentWireFormat.frame(frame.id(), frame.index(), payload);
+        byte[] framed = ConfluentWireFormat.frame(frame.id(), frame.index(), payload);
+        metrics.onSerialized(topic, packaged.getFullName());
+        return framed;
     }
 
     /** The packaged descriptor declaring {@code data}'s type: the contract this producer ships. */
-    private Descriptor packagedTypeFor(Message data) {
+    private Descriptor packagedTypeFor(String topic, Message data) {
         String fullName = data.getDescriptorForType().getFullName();
         if (pinnedType != null) {
             if (!fullName.equals(pinnedType.getFullName())) {
+                metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_WRONG_TYPE);
                 throw new SerializationException("This serializer is configured for "
                         + pinnedType.getFullName() + " but was handed a " + fullName);
             }
@@ -111,6 +119,7 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
             return found != null ? found : MISSING;
         });
         if (packaged == MISSING) {
+            metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_NOT_IN_CONTRACT);
             throw new SerializationException(fullName + " is not declared in the configured "
                     + "descriptor set, so it is not part of this producer's contract");
         }
