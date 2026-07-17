@@ -1,0 +1,12 @@
+description = 'Micrometer binding for the gRPC validation metrics SPI'
+
+dependencies {
+    api project(':protomolt-grpc-validation')
+    implementation libs.micrometer.core
+
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.stub
+    testImplementation libs.grpc.protobuf
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.slf4j.simple
+}

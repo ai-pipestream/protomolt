@@ -170,6 +170,17 @@ The builder can also measure [quality dimensions](quality.md) per request
 locally with the same `INVALID_ARGUMENT` a validating server would send back,
 without paying the network for an answer the descriptor in hand already knew.
 
+Everything the interceptors decide is observable, the same way the
+[serde](kafka-serde.md) is: `GrpcValidationMetricsListener` implementations
+found via `ServiceLoader` hear every validation, rejection (with the violated
+rule ids) and quality score, on both sides of the wire. Drop
+`protomolt-grpc-validation-micrometer` on the classpath and those events are
+Micrometer meters — `protomolt.grpc.validation.requests` / `.rejections` /
+`.violations` tagged by side, method, type (and rule), plus
+`protomolt.grpc.quality.score` / `.dimension` distributions — on the global
+registry, with nothing configured. Listeners observe, never participate: one
+that throws is logged once and costs no calls.
+
 ## Related
 
 - [JSON Schema generation](json-schema.md) renders the same constraint
