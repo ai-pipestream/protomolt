@@ -145,9 +145,35 @@ Structured field and rule paths are reconstructed with a faithful port of
 the suite's own field-path algorithm, so a match reflects semantic
 agreement, not formatting luck.
 
+## At the gRPC boundary
+
+`protomolt-grpc-validation` enforces the same rules at the call boundary —
+the guarantee the [Kafka serde](kafka-serde.md) gives a topic, given to a
+service:
+
+```java
+Server server = ServerBuilder.forPort(port)
+    .addService(ServerInterceptors.intercept(service,
+        ValidatingServerInterceptor.create()))
+    .build();
+```
+
+Every inbound request message — unary or streamed — is validated before the
+handler sees it; a violation is refused as `INVALID_ARGUMENT` naming every
+violated rule. Malformed rules are the server's problem and surface as
+`INTERNAL`, with the detail kept in server logs rather than on the wire.
+The builder can also measure [quality dimensions](quality.md) per request
+(`onQuality` callback) and gate on a floor (`qualityFloor`, refusing with
+`FAILED_PRECONDITION`).
+
+`ValidatingClientInterceptor` is the outbound half: an invalid request fails
+locally with the same `INVALID_ARGUMENT` a validating server would send back,
+without paying the network for an answer the descriptor in hand already knew.
+
 ## Related
 
 - [JSON Schema generation](json-schema.md) renders the same constraint
   model as JSON Schema keywords.
 - The [indexing facade](indexing.md) can run validation before emitting
   index documents.
+- [Quality scoring](quality.md) measures where validation gates.

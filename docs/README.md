@@ -19,7 +19,7 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 | [Kafka serde](kafka-serde.md) | A protobuf serializer and deserializer speaking the Confluent wire format, enforcing the schema's declared rules on write, with the packaged descriptor set as a floor under the registry |
 | [Joins and derived shapes](design/join-shapes.md) | Multi-source mapping scopes; envelope/projection/oneof output shapes; schema merging with clash resolution; derived schemas as registry subjects; the shape verbs |
 | [Field mapping](mapping.md) | Text rule syntax; CEL filters, selectors, and environments |
-| [Validation](validation.md) | The rule surface; dialect SPI; protovalidate interoperability and conformance |
+| [Validation](validation.md) | The rule surface; dialect SPI; protovalidate interoperability and conformance; validating gRPC interceptors |
 | [Quality scoring](quality.md) | CEL-scored quality dimensions declared as message options; weighted composites, measured (and optionally gated) in the Kafka serde |
 | [Schema metadata](metadata.md) | Declared descriptor-option metadata; CEL-based runtime extraction |
 | [JSON Schema generation](json-schema.md) | Draft 2020-12 schemas from descriptors and validation rules |

@@ -67,6 +67,8 @@ project(':protomolt-grpc-invoke').projectDir = file('grpc/invoke')
 
 include 'protomolt-grpc-service'
 project(':protomolt-grpc-service').projectDir = file('grpc/service')
+include 'protomolt-grpc-validation'
+project(':protomolt-grpc-validation').projectDir = file('grpc/validation')
 
 include 'protomolt-serve'
 project(':protomolt-serve').projectDir = file('serve')

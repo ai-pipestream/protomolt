@@ -1,0 +1,14 @@
+description = 'Validating gRPC interceptors: the schema\'s declared rules enforced at the call boundary'
+
+dependencies {
+    api libs.grpc.api
+    api libs.protobuf.java
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-quality')
+
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.stub
+    testImplementation libs.grpc.protobuf
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.slf4j.simple
+}
