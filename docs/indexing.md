@@ -151,7 +151,21 @@ applies the schema's declared sensitivity classes
 - `{"mask": ["pii"]}` and `{"exclude": ["secret"]}` — emitted as a
   security-plugin role fragment (`masked_fields` hashes values at query
   time; `fls` entries like `~field` hide fields outright). Apply the
-  fragment to reader roles on a security-enabled cluster.
+  fragment to reader roles on a security-enabled cluster. Note the
+  plugin's own boundary: masked fields cannot be *searched* — masking is
+  applied after indexing, so the inverted index still holds the original
+  terms and the plugin refuses to query them.
+- `{"maskFormat": {"pii": "::SHA-512"}}` — a per-class format appended to
+  each `masked_fields` entry, verbatim. The plugin's default hash is
+  BLAKE2b; `::SHA-512` (or any JVM-provided algorithm) picks another, and
+  `::/regex/::replacement` rewrites instead of hashing, chaining left to
+  right.
+- `{"role": {"indexPatterns": ["docs-*"], "allowedActions": ["read"]}}` —
+  additionally renders `security.role`, a complete role body ready to
+  `PUT _plugins/_security/api/roles/{name}`: the schema decides what is
+  masked and hidden, the request decides which indexes the role covers.
+  Empty `masked_fields`/`fls` are omitted, since absent and empty mean
+  different things to the plugin.
 
 With `sensitivity` present the response becomes `{mappings, security}`.
 The live integration suite proves the encrypted-store pattern end to end

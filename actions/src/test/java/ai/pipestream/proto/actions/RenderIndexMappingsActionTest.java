@@ -60,6 +60,41 @@ class RenderIndexMappingsActionTest {
         assertThat(encrypted.get("security").get("fls")).isEmpty();
     }
 
+    /** The complete role body, ready to PUT at _plugins/_security/api/roles/{name}. */
+    @Test
+    void sensitivityRoleRendersAnApplyableRoleBody() throws Exception {
+        ObjectNode result = catalog.execute("render-index-mappings", obj("""
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                 "sensitivity": {"mask": ["pii"],
+                                 "maskFormat": {"pii": "::SHA-512"},
+                                 "role": {"indexPatterns": ["docs-*"]}}}
+                """));
+
+        // The per-class format rides on the masked_fields entry itself.
+        assertThat(result.get("security").get("maskedFields"))
+                .extracting(JsonNode::asText).containsExactly("title::SHA-512");
+
+        JsonNode permission = result.get("security").get("role")
+                .get("index_permissions").get(0);
+        assertThat(permission.get("index_patterns"))
+                .extracting(JsonNode::asText).containsExactly("docs-*");
+        assertThat(permission.get("allowed_actions"))
+                .extracting(JsonNode::asText).containsExactly("read");
+        assertThat(permission.get("masked_fields"))
+                .extracting(JsonNode::asText).containsExactly("title::SHA-512");
+        // Nothing excluded: fls is omitted, because absent and empty mean different things.
+        assertThat(permission.has("fls")).isFalse();
+    }
+
+    @Test
+    void sensitivityRoleRequiresIndexPatterns() {
+        assertThatThrownBy(() -> catalog.execute("render-index-mappings", obj("""
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                 "sensitivity": {"mask": ["pii"], "role": {}}}
+                """)))
+                .hasMessageContaining("indexPatterns");
+    }
+
     @Test
     void solrSchemaHonorsHintsAndInference() throws Exception {
         ObjectNode result = render("solr");
