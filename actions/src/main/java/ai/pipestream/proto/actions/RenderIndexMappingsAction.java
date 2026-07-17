@@ -47,7 +47,12 @@ final class RenderIndexMappingsAction implements ProtoAction {
                 + "sensitivity classes — {\"encrypt\": [...]} renders those fields as "
                 + "store-only ciphertext containers (index: false), {\"mask\": [...]} and "
                 + "{\"exclude\": [...]} emit a security-plugin role fragment "
-                + "(masked_fields / fls). The response becomes {mappings, security}.");
+                + "(masked_fields / fls). {\"maskFormat\": {class: suffix}} appends a "
+                + "per-class masked_fields format, e.g. '::SHA-512' or "
+                + "'::/regex/::replacement'. {\"role\": {\"indexPatterns\": [...], "
+                + "\"allowedActions\": [...]}} additionally renders security.role, a "
+                + "complete role body ready to PUT at _plugins/_security/api/roles/{name}. "
+                + "The response becomes {mappings, security}.");
         ActionJson.required(schema, "schema", "engine");
         schema.put("additionalProperties", false);
         return schema;
@@ -93,6 +98,7 @@ final class RenderIndexMappingsAction implements ProtoAction {
         java.util.List<String> mask = classes(sensitivity, "mask");
         java.util.List<String> exclude = classes(sensitivity, "exclude");
         java.util.List<String> encrypt = classes(sensitivity, "encrypt");
+        ObjectNode maskFormat = Inputs.optionalObject(sensitivity, "maskFormat");
         ObjectNode properties = (ObjectNode) mappings.get("properties");
         ArrayNode maskedFields = context.objectMapper().createArrayNode();
         ArrayNode fls = context.objectMapper().createArrayNode();
@@ -110,7 +116,12 @@ final class RenderIndexMappingsAction implements ProtoAction {
                 properties.set(field.fieldName(), container);
             }
             if (mask.contains(cls)) {
-                maskedFields.add(field.fieldName());
+                // The security plugin's per-field format rides on the entry itself:
+                // "field::SHA-512" picks the hash, "field::/regex/::replacement" rewrites.
+                String format = maskFormat != null && maskFormat.hasNonNull(cls)
+                        ? maskFormat.get(cls).asText()
+                        : "";
+                maskedFields.add(field.fieldName() + format);
             }
             if (exclude.contains(cls)) {
                 fls.add("~" + field.fieldName());
@@ -121,7 +132,46 @@ final class RenderIndexMappingsAction implements ProtoAction {
         ObjectNode security = output.putObject("security");
         security.set("maskedFields", maskedFields);
         security.set("fls", fls);
+        ObjectNode roleRequest = Inputs.optionalObject(sensitivity, "role");
+        if (roleRequest != null) {
+            security.set("role", role(roleRequest, maskedFields, fls, context));
+        }
         return output;
+    }
+
+    /**
+     * A complete security-plugin role body, ready to PUT at
+     * {@code _plugins/_security/api/roles/{name}}: the caller supplies the index patterns the
+     * role covers (and optionally the allowed actions, default {@code read}); the schema
+     * supplies what is masked and what is hidden. Empty {@code masked_fields}/{@code fls} are
+     * omitted, since an empty list and an absent one mean different things to the plugin.
+     */
+    private static ObjectNode role(ObjectNode request, ArrayNode maskedFields, ArrayNode fls,
+                                   ActionContext context) throws ActionException {
+        ArrayNode patterns = Inputs.optionalArray(request, "indexPatterns");
+        if (patterns == null || patterns.isEmpty()) {
+            throw Inputs.invalidInput(
+                    "sensitivity.role needs indexPatterns: the index names the role covers",
+                    "/sensitivity/role/indexPatterns");
+        }
+        Inputs.stringElements(patterns, "/sensitivity/role/indexPatterns");
+        ObjectNode role = context.objectMapper().createObjectNode();
+        ObjectNode permission = role.putArray("index_permissions").addObject();
+        permission.set("index_patterns", patterns.deepCopy());
+        ArrayNode actions = Inputs.optionalArray(request, "allowedActions");
+        if (actions != null && !actions.isEmpty()) {
+            Inputs.stringElements(actions, "/sensitivity/role/allowedActions");
+            permission.set("allowed_actions", actions.deepCopy());
+        } else {
+            permission.putArray("allowed_actions").add("read");
+        }
+        if (!maskedFields.isEmpty()) {
+            permission.set("masked_fields", maskedFields.deepCopy());
+        }
+        if (!fls.isEmpty()) {
+            permission.set("fls", fls.deepCopy());
+        }
+        return role;
     }
 
     private static java.util.List<String> classes(ObjectNode sensitivity, String key)
