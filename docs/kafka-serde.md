@@ -47,9 +47,11 @@ protomolt.registry.url=http://localhost:8081
 ```
 
 On write, the id registered for the subject (`<topic>-value` by default) is
-looked up once and stamped into the frame. On read, the frame's id is resolved
-to the registry's schema, which is how a consumer follows a topic whose
-writers have moved on.
+looked up once and stamped into the frame — paired with the message's index
+in the *registry's* schema, because an index path is a position in the file
+the id names, and the packaged file may lay the same types out differently.
+On read, the frame's id is resolved to the registry's schema, which is how a
+consumer follows a topic whose writers have moved on.
 
 The registry answer also settles type *identity* by name. A frame's
 message-index array is a position in the writer's file, not a name, and two
@@ -60,6 +62,47 @@ still read correctly — and a frame that genuinely carries another type is
 refused by name. Only when no registry can answer does the check fall back to
 comparing the frame's index path against the configured type's position in
 the packaged file.
+
+## What comes back
+
+The application's own generated classes, when they are on the classpath. The
+descriptor set records each file's Java options — `java_package`,
+`java_multiple_files`, `java_outer_classname` — which is exactly what protoc
+used to name the generated classes, so the deserializer derives the class
+name, looks it up once per type, and parses straight into it. A consumer gets
+its `Order` back and calls `getId()`. Nothing is configured; a type with no
+generated class (descriptor-set-only deployments, types resolved from a
+registry this application never compiled) comes back as a `DynamicMessage`,
+and `protomolt.generated.classes=false` turns the whole behavior off.
+
+For Kafka Streams, `ProtoMoltSerde` packages both halves as one `Serde`:
+
+```java
+Consumed.with(Serdes.String(), new ProtoMoltSerde())
+```
+
+## Several types on one topic
+
+Leave `protomolt.message.type` unset and the serde is unpinned. The
+serializer accepts any type the descriptor set declares — the set stays the
+producer's contract, and a type outside it is refused — looking each type's
+id up under its own subject, which is what the record-name strategies are
+for:
+
+```properties
+protomolt.subject.strategy=record
+```
+
+`topic` is the default (`<topic>-value`, Confluent's TopicNameStrategy);
+`record` uses the message's full name and `topic-record` uses
+`<topic>-<full name>`, matching Confluent's other two strategies byte for
+byte.
+
+An unpinned deserializer resolves each frame's type through the registry,
+and therefore requires one: an index path is a position, not a name, and
+without a registry (or a pinned type) there is nothing to turn it into one.
+Resolved ids are cached for the serde's lifetime, so a registry outage only
+affects ids the consumer has never seen before.
 
 ### When the registry cannot answer
 
@@ -89,11 +132,13 @@ so the stamped id repairs itself without a restart.
 |---|---|---|
 | `protomolt.descriptor.set.resource` | | Classpath resource holding a serialized `FileDescriptorSet`. Exactly one of this or the base64 form is required |
 | `protomolt.descriptor.set.base64` | | The same, inline |
-| `protomolt.message.type` | | Fully qualified message type |
+| `protomolt.message.type` | unset | Pin the serde to one fully qualified type; unset accepts any packaged type |
 | `protomolt.registry.url` | none | A Confluent-compatible registry, if there is one |
-| `protomolt.subject` | `<topic>-value` | Subject to look the id up under |
+| `protomolt.subject` | per strategy | Explicit subject, overriding the strategy |
+| `protomolt.subject.strategy` | `topic` | `topic`, `record`, or `topic-record` |
 | `protomolt.schema.id` | `0` | Id stamped when no registry answers |
 | `protomolt.registry.retry.backoff.ms` | `30000` | How long a failed registry lookup stands before asking again |
+| `protomolt.generated.classes` | `true` | Return generated Java classes when they are on the classpath |
 | `protomolt.validate.on.write` | `true` | Reject invalid messages instead of writing them |
 | `protomolt.validate.on.read` | `false` | Validate after deserializing |
 
@@ -102,15 +147,28 @@ producer already wrote, and one that starts rejecting history on upgrade is
 worse than one that does not. Turn it on for topics whose producers do not all
 come through this serde, which is the only way invalid data gets in.
 
+## How this compares
+
+Against the two protobuf serdes people actually deploy:
+
+| | ProtoMolt | Confluent | Apicurio |
+|---|---|---|---|
+| License | Apache-2.0 | Apache-2.0 jar, CCL compile-scope dependency | Apache-2.0 |
+| Data validated against the schema's declared rules | serializer and deserializer, on by default | via Data Contracts: CEL rule strings in registry metadata, registry required | no — its validation option is a schema-shape diff, cached per type, that never looks at field values |
+| Runs with no registry at all | yes — the descriptor set is sufficient | no | no |
+| Registry outage | packaged fallback; paced retries; still validating | fails unresolved lookups | fails by default; two opt-in fallbacks, each needing per-serde configuration |
+| Generated-class return | automatic, on by default, derived from the descriptor set's java options | `derive.type` / `specific.protobuf.value.type` | explicit return class, or opt-in `derive.class` |
+| Multi-type topics | unpinned mode + record-name strategies | record-name strategies | record-name strategies |
+| Auto-registration | no, deliberately (see below) | yes (default on) | yes (option) |
+
+Auto-registration is the one their column wins, and it is declined on
+purpose: an id is something the schema's owner publishes, not something a
+producer decides, which is why registries are routinely deployed with
+auto-registration off. A subject the registry does not know falls back to
+the configured id.
+
 ## Current limitations
 
-- **Schemas are looked up, not registered.** There is no auto-registration: the
-  id is something the schema's owner publishes, not something a producer
-  decides, and registries are routinely deployed with auto-registration off for
-  exactly that reason. A subject the registry does not know falls back to the
-  configured id.
-- **The subject strategy is TopicNameStrategy**, overridable per serde with
-  `protomolt.subject`. Record-name strategies are not implemented.
 - **A registry-resolved schema carries only its own rules.** The validator
   reads rules from descriptor options even when the descriptor was built
   without the extensions registered (the annotations survive as unknown fields

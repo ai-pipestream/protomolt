@@ -1,0 +1,15 @@
+// Test fixture: a generated class the deserializer should hand back, with a rule the
+// serializer should enforce straight off the generated descriptor.
+syntax = "proto3";
+
+package serde.gen.v1;
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+option java_package = "ai.pipestream.proto.kafka.serde.testdata";
+option java_multiple_files = true;
+
+message GenOrder {
+  string id = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 3];
+  int32 quantity = 2;
+}
