@@ -18,10 +18,13 @@ import java.util.stream.Collectors;
  * A Kafka protobuf deserializer that reads the Confluent wire format and resolves the message
  * type from the descriptor set the deployment packages, not from a registry lookup per record.
  *
- * <p>The frame carries a schema id and an index path. The id names a schema in whichever registry
- * wrote it, which this deserializer does not consult; the index path, however, describes the
- * message's position in its file, and that is checked against the configured type. A frame whose
- * index path points somewhere else is a topic carrying a type this consumer was not configured
+ * <p>The frame carries a schema id and an index path. With a registry configured, the id and
+ * index resolve to the actual type the writer framed, and its <em>name</em> is checked against
+ * the configured type: an index path is a position in the writer's file, and two files can
+ * declare the same message at different positions, so comparing positions across files would
+ * refuse records that are exactly the configured type. Without a registry answer the index path
+ * is all there is, and it is compared against the configured type's position in the packaged
+ * file. Either way, a frame carrying some other type is a topic this consumer was not configured
  * for, and saying so beats parsing the bytes as the wrong message and returning nonsense.</p>
  *
  * <p>Validation on read is off by default. It is worth turning on for a topic whose producers do
@@ -47,7 +50,8 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
         indexPath = ConfluentWireFormat.indexPath(messageType);
         validateOnRead = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_READ);
         validator = ProtoValidator.create();
-        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL));
+        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
+                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS));
     }
 
     @Override
@@ -62,14 +66,8 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
         if (data == null) {
             return null;
         }
-        List<Integer> framedIndex = ConfluentWireFormat.messageIndex(data);
-        if (!framedIndex.equals(indexPath)) {
-            throw new SerializationException("A record on " + topic + " points at message index "
-                    + framedIndex + ", but this deserializer is configured for "
-                    + messageType.getFullName() + " at index " + indexPath
-                    + "; the topic is carrying a type this consumer does not expect");
-        }
-        Descriptor type = resolve(ConfluentWireFormat.schemaId(data), framedIndex);
+        Descriptor type = resolve(topic, ConfluentWireFormat.schemaId(data),
+                ConfluentWireFormat.messageIndex(data));
         Message message;
         try {
             message = DynamicMessage.parseFrom(type, ConfluentWireFormat.payload(data));
@@ -90,18 +88,39 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
     /**
      * The schema the frame's id names, when a registry can say, and the packaged one otherwise.
      *
-     * <p>The registry is the better answer because it describes what the writer actually wrote,
-     * which is how a consumer follows a topic whose producers moved on. Falling back rather than
-     * failing keeps the registry a metadata service instead of a runtime dependency of every
-     * consumer: an unreachable registry should not stop a consumer whose packaged schema still
-     * reads the bytes in front of it.</p>
+     * <p>The registry is the better answer twice over. It describes what the writer actually
+     * wrote, which is how a consumer follows a topic whose producers moved on — and it names the
+     * framed type, so the type check compares names rather than file positions. A writer whose
+     * file declares the configured type at a different index is still writing the configured
+     * type; only the registry can say so.</p>
+     *
+     * <p>Falling back rather than failing keeps the registry a metadata service instead of a
+     * runtime dependency of every consumer: an unreachable registry should not stop a consumer
+     * whose packaged schema still reads the bytes in front of it. The fallback check is
+     * positional, because without the writer's file an index path cannot be turned into a
+     * name.</p>
      */
-    private Descriptor resolve(int schemaId, List<Integer> framedIndex) {
-        if (schemaIds == null) {
-            return messageType;
+    private Descriptor resolve(String topic, int schemaId, List<Integer> framedIndex) {
+        if (schemaIds != null) {
+            Descriptor written = schemaIds.messageFor(schemaId, framedIndex);
+            if (written != null) {
+                if (!written.getFullName().equals(messageType.getFullName())) {
+                    throw new SerializationException("A record on " + topic + " is a "
+                            + written.getFullName() + " according to schema id " + schemaId
+                            + ", but this deserializer is configured for "
+                            + messageType.getFullName()
+                            + "; the topic is carrying a type this consumer does not expect");
+                }
+                return written;
+            }
         }
-        Descriptor resolved = schemaIds.messageFor(schemaId, framedIndex);
-        return resolved != null ? resolved : messageType;
+        if (!framedIndex.equals(indexPath)) {
+            throw new SerializationException("A record on " + topic + " points at message index "
+                    + framedIndex + ", but this deserializer is configured for "
+                    + messageType.getFullName() + " at index " + indexPath
+                    + "; the topic is carrying a type this consumer does not expect");
+        }
+        return messageType;
     }
 
     private static String describe(ValidationResult result) {

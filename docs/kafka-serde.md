@@ -47,9 +47,19 @@ protomolt.registry.url=http://localhost:8081
 ```
 
 On write, the id registered for the subject (`<topic>-value` by default) is
-looked up once per topic and stamped into the frame. On read, the frame's id is
-resolved to the registry's schema, which is how a consumer follows a topic
-whose writers have moved on.
+looked up once and stamped into the frame. On read, the frame's id is resolved
+to the registry's schema, which is how a consumer follows a topic whose
+writers have moved on.
+
+The registry answer also settles type *identity* by name. A frame's
+message-index array is a position in the writer's file, not a name, and two
+files can declare the same message at different positions; with a registry
+answer, the deserializer checks that the resolved type's full name is the
+configured one, so a writer whose file lays its messages out differently is
+still read correctly — and a frame that genuinely carries another type is
+refused by name. Only when no registry can answer does the check fall back to
+comparing the frame's index path against the configured type's position in
+the packaged file.
 
 ### When the registry cannot answer
 
@@ -61,10 +71,17 @@ not changed.
 
 Falling back supplies a schema; it does not suspend the contract that schema
 declares. Messages are still validated against the packaged schema's rules, and
-a frame whose index path disagrees with the configured type is still refused
-rather than parsed as the wrong message. The fallback is logged once per serde,
-not once per record, because a warning on every message during an outage is a
+a frame carrying a type other than the configured one is still refused rather
+than parsed as the wrong message. The fallback is logged once per serde, not
+once per record, because a warning on every message during an outage is a
 second outage.
+
+Nor does the outage cost every record a connection attempt. A lookup that
+failed is not retried until `protomolt.registry.retry.backoff.ms` (default
+30 seconds) has passed, and a lookup that succeeded is cached for the life of
+the serde. The backoff cuts both ways: a registry that comes back — or a
+subject registered after the producer started — is noticed at the next window,
+so the stamped id repairs itself without a restart.
 
 ## Configuration
 
@@ -76,6 +93,7 @@ second outage.
 | `protomolt.registry.url` | none | A Confluent-compatible registry, if there is one |
 | `protomolt.subject` | `<topic>-value` | Subject to look the id up under |
 | `protomolt.schema.id` | `0` | Id stamped when no registry answers |
+| `protomolt.registry.retry.backoff.ms` | `30000` | How long a failed registry lookup stands before asking again |
 | `protomolt.validate.on.write` | `true` | Reject invalid messages instead of writing them |
 | `protomolt.validate.on.read` | `false` | Validate after deserializing |
 
@@ -93,8 +111,9 @@ come through this serde, which is the only way invalid data gets in.
   configured id.
 - **The subject strategy is TopicNameStrategy**, overridable per serde with
   `protomolt.subject`. Record-name strategies are not implemented.
-- **Rules must survive the descriptor set.** Options are only readable as rules
-  if they were parsed with their extensions registered; this module registers
-  ProtoMolt's validation and metadata extensions when it reads a descriptor set.
-  A schema resolved from a registry carries whatever rules its `.proto` text
-  declares, which for a schema registered by another tool is typically none.
+- **A registry-resolved schema carries only its own rules.** The validator
+  reads rules from descriptor options even when the descriptor was built
+  without the extensions registered (the annotations survive as unknown fields
+  and are reparsed), so a descriptor set from any source keeps its rules. But a
+  schema resolved from a registry declares whatever its `.proto` text declares,
+  which for a schema registered by another tool is typically no rules at all.

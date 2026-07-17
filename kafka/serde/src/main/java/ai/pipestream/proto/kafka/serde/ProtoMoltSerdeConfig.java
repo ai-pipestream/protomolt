@@ -24,6 +24,8 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
     public static final String REGISTRY_URL = "protomolt.registry.url";
     /** Overrides the default {@code <topic>-value} / {@code <topic>-key} subject. */
     public static final String SUBJECT = "protomolt.subject";
+    /** How long a failed registry lookup stands before the registry is asked again. */
+    public static final String REGISTRY_RETRY_BACKOFF_MS = "protomolt.registry.retry.backoff.ms";
     /** Validate before writing, so invalid data never reaches the topic. */
     public static final String VALIDATE_ON_WRITE = "protomolt.validate.on.write";
     /** Validate after reading, which catches producers that never went through this serde. */
@@ -51,6 +53,12 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
             .define(SUBJECT, ConfigDef.Type.STRING, null, ConfigDef.Importance.LOW,
                     "Subject to look the id up under. Defaults to <topic>-value, or <topic>-key "
                             + "for a key serde.")
+            .define(REGISTRY_RETRY_BACKOFF_MS, ConfigDef.Type.LONG, 30_000L,
+                    ConfigDef.Range.atLeast(0), ConfigDef.Importance.LOW,
+                    "How long a failed registry lookup stands before the registry is asked "
+                            + "again. Successful lookups are cached for the life of the serde; "
+                            + "this only paces retries during an outage, so a registry that "
+                            + "recovers is noticed without costing every record an attempt.")
             .define(VALIDATE_ON_WRITE, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.HIGH,
                     "Validate against the schema's declared rules before serializing. Invalid "
                             + "messages are rejected rather than written.")
