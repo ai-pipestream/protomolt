@@ -126,6 +126,27 @@ the serde. The backoff cuts both ways: a registry that comes back — or a
 subject registered after the producer started — is noticed at the next window,
 so the stamped id repairs itself without a restart.
 
+### The latest version, strictly
+
+Registry mode stamps the id of the subject's *latest* registered version —
+what Confluent calls `use.latest.version`, here simply how the registry path
+works. That id is a promise about readers: a consumer following it reads the
+bytes with the *registered* schema, not with the packaged one that produced
+them. The two are allowed to differ — an added field, a reordered file — but
+not incompatibly, or every reader misreads every record, silently.
+
+So before stamping the id, the serializer checks that the registered schema
+can read what the packaged schema writes (binary wire rules, the same check
+`protomolt-compat` runs as a registry write-gate). A write that fails the
+check is refused with the violations listed, the same way a validation
+failure refuses it, and the refusal reaches the metrics listeners as
+`incompatible-with-latest`. The verdict is cached per schema pair, so the
+check costs nothing per record.
+
+`protomolt.latest.compatibility.strict=false` turns the check off and stamps
+the id regardless — the same escape hatch, under the same name, as
+Confluent's `latest.compatibility.strict=false`.
+
 ## Configuration
 
 | Key | Default | Meaning |
@@ -138,6 +159,7 @@ so the stamped id repairs itself without a restart.
 | `protomolt.subject.strategy` | `topic` | `topic`, `record`, or `topic-record` |
 | `protomolt.schema.id` | `0` | Id stamped when no registry answers |
 | `protomolt.registry.retry.backoff.ms` | `30000` | How long a failed registry lookup stands before asking again |
+| `protomolt.latest.compatibility.strict` | `true` | Refuse writes the registry's latest schema could not read, instead of stamping its id over them |
 | `protomolt.generated.classes` | `true` | Return generated Java classes when they are on the classpath |
 | `protomolt.validate.on.write` | `true` | Reject invalid messages instead of writing them |
 | `protomolt.validate.on.read` | `false` | Validate after deserializing |
@@ -230,6 +252,7 @@ Against the two protobuf serdes people actually deploy:
 | Registry outage | packaged fallback; paced retries; still validating | fails unresolved lookups | fails by default; two opt-in fallbacks, each needing per-serde configuration |
 | Generated-class return | automatic, on by default, derived from the descriptor set's java options | `derive.type` / `specific.protobuf.value.type` | explicit return class, or opt-in `derive.class` |
 | Multi-type topics | unpinned mode + record-name strategies | record-name strategies | record-name strategies |
+| Latest-version ids | always — the registry path stamps the subject's latest, guarded by a compatibility check on by default | `use.latest.version` (opt-in) with `latest.compatibility.strict` | `find-latest` (opt-in), no client-side compatibility guard |
 | Auto-registration | no, deliberately (see below) | yes (default on) | yes (option) |
 
 Auto-registration is the one their column wins, and it is declined on

@@ -30,6 +30,8 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
     public static final String SUBJECT = "protomolt.subject";
     /** How long a failed registry lookup stands before the registry is asked again. */
     public static final String REGISTRY_RETRY_BACKOFF_MS = "protomolt.registry.retry.backoff.ms";
+    /** Refuse writes whose packaged schema the registry's latest cannot read. */
+    public static final String LATEST_COMPATIBILITY_STRICT = "protomolt.latest.compatibility.strict";
     /** Validate before writing, so invalid data never reaches the topic. */
     public static final String VALIDATE_ON_WRITE = "protomolt.validate.on.write";
     /** Validate after reading, which catches producers that never went through this serde. */
@@ -90,6 +92,15 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
                             + "again. Successful lookups are cached for the life of the serde; "
                             + "this only paces retries during an outage, so a registry that "
                             + "recovers is noticed without costing every record an attempt.")
+            .define(LATEST_COMPATIBILITY_STRICT, ConfigDef.Type.BOOLEAN, true,
+                    ConfigDef.Importance.MEDIUM,
+                    "Registry mode stamps the id of the subject's latest registered version — "
+                            + "the schema a consumer following that id will read with. Before "
+                            + "stamping it, verify that schema can read what the packaged schema "
+                            + "writes (binary wire rules); an incompatible write is refused "
+                            + "rather than framed with an id that would misread it. Set false "
+                            + "to stamp the id without the check, like Confluent's "
+                            + "latest.compatibility.strict=false.")
             .define(VALIDATE_ON_WRITE, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.HIGH,
                     "Validate against the schema's declared rules before serializing. Invalid "
                             + "messages are rejected rather than written.")

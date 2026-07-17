@@ -24,6 +24,8 @@ public interface SerdeMetricsListener {
     String REASON_NOT_IN_CONTRACT = "not-in-contract";
     /** Refused because an unpinned consumer met a schema id the registry could not resolve. */
     String REASON_UNRESOLVED_ID = "unresolved-id";
+    /** Refused because the registry's latest schema cannot read what this producer writes. */
+    String REASON_INCOMPATIBLE_WITH_LATEST = "incompatible-with-latest";
 
     /** A record framed and handed to Kafka. */
     default void onSerialized(String topic, String type) {
@@ -49,7 +51,7 @@ public interface SerdeMetricsListener {
      * A record refused on type identity rather than data.
      *
      * @param reason one of {@link #REASON_WRONG_TYPE}, {@link #REASON_NOT_IN_CONTRACT},
-     *               {@link #REASON_UNRESOLVED_ID}
+     *               {@link #REASON_UNRESOLVED_ID}, {@link #REASON_INCOMPATIBLE_WITH_LATEST}
      */
     default void onTypeRefused(String topic, String reason) {
     }

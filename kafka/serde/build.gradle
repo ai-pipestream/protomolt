@@ -11,6 +11,7 @@ dependencies {
     compileOnly libs.kafka.clients
 
     implementation project(':protomolt-schema-confluent')
+    implementation project(':protomolt-compat')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
     implementation project(':protomolt-protobuf-quality')

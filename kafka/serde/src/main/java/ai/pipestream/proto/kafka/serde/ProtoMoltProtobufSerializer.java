@@ -40,6 +40,8 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
 
     /** Bound on the caller-descriptor trust cache; a producer usually has a handful at most. */
     private static final int MAX_TRUSTED_CALLERS = 64;
+    /** Bound on the packaged-versus-latest verdict cache, sized the same way. */
+    private static final int MAX_COMPAT_VERDICTS = 64;
 
     private List<FileDescriptor> files;
     private ProtoValidator validator;
@@ -55,6 +57,11 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     private boolean isKey;
     private SerdeMetricsListener metrics;
     private SerdeMapper mapper;
+    private boolean latestCompatibilityStrict;
+    private ai.pipestream.proto.compat.CompatibilityChecker compatChecker;
+    // Verdicts on (packaged file, registry file) pairs; both sides are cached instances.
+    private final ConcurrentMap<SchemaPair, ai.pipestream.proto.compat.CompatibilityResult>
+            compatVerdicts = new ConcurrentHashMap<>();
     // Packaged types by full name, resolved once per type; absent types marked by MISSING.
     private final ConcurrentMap<String, Descriptor> packagedByName = new ConcurrentHashMap<>();
     // Caller descriptors already proven byte-identical to their packaged schema (see below).
@@ -77,6 +84,9 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
                 config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
         subjectOverride = config.getString(ProtoMoltSerdeConfig.SUBJECT);
         subjectStrategy = config.getString(ProtoMoltSerdeConfig.SUBJECT_STRATEGY);
+        latestCompatibilityStrict =
+                config.getBoolean(ProtoMoltSerdeConfig.LATEST_COMPATIBILITY_STRICT);
+        compatChecker = ai.pipestream.proto.compat.CompatibilityChecker.create();
         mapper = SerdeMapper.parse(config.getList(ProtoMoltSerdeConfig.MAP_ON_WRITE),
                 ProtoMoltSerdeConfig.MAP_ON_WRITE);
         this.isKey = isKey;
@@ -204,11 +214,50 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
                 Descriptor writerType = schemaIds.typeInSchema(id.getAsInt(),
                         packaged.getFullName());
                 if (writerType != null) {
+                    ensureLatestCanRead(topic, packaged, writerType, subject, id.getAsInt());
                     return new Frame(id.getAsInt(), ConfluentWireFormat.indexPath(writerType));
                 }
             }
         }
         return new Frame(configuredSchemaId, ConfluentWireFormat.indexPath(packaged));
+    }
+
+    /** A packaged file and the registered file whose id would be stamped over its bytes. */
+    private record SchemaPair(FileDescriptor packaged, FileDescriptor latest) {
+    }
+
+    /**
+     * The strict half of use-latest-version semantics. The frame's id names the subject's
+     * latest registered schema, and a consumer following the id reads the bytes with
+     * <em>that</em> schema — not the packaged one that produced them. When the two have
+     * diverged incompatibly (a field's wire type changed, say), stamping the id would hand
+     * every reader a schema that misreads the record, silently. So the write is refused,
+     * the same way a validation failure refuses it, until the schemas agree again — unless
+     * {@code protomolt.latest.compatibility.strict} is off, which is Confluent's off switch
+     * too. The check is binary wire rules only ({@code BACKWARD}: the registered schema must
+     * read data the packaged schema wrote), and the verdict is cached per schema pair.
+     */
+    private void ensureLatestCanRead(String topic, Descriptor packaged, Descriptor latest,
+                                     String subject, int schemaId) {
+        if (!latestCompatibilityStrict) {
+            return;
+        }
+        if (compatVerdicts.size() >= MAX_COMPAT_VERDICTS) {
+            compatVerdicts.clear();
+        }
+        ai.pipestream.proto.compat.CompatibilityResult verdict = compatVerdicts.computeIfAbsent(
+                new SchemaPair(packaged.getFile(), latest.getFile()),
+                pair -> compatChecker.check(pair.packaged(), pair.latest(),
+                        ai.pipestream.proto.compat.CompatibilityMode.BACKWARD));
+        if (!verdict.isCompatible()) {
+            metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_INCOMPATIBLE_WITH_LATEST);
+            throw new SerializationException("The latest schema registered under subject "
+                    + subject + " (id " + schemaId + ") cannot read a " + packaged.getFullName()
+                    + " written with the packaged schema, so the record was not written to "
+                    + topic + ". Readers follow the frame's id, so stamping it would misread "
+                    + "every record. Violations: " + verdict.violations().stream()
+                            .map(Object::toString).collect(Collectors.joining("; ")));
+        }
     }
 
     /**
