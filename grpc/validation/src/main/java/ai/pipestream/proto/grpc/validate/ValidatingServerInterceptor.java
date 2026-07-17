@@ -36,10 +36,16 @@ import java.util.stream.Collectors;
  * {@code INVALID_ARGUMENT}. A rule that cannot even compile is the server's schema problem and
  * no caller can fix it: {@code INTERNAL}, with the detail kept out of the wire description.</p>
  *
- * <p>Optionally, messages are also measured against the {@code ai.pipestream.proto.quality.v1}
- * dimensions their schema declares: scores go to the {@link Builder#onQuality} callback, and a
+ * <p>Messages are also measured against the {@code ai.pipestream.proto.quality.v1} dimensions
+ * their schema declares — types declaring none cost one option read ever. Scores go to the
+ * metrics listeners and the {@link Builder#onQuality} callback, and a
  * {@link Builder#qualityFloor} turns the measurement into admission criteria
- * ({@code FAILED_PRECONDITION} below the floor). Types declaring no dimensions cost nothing.</p>
+ * ({@code FAILED_PRECONDITION} below the floor).</p>
+ *
+ * <p>Everything the interceptors decide is observable: {@link GrpcValidationMetricsListener}
+ * implementations found via {@link java.util.ServiceLoader} hear every validation, rejection
+ * and quality score, and {@code protomolt-grpc-validation-micrometer} ships the Micrometer
+ * binding.</p>
  */
 public final class ValidatingServerInterceptor implements ServerInterceptor {
 
@@ -47,11 +53,14 @@ public final class ValidatingServerInterceptor implements ServerInterceptor {
     private final QualityScorer quality;
     private final Double qualityFloor;
     private final BiConsumer<String, QualityReport> onQuality;
+    private final GrpcValidationMetricsListener metrics;
 
     private ValidatingServerInterceptor(Builder builder) {
         this.validator = builder.validator != null ? builder.validator : ProtoValidator.create();
-        boolean measuring = builder.qualityFloor != null || builder.onQuality != null;
-        this.quality = measuring ? QualityScorer.create() : null;
+        this.metrics = GrpcValidationMetricsListeners.load(getClass().getClassLoader());
+        // Always measuring matches the serde's default: types declaring no dimensions cost one
+        // option read ever, and scores flow to the metrics listeners without opting in.
+        this.quality = QualityScorer.create();
         this.qualityFloor = builder.qualityFloor;
         this.onQuality = builder.onQuality;
     }
@@ -136,6 +145,7 @@ public final class ValidatingServerInterceptor implements ServerInterceptor {
 
     /** The refusal status for {@code message}, or null when it may proceed. */
     private Status judge(Message message, String fullMethodName) {
+        String type = message.getDescriptorForType().getFullName();
         ValidationResult result;
         try {
             result = validator.validate(message);
@@ -150,11 +160,11 @@ public final class ValidatingServerInterceptor implements ServerInterceptor {
                     "The service's schema rules are malformed").withCause(e);
         }
         if (!result.valid()) {
+            metrics.onRejected(GrpcValidationMetricsListener.SIDE_SERVER, fullMethodName, type,
+                    result.violations().stream()
+                            .map(ValidationResult.Violation::ruleId).toList());
             return Status.INVALID_ARGUMENT.withDescription(
                     "Request violates the schema's declared rules: " + describe(result));
-        }
-        if (quality == null) {
-            return null;
         }
         QualityReport report;
         try {
@@ -163,18 +173,21 @@ public final class ValidatingServerInterceptor implements ServerInterceptor {
             return Status.INTERNAL.withDescription(
                     "The service's quality dimensions are malformed").withCause(e);
         }
-        if (!report.scored()) {
-            return null;
+        if (report.scored()) {
+            metrics.onQualityScored(fullMethodName, type, report.composite(),
+                    report.dimensions());
+            if (onQuality != null) {
+                onQuality.accept(fullMethodName, report);
+            }
+            if (qualityFloor != null && report.composite() < qualityFloor) {
+                metrics.onQualityRejected(fullMethodName, type, report.composite());
+                return Status.FAILED_PRECONDITION.withDescription(String.format(
+                        "Request scored %.3f against its schema's quality dimensions, below the "
+                                + "floor of %.3f: %s",
+                        report.composite(), qualityFloor, report.dimensions()));
+            }
         }
-        if (onQuality != null) {
-            onQuality.accept(fullMethodName, report);
-        }
-        if (qualityFloor != null && report.composite() < qualityFloor) {
-            return Status.FAILED_PRECONDITION.withDescription(String.format(
-                    "Request scored %.3f against its schema's quality dimensions, below the "
-                            + "floor of %.3f: %s",
-                    report.composite(), qualityFloor, report.dimensions()));
-        }
+        metrics.onValidated(GrpcValidationMetricsListener.SIDE_SERVER, fullMethodName, type);
         return null;
     }
 

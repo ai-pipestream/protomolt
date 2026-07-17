@@ -25,6 +25,7 @@ def supportedModules = [
         'protomolt-grpc-invoke',
         'protomolt-grpc-service',
         'protomolt-grpc-validation',
+        'protomolt-grpc-validation-micrometer',
         'protomolt-serve',
         'protomolt-connect',
         'protomolt-connect-iceberg',

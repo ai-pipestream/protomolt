@@ -30,9 +30,11 @@ import java.util.stream.Collectors;
 public final class ValidatingClientInterceptor implements ClientInterceptor {
 
     private final ProtoValidator validator;
+    private final GrpcValidationMetricsListener metrics;
 
     private ValidatingClientInterceptor(ProtoValidator validator) {
         this.validator = validator;
+        this.metrics = GrpcValidationMetricsListeners.load(getClass().getClassLoader());
     }
 
     /** Validation with the default rule-source chain. */
@@ -53,7 +55,7 @@ public final class ValidatingClientInterceptor implements ClientInterceptor {
             @Override
             public void sendMessage(ReqT message) {
                 if (message instanceof Message proto) {
-                    Status refusal = judge(proto);
+                    Status refusal = judge(proto, method.getFullMethodName());
                     if (refusal != null) {
                         // Cancel the underlying call, then fail the caller: the message never
                         // reaches the wire, and the caller sees the same status a validating
@@ -61,6 +63,8 @@ public final class ValidatingClientInterceptor implements ClientInterceptor {
                         cancel(refusal.getDescription(), refusal.asRuntimeException());
                         throw refusal.asRuntimeException();
                     }
+                    metrics.onValidated(GrpcValidationMetricsListener.SIDE_CLIENT,
+                            method.getFullMethodName(), proto.getDescriptorForType().getFullName());
                 }
                 super.sendMessage(message);
             }
@@ -68,7 +72,7 @@ public final class ValidatingClientInterceptor implements ClientInterceptor {
     }
 
     /** The refusal status for {@code message}, or null when it may be sent. */
-    private Status judge(Message message) {
+    private Status judge(Message message, String fullMethodName) {
         ValidationResult result;
         try {
             result = validator.validate(message);
@@ -80,6 +84,10 @@ public final class ValidatingClientInterceptor implements ClientInterceptor {
             throw e;
         }
         if (!result.valid()) {
+            metrics.onRejected(GrpcValidationMetricsListener.SIDE_CLIENT, fullMethodName,
+                    message.getDescriptorForType().getFullName(),
+                    result.violations().stream()
+                            .map(ValidationResult.Violation::ruleId).toList());
             return Status.INVALID_ARGUMENT.withDescription(
                     "Request violates the schema's declared rules: " + describe(result));
         }
