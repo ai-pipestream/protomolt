@@ -8,6 +8,11 @@ import java.util.Arrays;
  * The Confluent protobuf wire format: a zero magic byte, a 4-byte schema id, a varint array of
  * message indexes (count first; a single zero varint means "first message"), then the message
  * bytes. This sink resolves the message type from configuration, so only the payload matters.
+ *
+ * <p>The index varints are <em>zigzag</em>-encoded: Confluent writes them with Kafka's
+ * {@code ByteUtils.writeVarint}, which maps n to {@code (n << 1) ^ (n >> 31)}. Reading them as
+ * plain unsigned varints happens to work for the single-zero-byte "first message" case and for
+ * nothing else, so only a message declared first in its file would decode.</p>
  */
 final class ConfluentFraming {
 
@@ -25,7 +30,7 @@ final class ConfluentFraming {
                     + "and a schema id prefix");
         }
         int position = 5;
-        long count = readVarint(framed, position);
+        long count = zigzag(readVarint(framed, position));
         position += varintLength(framed, position);
         if (count > 0) {
             if (count > 128) {
@@ -36,6 +41,11 @@ final class ConfluentFraming {
             }
         }
         return position;
+    }
+
+    /** Undoes the zigzag mapping Kafka's ByteUtils.writeVarint applies. */
+    private static long zigzag(long encoded) {
+        return (encoded >>> 1) ^ -(encoded & 1);
     }
 
     private static long readVarint(byte[] bytes, int position) {
