@@ -4,9 +4,9 @@ import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
-import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.serialization.Deserializer;
 
@@ -27,31 +27,48 @@ import java.util.stream.Collectors;
  * file. Either way, a frame carrying some other type is a topic this consumer was not configured
  * for, and saying so beats parsing the bytes as the wrong message and returning nonsense.</p>
  *
- * <p>Validation on read is off by default. It is worth turning on for a topic whose producers do
- * not all go through this serde, which is the only way invalid data gets in.</p>
+ * <p>With {@code protomolt.message.type} unset the deserializer is unpinned: each frame's type is
+ * whatever the registry says it is, which is how several event types share one topic. Unpinned
+ * requires the registry, because without one an index path cannot be turned into a name — and an
+ * id the registry cannot resolve fails that record rather than guessing. Ids resolve once and are
+ * cached, so this degrades only for ids never seen before the outage.</p>
+ *
+ * <p>Records come back as the application's own generated classes when they are on the classpath
+ * (see {@link GeneratedMessages}), and as {@code DynamicMessage} otherwise. Validation on read is
+ * off by default; it is worth turning on for a topic whose producers do not all go through this
+ * serde, which is the only way invalid data gets in.</p>
  *
  * @see ProtoMoltSerdeConfig
  */
 public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
 
     private ProtoValidator validator;
-    private Descriptor messageType;
-    private List<Integer> indexPath;
+    private Descriptor pinnedType;
+    private List<Integer> pinnedIndexPath;
     private boolean validateOnRead;
     private SchemaIds schemaIds;
+    private GeneratedMessages generated;
 
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         ProtoMoltSerdeConfig config = new ProtoMoltSerdeConfig(configs);
         List<FileDescriptor> files =
                 ProtoMoltProtobufSerializer.Descriptors.load(config, getClass().getClassLoader());
-        messageType = SerdeDescriptors.messageType(files,
-                config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE));
-        indexPath = ConfluentWireFormat.indexPath(messageType);
-        validateOnRead = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_READ);
-        validator = ProtoValidator.create();
         schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
                 config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS));
+        String pinned = config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE);
+        if (pinned == null && schemaIds == null) {
+            throw new ConfigException(ProtoMoltSerdeConfig.MESSAGE_TYPE + " is required when no "
+                    + "registry is configured: a frame's index path is a position, not a name, "
+                    + "and only a registry or a pinned type can turn it into one");
+        }
+        pinnedType = pinned != null ? SerdeDescriptors.messageType(files, pinned) : null;
+        pinnedIndexPath = pinnedType != null ? ConfluentWireFormat.indexPath(pinnedType) : null;
+        validateOnRead = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_READ);
+        validator = ProtoValidator.create();
+        generated = new GeneratedMessages(files,
+                config.getBoolean(ProtoMoltSerdeConfig.GENERATED_CLASSES),
+                getClass().getClassLoader());
     }
 
     @Override
@@ -70,7 +87,7 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
                 ConfluentWireFormat.messageIndex(data));
         Message message;
         try {
-            message = DynamicMessage.parseFrom(type, ConfluentWireFormat.payload(data));
+            message = generated.parse(type, ConfluentWireFormat.payload(data));
         } catch (InvalidProtocolBufferException e) {
             throw new SerializationException("A record on " + topic + " is not a valid "
                     + type.getFullName() + ": " + e.getMessage(), e);
@@ -96,31 +113,40 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
      *
      * <p>Falling back rather than failing keeps the registry a metadata service instead of a
      * runtime dependency of every consumer: an unreachable registry should not stop a consumer
-     * whose packaged schema still reads the bytes in front of it. The fallback check is
-     * positional, because without the writer's file an index path cannot be turned into a
-     * name.</p>
+     * whose packaged schema still reads the bytes in front of it. The pinned fallback check is
+     * positional, because without the writer's file an index path cannot be turned into a name;
+     * unpinned, there is no fallback type to check against, so an unresolvable id fails the
+     * record rather than guessing.</p>
      */
     private Descriptor resolve(String topic, int schemaId, List<Integer> framedIndex) {
-        if (schemaIds != null) {
-            Descriptor written = schemaIds.messageFor(schemaId, framedIndex);
-            if (written != null) {
-                if (!written.getFullName().equals(messageType.getFullName())) {
-                    throw new SerializationException("A record on " + topic + " is a "
-                            + written.getFullName() + " according to schema id " + schemaId
-                            + ", but this deserializer is configured for "
-                            + messageType.getFullName()
-                            + "; the topic is carrying a type this consumer does not expect");
-                }
-                return written;
+        Descriptor written = schemaIds != null
+                ? schemaIds.messageFor(schemaId, framedIndex)
+                : null;
+        if (pinnedType == null) {
+            if (written == null) {
+                throw new SerializationException("A record on " + topic + " carries schema id "
+                        + schemaId + ", which the registry could not resolve; without a "
+                        + "configured " + ProtoMoltSerdeConfig.MESSAGE_TYPE
+                        + " there is no packaged type to fall back to");
             }
+            return written;
         }
-        if (!framedIndex.equals(indexPath)) {
+        if (written != null) {
+            if (!written.getFullName().equals(pinnedType.getFullName())) {
+                throw new SerializationException("A record on " + topic + " is a "
+                        + written.getFullName() + " according to schema id " + schemaId
+                        + ", but this deserializer is configured for " + pinnedType.getFullName()
+                        + "; the topic is carrying a type this consumer does not expect");
+            }
+            return written;
+        }
+        if (!framedIndex.equals(pinnedIndexPath)) {
             throw new SerializationException("A record on " + topic + " points at message index "
                     + framedIndex + ", but this deserializer is configured for "
-                    + messageType.getFullName() + " at index " + indexPath
+                    + pinnedType.getFullName() + " at index " + pinnedIndexPath
                     + "; the topic is carrying a type this consumer does not expect");
         }
-        return messageType;
+        return pinnedType;
     }
 
     private static String describe(ValidationResult result) {

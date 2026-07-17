@@ -79,7 +79,7 @@ class SerdeFakeRegistryTest {
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
             switch (path) {
-                case "/schemas/ids/42", "/schemas/ids/43" ->
+                case "/schemas/ids/42", "/schemas/ids/43", "/schemas/ids/88" ->
                         respond(exchange, 200, schemaJson(WRITER_PROTO));
                 case "/schemas/ids/66" -> {
                     schemaId66Requests.incrementAndGet();
@@ -218,16 +218,24 @@ class SerdeFakeRegistryTest {
             assertThat(ConfluentWireFormat.schemaId(afterRecovery))
                     .as("the registry's id once the backoff expired")
                     .isEqualTo(88);
+            // And the index is id 88's schema's, where Order is first — id and index pair up.
+            assertThat(ConfluentWireFormat.messageIndex(afterRecovery)).containsExactly(0);
         }
     }
 
-    /** The ordinary happy path: the subject resolves and the frame carries the registry's id. */
+    /**
+     * The ordinary happy path: the subject resolves and the frame carries the registry's id —
+     * paired with the index of the type in the <em>registry's</em> file, not the packaged one.
+     * Order is second in the packaged file but first in the registered schema, and a consumer
+     * following id 42 will look it up at the registered position.
+     */
     @Test
-    void stampsTheRegistryIdWhenTheSubjectResolves() {
+    void stampsTheRegistryIdWithTheRegistrySchemasIndex() {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(config(Map.of()), false);
             byte[] framed = serializer.serialize("orders", message("A-5", 9));
             assertThat(ConfluentWireFormat.schemaId(framed)).isEqualTo(42);
+            assertThat(ConfluentWireFormat.messageIndex(framed)).containsExactly(0);
         }
     }
 

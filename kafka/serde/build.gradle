@@ -1,3 +1,7 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
 description = 'Kafka protobuf serde: the Confluent wire format, with the schema\'s own declared rules enforced on write'
 
 dependencies {
@@ -13,4 +17,11 @@ dependencies {
     testImplementation libs.kafka.clients
     testImplementation project(':protomolt-proto-sources')
     testImplementation libs.slf4j.simple
+}
+
+// Test fixtures only: generated classes to prove the deserializer returns them.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
 }

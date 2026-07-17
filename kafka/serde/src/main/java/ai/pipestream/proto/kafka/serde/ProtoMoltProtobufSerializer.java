@@ -13,6 +13,7 @@ import org.apache.kafka.common.serialization.Serializer;
 
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
@@ -27,52 +28,47 @@ import java.util.stream.Collectors;
  * the schema comes from a descriptor set the deployment packages rather than from a registry
  * lookup, there is no per-message network hop and no registry to be down.</p>
  *
+ * <p>With {@code protomolt.message.type} set the serializer is pinned to one type. Unset, it
+ * accepts any type declared in the descriptor set — several event types sharing one topic — with
+ * each type validated against its own packaged contract. The descriptor set stays the boundary
+ * either way: a message whose type it does not declare is not part of this producer's contract
+ * and is refused.</p>
+ *
  * @see ProtoMoltSerdeConfig
  */
 public class ProtoMoltProtobufSerializer implements Serializer<Message> {
 
-    /** Bound on the caller-descriptor trust cache; a producer usually has exactly one. */
+    /** Bound on the caller-descriptor trust cache; a producer usually has a handful at most. */
     private static final int MAX_TRUSTED_CALLERS = 64;
 
+    private List<FileDescriptor> files;
     private ProtoValidator validator;
-    private Descriptor messageType;
-    private List<Integer> indexPath;
+    private Descriptor pinnedType;
     private int configuredSchemaId;
     private boolean validateOnWrite;
     private SchemaIds schemaIds;
-    private String subject;
+    private String subjectOverride;
+    private String subjectStrategy;
     private boolean isKey;
-    // Caller descriptors already proven byte-identical to the configured schema (see below).
+    // Packaged types by full name, resolved once per type; absent types marked by MISSING.
+    private final ConcurrentMap<String, Descriptor> packagedByName = new ConcurrentHashMap<>();
+    // Caller descriptors already proven byte-identical to their packaged schema (see below).
     private final ConcurrentMap<Descriptor, Boolean> sameSchema = new ConcurrentHashMap<>();
 
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         ProtoMoltSerdeConfig config = new ProtoMoltSerdeConfig(configs);
-        List<FileDescriptor> files = Descriptors.load(config, getClass().getClassLoader());
-        messageType = SerdeDescriptors.messageType(files, config.getString(
-                ProtoMoltSerdeConfig.MESSAGE_TYPE));
-        indexPath = ConfluentWireFormat.indexPath(messageType);
+        files = Descriptors.load(config, getClass().getClassLoader());
+        String pinned = config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE);
+        pinnedType = pinned != null ? SerdeDescriptors.messageType(files, pinned) : null;
         configuredSchemaId = config.getInt(ProtoMoltSerdeConfig.SCHEMA_ID);
         validateOnWrite = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_WRITE);
         validator = ProtoValidator.create();
         schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
                 config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS));
-        subject = config.getString(ProtoMoltSerdeConfig.SUBJECT);
+        subjectOverride = config.getString(ProtoMoltSerdeConfig.SUBJECT);
+        subjectStrategy = config.getString(ProtoMoltSerdeConfig.SUBJECT_STRATEGY);
         this.isKey = isKey;
-    }
-
-    /**
-     * The id to stamp: the registry's, when it has one for this subject, and the configured one
-     * otherwise. {@link SchemaIds} caches the answer, so this is a map read per record — and a
-     * lookup that failed during an outage is retried after the backoff rather than standing for
-     * the life of the producer, so a registry that recovers repairs the stamped id.
-     */
-    private int schemaIdFor(String topic) {
-        if (schemaIds == null) {
-            return configuredSchemaId;
-        }
-        return schemaIds.idForSubject(subject != null ? subject : Subjects.of(topic, isKey))
-                .orElse(configuredSchemaId);
     }
 
     @Override
@@ -87,49 +83,102 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
         if (data == null) {
             return null;
         }
-        if (!data.getDescriptorForType().getFullName().equals(messageType.getFullName())) {
-            throw new SerializationException("This serializer is configured for "
-                    + messageType.getFullName() + " but was handed a "
-                    + data.getDescriptorForType().getFullName());
-        }
+        Descriptor packaged = packagedTypeFor(data);
         byte[] payload = data.toByteArray();
         if (validateOnWrite) {
-            ValidationResult result = validator.validate(asConfiguredType(data, payload));
+            ValidationResult result = validator.validate(asPackagedType(data, payload, packaged));
             if (!result.valid()) {
                 throw new SerializationException("Message violates the schema's declared rules, "
                         + "so it was not written to " + topic + ": " + describe(result));
             }
         }
-        return ConfluentWireFormat.frame(schemaIdFor(topic), indexPath, payload);
+        Frame frame = frameFor(topic, packaged);
+        return ConfluentWireFormat.frame(frame.id(), frame.index(), payload);
+    }
+
+    /** The packaged descriptor declaring {@code data}'s type: the contract this producer ships. */
+    private Descriptor packagedTypeFor(Message data) {
+        String fullName = data.getDescriptorForType().getFullName();
+        if (pinnedType != null) {
+            if (!fullName.equals(pinnedType.getFullName())) {
+                throw new SerializationException("This serializer is configured for "
+                        + pinnedType.getFullName() + " but was handed a " + fullName);
+            }
+            return pinnedType;
+        }
+        Descriptor packaged = packagedByName.computeIfAbsent(fullName, name -> {
+            Descriptor found = SerdeDescriptors.findMessageType(files, name);
+            return found != null ? found : MISSING;
+        });
+        if (packaged == MISSING) {
+            throw new SerializationException(fullName + " is not declared in the configured "
+                    + "descriptor set, so it is not part of this producer's contract");
+        }
+        return packaged;
+    }
+
+    /** Sentinel for types proven absent, since a ConcurrentMap cannot hold null. */
+    private static final Descriptor MISSING =
+            com.google.protobuf.Empty.getDescriptor();
+
+    /** A schema id and the message-index path within the schema that id names. */
+    private record Frame(int id, List<Integer> index) {
     }
 
     /**
-     * The rules enforced are the configured schema's, not the caller's.
+     * The id and index stamped into the frame, which must describe the same file.
+     *
+     * <p>A message-index path is a position in the schema the frame's id names. When the registry
+     * supplies the id, the index is therefore computed against the <em>registry's</em> schema:
+     * the packaged file can declare the same type at a different position, and a consumer
+     * following the id would land on the wrong message. When the registry cannot supply both
+     * halves — no id for the subject, or a registered schema that does not declare this type —
+     * the frame falls back to the configured id and the packaged index, a pair consistent with
+     * itself.</p>
+     */
+    private Frame frameFor(String topic, Descriptor packaged) {
+        if (schemaIds != null) {
+            String subject = subjectOverride != null ? subjectOverride
+                    : Subjects.of(subjectStrategy, topic, packaged.getFullName(), isKey);
+            OptionalInt id = schemaIds.idForSubject(subject);
+            if (id.isPresent()) {
+                Descriptor writerType = schemaIds.typeInSchema(id.getAsInt(),
+                        packaged.getFullName());
+                if (writerType != null) {
+                    return new Frame(id.getAsInt(), ConfluentWireFormat.indexPath(writerType));
+                }
+            }
+        }
+        return new Frame(configuredSchemaId, ConfluentWireFormat.indexPath(packaged));
+    }
+
+    /**
+     * The rules enforced are the packaged schema's, not the caller's.
      *
      * <p>A message arrives carrying whatever descriptor the application built it from — often a
      * generated class compiled from a {@code .proto} that may or may not still match the
      * descriptor set this serde was configured with. When the caller's schema is byte-identical
-     * to the configured one (its file and every transitive import), validating the message
+     * to the packaged one (its file and every transitive import), validating the message
      * directly enforces the same contract, so that proof is cached per descriptor and the common
      * case costs nothing per record. A caller whose schema differs — stale protos, or options
-     * that lost their extensions — is re-read under the configured type: one parse, in exchange
+     * that lost their extensions — is re-read under the packaged type: one parse, in exchange
      * for the guarantee that the contract enforced is the one this serde was configured with.</p>
      */
-    private Message asConfiguredType(Message data, byte[] payload) {
-        if (sharesConfiguredSchema(data.getDescriptorForType())) {
+    private Message asPackagedType(Message data, byte[] payload, Descriptor packaged) {
+        if (sharesPackagedSchema(data.getDescriptorForType(), packaged)) {
             return data;
         }
         try {
-            return DynamicMessage.parseFrom(messageType, payload);
+            return DynamicMessage.parseFrom(packaged, payload);
         } catch (InvalidProtocolBufferException e) {
-            throw new SerializationException("A " + messageType.getFullName()
+            throw new SerializationException("A " + packaged.getFullName()
                     + " could not be read back under the configured schema: " + e.getMessage(), e);
         }
     }
 
-    /** Whether {@code caller}'s schema is the configured schema, byte for byte. Cached. */
-    private boolean sharesConfiguredSchema(Descriptor caller) {
-        if (caller == messageType) {
+    /** Whether {@code caller}'s schema is the packaged schema, byte for byte. Cached. */
+    private boolean sharesPackagedSchema(Descriptor caller, Descriptor packaged) {
+        if (caller == packaged) {
             return true;
         }
         Boolean known = sameSchema.get(caller);
@@ -140,7 +189,7 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
             sameSchema.clear();
         }
         return sameSchema.computeIfAbsent(caller,
-                d -> fileClosure(d.getFile()).equals(fileClosure(messageType.getFile())));
+                d -> fileClosure(d.getFile()).equals(fileClosure(packaged.getFile())));
     }
 
     /**

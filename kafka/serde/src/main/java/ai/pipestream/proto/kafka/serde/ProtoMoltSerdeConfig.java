@@ -16,8 +16,12 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
     public static final String DESCRIPTOR_SET_RESOURCE = "protomolt.descriptor.set.resource";
     /** A serialized FileDescriptorSet inline, for deployments that configure rather than package. */
     public static final String DESCRIPTOR_SET_BASE64 = "protomolt.descriptor.set.base64";
-    /** The fully qualified message type this serde reads or writes. */
+    /** The fully qualified message type this serde reads or writes; unset accepts any packaged type. */
     public static final String MESSAGE_TYPE = "protomolt.message.type";
+    /** How subjects are named: {@code topic} (default), {@code record}, or {@code topic-record}. */
+    public static final String SUBJECT_STRATEGY = "protomolt.subject.strategy";
+    /** Whether the deserializer returns generated Java classes when they are on the classpath. */
+    public static final String GENERATED_CLASSES = "protomolt.generated.classes";
     /** The schema id to stamp into the frame. */
     public static final String SCHEMA_ID = "protomolt.schema.id";
     /** A Confluent-compatible registry, if there is one. Without it the descriptor set stands alone. */
@@ -39,9 +43,26 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
             .define(DESCRIPTOR_SET_BASE64, ConfigDef.Type.PASSWORD, null,
                     ConfigDef.Importance.MEDIUM,
                     "A serialized FileDescriptorSet, base64 encoded.")
-            .define(MESSAGE_TYPE, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE,
+            .define(MESSAGE_TYPE, ConfigDef.Type.STRING, null,
                     ConfigDef.Importance.HIGH,
-                    "Fully qualified message type, e.g. acme.orders.v1.Order.")
+                    "Fully qualified message type, e.g. acme.orders.v1.Order. When set, the "
+                            + "serde is pinned: it writes and reads exactly this type. When "
+                            + "unset, the serializer accepts any type in the descriptor set "
+                            + "(several event types can share a topic), and the deserializer "
+                            + "resolves each frame's type through the registry — which is then "
+                            + "required.")
+            .define(SUBJECT_STRATEGY, ConfigDef.Type.STRING, Subjects.TOPIC,
+                    ConfigDef.ValidString.in(Subjects.TOPIC, Subjects.RECORD,
+                            Subjects.TOPIC_RECORD),
+                    ConfigDef.Importance.MEDIUM,
+                    "How the subject is named for registry lookups: 'topic' (<topic>-value, the "
+                            + "Confluent default), 'record' (the message's full name), or "
+                            + "'topic-record' (<topic>-<full name>). The record strategies give "
+                            + "each type its own subject, which is what multi-type topics need.")
+            .define(GENERATED_CLASSES, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.MEDIUM,
+                    "Return instances of the generated Java classes when they are on the "
+                            + "classpath, derived from the descriptor set's java options. Types "
+                            + "with no generated class come back as DynamicMessage either way.")
             .define(SCHEMA_ID, ConfigDef.Type.INT, 0, ConfigDef.Importance.MEDIUM,
                     "Schema id written into the frame. Readers that resolve the type from "
                             + "configuration ignore it; a Confluent registry would assign it.")

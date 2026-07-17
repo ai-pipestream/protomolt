@@ -1,0 +1,12 @@
+// Test fixture: no java_multiple_files and a message named after the file, so protoc derives
+// the outer class name and then appends OuterClass to dodge the clash — the naming case the
+// class derivation has to get right.
+syntax = "proto3";
+
+package serde.gen.v1;
+
+option java_package = "ai.pipestream.proto.kafka.serde.testdata";
+
+message LegacyEvent {
+  string name = 1;
+}

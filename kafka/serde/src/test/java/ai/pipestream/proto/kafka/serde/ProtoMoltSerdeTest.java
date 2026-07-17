@@ -33,6 +33,9 @@ class ProtoMoltSerdeTest {
               string id = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 3];
               int32 quantity = 2 [(ai.pipestream.proto.validate.v1.field).int32.gte = 1];
             }
+            message Envelope {
+              message Inner { string v = 1; }
+            }
             """;
 
     private static String descriptorSetBase64;
@@ -183,6 +186,42 @@ class ProtoMoltSerdeTest {
                     DynamicMessage.newBuilder(other).build()))
                     .isInstanceOf(SerializationException.class)
                     .hasMessageContaining("was handed a");
+        }
+    }
+
+    /** The Serde wrapper is the same two halves in the shape Kafka Streams asks for. */
+    @Test
+    void worksAsASerde() {
+        try (var serde = new ProtoMoltSerde()) {
+            serde.configure(config(Map.of()), false);
+            Message back = serde.deserializer().deserialize("orders",
+                    serde.serializer().serialize("orders", order("A-100", 3)));
+            Descriptor type = back.getDescriptorForType();
+            assertThat(back.getField(type.findFieldByName("id"))).isEqualTo("A-100");
+        }
+    }
+
+    /** Nested types resolve by dotted name, and their multi-element index paths round-trip. */
+    @Test
+    void roundTripsANestedType() {
+        Map<String, Object> config = config(Map.of(
+                ProtoMoltSerdeConfig.MESSAGE_TYPE, "serde.orders.v1.Envelope.Inner"));
+        try (var serializer = new ProtoMoltProtobufSerializer();
+             var deserializer = new ProtoMoltProtobufDeserializer()) {
+            serializer.configure(config, false);
+            deserializer.configure(config, false);
+
+            Descriptor inner = orderType.getFile().findMessageTypeByName("Envelope")
+                    .findNestedTypeByName("Inner");
+            byte[] bytes = serializer.serialize("envelopes", DynamicMessage.newBuilder(inner)
+                    .setField(inner.findFieldByName("v"), "nested")
+                    .build());
+
+            // Envelope is the third top-level message; Inner is its first nested type.
+            assertThat(ConfluentWireFormat.messageIndex(bytes)).containsExactly(2, 0);
+            Message back = deserializer.deserialize("envelopes", bytes);
+            assertThat(back.getField(back.getDescriptorForType().findFieldByName("v")))
+                    .isEqualTo("nested");
         }
     }
 

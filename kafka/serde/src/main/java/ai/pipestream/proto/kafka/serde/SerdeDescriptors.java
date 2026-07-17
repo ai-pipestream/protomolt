@@ -72,25 +72,41 @@ final class SerdeDescriptors {
 
     /** Finds a message type by full name, nested types included. */
     static Descriptor messageType(List<FileDescriptor> files, String fullName) {
+        Descriptor found = findMessageType(files, fullName);
+        if (found == null) {
+            throw new KafkaException("Message type '" + fullName
+                    + "' is not in the configured descriptor set");
+        }
+        return found;
+    }
+
+    /** As {@link #messageType} but null when absent, for callers with a fallback. */
+    static Descriptor findMessageType(List<FileDescriptor> files, String fullName) {
         for (FileDescriptor file : files) {
             Descriptor found = findMessage(file, fullName);
             if (found != null) {
                 return found;
             }
         }
-        throw new KafkaException("Message type '" + fullName
-                + "' is not in the configured descriptor set");
+        return null;
     }
 
-    private static Descriptor findMessage(FileDescriptor file, String fullName) {
+    /** Resolves a possibly nested name: each dot past the package descends one nesting level. */
+    static Descriptor findMessage(FileDescriptor file, String fullName) {
         String pkg = file.getPackage();
+        String relative = fullName;
         if (!pkg.isEmpty()) {
             if (!fullName.startsWith(pkg + ".")) {
                 return null;
             }
-            return file.findMessageTypeByName(fullName.substring(pkg.length() + 1));
+            relative = fullName.substring(pkg.length() + 1);
         }
-        return file.findMessageTypeByName(fullName);
+        String[] parts = relative.split("\\.");
+        Descriptor current = file.findMessageTypeByName(parts[0]);
+        for (int i = 1; current != null && i < parts.length; i++) {
+            current = current.findNestedTypeByName(parts[i]);
+        }
+        return current;
     }
 
     private static List<FileDescriptor> link(FileDescriptorSet set) {

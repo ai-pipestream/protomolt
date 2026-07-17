@@ -120,6 +120,36 @@ final class SchemaIds implements AutoCloseable {
         }
     }
 
+    /**
+     * The type named {@code fullName} within the schema {@code schemaId} names, or null when the
+     * registry cannot say — or when the registered schema does not declare the type at all.
+     *
+     * <p>This is the serializer's half of type identity. The frame's message-index array is a
+     * position in the schema the frame's id names, so a serializer that stamps a registry id must
+     * compute the index against the <em>registry's</em> file, not its packaged one: the two can
+     * declare the same type at different positions, and a consumer following the id would land on
+     * the wrong message. A null here tells the caller to stamp the configured id and the packaged
+     * index instead — a pair that is at least consistent with itself.</p>
+     */
+    Descriptor typeInSchema(int schemaId, String fullName) {
+        if (inBackoff(schemaRetryAt, schemaId)) {
+            return null;
+        }
+        try {
+            FileDescriptor file = registry.schemaById(schemaId);
+            Descriptor type = SerdeDescriptors.findMessage(file, fullName);
+            if (type == null) {
+                warnOnce("the schema registered under id " + schemaId + " does not declare "
+                        + fullName);
+            }
+            return type;
+        } catch (DescriptorLoadException e) {
+            couldNotAnswer(schemaRetryAt, schemaId,
+                    "resolving schema id " + schemaId + " failed: " + e.getMessage());
+            return null;
+        }
+    }
+
     /** Whether {@code key} failed recently enough that asking again would just repeat the answer. */
     private <K> boolean inBackoff(ConcurrentMap<K, Long> retryAt, K key) {
         Long deadline = retryAt.get(key);
