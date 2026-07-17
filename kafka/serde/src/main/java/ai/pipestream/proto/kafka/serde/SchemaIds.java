@@ -10,6 +10,9 @@ import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.util.List;
 import java.util.OptionalInt;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -24,41 +27,69 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * announced once per serde, not per record, because a warning on every message is a second
  * outage.</p>
  *
- * <p>Correctness is not traded away for it. The fallback only supplies a schema; the message is
- * still validated against the rules that schema declares, and a frame whose index path disagrees
- * with the configured type is still refused rather than parsed as the wrong message.</p>
+ * <p>The registry is also not retried per record. Answers are cached: a resolved subject id or
+ * schema is kept for the life of the serde (an id in a Confluent-compatible registry names one
+ * exact schema forever), and a lookup that failed is not attempted again until the retry backoff
+ * expires. Without the backoff, an outage would cost every record a connection attempt — and a
+ * registry that recovers would still be answering for a serde that stopped asking.</p>
+ *
+ * <p>Correctness is not traded away for any of it. The fallback only supplies a schema; the
+ * message is still validated against the rules that schema declares, and a frame carrying a type
+ * other than the configured one is still refused rather than parsed as the wrong message.</p>
  */
 final class SchemaIds implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(SchemaIds.class);
+    /** Bound on the retry maps; frames carrying garbage ids must not grow them without limit. */
+    private static final int MAX_TRACKED_FAILURES = 1024;
 
     private final ConfluentSchemaRegistryLoader registry;
+    private final long retryBackoffNanos;
     private final AtomicBoolean warnedFallback = new AtomicBoolean();
+    // Resolved subject ids, kept for the serde's lifetime; the frame is stamped once per subject.
+    private final ConcurrentMap<String, OptionalInt> idsBySubject = new ConcurrentHashMap<>();
+    // Failed lookups by key, each holding the System.nanoTime() after which to ask again.
+    private final ConcurrentMap<String, Long> subjectRetryAt = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Integer, Long> schemaRetryAt = new ConcurrentHashMap<>();
 
-    private SchemaIds(ConfluentSchemaRegistryLoader registry) {
+    private SchemaIds(ConfluentSchemaRegistryLoader registry, long retryBackoffMillis) {
         this.registry = registry;
+        this.retryBackoffNanos = TimeUnit.MILLISECONDS.toNanos(retryBackoffMillis);
     }
 
     /** @return null when no registry is configured, which is a supported way to run */
-    static SchemaIds create(String registryUrl) {
+    static SchemaIds create(String registryUrl, long retryBackoffMillis) {
         return registryUrl == null || registryUrl.isBlank()
                 ? null
-                : new SchemaIds(new ConfluentSchemaRegistryLoader(URI.create(registryUrl.trim())));
+                : new SchemaIds(new ConfluentSchemaRegistryLoader(URI.create(registryUrl.trim())),
+                        retryBackoffMillis);
     }
 
     /**
      * The id registered for a subject, or empty when the registry cannot say. Empty is not an
-     * error: the caller stamps its configured id and carries on.
+     * error: the caller stamps its configured id and carries on. A subject that resolved once is
+     * never asked about again; one that did not is asked again after the backoff, so a registry
+     * that comes up (or a subject registered later) repairs the stamped id without a restart.
      */
     OptionalInt idForSubject(String subject) {
+        OptionalInt resolved = idsBySubject.get(subject);
+        if (resolved != null) {
+            return resolved;
+        }
+        if (inBackoff(subjectRetryAt, subject)) {
+            return OptionalInt.empty();
+        }
         try {
             OptionalInt id = registry.idForSubject(subject);
-            if (id.isEmpty()) {
-                warnOnce("subject " + subject + " is not registered");
+            if (id.isPresent()) {
+                idsBySubject.put(subject, id);
+            } else {
+                couldNotAnswer(subjectRetryAt, subject, "subject " + subject + " is not registered");
             }
             return id;
         } catch (DescriptorLoadException e) {
-            warnOnce("looking up subject " + subject + " failed: " + e.getMessage());
+            couldNotAnswer(subjectRetryAt, subject,
+                    "looking up subject " + subject + " failed: " + e.getMessage());
             return OptionalInt.empty();
         }
     }
@@ -68,9 +99,13 @@ final class SchemaIds implements AutoCloseable {
      *
      * <p>A resolved schema that does not contain the index path is treated as unresolved rather
      * than as an error: the caller falls back to its configured type, which then either matches
-     * the frame or is refused by the index-path check.</p>
+     * the frame or is refused. Resolved schemas are cached by the registry client for the life of
+     * the serde; an id that failed to resolve is retried only after the backoff.</p>
      */
     Descriptor messageFor(int schemaId, List<Integer> indexPath) {
+        if (inBackoff(schemaRetryAt, schemaId)) {
+            return null;
+        }
         try {
             FileDescriptor file = registry.schemaById(schemaId);
             Descriptor message = ConfluentWireFormat.messageAt(file, indexPath);
@@ -79,9 +114,31 @@ final class SchemaIds implements AutoCloseable {
             }
             return message;
         } catch (DescriptorLoadException e) {
-            warnOnce("resolving schema id " + schemaId + " failed: " + e.getMessage());
+            couldNotAnswer(schemaRetryAt, schemaId,
+                    "resolving schema id " + schemaId + " failed: " + e.getMessage());
             return null;
         }
+    }
+
+    /** Whether {@code key} failed recently enough that asking again would just repeat the answer. */
+    private <K> boolean inBackoff(ConcurrentMap<K, Long> retryAt, K key) {
+        Long deadline = retryAt.get(key);
+        if (deadline == null) {
+            return false;
+        }
+        if (System.nanoTime() - deadline < 0) {
+            return true;
+        }
+        retryAt.remove(key);
+        return false;
+    }
+
+    private <K> void couldNotAnswer(ConcurrentMap<K, Long> retryAt, K key, String what) {
+        warnOnce(what);
+        if (retryAt.size() >= MAX_TRACKED_FAILURES) {
+            retryAt.clear();
+        }
+        retryAt.put(key, System.nanoTime() + retryBackoffNanos);
     }
 
     /** Once per serde: a per-record warning during an outage is its own incident. */

@@ -15,6 +15,7 @@ import ai.pipestream.proto.validate.MessageRules;
 import ai.pipestream.proto.validate.RepeatedRules;
 import ai.pipestream.proto.validate.StringRules;
 import ai.pipestream.proto.validate.TimestampRules;
+import ai.pipestream.proto.validate.RuleCompilationException;
 import ai.pipestream.proto.validate.UInt32Rules;
 import ai.pipestream.proto.validate.UInt64Rules;
 import ai.pipestream.proto.validate.ValidateProto;
@@ -33,8 +34,11 @@ import ai.pipestream.proto.validate.model.StringConstraints;
 import ai.pipestream.proto.validate.model.StringFormat;
 import ai.pipestream.proto.validate.model.TimestampConstraints;
 import ai.pipestream.proto.validate.spi.ValidationRuleSource;
+import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.ExtensionRegistry;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -51,27 +55,80 @@ import java.util.OptionalLong;
  */
 public final class AiPipestreamRuleSource implements ValidationRuleSource {
 
+    private static final ExtensionRegistry EXTENSIONS = createExtensionRegistry();
+
+    private static ExtensionRegistry createExtensionRegistry() {
+        ExtensionRegistry registry = ExtensionRegistry.newInstance();
+        ValidateProto.registerAllExtensions(registry);
+        return registry;
+    }
+
     @Override
     public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
-        var options = field.getOptions();
-        if (!options.hasExtension(ValidateProto.field)) {
-            return Optional.empty();
-        }
-        return Optional.of(toFieldConstraints(options.getExtension(ValidateProto.field)));
+        FieldRules rules = fieldRules(field.getOptions());
+        return rules == null ? Optional.empty() : Optional.of(toFieldConstraints(rules));
     }
 
     @Override
     public Optional<MessageConstraints> messageConstraints(Descriptor message) {
-        var options = message.getOptions();
-        if (!options.hasExtension(ValidateProto.message)) {
+        MessageRules rules = messageRules(message.getOptions());
+        if (rules == null) {
             return Optional.empty();
         }
-        MessageRules rules = options.getExtension(ValidateProto.message);
         List<CelConstraint> cel = new ArrayList<>(rules.getCelList().size());
         for (CelRule rule : rules.getCelList()) {
             cel.add(toCel(rule));
         }
         return Optional.of(new MessageConstraints(cel));
+    }
+
+    /**
+     * The {@code (ai.pipestream.proto.validate.v1.field)} rules on {@code options}, or null when
+     * absent. Descriptors linked without this extension registered carry the annotation only as
+     * an unknown field; reparse the options against a knowing registry rather than silently
+     * dropping rules — a validator that cannot see a schema's rules pronounces every message
+     * clean, which is the failure mode that reports success.
+     */
+    private static FieldRules fieldRules(DescriptorProtos.FieldOptions options) {
+        if (options.hasExtension(ValidateProto.field)) {
+            return options.getExtension(ValidateProto.field);
+        }
+        if (!options.getUnknownFields().hasField(ValidateProto.field.getNumber())) {
+            return null;
+        }
+        return reparse(options, DescriptorProtos.FieldOptions::parseFrom,
+                "(ai.pipestream.proto.validate.v1.field)")
+                .getExtension(ValidateProto.field);
+    }
+
+    /** As {@link #fieldRules} for the {@code (ai.pipestream.proto.validate.v1.message)} extension. */
+    private static MessageRules messageRules(DescriptorProtos.MessageOptions options) {
+        if (options.hasExtension(ValidateProto.message)) {
+            return options.getExtension(ValidateProto.message);
+        }
+        if (!options.getUnknownFields().hasField(ValidateProto.message.getNumber())) {
+            return null;
+        }
+        return reparse(options, DescriptorProtos.MessageOptions::parseFrom,
+                "(ai.pipestream.proto.validate.v1.message)")
+                .getExtension(ValidateProto.message);
+    }
+
+    /** Parses {@code options}' bytes against {@link #EXTENSIONS}; failures are schema errors. */
+    private static <T extends com.google.protobuf.Message> T reparse(
+            T options, OptionsParser<T> parser, String extensionName) {
+        try {
+            return parser.parse(options.toByteString(), EXTENSIONS);
+        } catch (InvalidProtocolBufferException e) {
+            throw new RuleCompilationException(
+                    "cannot reparse options carrying " + extensionName + ": " + e.getMessage(), e);
+        }
+    }
+
+    @FunctionalInterface
+    private interface OptionsParser<T> {
+        T parse(com.google.protobuf.ByteString bytes, ExtensionRegistry registry)
+                throws InvalidProtocolBufferException;
     }
 
     /** Recursively translates {@link FieldRules} (also used for items/keys/values). */

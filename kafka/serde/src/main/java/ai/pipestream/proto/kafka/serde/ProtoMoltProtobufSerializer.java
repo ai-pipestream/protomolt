@@ -31,6 +31,9 @@ import java.util.stream.Collectors;
  */
 public class ProtoMoltProtobufSerializer implements Serializer<Message> {
 
+    /** Bound on the caller-descriptor trust cache; a producer usually has exactly one. */
+    private static final int MAX_TRUSTED_CALLERS = 64;
+
     private ProtoValidator validator;
     private Descriptor messageType;
     private List<Integer> indexPath;
@@ -39,7 +42,8 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     private SchemaIds schemaIds;
     private String subject;
     private boolean isKey;
-    private final ConcurrentMap<String, Integer> idsByTopic = new ConcurrentHashMap<>();
+    // Caller descriptors already proven byte-identical to the configured schema (see below).
+    private final ConcurrentMap<Descriptor, Boolean> sameSchema = new ConcurrentHashMap<>();
 
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
@@ -51,22 +55,24 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
         configuredSchemaId = config.getInt(ProtoMoltSerdeConfig.SCHEMA_ID);
         validateOnWrite = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_WRITE);
         validator = ProtoValidator.create();
-        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL));
+        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
+                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS));
         subject = config.getString(ProtoMoltSerdeConfig.SUBJECT);
         this.isKey = isKey;
     }
 
     /**
      * The id to stamp: the registry's, when it has one for this subject, and the configured one
-     * otherwise. Looked up once per topic, since a subject's latest id is not per-record news.
+     * otherwise. {@link SchemaIds} caches the answer, so this is a map read per record — and a
+     * lookup that failed during an outage is retried after the backoff rather than standing for
+     * the life of the producer, so a registry that recovers repairs the stamped id.
      */
     private int schemaIdFor(String topic) {
         if (schemaIds == null) {
             return configuredSchemaId;
         }
-        return idsByTopic.computeIfAbsent(topic, name -> schemaIds
-                .idForSubject(subject != null ? subject : Subjects.of(name, isKey))
-                .orElse(configuredSchemaId));
+        return schemaIds.idForSubject(subject != null ? subject : Subjects.of(topic, isKey))
+                .orElse(configuredSchemaId);
     }
 
     @Override
@@ -100,15 +106,17 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     /**
      * The rules enforced are the configured schema's, not the caller's.
      *
-     * <p>A message arrives carrying whatever descriptor the application built it from, and that
-     * descriptor only knows its declared rules if the options were parsed with the extensions
-     * registered. A caller whose descriptor lost them would otherwise sail through: the validator
-     * would find a schema with no rules and pronounce every message clean, which is the failure
-     * that reports success. Re-reading the payload under the configured type costs one parse and
-     * buys the guarantee that the contract enforced is the one this serde was configured with.</p>
+     * <p>A message arrives carrying whatever descriptor the application built it from — often a
+     * generated class compiled from a {@code .proto} that may or may not still match the
+     * descriptor set this serde was configured with. When the caller's schema is byte-identical
+     * to the configured one (its file and every transitive import), validating the message
+     * directly enforces the same contract, so that proof is cached per descriptor and the common
+     * case costs nothing per record. A caller whose schema differs — stale protos, or options
+     * that lost their extensions — is re-read under the configured type: one parse, in exchange
+     * for the guarantee that the contract enforced is the one this serde was configured with.</p>
      */
     private Message asConfiguredType(Message data, byte[] payload) {
-        if (data.getDescriptorForType() == messageType) {
+        if (sharesConfiguredSchema(data.getDescriptorForType())) {
             return data;
         }
         try {
@@ -117,6 +125,43 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
             throw new SerializationException("A " + messageType.getFullName()
                     + " could not be read back under the configured schema: " + e.getMessage(), e);
         }
+    }
+
+    /** Whether {@code caller}'s schema is the configured schema, byte for byte. Cached. */
+    private boolean sharesConfiguredSchema(Descriptor caller) {
+        if (caller == messageType) {
+            return true;
+        }
+        Boolean known = sameSchema.get(caller);
+        if (known != null) {
+            return known;
+        }
+        if (sameSchema.size() >= MAX_TRUSTED_CALLERS) {
+            sameSchema.clear();
+        }
+        return sameSchema.computeIfAbsent(caller,
+                d -> fileClosure(d.getFile()).equals(fileClosure(messageType.getFile())));
+    }
+
+    /**
+     * The file and its transitive imports, keyed by file name, in comparable serialized form.
+     * Imports matter: rules on an imported message type live in the imported file's options, so
+     * equality of the root file alone would not prove the schemas agree. Source info is stripped
+     * because descriptor sets built with {@code --include_source_info} differ from runtime
+     * descriptors only in that metadata.
+     */
+    private static Map<String, com.google.protobuf.ByteString> fileClosure(FileDescriptor root) {
+        Map<String, com.google.protobuf.ByteString> files = new java.util.HashMap<>();
+        java.util.ArrayDeque<FileDescriptor> queue = new java.util.ArrayDeque<>(List.of(root));
+        while (!queue.isEmpty()) {
+            FileDescriptor file = queue.pop();
+            com.google.protobuf.ByteString stripped = file.toProto().toBuilder()
+                    .clearSourceCodeInfo().build().toByteString();
+            if (files.put(file.getName(), stripped) == null) {
+                queue.addAll(file.getDependencies());
+            }
+        }
+        return files;
     }
 
     /** Every violation, not just the first: a producer fixing them one at a time is a slow loop. */
