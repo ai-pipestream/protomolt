@@ -28,6 +28,7 @@ prefix; Java packages use the `ai.pipestream.proto.*` namespace (see
 | `mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
 | `grpc/` | `grpc-invoke`, `grpc-service` | Dynamic gRPC invocation and server reflection from descriptors; the action catalog itself as a typed gRPC service, served descriptor-natively |
 | `serve/` | `serve` | One-process server: the gRPC service with reflection, the verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, optional registry |
+| `cli/` | `cli` | The command line: run any catalog verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same catalog |
 | `kafka/` | `connect` | Kafka Connect plugin: the sink drives any gRPC method from topics, the source feeds topics from server streams with CEL resume-token offsets, and protobuf-aware transforms (validate, map, CEL filter) drop into any pipeline |
 | `chain/` | `chain` | The chain manager: configured, type-checked compositions of gRPC calls (verify statically, run serially with gates and deadlines, store named chains in the registry) — plus keyed/zip joins over two live gRPC streams |
 | `codegen/` | `codegen` | Live code generation: every libprotoc generator (8 languages) and the grpc-java plugin as WebAssembly, no native toolchain |

@@ -1,0 +1,16 @@
+plugins {
+    id 'application'
+}
+
+description = 'The ProtoMolt command line: run any verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same action catalog the servers expose'
+
+dependencies {
+    api project(':protomolt-grpc-service')
+    implementation libs.jackson.databind
+
+    runtimeOnly libs.slf4j.simple
+}
+
+application {
+    mainClass = 'ai.pipestream.proto.cli.ProtoMoltCli'
+}

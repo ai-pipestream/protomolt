@@ -75,6 +75,9 @@ project(':protomolt-grpc-validation-micrometer').projectDir = file('grpc/validat
 include 'protomolt-serve'
 project(':protomolt-serve').projectDir = file('serve')
 
+include 'protomolt-cli'
+project(':protomolt-cli').projectDir = file('cli')
+
 include 'protomolt-connect'
 project(':protomolt-connect').projectDir = file('kafka/connect')
 include 'protomolt-connect-iceberg'
