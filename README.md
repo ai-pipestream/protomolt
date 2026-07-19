@@ -33,6 +33,7 @@ prefix; Java packages use the `ai.pipestream.proto.*` namespace (see
 | `codegen/` | `codegen` | Live code generation: every libprotoc generator (8 languages) and the grpc-java plugin as WebAssembly, no native toolchain |
 | `shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
 | `mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
+| `projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
 | `protobuf/` | `protobuf-metadata`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; protovalidate dialect and conformance harness |
 | `schema/` | `schema-apicurio`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries |
 | `index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr` | Indexing plans and hints; NDJSON output; engine plugins |
@@ -145,6 +146,8 @@ Each of these is covered in depth in the documentation below.
   server, generate the `_pb2.py` modules, call it with plain grpcio
 - [Field mapping](docs/mapping.md) — text rule syntax, CEL filters and
   selectors
+- [Projections](docs/projection.md) — self-describing message-to-message
+  mappings as descriptor options on the target message
 - [Validation](docs/validation.md) — the rule surface, dialect SPI,
   protovalidate interoperability, conformance
 - [Schema metadata](docs/metadata.md) — descriptor-option metadata and

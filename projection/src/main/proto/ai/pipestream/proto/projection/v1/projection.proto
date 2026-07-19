@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.projection.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.projection";
+option java_outer_classname = "ProjectionProto";
+
+import "google/protobuf/descriptor.proto";
+import "google/protobuf/struct.proto";
+
+// Source message types a projection target can be built from, declared as a
+// message option on the target. A projection accepts one source message at a
+// time; listing several types is how one target joins differently-shaped
+// sources (e.g. one search document projected from Case and Matter shards).
+message ProjectionSources {
+  // Fully-qualified source message names (e.g. "acme.court.v1.Case").
+  repeated string source = 1;
+}
+
+// Ordered candidate source paths for one target field.
+message ProjectionPaths {
+  // Dotted field paths (e.g. "case_id", "address.state"), tried in order.
+  // A path that does not resolve against the source type counts as absent.
+  repeated string path = 1;
+}
+
+// Provenance for one target field: where its value comes from when a source
+// message is projected. Fields without this option are left unset.
+message FieldProjection {
+  oneof provenance {
+    // Candidate source paths; the first that resolves to a present value wins.
+    ProjectionPaths paths = 1;
+    // CEL expression evaluated with the source message bound as `source`.
+    // An expression that does not compile against the source type counts as
+    // absent; use has() for presence-dependent logic. Runtime evaluation
+    // errors fail the projection.
+    string cel = 2;
+    // Constant value, independent of the source message.
+    google.protobuf.Value literal = 3;
+  }
+}
+
+extend google.protobuf.MessageOptions {
+  // Declares the message types this message projects from.
+  ProjectionSources sources = 59100511;
+}
+
+extend google.protobuf.FieldOptions {
+  // Declares where this field's value comes from during projection.
+  FieldProjection from = 59100512;
+}

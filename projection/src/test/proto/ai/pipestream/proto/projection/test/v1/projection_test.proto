@@ -1,0 +1,229 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.projection.test.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.projection.test";
+option java_outer_classname = "ProjectionTestProto";
+
+import "ai/pipestream/proto/projection/v1/projection.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+message Address {
+  string state = 1;
+}
+
+// Court-filing source shape.
+message Case {
+  string case_id = 1;
+  string style_of_cause = 2;
+  Address address = 3;
+  repeated string parties = 4;
+  int64 filed_epoch = 5;
+}
+
+// Billing source shape: differently-shaped source for the same target.
+message Matter {
+  string matter_no = 1;
+  string caption = 2;
+  string jurisdiction = 3;
+}
+
+// One search document projected from both source shapes.
+message SearchDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.Case"
+    source: "ai.pipestream.proto.projection.test.v1.Matter"
+  };
+
+  string doc_id = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "case_id" path: "matter_no"}
+  }];
+  string title = 2 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "style_of_cause" path: "caption"}
+  }];
+  // Compiles only against Case; absent for Matter.
+  string region = 3 [(ai.pipestream.proto.projection.v1.from) = {
+    cel: "source.address.state.upperAscii()"
+  }];
+  // Resolves only on Matter; absent for Case.
+  string jurisdiction = 4 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "jurisdiction"}
+  }];
+  string source_system = 5 [(ai.pipestream.proto.projection.v1.from) = {
+    literal: {string_value: "filing-index"}
+  }];
+  repeated string parties = 6 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "parties"}
+  }];
+  int64 filed_epoch = 7 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "filed_epoch"}
+  }];
+  double file_rank = 8 [(ai.pipestream.proto.projection.v1.from) = {
+    literal: {number_value: 1.5}
+  }];
+  // No provenance option: never populated by projection.
+  string unmapped = 9;
+}
+
+// CEL that compiles against no declared source must fail construction.
+message BrokenProjection {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.Case"
+  };
+
+  string boom = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    cel: "source.nope.deeply_missing"
+  }];
+}
+
+// CEL that compiles but fails at evaluation must fail the projection.
+message RuntimeErrorProjection {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.Case"
+  };
+
+  int64 ratio = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    cel: "source.filed_epoch / 0"
+  }];
+}
+
+// Paths-only projection: source masks are exact for every source.
+message FlatDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.Case"
+    source: "ai.pipestream.proto.projection.test.v1.Matter"
+  };
+
+  string doc_id = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "case_id" path: "matter_no"}
+  }];
+}
+
+enum ZooStatus {
+  ZOO_STATUS_UNSPECIFIED = 0;
+  ZOO_STATUS_OPEN = 1;
+  ZOO_STATUS_CLOSED = 2;
+}
+
+message ZooNested {
+  string leaf = 1;
+}
+
+// One source carrying every construct the coercion and presence semantics touch.
+message ScalarZoo {
+  int32 small = 1;
+  int64 big = 2;
+  double ratio = 3;
+  bool active = 4;
+  string name = 5;
+  string numeric_text = 6;
+  ZooStatus status = 7;
+  repeated int32 scores = 8;
+  map<string, int32> counts = 9;
+  google.protobuf.Timestamp when = 10;
+  google.protobuf.Struct attrs = 11;
+  optional int32 maybe_count = 12;
+  oneof choice {
+    string choice_text = 13;
+    int64 choice_num = 14;
+  }
+  ZooNested nested = 15;
+}
+
+// Happy-path coercions: every mapping here must succeed together.
+message CoercionDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.ScalarZoo"
+  };
+
+  int64 widened = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "small"}
+  }];
+  double big_as_double = 2 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "big"}
+  }];
+  string big_text = 3 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "big"}
+  }];
+  string active_text = 4 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "active"}
+  }];
+  int32 parsed = 5 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "numeric_text"}
+  }];
+  ZooStatus status = 6 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "status"}
+  }];
+  repeated int64 scores = 7 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "scores"}
+  }];
+  google.protobuf.Timestamp when = 8 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "when"}
+  }];
+  google.protobuf.Struct attrs = 9 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "attrs"}
+  }];
+  // Scalar literal wraps into a Value field.
+  google.protobuf.Value tag = 10 [(ai.pipestream.proto.projection.v1.from) = {
+    literal: {string_value: "v1"}
+  }];
+}
+
+// Presence, oneof, nesting, and fallback semantics.
+message PresenceDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.ScalarZoo"
+  };
+
+  int32 maybe_count = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "maybe_count"}
+  }];
+  string choice = 2 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "choice_text"}
+  }];
+  // proto3 implicit presence: a big of 0 counts as absent.
+  int64 big_when_set = 3 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "big"}
+  }];
+  string nested_leaf = 4 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "nested.leaf"}
+  }];
+  string fallback = 5 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "nested.missing.deep" path: "name"}
+  }];
+}
+
+// "not-a-number" into int32 must fail with a field-named error.
+message BadParseDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.ScalarZoo"
+  };
+
+  int32 parsed = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "name"}
+  }];
+}
+
+// Map fields are rejected with a deliberate unsupported error.
+message MapDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.ScalarZoo"
+  };
+
+  map<string, int32> counts = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "counts"}
+  }];
+}
+
+// A repeated source value into a singular target must fail.
+message SingularFromRepeatedDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.ScalarZoo"
+  };
+
+  int32 first = 1 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: {path: "scores"}
+  }];
+}

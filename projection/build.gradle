@@ -1,0 +1,24 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Self-describing protobuf-to-protobuf projections via descriptor options'
+
+dependencies {
+    api project(':protomolt-descriptors')
+    api project(':protomolt-helpers')
+    api project(':protomolt-mapper-core')
+    api project(':protomolt-mapper-cel')
+    api libs.protobuf.java
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation libs.junit.jupiter
+    testImplementation libs.assertj.core
+    testRuntimeOnly libs.junit.platform.launcher
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

@@ -37,6 +37,7 @@ def supportedModules = [
         'protomolt-protobuf-validation-protovalidate',
         'protomolt-mapper-core',
         'protomolt-mapper-cel',
+        'protomolt-projection',
         'protomolt-schema-apicurio',
         'protomolt-schema-apicurio-deployment',
         'protomolt-schema-confluent',
@@ -80,7 +81,7 @@ catalog {
         bundle('schema-governance', ['compat', 'registry', 'registry-server'])
         bundle('validation', ['protobuf-validation',
                               'protobuf-validation-protovalidate'])
-        bundle('mapping', ['mapper-core', 'mapper-cel', 'metadata'])
+        bundle('mapping', ['mapper-core', 'mapper-cel', 'metadata', 'projection'])
         bundle('dynamic-runtime', ['actions', 'grpc-invoke', 'grpc-service', 'serve'])
         bundle('search', ['index-spi', 'index-ndjson', 'index-lucene',
                           'index-opensearch', 'index-solr'])

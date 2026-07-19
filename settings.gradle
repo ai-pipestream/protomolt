@@ -94,6 +94,10 @@ include 'protomolt-mapper-cel'
 project(':protomolt-mapper-cel').projectDir = file('mapper/cel')
 include 'protomolt-shapes'
 project(':protomolt-shapes').projectDir = file('shapes')
+
+include 'protomolt-projection'
+project(':protomolt-projection').projectDir = file('projection')
+
 include 'protomolt-chain'
 project(':protomolt-chain').projectDir = file('chain/core')
 
