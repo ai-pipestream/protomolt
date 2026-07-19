@@ -48,9 +48,9 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 - [Chain manager design](design/chain-manager.md) — typed, registered
   compositions of gRPC calls: one endpoint in, one composed answer out; a
   sidecar to existing pipelines, deliberately not a pipeline
-- [Pipeline design](design/pipeline.md) — a type-checked composition language
-  that is data, not syntax: gRPC calls, CEL, and projections over a
-  stream-native flow, authored as JSON and checked before it runs
+- [Pipeline design](design/pipeline.md) — a dead-simple chain call, typed
+  before it runs: gRPC calls, CEL, and projections over a stream of messages,
+  authored as JSON and checked against descriptors
 
 ## Records
 

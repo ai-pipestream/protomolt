@@ -1,19 +1,18 @@
-# Pipeline: a type-checked composition language that is data, not syntax
+# Pipeline: a dead-simple chain call, typed before it runs
 
-Status: design proposal. No code yet — this document is the artifact to react to.
+Status: design proposal. No code yet.
 
-ProtoMolt composes gRPC calls and CEL today in two places that deliberately
-stop short of being a language: the chain manager (typed gRPC composition,
-"deliberately not a pipeline") and the mapping engines (CEL rules, no call
-graph). The missing middle is a composition an agent can author, a machine can
-type-check *before* it touches a live service, and the registry can version.
+A pipeline is a linear chain of steps that hands protobuf messages from one
+step to the next. It runs in one process, typically against services on the
+same machine, and saves nothing between steps. It is authored as JSON against
+a pipeline schema, so there is no parser and no syntax to get wrong. The
+schema validates structure. A check phase validates every step against the
+descriptors it names, before anything runs.
 
-The proposal: the composition language is a **protobuf schema**, authored as
-JSON/proto-text. No parser, no grammar, no syntax-error failure class.
-Structural validation comes from the schema itself; semantic validation (the
-"strongly typed" part) is a check phase that walks the flow's type state
-through every step. The same pattern `protomolt-projection` proved: options in
-descriptors, evaluation at runtime, zero codegen.
+This is not orchestration. No persistence, no scheduler, no cluster, no
+provenance store. A NiFi-class system with flow management and a provenance
+UI would be its own server built on top of this schema and executor. This is
+not that, and it should not grow into that.
 
 ## The schema (pipeline.proto)
 
@@ -28,8 +27,7 @@ option java_outer_classname = "PipelineProto";
 
 import "google/protobuf/struct.proto";
 
-// A Pipeline is a type-checked composition of gRPC calls, CEL steps, and
-// projections over a flow of protobuf messages.
+// A linear chain of steps over a stream of protobuf messages.
 message Pipeline {
   string name = 1;
   string description = 2;
@@ -48,7 +46,7 @@ message Endpoint {
 }
 
 message Step {
-  // Optional label; names errors and appears in run results.
+  // Optional label; names errors and appears in the run record.
   string name = 1;
   oneof kind {
     GrpcCall grpc_call = 2;
@@ -61,10 +59,10 @@ message Step {
   }
 }
 
-// Calls a method whose streaming shape comes from its own descriptor: unary
-// over a stream flow fans out per element, client-streaming consumes the flow
-// as its request stream, and server-streaming/bidi responses become the new
-// flow.
+// Call shape comes from the method descriptor crossed with the flow state:
+// unary over a stream fans out per element, client-streaming consumes the
+// flow as its request stream, server-streaming and bidi responses become the
+// new flow.
 message GrpcCall {
   Endpoint endpoint = 1;
   string service = 2;  // fully-qualified service name
@@ -75,103 +73,108 @@ message GrpcCall {
   }
 }
 
-// Keeps the flow messages where `condition` is true. Stream flows only.
+// Keeps the flow messages where `condition` is true.
 message CelFilter {
   string condition = 1;  // bool CEL over `input`
 }
 
-// Replaces each flow message with the CEL result. The expression's inferred
-// type becomes the new flow type.
+// Replaces each flow message with the CEL result.
 message CelSelect {
   string expression = 1;
 }
 
 // Maps each flow message through a protomolt-projection target. The flow type
-// must be one of the target's declared `(sources)`; the target type becomes
-// the new flow type.
+// must be one of the target's declared `(sources)`.
 message Project {
   string target_type = 1;
 }
 
 // Turns a repeated field of the flow message into a stream of its elements.
 message Unnest {
-  string path = 1;  // must resolve to a repeated field
+  string path = 1;
 }
 
-// Collapses a stream into a single list value (e.g. to hand a whole result
-// set to a reranker in one call).
+// Collapses a stream into a single list value, for steps that need the whole
+// set at once (rerank).
 message Collect {
 }
 
-// Binds a CEL value from the flow message as `vars.<name>` for later steps;
-// the flow is unchanged.
+// Binds a CEL value as `vars.<name>` for later steps; the flow is unchanged.
 message Let {
   string name = 1;
   string cel = 2;
 }
 ```
 
-## The type system (what "strongly typed" buys)
+## Type checking
 
-The flow is a **stream of messages of one tracked type**; a single message is
-a stream of one. Every step is a stream operator, and the checker threads the
-flow's type through the steps, failing before anything runs:
+The flow is a stream of messages of one tracked type. A single message is a
+stream of one. The checker walks the type through the steps and fails before
+anything runs:
 
-1. The flow starts as a stream of one message of `input_type`, resolved
-   against the registry.
-2. `grpc_call`: service/method resolved via the endpoint's reflection (or the
-   registry), and the call shape comes from the method descriptor's own
-   streaming flags crossed with the flow state. `input_cel` compiles against
-   the current flow type; its result must be assignable to the method's input
-   type (per-element when the flow is a stream and the method is unary). The
-   matrix:
-   - stream of one + unary method → one call
-   - stream + unary method → one call per element, ordered
-   - stream + client-streaming method → the flow streams in as the request
-     stream; the single response is the new flow
-   - server-streaming or bidi method → the response stream is the new flow
-3. `cel_filter`: the condition must compile to bool against the flow type.
-4. `cel_select`: compiles against the flow type; the inferred result type is
-   the new flow type (message types stay precise, anything else becomes
-   `dyn`, and later steps that need a concrete type will fail loudly).
-5. `project`: the target resolves and carries `(sources)`; the current flow
-   type must be one of them (this is exactly `MessageProjection`'s eager
-   validation, reused). New flow type = the projection target.
-6. `unnest`: the path resolves to a repeated field; the flow becomes a stream
-   of its element type.
-7. `collect`: stream → a single list value, where an operator genuinely needs
-   the whole set (rerank); the set boundary is explicit, not implicit.
-8. `let`: the name is unique; the expression compiles against the flow type
-   plus all prior `vars`.
+1. The flow starts as a stream of one message of `input_type`.
+2. `grpc_call`: the service and method resolve via the endpoint's reflection.
+   `input_cel` compiles against the current flow type, and its result must be
+   assignable to the method's input type. The response becomes the new flow.
+3. `cel_filter`: the condition compiles to bool against the flow type.
+4. `cel_select`: the inferred result type becomes the new flow type. Message
+   types stay precise; anything else becomes `dyn`, and later steps that need
+   a concrete type fail loudly.
+5. `project`: the target resolves, carries `(sources)`, and the flow type is
+   one of them. This reuses `MessageProjection`'s eager validation.
+6. `unnest`: the path resolves to a repeated field; the flow becomes its
+   element type.
+7. `collect`: stream becomes a single list value.
+8. `let`: the name is unique, and the expression compiles against the flow
+   type plus all prior `vars`.
 
-Every CEL expression is compiled per flow type with the same
-`CelEnvironmentFactory.addMessageVar("input", type)` pattern the projection
-module uses — so a typo fails at check time with the step named, not mid-run
-against a live service.
+Every CEL expression is compiled per flow type with
+`CelEnvironmentFactory.addMessageVar("input", type)`, the same pattern the
+projection module uses. A typo fails at check time with the step named, not
+mid-run against a live service.
 
-## Execution semantics (v1)
+## Fan-out
 
-In-order, in-memory, fail-fast: a run executes steps sequentially and stops on
-the first error, reporting the step name and index. The semantics are
-stream-native, but the v1 executor **materializes** each stage (bounded by the
-same payload caps grpc-invoke already enforces); a lazy, backpressured
-executor is a later implementation concern that requires no schema change. No
-retries, no branching, no deadlines — chains keep their gates/deadlines niche,
-and anything durable is a chain concern, not a pipeline concern. Runs are
-request-scoped and ephemeral by design.
+V1 is linear. The only fan-out is per-element: a stream flowing into a unary
+call runs that call once per element, in order.
+
+Branching fan-out, where one message goes to several downstream steps, is a
+DAG. That is the slope toward NiFi, and v1 does not climb it. If a real DAG
+is needed, the chain manager already has keyed and zip joins. If v1 use
+proves the gap, the extension is a `fan_out` step running named
+sub-sequences, added to the schema without changing the linear core.
+
+## Audit trail
+
+Yes, runs need a record. Every run returns a `RunRecord`:
+
+- pipeline name, input type, output type, success or failure
+- per step: name, duration, messages in, messages out, error if any
+
+The CLI prints it. MCP returns it. Payloads are not recorded by default; an
+optional per-stage digest supports replay and debugging without storing every
+message. When pipelines get stored or deployed later, the `RunRecord` is what
+persists. That is the whole audit story. A queryable provenance system
+belongs to the NiFi-class server, not to a chain call.
+
+## Execution semantics
+
+In-order, in-memory, fail-fast. A run executes steps sequentially and stops
+on the first error, reporting the step name and index. The semantics are
+stream-native, but the v1 executor materializes each stage, bounded by the
+payload caps grpc-invoke already enforces. A lazy, backpressured executor is
+a later implementation swap that requires no schema change. No retries, no
+branching, no deadlines. Runs are request-scoped and ephemeral.
 
 ## Surfaces
 
-- **CLI**: `protomolt run pipeline.json --input '<json>'` — one new verb on
-  the existing dispatcher.
-- **MCP**: `run-pipeline` (and later `check-pipeline`, which type-checks
-  without executing) — one `register()` line each; an agent authors the JSON
-  and self-validates it before spending a run.
-- **Registry**: pipelines store as subjects like any schema; `deploy-chain`
-  later is the same artifact with a trigger. Experiment and deployment are
-  one artifact at two lifecycle stages.
+- **CLI**: `protomolt run pipeline.json --input '<json>'`. One new verb.
+- **MCP**: `run-pipeline` and `check-pipeline` actions. One `register()` line
+  each. An agent authors the JSON and self-validates before spending a run.
+- **Registry**: pipelines store as subjects like any schema. `deploy-chain`
+  later is the same artifact with a trigger.
 
-## The search story as a pipeline
+## Example: search, project, rerank
 
 ```json
 {
@@ -195,33 +198,15 @@ request-scoped and ephemeral by design.
 ```
 
 Every step checks statically: `Search` accepts the request, `hits` is a
-repeated field of the response, each hit is a declared source of `SearchDoc`
-(via its projection options), the rerank request matches its method's input
-type. A mismatch anywhere fails at check time with the step named.
+repeated field of the response, each hit is a declared source of `SearchDoc`,
+the rerank request matches its method's input type. A mismatch fails at check
+time with the step named.
 
-## Honest edges and open questions
+## Not v1
 
-- **Relationship to chain**: chains compose gRPC calls with gates and
-  deadlines and are already registry-stored. Pipelines add CEL/projection
-  steps and stream cardinality but v1 has *less* operational machinery. If the
-  two converge, the likely shape is pipeline-as-authoring-surface compiling to
-  chain-as-runtime; for now they answer different questions (ephemeral typed
-  experiments vs. durable compositions).
-- **Endpoints by name**: inline host/port is v1-honest but a named-endpoint
-  registry (or MCP resource) would keep secrets and topology out of scripts.
-- **Streaming execution**: the flow semantics are stream-native (every step is
-  a stream operator; client-streaming calls consume the flow directly), but
-  the v1 executor materializes each stage. Backpressure, windowing, and
-  unbounded sources are executor concerns for later — the schema does not
-  change when they arrive.
-- **Error handling**: fail-fast only. Conditional branches, catch/retry, and
-  loops are deliberately absent — that is the DSL slope, and it stays
-  un-climbed.
-- **Map fields in `project`**: inherits the projection module's v1 limit.
-
-## v1 scope
-
-Schema + checker + executor + `run` verb + `run-pipeline` action + tests in
-the fixture style (pipeline JSON + stubbed descriptor sources). Everything
-else — named endpoints, deploy triggers, streaming, convergence with chain —
-is later, and each is an extension of the schema rather than a change to it.
+- Named endpoints, so topology stays out of scripts.
+- Branching fan-out and joins.
+- Queryable provenance. The `RunRecord` is enough.
+- Backpressure, windowing, unbounded sources. Executor concerns, later.
+- Convergence with the chain manager. Pipelines answer ephemeral typed
+  experiments; chains answer durable compositions with gates and deadlines.
