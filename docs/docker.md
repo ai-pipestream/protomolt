@@ -81,6 +81,28 @@ in-process without Docker:
 ./gradlew :protomolt-acp:acpSmoke -Pagent="$(pwd)/acp/build/install/protomolt-acp/bin/protomolt-acp"
 ```
 
+## Live self-test: the agent calling our own gRPC
+
+`scripts/acp-grpc-live.sh` is a self-hosting proof. It brings up the server, then drives the ACP
+agent — as a container joined to the server's Compose network — to `reflect` ProtoMolt's own
+gRPC service and `grpc-invoke` a method on it, over gRPC, container to container. The agent
+discovers `ProtoMoltService` by reflection and calls `ListTypes` with the reflected descriptor
+set as its schema, so the toolkit describes and calls itself.
+
+```shell
+./scripts/acp-grpc-live.sh
+```
+
+The same driver runs against any gRPC target and method, and against an agent launched however
+you like:
+
+```shell
+./gradlew :protomolt-acp:acpGrpcLive \
+  -Pagent="docker run -i --rm --network protomolt_default protomolt-acp:local" \
+  -Ptarget="serve:9090" \
+  -Pmethod="ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes"
+```
+
 ## Prove both surfaces at once
 
 `scripts/docker-smoke.sh` runs the whole thing end to end: it builds the distributions and

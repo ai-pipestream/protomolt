@@ -41,6 +41,19 @@ tasks.register('acpSmoke', JavaExec) {
     }
 }
 
+// Live self-hosting proof: through the ACP agent, reflect ProtoMolt's own running gRPC service
+// and invoke a method on it. -Pagent="<launch command>", -Ptarget=<host:port>, -Pmethod=<Svc/Method>.
+tasks.register('acpGrpcLive', JavaExec) {
+    group = 'verification'
+    description = 'Drives the ACP agent to reflect and invoke our own gRPC service'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.pipestream.proto.acp.AcpGrpcLive'
+    args(
+        project.findProperty('agent') ?: '',
+        project.findProperty('target') ?: '',
+        project.findProperty('method') ?: '')
+}
+
 // The acp-protocol tests drive the protoc-backed verbs through the ACP SDK's client. On a
 // contended machine that client has been observed blocking indefinitely inside prompt(), which
 // fails the build on machine load rather than on a defect in this module — the same hang
