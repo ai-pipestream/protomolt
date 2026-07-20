@@ -1,0 +1,25 @@
+plugins {
+    id 'application'
+}
+
+description = 'The ProtoMolt action catalog as an Agent Client Protocol agent: run any verb from an ACP-capable IDE'
+
+dependencies {
+    api project(':protomolt-actions')
+    api project(':protomolt-grpc-service')
+    api libs.acp.core
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    testImplementation 'com.agentclientprotocol:acp-test:0.14.0'
+    testImplementation platform(libs.junit.bom)
+    testImplementation libs.junit.jupiter
+    testImplementation libs.assertj.core
+    testRuntimeOnly libs.junit.platform.launcher
+}
+
+application {
+    mainClass = 'ai.pipestream.proto.acp.ProtoMoltAcpAgent'
+}

@@ -1,6 +1,7 @@
 [versions]
 protobuf = "4.35.1"
 cel = "0.13.1"
+acp = "0.14.0"
 junit = "6.1.1"
 assertj = "3.27.7"
 slf4j = "2.0.18"
@@ -45,6 +46,7 @@ chicory-compiler = { module = "com.dylibso.chicory:compiler", version.ref = "chi
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
 protobuf-java-util = { module = "com.google.protobuf:protobuf-java-util", version.ref = "protobuf" }
 cel = { module = "dev.cel:cel", version.ref = "cel" }
+acp-core = { module = "com.agentclientprotocol:acp-core", version.ref = "acp" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }

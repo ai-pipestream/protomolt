@@ -78,6 +78,9 @@ project(':protomolt-serve').projectDir = file('serve')
 include 'protomolt-cli'
 project(':protomolt-cli').projectDir = file('cli')
 
+include 'protomolt-acp'
+project(':protomolt-acp').projectDir = file('acp')
+
 include 'protomolt-connect'
 project(':protomolt-connect').projectDir = file('kafka/connect')
 include 'protomolt-connect-iceberg'

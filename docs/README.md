@@ -14,6 +14,7 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 | [The registry](registry.md) | Git-backed schema storage; the Confluent-protocol server; compatibility-gated writes; descriptor-set serving |
 | [Actions](actions.md) | The verb catalog — compile, validate, diff, check, render, evaluate — self-describing for consoles and LLM tools |
 | [MCP server](mcp.md) | The catalog as MCP tools and the registry as MCP resources; the gRPC agent workflow (reflect, invoke, generate); plain-Java stdio transport |
+| [ACP agent](acp.md) | The catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio |
 | [The gRPC service](grpc-service.md) | The catalog as `ProtoMoltService` — typed RPCs served descriptor-natively with reflection; JSON/REST with OpenAPI and Swagger UI; the `protomolt-serve` launcher |
 | [Kafka Connect](kafka-connect.md) | The sink (topics drive gRPC methods), the source (server streams feed topics, resumable via CEL tokens), and protobuf-aware transforms (validate, map, CEL filter) |
 | [Kafka serde](kafka-serde.md) | A protobuf serializer and deserializer speaking the Confluent wire format, enforcing the schema's declared rules on write, with the packaged descriptor set as a floor under the registry |

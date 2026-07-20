@@ -28,6 +28,7 @@ def supportedModules = [
         'protomolt-grpc-validation-micrometer',
         'protomolt-serve',
         'protomolt-cli',
+        'protomolt-acp',
         'protomolt-connect',
         'protomolt-connect-iceberg',
         'protomolt-serde',
