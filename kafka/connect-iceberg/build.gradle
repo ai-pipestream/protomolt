@@ -17,6 +17,8 @@ dependencies {
     testImplementation project(':protomolt-proto-sources')
     testImplementation libs.iceberg.data
     testImplementation libs.iceberg.parquet
+    // The live suite boots its own Iceberg REST catalog fixture container.
+    testImplementation libs.testcontainers.junit.jupiter
     // iceberg-data's format registry insists on the ORC model class even for Parquet reads.
     testRuntimeOnly 'org.apache.iceberg:iceberg-orc:1.11.0'
     testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'

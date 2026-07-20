@@ -18,6 +18,9 @@ dependencies {
     testImplementation libs.protobuf.java.util
     testImplementation libs.iceberg.data
     testImplementation libs.iceberg.parquet
+    // The live suite boots its own LocalStack S3 store and REST catalog fixture.
+    testImplementation libs.testcontainers.junit.jupiter
+    testImplementation libs.testcontainers.localstack
     // iceberg-data's format registry insists on the ORC model class even for Parquet reads.
     testRuntimeOnly 'org.apache.iceberg:iceberg-orc:1.11.0'
     testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'

@@ -20,35 +20,72 @@ import org.apache.iceberg.rest.RESTCatalog;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.BindMode;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The lake lane against <a href="https://gravitino.apache.org">Apache Gravitino</a>, whose Iceberg
- * REST service (the {@code gravitino-iceberg-rest} fixture from docker-compose.integration.yml)
+ * REST service (the {@code gravitino-iceberg-rest} image docker-compose.integration.yml runs)
  * stands in for the reference catalog. Nothing in the sink changes: Gravitino speaks the Iceberg
  * REST spec, so the same {@code ensureTable}/{@code append} that drives any catalog lands tables in
- * a federated metadata lake, and Iceberg's own reader gets the rows back. Skips when Gravitino is
- * not running; CI runs it with the stack up and fails if it skipped.
+ * a federated metadata lake, and Iceberg's own reader gets the rows back. A Testcontainers
+ * instance provides the service; the suite skips when Docker is unavailable.
  *
  * <p>Gravitino serves the REST endpoint under {@code /iceberg}, not the root.</p>
  */
+@Testcontainers(disabledWithoutDocker = true)
 class IcebergGravitinoLiveIntegrationTest {
 
-    private static final String CATALOG_URI = System.getProperty(
-            "protomolt.it.gravitino.iceberg", "http://127.0.0.1:19002/iceberg");
+    // Its own warehouse tree: sharing one with the reference catalog means two services (each
+    // its own container user) creating entries under the same root.
+    private static final String WAREHOUSE = "/tmp/protomolt-gravitino-warehouse";
+
+    static {
+        // Docker creates a missing bind source root-owned; the service must be able to write.
+        try {
+            Files.createDirectories(Path.of(WAREHOUSE));
+            Files.setPosixFilePermissions(Path.of(WAREHOUSE),
+                    PosixFilePermissions.fromString("rwxrwxrwx"));
+        } catch (Exception ignored) {
+            // best effort: a non-POSIX filesystem or an owner left by an earlier run
+        }
+    }
+
+    @Container
+    static final GenericContainer<?> GRAVITINO = new GenericContainer<>(
+            DockerImageName.parse("apache/gravitino-iceberg-rest:1.3.0"))
+            .withExposedPorts(9001)
+            .withEnv("GRAVITINO_ICEBERG_REST_WAREHOUSE", "file://" + WAREHOUSE)
+            // A test fixture does not need the 1 GB default heap.
+            .withEnv("GRAVITINO_MEM", "-Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m")
+            .withFileSystemBind(WAREHOUSE, WAREHOUSE, BindMode.READ_WRITE)
+            // The aliyun bundle shades an older jackson-core that can win the libs/* glob and
+            // break every write with a NoSuchMethodError; this lane is file:// only, so the
+            // compose fixture drops the jar and so do we.
+            .withCreateContainerCmdModifier(cmd -> cmd.withEntrypoint(
+                    "/bin/bash", "-c",
+                    "rm -f /opt/gravitino-iceberg-rest-server/libs/gravitino-iceberg-aliyun-bundle-*.jar"
+                            + " && exec /opt/gravitino-iceberg-rest-server/bin/start-iceberg-rest-server.sh"))
+            .waitingFor(Wait.forHttp("/iceberg/v1/config").forPort(9001)
+                    .withStartupTimeout(Duration.ofMinutes(3)));
+
+    private static String catalogUri() {
+        return "http://" + GRAVITINO.getHost() + ":" + GRAVITINO.getMappedPort(9001) + "/iceberg";
+    }
 
     private static final String PROTO = """
             syntax = "proto3";
@@ -65,14 +102,12 @@ class IcebergGravitinoLiveIntegrationTest {
 
     @BeforeAll
     static void start() throws Exception {
-        assumeTrue(reachable(), "Gravitino Iceberg REST catalog not reachable at " + CATALOG_URI
-                + "; start docker-compose.integration.yml to run this suite");
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
                 .add("gravitinoit/v1/tick.proto", PROTO, "test").build());
         file = compiled.descriptorFor("gravitinoit/v1/tick.proto").orElseThrow();
         catalog = new RESTCatalog();
         catalog.initialize("gravitino", Map.of(
-                CatalogProperties.URI, CATALOG_URI,
+                CatalogProperties.URI, catalogUri(),
                 // file:// without Hadoop: JEP 486 removed what HadoopFileIO leans on.
                 CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
         try {
@@ -86,17 +121,6 @@ class IcebergGravitinoLiveIntegrationTest {
     static void stop() throws Exception {
         if (catalog != null) {
             catalog.close();
-        }
-    }
-
-    private static boolean reachable() {
-        try (HttpClient http = HttpClient.newHttpClient()) {
-            return http.send(HttpRequest.newBuilder(URI.create(CATALOG_URI + "/v1/config"))
-                                    .GET().build(),
-                            HttpResponse.BodyHandlers.discarding())
-                    .statusCode() == 200;
-        } catch (Exception e) {
-            return false;
         }
     }
 
@@ -117,7 +141,7 @@ class IcebergGravitinoLiveIntegrationTest {
 
         // A client-owned location: the catalog container and this JVM run as different users on
         // CI, and whoever owns the tree must be the data writer.
-        Path base = Path.of("/tmp/protomolt-gravitino-warehouse/client/" + name);
+        Path base = Path.of(WAREHOUSE + "/client/" + name);
         for (String dir : new String[]{"", "metadata", "data"}) {
             Path path = dir.isEmpty() ? base : base.resolve(dir);
             Files.createDirectories(path);

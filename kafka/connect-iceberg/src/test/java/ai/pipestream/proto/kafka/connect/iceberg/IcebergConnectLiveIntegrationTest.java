@@ -20,11 +20,13 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.BindMode;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -35,20 +37,46 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * The sink task driven against a genuine REST catalog (the {@code iceberg-rest} fixture from
- * docker-compose.integration.yml). This is what the in-memory unit test cannot cover: the
+ * The sink task driven against a genuine REST catalog (the {@code iceberg-rest-fixture} image
+ * docker-compose.integration.yml runs). This is what the in-memory unit test cannot cover: the
  * {@code iceberg.catalog.*} config actually builds a catalog, the connector commits real
- * snapshots through it, and Iceberg's own reader gets the rows back. Skips when the catalog is
- * not running; CI runs it with the stack up and fails if it skipped.
+ * snapshots through it, and Iceberg's own reader gets the rows back. A Testcontainers instance
+ * provides the catalog; the suite skips when Docker is unavailable.
  */
+@Testcontainers(disabledWithoutDocker = true)
 class IcebergConnectLiveIntegrationTest {
 
-    private static final String CATALOG_URI = System.getProperty(
-            "protomolt.it.iceberg.rest", "http://127.0.0.1:18181");
     private static final String LOCAL_FILE_IO = "ai.pipestream.proto.lake.iceberg.LocalFileIO";
+
+    // The warehouse is bind-mounted at the SAME absolute path inside the container, so the
+    // catalog and this JVM both resolve file:// data locations without an object store.
+    private static final String WAREHOUSE = "/tmp/protomolt-iceberg-warehouse";
+
+    static {
+        // Docker creates a missing bind source root-owned; the fixture runs as uid 1000 and
+        // must be able to write here.
+        try {
+            Files.createDirectories(Path.of(WAREHOUSE));
+            Files.setPosixFilePermissions(Path.of(WAREHOUSE),
+                    PosixFilePermissions.fromString("rwxrwxrwx"));
+        } catch (Exception ignored) {
+            // best effort: a non-POSIX filesystem or an owner left by an earlier run
+        }
+    }
+
+    @Container
+    static final GenericContainer<?> CATALOG_SERVICE = new GenericContainer<>(
+            DockerImageName.parse("apache/iceberg-rest-fixture:1.10.1"))
+            .withExposedPorts(8181)
+            .withEnv("CATALOG_WAREHOUSE", "file://" + WAREHOUSE)
+            .withFileSystemBind(WAREHOUSE, WAREHOUSE, BindMode.READ_WRITE)
+            .waitingFor(Wait.forHttp("/v1/config").forPort(8181));
+
+    private static String catalogUri() {
+        return "http://" + CATALOG_SERVICE.getHost() + ":" + CATALOG_SERVICE.getMappedPort(8181);
+    }
 
     private static final String PROTO = """
             syntax = "proto3";
@@ -65,14 +93,12 @@ class IcebergConnectLiveIntegrationTest {
 
     @BeforeAll
     static void start() throws Exception {
-        assumeTrue(reachable(), "Iceberg REST catalog not reachable at " + CATALOG_URI
-                + "; start docker-compose.integration.yml to run this suite");
         file = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
                         .add("connectit/v1/tick.proto", PROTO, "test").build())
                 .descriptorFor("connectit/v1/tick.proto").orElseThrow();
         reader = new RESTCatalog();
         reader.initialize("reader", Map.of(
-                CatalogProperties.URI, CATALOG_URI,
+                CatalogProperties.URI, catalogUri(),
                 CatalogProperties.FILE_IO_IMPL, LOCAL_FILE_IO));
         try {
             reader.createNamespace(Namespace.of("protomolt_connect_it"));
@@ -85,17 +111,6 @@ class IcebergConnectLiveIntegrationTest {
     static void stop() throws Exception {
         if (reader != null) {
             reader.close();
-        }
-    }
-
-    private static boolean reachable() {
-        try (HttpClient http = HttpClient.newHttpClient()) {
-            return http.send(HttpRequest.newBuilder(URI.create(CATALOG_URI + "/v1/config"))
-                                    .GET().build(),
-                            HttpResponse.BodyHandlers.discarding())
-                    .statusCode() == 200;
-        } catch (Exception e) {
-            return false;
         }
     }
 
@@ -125,7 +140,7 @@ class IcebergConnectLiveIntegrationTest {
 
         // A client-owned location, pre-created world-writable: on CI the catalog container and
         // the test JVM run as different users, so whoever owns the tree must be able to write it.
-        Path base = Path.of("/tmp/protomolt-iceberg-warehouse/client/connect-" + name);
+        Path base = Path.of(WAREHOUSE + "/client/connect-" + name);
         for (String dir : new String[]{"", "metadata", "data"}) {
             Path path = dir.isEmpty() ? base : base.resolve(dir);
             Files.createDirectories(path);
@@ -145,7 +160,7 @@ class IcebergConnectLiveIntegrationTest {
         props.put(IcebergSinkConfig.TABLE_LOCATION, "file://" + base);
         props.put("iceberg.catalog.name", "connect-live");
         props.put("iceberg.catalog.type", "rest");
-        props.put("iceberg.catalog.uri", CATALOG_URI);
+        props.put("iceberg.catalog.uri", catalogUri());
         props.put("iceberg.catalog.io-impl", LOCAL_FILE_IO);
 
         IcebergSinkTask task = new IcebergSinkTask();

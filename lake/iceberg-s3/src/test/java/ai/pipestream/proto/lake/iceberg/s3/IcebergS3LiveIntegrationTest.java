@@ -21,6 +21,13 @@ import org.apache.iceberg.rest.RESTCatalog;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.Network;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.localstack.LocalStackContainer;
+import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
@@ -30,9 +37,6 @@ import software.amazon.awssdk.services.s3.model.BucketAlreadyExistsException;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
 
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -40,26 +44,49 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The whole lane on an S3-compatible object store: an Iceberg REST catalog whose warehouse lives
- * on RustFS through {@code S3FileIO} (both from docker-compose.integration.yml). Tables are
- * created and committed over REST, the data files land on RustFS as {@code s3://} objects, and
- * Iceberg's own reader gets every value back. Unlike the file:// suite there is no shared warehouse
- * volume: the catalog container and this JVM each reach RustFS by URL and resolve the same keys.
- * Skips when the stack is not running; CI runs it with the stack up and fails if it skipped.
+ * on LocalStack through {@code S3FileIO}, both provisioned by Testcontainers (the catalog is the
+ * {@code apache/iceberg-rest-fixture} image docker-compose.integration.yml runs). Tables are
+ * created and committed over REST, the data files land on LocalStack as {@code s3://} objects,
+ * and Iceberg's own reader gets every value back. Unlike the file:// suite there is no shared
+ * warehouse volume: the catalog container and this JVM each reach the store by URL and resolve
+ * the same keys. The suite skips when Docker is unavailable.
  */
+@Testcontainers(disabledWithoutDocker = true)
 class IcebergS3LiveIntegrationTest {
 
-    private static final String CATALOG_URI = System.getProperty(
-            "protomolt.it.iceberg.rest.s3", "http://127.0.0.1:18182");
-    private static final String S3_ENDPOINT = System.getProperty(
-            "protomolt.it.rustfs", "http://127.0.0.1:19000");
     private static final String BUCKET = "protomolt-lake";
-    private static final String REGION = "us-east-1";
-    private static final String ACCESS_KEY = "protomolt";
-    private static final String SECRET_KEY = "protomoltsecret";
+    private static final Network NETWORK = Network.newNetwork();
+
+    @Container
+    static final LocalStackContainer S3 = new LocalStackContainer(
+            DockerImageName.parse("localstack/localstack:4.13"))
+            .withServices("s3")
+            .withNetwork(NETWORK)
+            // The catalog container reaches the store by this alias; the test JVM uses the
+            // mapped port on the host. Both resolve the same s3:// keys.
+            .withNetworkAliases("localstack");
+
+    @Container
+    static final GenericContainer<?> CATALOG_SERVICE = new GenericContainer<>(
+            DockerImageName.parse("apache/iceberg-rest-fixture:1.10.1"))
+            .withNetwork(NETWORK)
+            .dependsOn(S3)
+            .withExposedPorts(8181)
+            .withEnv("CATALOG_WAREHOUSE", "s3://" + BUCKET + "/warehouse")
+            .withEnv("CATALOG_IO__IMPL", "org.apache.iceberg.aws.s3.S3FileIO")
+            .withEnv("CATALOG_S3_ENDPOINT", "http://localstack:4566")
+            .withEnv("CATALOG_S3_PATH__STYLE__ACCESS", "true")
+            .withEnv("AWS_ACCESS_KEY_ID", S3.getAccessKey())
+            .withEnv("AWS_SECRET_ACCESS_KEY", S3.getSecretKey())
+            .withEnv("AWS_REGION", S3.getRegion())
+            .waitingFor(Wait.forHttp("/v1/config").forPort(8181));
+
+    private static String catalogUri() {
+        return "http://" + CATALOG_SERVICE.getHost() + ":" + CATALOG_SERVICE.getMappedPort(8181);
+    }
 
     private static final String PROTO = """
             syntax = "proto3";
@@ -78,16 +105,14 @@ class IcebergS3LiveIntegrationTest {
 
     @BeforeAll
     static void start() throws Exception {
-        assumeTrue(reachable(), "S3 Iceberg catalog not reachable at " + CATALOG_URI
-                + "; start docker-compose.integration.yml to run this suite");
         createBucket();
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
                 .add("lakes3/v1/tick.proto", PROTO, "test").build());
         file = compiled.descriptorFor("lakes3/v1/tick.proto").orElseThrow();
 
-        Map<String, String> props = new HashMap<>(
-                S3Catalogs.pathStyle(S3_ENDPOINT, REGION, ACCESS_KEY, SECRET_KEY));
-        props.put(CatalogProperties.URI, CATALOG_URI);
+        Map<String, String> props = new HashMap<>(S3Catalogs.pathStyle(
+                S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey()));
+        props.put(CatalogProperties.URI, catalogUri());
         catalog = new RESTCatalog();
         catalog.initialize("live-s3", props);
         try {
@@ -104,24 +129,13 @@ class IcebergS3LiveIntegrationTest {
         }
     }
 
-    private static boolean reachable() {
-        try (HttpClient http = HttpClient.newHttpClient()) {
-            return http.send(HttpRequest.newBuilder(URI.create(CATALOG_URI + "/v1/config"))
-                                    .GET().build(),
-                            HttpResponse.BodyHandlers.discarding())
-                    .statusCode() == 200;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
     /** The warehouse bucket has to exist before the catalog writes metadata into it. */
     private static void createBucket() {
         try (S3Client s3 = S3Client.builder()
-                .endpointOverride(URI.create(S3_ENDPOINT))
-                .region(Region.of(REGION))
+                .endpointOverride(S3.getEndpoint())
+                .region(Region.of(S3.getRegion()))
                 .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)))
+                        AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey())))
                 .forcePathStyle(true)
                 .httpClientBuilder(UrlConnectionHttpClient.builder())
                 .build()) {
@@ -156,7 +170,7 @@ class IcebergS3LiveIntegrationTest {
         try {
             List<DataFile> files = IcebergSink.append(table, type,
                     List.of(tick(type, 0), tick(type, 1)));
-            // The data file is an object on RustFS, not a local path.
+            // The data file is an object on the store, not a local path.
             assertThat(files.getFirst().location()).startsWith("s3://" + BUCKET + "/");
             IcebergSink.append(table, type, List.of(tick(type, 2)));
 

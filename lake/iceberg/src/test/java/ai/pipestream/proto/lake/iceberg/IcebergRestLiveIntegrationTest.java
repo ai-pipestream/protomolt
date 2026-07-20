@@ -17,29 +17,57 @@ import org.apache.iceberg.rest.RESTCatalog;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.BindMode;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The whole lane against a genuine REST catalog service
- * ({@code apache/iceberg-rest-fixture} from docker-compose.integration.yml): tables created
- * over the wire, snapshots committed through REST transactions, and the data read back by
- * Iceberg's own reader from the shared warehouse. Skips when the catalog is not running;
- * CI runs it with the compose stack up and fails if it skipped.
+ * ({@code apache/iceberg-rest-fixture}, the image docker-compose.integration.yml runs):
+ * tables created over the wire, snapshots committed through REST transactions, and the data
+ * read back by Iceberg's own reader from the shared warehouse. A Testcontainers instance
+ * provides the catalog; the suite skips when Docker is unavailable.
  */
+@Testcontainers(disabledWithoutDocker = true)
 class IcebergRestLiveIntegrationTest {
 
-    private static final String CATALOG_URI = System.getProperty(
-            "protomolt.it.iceberg.rest", "http://127.0.0.1:18181");
+    // The warehouse is bind-mounted at the SAME absolute path inside the container, so the
+    // catalog and this JVM both resolve file:// data locations without an object store.
+    private static final String WAREHOUSE = "/tmp/protomolt-iceberg-warehouse";
+
+    static {
+        // Docker creates a missing bind source root-owned; the fixture runs as uid 1000 and
+        // must be able to write here.
+        try {
+            java.nio.file.Path warehouse = java.nio.file.Path.of(WAREHOUSE);
+            java.nio.file.Files.createDirectories(warehouse);
+            java.nio.file.Files.setPosixFilePermissions(warehouse,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwxrwxrwx"));
+        } catch (Exception ignored) {
+            // best effort: a non-POSIX filesystem or an owner left by an earlier run
+        }
+    }
+
+    @Container
+    static final GenericContainer<?> CATALOG_SERVICE = new GenericContainer<>(
+            DockerImageName.parse("apache/iceberg-rest-fixture:1.10.1"))
+            .withExposedPorts(8181)
+            .withEnv("CATALOG_WAREHOUSE", "file://" + WAREHOUSE)
+            .withFileSystemBind(WAREHOUSE, WAREHOUSE, BindMode.READ_WRITE)
+            .waitingFor(Wait.forHttp("/v1/config").forPort(8181));
+
+    private static String catalogUri() {
+        return "http://" + CATALOG_SERVICE.getHost() + ":" + CATALOG_SERVICE.getMappedPort(8181);
+    }
 
     private static final String PROTO = """
             syntax = "proto3";
@@ -58,14 +86,12 @@ class IcebergRestLiveIntegrationTest {
 
     @BeforeAll
     static void start() throws Exception {
-        assumeTrue(reachable(), "Iceberg REST catalog not reachable at " + CATALOG_URI
-                + "; start docker-compose.integration.yml to run this suite");
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
                 .add("lakeit/v1/tick.proto", PROTO, "test").build());
         file = compiled.descriptorFor("lakeit/v1/tick.proto").orElseThrow();
         catalog = new RESTCatalog();
         catalog.initialize("live", Map.of(
-                "uri", CATALOG_URI,
+                "uri", catalogUri(),
                 // file:// without Hadoop: JEP 486 removed what HadoopFileIO leans on.
                 org.apache.iceberg.CatalogProperties.FILE_IO_IMPL,
                 LocalFileIO.class.getName()));
@@ -80,17 +106,6 @@ class IcebergRestLiveIntegrationTest {
     static void stop() throws Exception {
         if (catalog != null) {
             catalog.close();
-        }
-    }
-
-    private static boolean reachable() {
-        try (HttpClient http = HttpClient.newHttpClient()) {
-            return http.send(HttpRequest.newBuilder(URI.create(CATALOG_URI + "/v1/config"))
-                                    .GET().build(),
-                            HttpResponse.BodyHandlers.discarding())
-                    .statusCode() == 200;
-        } catch (Exception e) {
-            return false;
         }
     }
 
@@ -114,10 +129,10 @@ class IcebergRestLiveIntegrationTest {
         TableIdentifier id = TableIdentifier.of("protomolt_it",
                 "ticks_" + Long.toUnsignedString(System.nanoTime(), 36));
 
-        // A client-owned location: on CI the catalog container and the test JVM run as
-        // different users; whoever owns the table tree must be the data writer.
+        // A client-owned location: the catalog container and the test JVM run as different
+        // users; whoever owns the table tree must be the data writer.
         java.nio.file.Path base = java.nio.file.Path.of(
-                "/tmp/protomolt-iceberg-warehouse/client/" + id.name());
+                WAREHOUSE + "/client/" + id.name());
         // Pre-create the WHOLE table tree world-writable: the catalog service (uid 1000
         // in the container) writes metadata.json here while this JVM (a different uid on
         // CI) writes manifests and data - whoever creates a directory first owns it, so

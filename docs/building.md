@@ -57,32 +57,52 @@ ccompat facade and a Redpanda container.
 The Confluent lanes (the `:protomolt-schema-confluent` Confluent suites and
 the `:protomolt-serde` registry suite) provision their own registry: a
 Testcontainers Redpanda, which serves the Confluent Schema Registry API.
-They run wherever Docker is available and skip otherwise. The Apicurio
-lanes need the compose stack:
+They run wherever Docker is available and skip otherwise.
+
+The OpenSearch index lane (`:protomolt-index-opensearch`) also provisions
+its own engine: a Testcontainers container running
+`opensearchproject/opensearch:2.19.1` (the same image the compose stack
+pins), started through the OpenSearch project's `opensearch-testcontainers`
+module. It likewise runs wherever Docker is available and skips otherwise,
+so the compose stack's `opensearch` service is not needed for tests.
+
+The Iceberg lanes self-provision the same way. The `:protomolt-iceberg`
+suites each boot an `apache/iceberg-rest-fixture` catalog (one suite uses
+`apache/gravitino-iceberg-rest` instead), the `:protomolt-iceberg-s3` suite
+pairs a fixture catalog with a Testcontainers LocalStack S3 store, and the
+`:protomolt-connect-iceberg` suite boots its own fixture catalog. They run
+wherever Docker is available and skip otherwise, so the compose stack's
+`iceberg-rest`, `iceberg-rest-s3`, `rustfs`, and `gravitino-iceberg-rest`
+services are not needed for tests. The Apicurio lanes self-provision the same way: the
+`:protomolt-schema-apicurio` suites and the confluent module's two ccompat
+suites each boot an `apicurio/apicurio-registry:3.3.0` container (the
+ccompat suites hit its `/apis/ccompat/v7` facade). They run wherever
+Docker is available and skip otherwise, so the compose stack's `apicurio`
+service is not needed for tests:
 
 ```shell
-docker compose -f docker-compose.integration.yml up -d
-
 ./gradlew :protomolt-schema-apicurio:test \
           :protomolt-schema-confluent:test
 ```
 
-When a compose registry is not reachable (a quick ~2 second probe), the
-Apicurio tests skip via JUnit assumptions, so a plain `./gradlew build`
-stays green without containers. Test artifacts and subjects use unique
-per-run names, so reruns against a long-lived registry never collide.
+Test artifacts and subjects use unique per-run names, so reruns never
+collide.
 
-The Apicurio endpoint matches `docker-compose.integration.yml` and can be
-overridden with a system property or environment variable:
+The Apicurio lanes can be retargeted at an external registry, such as the
+compose stack's, with a system property or environment variable:
 
 | Property | Environment variable | Default |
 |---|---|---|
-| `pipestream.it.apicurio.url` | `PIPESTREAM_IT_APICURIO_URL` | `http://localhost:18780` |
+| `pipestream.it.apicurio.url` | `PIPESTREAM_IT_APICURIO_URL` | the suite's Testcontainers registry |
 
 ```shell
 ./gradlew :protomolt-schema-apicurio:test \
           -Dpipestream.it.apicurio.url=http://my-registry:8080
 ```
+
+An unreachable override endpoint still skips via a JUnit assumption (a
+quick ~2 second probe), so a plain `./gradlew build` stays green without
+containers.
 
 ## Conformance against buf's own runner
 
