@@ -2,7 +2,10 @@ package ai.pipestream.proto.connector;
 
 import com.google.protobuf.BytesValue;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
+import ai.pipestream.proto.kafka.serde.ProtoMoltProtobufSerializer;
+import ai.pipestream.proto.kafka.serde.ProtoMoltSerdeConfig;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -19,8 +22,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.redpanda.RedpandaContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -172,5 +180,96 @@ class KafkaSourceLiveIntegrationTest {
         } finally {
             pump.close();
         }
+    }
+
+    @Test
+    void confluentWireFormatRoundTripsThroughTheSerde() throws Exception {
+        String topic = unique("connector-it-serde");
+        createTopic(topic);
+
+        String proto = """
+                syntax = "proto3";
+                package connector.it;
+                message Envelope { string doc_id = 1; int32 seq = 2; }
+                """;
+        CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                .add("connector/it/envelope.proto", proto, "test").build());
+        Descriptor envelope = compiled.descriptorFor("connector/it/envelope.proto").orElseThrow()
+                .findMessageTypeByName("Envelope");
+        String descriptorSetBase64 = Base64.getEncoder()
+                .encodeToString(compiled.descriptorSet().toByteArray());
+        String registry = KAFKA.getSchemaRegistryAddress();
+
+        // The value subject the serializer's frames will name.
+        register(topic + "-value", proto);
+
+        // Write with the ProtoMolt serializer: Confluent-framed bytes, subject registered.
+        ProtoMoltProtobufSerializer serializer = new ProtoMoltProtobufSerializer();
+        serializer.configure(Map.of(
+                ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64, descriptorSetBase64,
+                ProtoMoltSerdeConfig.MESSAGE_TYPE, "connector.it.Envelope",
+                ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, registry), false);
+
+        Properties config = new Properties();
+        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap());
+        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
+        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
+        config.put(ProducerConfig.ACKS_CONFIG, "all");
+        try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(config)) {
+            for (int i = 0; i < 3; i++) {
+                DynamicMessage.Builder builder = DynamicMessage.newBuilder(envelope);
+                builder.setField(envelope.findFieldByName("doc_id"), "doc-" + i);
+                builder.setField(envelope.findFieldByName("seq"), i);
+                producer.send(new ProducerRecord<>(topic, serializer.serialize(topic, builder.build())))
+                        .get(10, TimeUnit.SECONDS);
+            }
+        }
+
+        // Read with only the registry URL: the frame's schema id resolves server-side.
+        KafkaSourcePlan plan = new KafkaSourcePlan(bootstrap(), topic, unique("connector-it-group"),
+                MessageParser.confluent(registry),
+                Map.of(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"));
+        try (SourcePump pump = new SourcePump(4)) {
+            pump.attach(new KafkaSource().open(plan, pump));
+            for (int i = 0; i < 3; i++) {
+                Message next = pump.take(Duration.ofSeconds(15));
+                assertThat(next).as("frame %d arrives", i).isNotNull();
+                DynamicMessage message = (DynamicMessage) next;
+                // The serde links its own descriptors, so read through the message's type.
+                Descriptor actual = message.getDescriptorForType();
+                assertThat(actual.getFullName()).isEqualTo("connector.it.Envelope");
+                assertThat(message.getField(actual.findFieldByName("doc_id"))).isEqualTo("doc-" + i);
+                assertThat(message.getField(actual.findFieldByName("seq"))).isEqualTo(i);
+            }
+        }
+    }
+
+    /** Registers a protobuf schema under the subject; the registry assigns the id. */
+    private static void register(String subject, String schema) throws Exception {
+        String body = "{\"schemaType\":\"PROTOBUF\",\"schema\":" + quote(schema) + "}";
+        try (HttpClient http = HttpClient.newHttpClient()) {
+            HttpResponse<String> response = http.send(HttpRequest
+                    .newBuilder(URI.create(
+                            KAFKA.getSchemaRegistryAddress() + "/subjects/" + subject + "/versions"))
+                    .header("Content-Type", "application/vnd.schemaregistry.v1+json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode())
+                    .as("registering %s: %s", subject, response.body())
+                    .isEqualTo(200);
+        }
+    }
+
+    private static String quote(String text) {
+        StringBuilder out = new StringBuilder("\"");
+        for (char c : text.toCharArray()) {
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\n' -> out.append("\\n");
+                default -> out.append(c);
+            }
+        }
+        return out.append('"').toString();
     }
 }

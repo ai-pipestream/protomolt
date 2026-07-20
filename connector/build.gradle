@@ -11,4 +11,7 @@ dependencies {
     testImplementation libs.grpc.stub
     testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
+
+    // OOTB Confluent wire format: MessageParser.confluent adapts the ProtoMolt serde.
+    implementation project(':protomolt-serde')
 }

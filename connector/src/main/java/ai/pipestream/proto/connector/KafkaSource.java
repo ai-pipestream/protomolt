@@ -85,7 +85,7 @@ public final class KafkaSource implements StreamSource<KafkaSourcePlan> {
                         }
                         Message message;
                         try {
-                            message = parser.parse(record.value());
+                            message = parser.parse(record.topic(), record.value());
                         } catch (RuntimeException e) {
                             fireError(new SourceException("could not parse a record from "
                                     + record.topic() + ":" + record.partition()
