@@ -304,4 +304,18 @@ class GrpcInvokeActionTest {
         assertThat(emitted.get(0).get("status").asText()).isEqualTo("INVALID_ARGUMENT");
         assertThat(emitted.get(0).get("description").asText()).isEqualTo("bad ping");
     }
+
+    @Test
+    void streamingOpenStreamEndsWithDeadlineTerminal() throws Exception {
+        ObjectNode input = input("invoke.test.EchoService/Open",
+                MAPPER.createObjectNode().put("text", "x"));
+        input.put("deadlineMs", 800);
+        List<ObjectNode> emitted = new ArrayList<>();
+        action.executeStreaming(input, ActionContext.create(), emitted::add);
+        // The open stream yields its one tick, then the call deadline ends it.
+        assertThat(emitted).hasSize(2);
+        assertThat(emitted.get(0).get("text").asText()).isEqualTo("tick");
+        assertThat(emitted.get(1).get("ok").asBoolean()).isFalse();
+        assertThat(emitted.get(1).get("status").asText()).isEqualTo("DEADLINE_EXCEEDED");
+    }
 }

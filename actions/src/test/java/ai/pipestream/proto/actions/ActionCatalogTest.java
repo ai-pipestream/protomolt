@@ -2,12 +2,14 @@ package ai.pipestream.proto.actions;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static ai.pipestream.proto.actions.TestFixtures.MAPPER;
 import static ai.pipestream.proto.actions.TestFixtures.obj;
@@ -23,6 +25,54 @@ class ActionCatalogTest {
             "extract-metadata", "list-types");
 
     private final ActionCatalog catalog = ActionCatalog.defaults(TestFixtures.personContext());
+
+    @Test
+    void executeStreamingFallsBackToSingleEmissionForUnaryActions() throws Exception {
+        List<ObjectNode> emitted = new ArrayList<>();
+        catalog.executeStreaming("list-types", JsonNodeFactory.instance.objectNode()
+                .putObject("schema").put("type", "test.Person"), emitted::add);
+        assertThat(emitted).hasSize(1);
+    }
+
+    @Test
+    void executeStreamingDispatchesToStreamingActions() throws Exception {
+        AtomicInteger emissions = new AtomicInteger();
+        catalog.register(new StreamingAction() {
+            @Override
+            public String name() {
+                return "test-stream";
+            }
+
+            @Override
+            public String description() {
+                return "emits two documents";
+            }
+
+            @Override
+            public ObjectNode inputSchema() {
+                return JsonNodeFactory.instance.objectNode();
+            }
+
+            @Override
+            public ObjectNode execute(ObjectNode input, ActionContext context) {
+                return JsonNodeFactory.instance.objectNode().put("unary", true);
+            }
+
+            @Override
+            public void executeStreaming(ObjectNode input, ActionContext context,
+                    StreamEmitter emitter) {
+                emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 1));
+                emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 2));
+                emissions.addAndGet(2);
+            }
+        });
+        List<ObjectNode> emitted = new ArrayList<>();
+        catalog.executeStreaming("test-stream", JsonNodeFactory.instance.objectNode(),
+                emitted::add);
+        assertThat(emitted).hasSize(2);
+        assertThat(emitted.get(0).get("n").asInt()).isEqualTo(1);
+        assertThat(emitted.get(1).get("n").asInt()).isEqualTo(2);
+    }
 
     @Test
     void defaultsRegistersAllSixteenBuiltIns() {

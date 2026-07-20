@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package demo.search.v1;
+
+option java_multiple_files = true;
+option java_package = "demo.search.v1";
+option java_outer_classname = "DemoSearchProto";
+
+// A minimal server-streaming search: hits arrive one at a time, best first,
+// with a configurable delay between them so streaming is visible.
+service DemoSearch {
+  rpc Search(SearchRequest) returns (stream SearchHit);
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 hits = 2;
+  int32 delay_ms = 3;
+}
+
+message SearchHit {
+  string doc_id = 1;
+  float score = 2;
+  string text = 3;
+}
