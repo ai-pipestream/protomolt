@@ -74,5 +74,5 @@ rebalance-safe delivery, use the Connect source instead.
 ## Testing
 
 Unit tests run without infrastructure. `KafkaSourceLiveIntegrationTest` starts
-its own Apache Kafka broker as a Testcontainer and skips when Docker is
+its own Redpanda broker as a Testcontainer and skips when Docker is
 unavailable.

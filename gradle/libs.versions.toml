@@ -56,7 +56,7 @@ slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 kafka-connect-api = { module = "org.apache.kafka:connect-api", version.ref = "kafka" }
 kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
-testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka", version.ref = "testcontainers" }
+testcontainers-redpanda = { module = "org.testcontainers:testcontainers-redpanda", version.ref = "testcontainers" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
 micrometer-core = { module = "io.micrometer:micrometer-core", version.ref = "micrometer" }
 swagger-ui = { module = "org.webjars:swagger-ui", version.ref = "swagger-ui" }

@@ -12,7 +12,7 @@ import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.kafka.KafkaContainer;
+import org.testcontainers.redpanda.RedpandaContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.nio.charset.StandardCharsets;
@@ -27,14 +27,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The Kafka source against a genuine broker: records arrive in order through the pump,
  * and pausing holds back a follow-up batch until resume lets it through. The broker is a
- * Testcontainers Apache Kafka instance; the suite skips when Docker is unavailable.
+ * Testcontainers Redpanda instance; the suite skips when Docker is unavailable.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class KafkaSourceLiveIntegrationTest {
 
+    // The module has no no-arg constructor and no default tag; this is the baseline
+    // image its own test suite pins (also its minimum supported version).
     @Container
-    static final KafkaContainer KAFKA =
-            new KafkaContainer(DockerImageName.parse("apache/kafka:3.7.0"));
+    static final RedpandaContainer KAFKA = new RedpandaContainer(
+            DockerImageName.parse("docker.redpanda.com/redpandadata/redpanda:v22.2.1"));
 
     private static String unique(String prefix) {
         return prefix + "-" + Long.toUnsignedString(System.nanoTime(), 36);
