@@ -43,7 +43,7 @@ network hop.
 Point it at a Confluent-compatible registry and it will use one:
 
 ```properties
-protomolt.registry.url=http://localhost:8081
+schema.registry.url=http://localhost:8081
 ```
 
 On write, the id registered for the subject (`<topic>-value` by default) is
@@ -62,6 +62,12 @@ still read correctly — and a frame that genuinely carries another type is
 refused by name. Only when no registry can answer does the check fall back to
 comparing the frame's index path against the configured type's position in
 the packaged file.
+
+A consumer that packages nothing works too: with only `schema.registry.url`
+configured, the deserializer resolves every frame's type by id from the
+registry — the same lane Confluent's deserializer offers, with the packaged
+descriptor set simply absent rather than required. Messages come back as
+`DynamicMessage`, since generated-class derivation needs the packaged files.
 
 ## What comes back
 
@@ -90,7 +96,7 @@ id up under its own subject, which is what the record-name strategies are
 for:
 
 ```properties
-protomolt.subject.strategy=record
+subject.name.strategy=record
 ```
 
 `topic` is the default (`<topic>-value`, Confluent's TopicNameStrategy);
@@ -143,9 +149,8 @@ failure refuses it, and the refusal reaches the metrics listeners as
 `incompatible-with-latest`. The verdict is cached per schema pair, so the
 check costs nothing per record.
 
-`protomolt.latest.compatibility.strict=false` turns the check off and stamps
-the id regardless — the same escape hatch, under the same name, as
-Confluent's `latest.compatibility.strict=false`.
+`latest.compatibility.strict=false` turns the check off and stamps the id
+regardless — Confluent's escape hatch, honored under Confluent's own name.
 
 ## Configuration
 
@@ -154,12 +159,12 @@ Confluent's `latest.compatibility.strict=false`.
 | `protomolt.descriptor.set.resource` | | Classpath resource holding a serialized `FileDescriptorSet`. Exactly one of this or the base64 form is required |
 | `protomolt.descriptor.set.base64` | | The same, inline |
 | `protomolt.message.type` | unset | Pin the serde to one fully qualified type; unset accepts any packaged type |
-| `protomolt.registry.url` | none | A Confluent-compatible registry, if there is one |
+| `schema.registry.url` | none | A Confluent-compatible registry, if there is one |
 | `protomolt.subject` | per strategy | Explicit subject, overriding the strategy |
-| `protomolt.subject.strategy` | `topic` | `topic`, `record`, or `topic-record` |
-| `protomolt.schema.id` | `0` | Id stamped when no registry answers |
+| `subject.name.strategy` | `topic` | `topic`, `record`, or `topic-record` |
+| `use.schema.id` | `0` | Id stamped when no registry answers |
 | `protomolt.registry.retry.backoff.ms` | `30000` | How long a failed registry lookup stands before asking again |
-| `protomolt.latest.compatibility.strict` | `true` | Refuse writes the registry's latest schema could not read, instead of stamping its id over them |
+| `latest.compatibility.strict` | `true` | Refuse writes the registry's latest schema could not read, instead of stamping its id over them |
 | `protomolt.generated.classes` | `true` | Return generated Java classes when they are on the classpath |
 | `protomolt.validate.on.write` | `true` | Reject invalid messages instead of writing them |
 | `protomolt.validate.on.read` | `false` | Validate after deserializing |
@@ -168,6 +173,10 @@ Confluent's `latest.compatibility.strict=false`.
 | `protomolt.quality.min` | unset | Reject writes whose composite score falls below this |
 | `protomolt.map.on.write` | none | Mapping rules applied before validating and writing |
 | `protomolt.map.on.read` | none | Mapping rules applied right after parsing |
+
+The keys without a `protomolt.` prefix are Confluent's standard names,
+honored as-is so existing registry configuration carries over unchanged;
+everything under `protomolt.*` is ProtoMolt's own extension.
 
 Validating on read is off by default. A consumer usually cannot fix what a
 producer already wrote, and one that starts rejecting history on upgrade is
@@ -252,7 +261,7 @@ Against the two protobuf serdes people actually deploy:
 | Registry outage | packaged fallback; paced retries; still validating | fails unresolved lookups | fails by default; two opt-in fallbacks, each needing per-serde configuration |
 | Generated-class return | automatic, on by default, derived from the descriptor set's java options | `derive.type` / `specific.protobuf.value.type` | explicit return class, or opt-in `derive.class` |
 | Multi-type topics | unpinned mode + record-name strategies | record-name strategies | record-name strategies |
-| Latest-version ids | always — the registry path stamps the subject's latest, guarded by a compatibility check on by default | `use.latest.version` (opt-in) with `latest.compatibility.strict` | `find-latest` (opt-in), no client-side compatibility guard |
+| Latest-version ids | always — the registry path stamps the subject's latest, guarded by a compatibility check on by default (`latest.compatibility.strict`, the same key) | `use.latest.version` (opt-in) with `latest.compatibility.strict` | `find-latest` (opt-in), no client-side compatibility guard |
 | Auto-registration | no, deliberately (see below) | yes (default on) | yes (option) |
 
 Auto-registration is the one their column wins, and it is declined on

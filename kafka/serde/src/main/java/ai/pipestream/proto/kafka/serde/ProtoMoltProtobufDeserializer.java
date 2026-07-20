@@ -33,6 +33,10 @@ import java.util.stream.Collectors;
  * id the registry cannot resolve fails that record rather than guessing. Ids resolve once and are
  * cached, so this degrades only for ids never seen before the outage.</p>
  *
+ * <p>The descriptor set itself is optional when a registry is configured: with only
+ * {@code schema.registry.url} set the deserializer resolves every frame's type by id and returns
+ * {@code DynamicMessage} — the registry-only lane Confluent's deserializer has always had.</p>
+ *
  * <p>Records come back as the application's own generated classes when they are on the classpath
  * (see {@link GeneratedMessages}), and as {@code DynamicMessage} otherwise. Validation on read is
  * off by default; it is worth turning on for a topic whose producers do not all go through this
@@ -56,11 +60,24 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         ProtoMoltSerdeConfig config = new ProtoMoltSerdeConfig(configs);
-        List<FileDescriptor> files =
-                ProtoMoltProtobufSerializer.Descriptors.load(config, getClass().getClassLoader());
         metrics = SerdeMetricsListeners.load(getClass().getClassLoader());
-        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
+        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL),
                 config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
+        List<FileDescriptor> files = ProtoMoltProtobufSerializer.Descriptors
+                .loadIfPresent(config, getClass().getClassLoader());
+        if (files == null) {
+            if (schemaIds == null) {
+                throw new ConfigException("One of "
+                        + ProtoMoltSerdeConfig.DESCRIPTOR_SET_RESOURCE + ", "
+                        + ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64 + " or "
+                        + ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL + " must be set: without a "
+                        + "descriptor set or a registry there is no schema to read frames with");
+            }
+            // Registry-only: every frame's type is resolved from the registry by id, so the
+            // packaged set has nothing to do. Generated classes cannot be derived without it,
+            // so messages come back as DynamicMessage.
+            files = List.of();
+        }
         String pinned = config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE);
         if (pinned == null && schemaIds == null) {
             throw new ConfigException(ProtoMoltSerdeConfig.MESSAGE_TYPE + " is required when no "

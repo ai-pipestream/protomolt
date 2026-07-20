@@ -125,9 +125,9 @@ class SerdeRegistryLiveIntegrationTest {
         Map<String, Object> config = new HashMap<>();
         config.put(ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64, descriptorSetBase64);
         config.put(ProtoMoltSerdeConfig.MESSAGE_TYPE, "serde.it.v1.Order");
-        config.put(ProtoMoltSerdeConfig.REGISTRY_URL, registryUrl());
+        config.put(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, registryUrl());
         config.put(ProtoMoltSerdeConfig.SUBJECT, subject);
-        config.put(ProtoMoltSerdeConfig.SCHEMA_ID, 0);
+        config.put(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 0);
         return config;
     }
 
@@ -174,11 +174,38 @@ class SerdeRegistryLiveIntegrationTest {
     void fallsBackWhenTheSubjectIsNotRegistered() {
         Map<String, Object> config = config();
         config.put(ProtoMoltSerdeConfig.SUBJECT, "serde-it-no-such-subject-value");
-        config.put(ProtoMoltSerdeConfig.SCHEMA_ID, 42);
+        config.put(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 42);
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(config, false);
             assertThat(ConfluentWireFormat.schemaId(serializer.serialize("orders", order("A", 1))))
                     .isEqualTo(42);
+        }
+    }
+
+    /**
+     * Registry-only, the lane Confluent's deserializer has always had: no descriptor set at all,
+     * so the frame's id is resolved against the registry and the record comes back dynamic.
+     */
+    @Test
+    void readsWithOnlyTheRegistryConfigured() {
+        Map<String, Object> registryOnly = new HashMap<>();
+        registryOnly.put(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, registryUrl());
+        try (var serializer = new ProtoMoltProtobufSerializer();
+             var deserializer = new ProtoMoltProtobufDeserializer()) {
+            serializer.configure(config(), false);
+            deserializer.configure(registryOnly, false);
+
+            byte[] bytes = serializer.serialize("orders", order("A-7", 2));
+            Message back = deserializer.deserialize("orders", bytes);
+
+            assertThat(back).isInstanceOf(DynamicMessage.class);
+            Descriptor resolved = back.getDescriptorForType();
+            assertThat(resolved.getFullName()).isEqualTo("serde.it.v1.Order");
+            assertThat(resolved.findFieldByName("note"))
+                    .as("the resolved schema is the registry's, which carries the extra field")
+                    .isNotNull();
+            assertThat(back.getField(resolved.findFieldByName("id"))).isEqualTo("A-7");
+            assertThat(back.getField(resolved.findFieldByName("quantity"))).isEqualTo(2);
         }
     }
 }

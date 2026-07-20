@@ -124,8 +124,8 @@ class MultiTypeTopicTest {
     private static Map<String, Object> unpinned(Map<String, Object> extra) {
         Map<String, Object> config = new HashMap<>();
         config.put(ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64, descriptorSetBase64);
-        config.put(ProtoMoltSerdeConfig.REGISTRY_URL, registryUrl);
-        config.put(ProtoMoltSerdeConfig.SUBJECT_STRATEGY, Subjects.RECORD);
+        config.put(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, registryUrl);
+        config.put(ProtoMoltSerdeConfig.SUBJECT_NAME_STRATEGY, Subjects.RECORD);
         config.putAll(extra);
         return config;
     }
@@ -176,7 +176,7 @@ class MultiTypeTopicTest {
     @Test
     void unpinnedConsumerRequiresARegistry() {
         Map<String, Object> config = unpinned(Map.of());
-        config.remove(ProtoMoltSerdeConfig.REGISTRY_URL);
+        config.remove(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL);
         try (var deserializer = new ProtoMoltProtobufDeserializer()) {
             assertThatThrownBy(() -> deserializer.configure(config, false))
                     .isInstanceOf(ConfigException.class)

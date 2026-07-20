@@ -73,17 +73,17 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
         files = Descriptors.load(config, getClass().getClassLoader());
         String pinned = config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE);
         pinnedType = pinned != null ? SerdeDescriptors.messageType(files, pinned) : null;
-        configuredSchemaId = config.getInt(ProtoMoltSerdeConfig.SCHEMA_ID);
+        configuredSchemaId = config.getInt(ProtoMoltSerdeConfig.USE_SCHEMA_ID);
         validateOnWrite = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_WRITE);
         qualityOnWrite = config.getBoolean(ProtoMoltSerdeConfig.QUALITY_ON_WRITE);
         qualityMin = config.getDouble(ProtoMoltSerdeConfig.QUALITY_MIN);
         validator = ProtoValidator.create();
         quality = ai.pipestream.proto.quality.QualityScorer.create();
         metrics = SerdeMetricsListeners.load(getClass().getClassLoader());
-        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.REGISTRY_URL),
+        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL),
                 config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
         subjectOverride = config.getString(ProtoMoltSerdeConfig.SUBJECT);
-        subjectStrategy = config.getString(ProtoMoltSerdeConfig.SUBJECT_STRATEGY);
+        subjectStrategy = config.getString(ProtoMoltSerdeConfig.SUBJECT_NAME_STRATEGY);
         latestCompatibilityStrict =
                 config.getBoolean(ProtoMoltSerdeConfig.LATEST_COMPATIBILITY_STRICT);
         compatChecker = ai.pipestream.proto.compat.CompatibilityChecker.create();
@@ -233,7 +233,7 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
      * diverged incompatibly (a field's wire type changed, say), stamping the id would hand
      * every reader a schema that misreads the record, silently. So the write is refused,
      * the same way a validation failure refuses it, until the schemas agree again — unless
-     * {@code protomolt.latest.compatibility.strict} is off, which is Confluent's off switch
+     * {@code latest.compatibility.strict} is off, which is Confluent's off switch
      * too. The check is binary wire rules only ({@code BACKWARD}: the registered schema must
      * read data the packaged schema wrote), and the verdict is cached per schema pair.
      */
@@ -336,16 +336,32 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
         }
 
         static List<FileDescriptor> load(ProtoMoltSerdeConfig config, ClassLoader loader) {
-            String resource = config.getString(ProtoMoltSerdeConfig.DESCRIPTOR_SET_RESOURCE);
-            var base64 = config.getPassword(ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64);
-            if ((resource == null) == (base64 == null)) {
+            List<FileDescriptor> files = loadIfPresent(config, loader);
+            if (files == null) {
                 throw new ConfigException("Exactly one of "
                         + ProtoMoltSerdeConfig.DESCRIPTOR_SET_RESOURCE + " or "
                         + ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64 + " must be set");
             }
-            return resource != null
-                    ? SerdeDescriptors.fromClasspath(resource, loader)
-                    : SerdeDescriptors.fromBase64(base64.value());
+            return files;
+        }
+
+        /**
+         * The packaged descriptors, or null when neither descriptor source is set. The
+         * serializer calls {@link #load} — it writes from the packaged schema, so it cannot
+         * do without one; the deserializer tolerates the null when a registry is configured.
+         */
+        static List<FileDescriptor> loadIfPresent(ProtoMoltSerdeConfig config, ClassLoader loader) {
+            String resource = config.getString(ProtoMoltSerdeConfig.DESCRIPTOR_SET_RESOURCE);
+            var base64 = config.getPassword(ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64);
+            if (resource != null && base64 != null) {
+                throw new ConfigException("Exactly one of "
+                        + ProtoMoltSerdeConfig.DESCRIPTOR_SET_RESOURCE + " or "
+                        + ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64 + " must be set");
+            }
+            if (resource != null) {
+                return SerdeDescriptors.fromClasspath(resource, loader);
+            }
+            return base64 != null ? SerdeDescriptors.fromBase64(base64.value()) : null;
         }
     }
 }

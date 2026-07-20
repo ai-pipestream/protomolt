@@ -121,7 +121,7 @@ class SerdeLatestCompatibilityTest {
         Map<String, Object> config = new HashMap<>();
         config.put(ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64, descriptorSetBase64);
         config.put(ProtoMoltSerdeConfig.MESSAGE_TYPE, "serde.orders.v1.Order");
-        config.put(ProtoMoltSerdeConfig.REGISTRY_URL, registryUrl);
+        config.put(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, registryUrl);
         config.putAll(extra);
         return config;
     }

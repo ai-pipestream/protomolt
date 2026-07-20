@@ -127,7 +127,7 @@ class SerdeMetricsTest {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             // Nothing listens here; the lookup fails and the packaged set carries the record.
             serializer.configure(config(Map.of(
-                    ProtoMoltSerdeConfig.REGISTRY_URL, "http://127.0.0.1:34998")), false);
+                    ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, "http://127.0.0.1:34998")), false);
             assertThat(serializer.serialize("events", event("ok"))).isNotEmpty();
             assertThat(RecordingMetricsListener.EVENTS).contains("fallback");
         }

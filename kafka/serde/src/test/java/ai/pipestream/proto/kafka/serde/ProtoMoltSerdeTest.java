@@ -7,6 +7,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -75,7 +76,7 @@ class ProtoMoltSerdeTest {
     void roundTripsAMessage() {
         try (var serializer = new ProtoMoltProtobufSerializer();
              var deserializer = new ProtoMoltProtobufDeserializer()) {
-            serializer.configure(config(Map.of(ProtoMoltSerdeConfig.SCHEMA_ID, 17)), false);
+            serializer.configure(config(Map.of(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 17)), false);
             deserializer.configure(config(Map.of()), false);
 
             byte[] bytes = serializer.serialize("orders", order("A-100", 3));
@@ -238,6 +239,19 @@ class ProtoMoltSerdeTest {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             assertThatThrownBy(() -> serializer.configure(both, false))
                     .hasMessageContaining("Exactly one of");
+        }
+    }
+
+    /** A deserializer without a descriptor set or a registry has nothing to read frames with. */
+    @Test
+    void requiresADescriptorSetOrARegistry() {
+        Map<String, Object> neither = new HashMap<>();
+        neither.put(ProtoMoltSerdeConfig.MESSAGE_TYPE, "serde.orders.v1.Order");
+        try (var deserializer = new ProtoMoltProtobufDeserializer()) {
+            assertThatThrownBy(() -> deserializer.configure(neither, false))
+                    .isInstanceOf(ConfigException.class)
+                    .hasMessageContaining("One of")
+                    .hasMessageContaining(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL);
         }
     }
 }

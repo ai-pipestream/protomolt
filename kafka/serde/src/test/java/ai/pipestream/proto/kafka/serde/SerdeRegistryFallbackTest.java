@@ -57,7 +57,7 @@ class SerdeRegistryFallbackTest {
         Map<String, Object> config = new HashMap<>();
         config.put(ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64, descriptorSetBase64);
         config.put(ProtoMoltSerdeConfig.MESSAGE_TYPE, "serde.fallback.v1.Event");
-        config.put(ProtoMoltSerdeConfig.REGISTRY_URL, DEAD_REGISTRY);
+        config.put(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, DEAD_REGISTRY);
         config.putAll(extra);
         return config;
     }
@@ -72,7 +72,7 @@ class SerdeRegistryFallbackTest {
     @Test
     void producesWhenTheRegistryIsUnreachable() {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
-            serializer.configure(config(Map.of(ProtoMoltSerdeConfig.SCHEMA_ID, 5)), false);
+            serializer.configure(config(Map.of(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 5)), false);
             byte[] bytes = serializer.serialize("events", event("ok"));
             assertThat(bytes).isNotEmpty();
             // The configured id stands in for the one the registry could not supply.
@@ -120,7 +120,7 @@ class SerdeRegistryFallbackTest {
     @Test
     void runsWithNoRegistryConfiguredAtAll() {
         Map<String, Object> noRegistry = config(Map.of());
-        noRegistry.remove(ProtoMoltSerdeConfig.REGISTRY_URL);
+        noRegistry.remove(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL);
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(noRegistry, false);
             assertThat(serializer.serialize("events", event("ok"))).isNotEmpty();

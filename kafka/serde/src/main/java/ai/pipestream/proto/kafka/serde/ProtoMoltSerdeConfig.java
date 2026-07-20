@@ -6,32 +6,41 @@ import org.apache.kafka.common.config.ConfigDef;
 import java.util.Map;
 
 /**
- * What the serdes need to know. The descriptor set is the only required piece: this serde reads
- * the schema from something the deployment already has rather than from a registry, so a
- * registry outage cannot stop a producer that has not changed its schema.
+ * What the serdes need to know. Producers package a descriptor set: this serde reads the
+ * schema from something the deployment already has rather than from a registry, so a
+ * registry outage cannot stop a producer that has not changed its schema. A consumer may
+ * instead name only a registry and resolve every type from it.
  */
 public final class ProtoMoltSerdeConfig extends AbstractConfig {
 
-    /** A serialized FileDescriptorSet on the classpath: what a build that compiled protos emits. */
+    /**
+     * A serialized FileDescriptorSet on the classpath: what a build that compiled protos emits.
+     * A deserializer with {@link #SCHEMA_REGISTRY_URL} configured may leave it unset and resolve
+     * every type from the registry.
+     */
     public static final String DESCRIPTOR_SET_RESOURCE = "protomolt.descriptor.set.resource";
-    /** A serialized FileDescriptorSet inline, for deployments that configure rather than package. */
+    /**
+     * A serialized FileDescriptorSet inline, for deployments that configure rather than package.
+     * Optional for a deserializer with {@link #SCHEMA_REGISTRY_URL} configured, as for
+     * {@link #DESCRIPTOR_SET_RESOURCE}.
+     */
     public static final String DESCRIPTOR_SET_BASE64 = "protomolt.descriptor.set.base64";
     /** The fully qualified message type this serde reads or writes; unset accepts any packaged type. */
     public static final String MESSAGE_TYPE = "protomolt.message.type";
     /** How subjects are named: {@code topic} (default), {@code record}, or {@code topic-record}. */
-    public static final String SUBJECT_STRATEGY = "protomolt.subject.strategy";
+    public static final String SUBJECT_NAME_STRATEGY = "subject.name.strategy";
     /** Whether the deserializer returns generated Java classes when they are on the classpath. */
     public static final String GENERATED_CLASSES = "protomolt.generated.classes";
     /** The schema id to stamp into the frame. */
-    public static final String SCHEMA_ID = "protomolt.schema.id";
+    public static final String USE_SCHEMA_ID = "use.schema.id";
     /** A Confluent-compatible registry, if there is one. Without it the descriptor set stands alone. */
-    public static final String REGISTRY_URL = "protomolt.registry.url";
+    public static final String SCHEMA_REGISTRY_URL = "schema.registry.url";
     /** Overrides the default {@code <topic>-value} / {@code <topic>-key} subject. */
     public static final String SUBJECT = "protomolt.subject";
     /** How long a failed registry lookup stands before the registry is asked again. */
     public static final String REGISTRY_RETRY_BACKOFF_MS = "protomolt.registry.retry.backoff.ms";
     /** Refuse writes whose packaged schema the registry's latest cannot read. */
-    public static final String LATEST_COMPATIBILITY_STRICT = "protomolt.latest.compatibility.strict";
+    public static final String LATEST_COMPATIBILITY_STRICT = "latest.compatibility.strict";
     /** Validate before writing, so invalid data never reaches the topic. */
     public static final String VALIDATE_ON_WRITE = "protomolt.validate.on.write";
     /** Validate after reading, which catches producers that never went through this serde. */
@@ -51,7 +60,9 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
             .define(DESCRIPTOR_SET_RESOURCE, ConfigDef.Type.STRING, null,
                     ConfigDef.Importance.HIGH,
                     "Classpath resource holding a serialized FileDescriptorSet. Exactly one of "
-                            + "this or " + DESCRIPTOR_SET_BASE64 + " is required.")
+                            + "this or " + DESCRIPTOR_SET_BASE64 + " is required — except on a "
+                            + "deserializer with " + SCHEMA_REGISTRY_URL + " set, which resolves "
+                            + "every schema from the registry instead.")
             .define(DESCRIPTOR_SET_BASE64, ConfigDef.Type.PASSWORD, null,
                     ConfigDef.Importance.MEDIUM,
                     "A serialized FileDescriptorSet, base64 encoded.")
@@ -63,7 +74,7 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
                             + "(several event types can share a topic), and the deserializer "
                             + "resolves each frame's type through the registry — which is then "
                             + "required.")
-            .define(SUBJECT_STRATEGY, ConfigDef.Type.STRING, Subjects.TOPIC,
+            .define(SUBJECT_NAME_STRATEGY, ConfigDef.Type.STRING, Subjects.TOPIC,
                     ConfigDef.ValidString.in(Subjects.TOPIC, Subjects.RECORD,
                             Subjects.TOPIC_RECORD),
                     ConfigDef.Importance.MEDIUM,
@@ -75,10 +86,10 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
                     "Return instances of the generated Java classes when they are on the "
                             + "classpath, derived from the descriptor set's java options. Types "
                             + "with no generated class come back as DynamicMessage either way.")
-            .define(SCHEMA_ID, ConfigDef.Type.INT, 0, ConfigDef.Importance.MEDIUM,
+            .define(USE_SCHEMA_ID, ConfigDef.Type.INT, 0, ConfigDef.Importance.MEDIUM,
                     "Schema id written into the frame. Readers that resolve the type from "
                             + "configuration ignore it; a Confluent registry would assign it.")
-            .define(REGISTRY_URL, ConfigDef.Type.STRING, null, ConfigDef.Importance.MEDIUM,
+            .define(SCHEMA_REGISTRY_URL, ConfigDef.Type.STRING, null, ConfigDef.Importance.MEDIUM,
                     "Base URL of a Confluent-compatible registry, e.g. http://localhost:8081. "
                             + "When set, the id is looked up by subject on write and the schema "
                             + "is resolved by id on read; when the registry cannot answer, the "
@@ -99,8 +110,8 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
                             + "stamping it, verify that schema can read what the packaged schema "
                             + "writes (binary wire rules); an incompatible write is refused "
                             + "rather than framed with an id that would misread it. Set false "
-                            + "to stamp the id without the check, like Confluent's "
-                            + "latest.compatibility.strict=false.")
+                            + "to stamp the id without the check — the same switch, under the "
+                            + "same name, as Confluent's.")
             .define(VALIDATE_ON_WRITE, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.HIGH,
                     "Validate against the schema's declared rules before serializing. Invalid "
                             + "messages are rejected rather than written.")
