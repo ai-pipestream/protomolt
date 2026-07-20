@@ -115,9 +115,9 @@ final class ProtoParquetWriteSupport extends WriteSupport<Message> {
             writeList(message, field, index);
             return;
         }
-        boolean tracksPresence = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
-                || field.toProto().getProto3Optional();
-        if (tracksPresence && !message.hasField(field)) {
+        // Must match ProtoParquetSchemas' repetition exactly: a field the schema declared
+        // optional has to be skipped when unset, never written as its default.
+        if (field.hasPresence() && !message.hasField(field)) {
             return;
         }
         consumer.startField(field.getName(), index);

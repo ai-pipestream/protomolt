@@ -95,6 +95,7 @@ public final class GraphFiles {
      * {@link #listItemFields}, ready to hand straight to {@code infer-schema} as one sample.
      * Returns an empty object when the item has no list item (a personal-OneDrive file that
      * belongs to no document library), so a caller can sample a folder without null checks.
+     * A {@code driveId} or {@code itemId} that does not resolve still fails.
      */
     public ObjectNode listItemFieldsOnly(String driveId, String itemId)
             throws IOException, InterruptedException {
@@ -102,13 +103,26 @@ public final class GraphFiles {
         try {
             fields = listItemFields(driveId, itemId).path("fields");
         } catch (GraphClient.GraphApiException e) {
-            if (e.status() == 404) {
-                // A file with no backing list item (a plain personal-OneDrive file): no columns.
+            // Graph answers 404 both for a file with no backing list item (a plain
+            // personal-OneDrive file: no columns) and for an item that is not there at all;
+            // only the item itself resolving tells the two apart.
+            if (e.status() == 404 && itemExists(driveId, itemId)) {
                 return JsonNodeFactory.instance.objectNode();
             }
             throw e;
         }
         return fields.isObject() ? (ObjectNode) fields : JsonNodeFactory.instance.objectNode();
+    }
+
+    /** Whether the driveItem resolves; any error resolving it leaves the caller's own to report. */
+    private boolean itemExists(String driveId, String itemId)
+            throws IOException, InterruptedException {
+        try {
+            graph.get("/drives/" + driveId + "/items/" + itemId);
+            return true;
+        } catch (GraphClient.GraphApiException e) {
+            return false;
+        }
     }
 
     /** Patches list-item columns; {@code fields} holds exactly the columns to change. */

@@ -135,7 +135,7 @@ public final class GitProtoGatherer implements ProtoGatherer {
                 throw new GatherException("Git module directory does not exist in repo: "
                         + module + " (in " + origin() + ")");
             }
-            Path protoRoot = moduleDir.resolve(subdir).normalize();
+            Path protoRoot = resolveInside(moduleDir, subdir, "git proto subdir");
             if (!Files.isDirectory(protoRoot)) {
                 protoRoot = moduleDir;
             }

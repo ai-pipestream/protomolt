@@ -40,7 +40,7 @@ over both, not a new source of truth.
 
 The `DescriptorLoader` SPI (`core/descriptors`) is the seam every source plugs
 into, and `DescriptorRegistry` aggregates loaders with caching and on-demand
-type resolution. Five loaders ship:
+type resolution. Six loaders ship:
 
 | Source | Loader | Notes |
 |---|---|---|
@@ -49,13 +49,15 @@ type resolution. Five loaders ship:
 | Confluent Schema Registry (subjects API) | `ConfluentSchemaRegistryLoader` | Fetches `.proto` text + references, compiles at runtime via Square Wire |
 | Descriptor set over HTTP | `ConfluentDescriptorSource` | Binary `FileDescriptorSet` payloads |
 | Apicurio Registry v3 | `ApicurioDescriptorLoader` | Native v3 API, reference resolution |
+| Any gatherer source (filesystem, jar, Git, Maven) | `GatheringDescriptorLoader` | Adapts the `ProtoGatherer` SPI; see item 1 below |
 
 Two properties of this list matter for the roadmap. First,
 `ConfluentSchemaRegistryLoader` already proves the hard part — compiling
 `.proto` source to runtime descriptors inside the JVM, including reference
 graphs — so new text-based sources are a matter of plumbing, not research.
-Second, everything here is read-only; nothing in ProtoMolt can publish a
-schema anywhere.
+Second, every loader here is read-only: acquisition and publication are
+separate seams. Publishing is `SchemaPublisher` (item 2 below), not the
+loader SPI.
 
 ### Acquisition at build time — solved in a sibling project
 
@@ -153,9 +155,13 @@ engine.
 **4b. The MCP surface — first slice done.** `protomolt-mcp` serves the
 action catalog as MCP tools (the manifest is already the MCP tool shape)
 and a git-backed registry as MCP resources, over a hand-rolled JSON-RPC
-2.0 stdio transport: plain Java, Jackson, no framework. Next increments:
-a Streamable HTTP mount on the registry server, thin Spring AI / Quarkus
-MCP host adapters over the same catalog, `generate-stubs` is also done: `protomolt-codegen` bundles every
+2.0 stdio transport: plain Java, Jackson, no framework. The Streamable
+HTTP mount is done too — `protomolt-serve` serves the same catalog at
+`/mcp` through `McpHttpHandler`, with registry resources when a registry
+is mounted. Thin Spring AI / Quarkus MCP host adapters over the same
+catalog remain open; nothing in `protomolt-mcp` is framework-aware, so a
+host registers the catalog through its own APIs today.
+`generate-stubs` is also done: `protomolt-codegen` bundles every
 libprotoc generator (Java, Kotlin, Python, C++, C#, Ruby, PHP,
 Objective-C) and the grpc-java plugin compiled to WebAssembly, run
 in-JVM via Chicory, so descriptors become compilable client code in
@@ -194,18 +200,11 @@ readiness-aware client-streaming call — and `protomolt-connect` builds a
 Kafka Connect plugin on them: a sink that drives any unary or
 client-streaming gRPC method from topics, and a source that feeds topics
 from a server stream, resumable across restarts via CEL-extracted tokens
-stored as Connect offsets. Alongside them, three protobuf-aware Single
+stored as Connect offsets. Alongside them, four protobuf-aware Single
 Message Transforms (validate against declared rules with DLQ-ready
-violation headers, reshape with mapping rules, filter by CEL predicate)
-drop into any Connect pipeline, and a plugin zip rides along with
-releases. See [Kafka Connect](kafka-connect.md).
-
-The next composition layer is designed but not yet built: the
-[chain manager](design/chain-manager.md) — configured, type-checked
-compositions of gRPC calls (invoke, reshape with mapping rules and CEL,
-gate, validate, repeat) exposed as `run-chain`/`check-chain` verbs and
-versioned in the registry. A sidecar to whatever pipeline people already
-run, deliberately not a pipeline product.
+violation headers, reshape with mapping rules, filter by CEL predicate,
+redact sensitive fields) drop into any Connect pipeline, and a plugin zip
+rides along with releases. See [Kafka Connect](kafka-connect.md).
 
 The first slice of the ETL story shipped alongside its design
 ([joins and derived shapes](design/join-shapes.md)): `protomolt-shapes`
@@ -225,26 +224,41 @@ story is `check-rules`: mapping rules and CEL checked against descriptors
 without executing (filters must type-check to bool), with an optional
 dry run over sample messages.
 
-The [chain manager](design/chain-manager.md) shipped its phase 1:
-`protomolt-chain` runs inline chains — serial unary gRPC calls whose
-requests are mapped from the chain input and every prior step's response,
-with boolean gates, nested deadlines, optional response validation, and
-fail-fast errors carrying the step name — and `check-chain` verifies all
-of it statically, so a chain that checks clean cannot fail on a type
-error at run time. The console gained the merge workbench at
-`/console/schema-registry/merge`: pick two types, decide clashes, and
-register the merged schema with its mappings in one move. Planned next
-per the designs: named chains in the registry, keyed joins over two gRPC
-server streams with bounded buffers, and a schema-declared key option.
+The [chain manager](design/chain-manager.md) is the composition layer over
+those invocation primitives, and it is built: configured, type-checked
+compositions of gRPC calls (invoke, reshape with mapping rules and CEL,
+gate, validate) exposed as `run-chain`/`check-chain` verbs and versioned in
+the registry — a sidecar to whatever pipeline people already run,
+deliberately not a pipeline product. `protomolt-chain` runs inline chains —
+serial unary gRPC calls whose requests are mapped from the chain input and
+every prior step's response, with boolean CEL gates, nested deadlines,
+optional response validation, and fail-fast errors carrying the step name —
+and `check-chain` verifies all of it statically, so a chain that checks
+clean cannot fail on a type error at run time. Named chains resolve through
+the `ChainRepository` seam, which `protomolt-serve` backs with the git
+registry store, so `run-chain` can take a stored chain by name.
+`StreamJoiner` covers the streaming half: two live gRPC server streams
+joined into a target type, paired by arrival order (`ZIP`) or matched on a
+key field path (`KEYED`), both sides flow-controlled with bounded per-side
+buffers that drop oldest on overflow. The console gained the merge
+workbench at `/console/schema-registry/merge`: pick two types, decide
+clashes, and register the merged schema with its mappings in one move.
+Still open from the designs: a schema-declared key option, so a join key
+travels with the schema rather than being named per call; and step kinds
+beyond the serial gated call (the runner has no repeat construct).
 
-**5. A web console.** Every server host already serves `openapi.json`, and
-`MappingHelper` exists specifically to feed schema-browsing UIs. A bundled,
-build-free console — schema browser, subject/version history, a try-it
-request panel — served as static assets from the same hosts would give the
-registry and gateway a common front end without adding a frontend toolchain
-to the build. The try-it panel exists today: `protomolt-serve` bundles
-Swagger UI at `/docs` over the generated OpenAPI document. The schema
-browser and version history remain open.
+**5. A web console — done.** Every server host serves `openapi.json`, and
+`MappingHelper` feeds schema-browsing UIs. The console ships as static
+assets: `ConsoleHandler` serves it from the classpath at `/console`, and
+five views cover the surface — a subject browser, a subject detail page
+with version history and a version diff panel, the merge workbench, a
+chains page, and the connect-service wizard. The try-it panel is Swagger
+UI, bundled by `protomolt-serve` at `/docs` over the generated OpenAPI
+document. The console is built with Vite outside the Gradle build and its
+`dist` output is bundled when present, so the Gradle build itself still
+carries no frontend toolchain and the server builds and explains itself
+without the assets. Still open: the console is disabled in token mode
+until the session flow in the hardening backlog lands.
 
 **6. Cross-language project bootstrap.** With 1–4 in place, "cross-language
 out of the box" is mostly packaging: a project template (or plugin) where
@@ -305,10 +319,20 @@ features.
 
 ## Assessment
 
-With items 1 and 2 complete, ProtoMolt reads from and writes to every
-registry and source it targets, and the gather-from-Git → publish-to-registry
-bridge works end to end. What stands between here and a demoable registry is
-items 3 and 4 — compatibility checking as a library and the git-backed
-subject/version store with its API facade — both bounded, well-understood
-problems. The shape language (4a) follows the expanded hint standard; the
-console (5) and project bootstrap (6) build on all of it.
+Items 1 through 4 are complete, and 4b and 5 with them. ProtoMolt reads from
+and writes to every registry and source it targets, the gather-from-Git →
+publish-to-registry bridge works end to end, compatibility checking gates
+writes, and the git-backed subject/version store serves the Confluent
+subjects protocol alongside a native descriptor-set endpoint and a console
+over both. The registry is demoable; the acceptance test is the dogfood
+described in item 4.
+
+What remains is depth rather than foundation. The registry milestone still
+owes authentication, federation, branch-per-scope workflows, Maven-repository
+artifact publication, and the binary registration and protobuf action
+envelopes that keep JSON an edge dialect. The shape language (4a) is designed
+but not built, and follows the expanded hint standard. Project bootstrap (6)
+is packaging over everything above. Running underneath all of it is the
+hardening backlog, whose first four items — authorization scopes, the console
+session flow, the metadata propagation contract, and execution budgets —
+gate a production deployment more than any remaining feature does.

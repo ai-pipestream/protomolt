@@ -65,7 +65,10 @@ public final class ValidatingServerInterceptor implements ServerInterceptor {
         this.onQuality = builder.onQuality;
     }
 
-    /** Validation only, with the default rule-source chain. */
+    /**
+     * The default rule-source chain, with quality measured and reported to the metrics listeners
+     * but no floor: no message is refused for its score.
+     */
     public static ValidatingServerInterceptor create() {
         return builder().build();
     }

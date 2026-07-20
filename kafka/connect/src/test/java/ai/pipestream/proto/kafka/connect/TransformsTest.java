@@ -1,5 +1,6 @@
 package ai.pipestream.proto.kafka.connect;
 
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -222,7 +223,7 @@ class TransformsTest {
         assertThat(value[0]).isZero();
         assertThat(value[4]).isEqualTo((byte) 42);      // frame prefix preserved
         DynamicMessage mapped = DynamicMessage.parseFrom(
-                eventType, ConfluentFraming.payload(value));
+                eventType, ConfluentWireFormat.payload(value));
         assertThat(field(mapped, "note")).isEqualTo("abc");
     }
 
@@ -242,6 +243,94 @@ class TransformsTest {
         assertThatThrownBy(() -> map(baseConfig()))
                 .isInstanceOf(ConfigException.class)
                 .hasMessageContaining(MapMessage.RULES);
+    }
+
+    /**
+     * Every malformed shape of 'cel.rules.json' has to fail at configure time. A rule list that
+     * silently parsed to zero rules would leave the transform running as a no-op.
+     */
+    @Test
+    void malformedCelRulesJsonIsRejectedAtConfigure() {
+        Map<String, String> notJson = baseConfig();
+        notJson.put(MapMessage.CEL_RULES_JSON, "[{\"target\": ");
+        assertThatThrownBy(() -> map(notJson))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining(MapMessage.CEL_RULES_JSON)
+                .hasMessageContaining("not valid JSON");
+
+        Map<String, String> notArray = baseConfig();
+        notArray.put(MapMessage.CEL_RULES_JSON, "{\"target\": \"category\"}");
+        assertThatThrownBy(() -> map(notArray))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining(MapMessage.CEL_RULES_JSON)
+                .hasMessageContaining("must be a JSON array");
+
+        Map<String, String> notObjects = baseConfig();
+        notObjects.put(MapMessage.CEL_RULES_JSON, "[\"category = id\"]");
+        assertThatThrownBy(() -> map(notObjects))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("each rule must be a JSON object");
+
+        Map<String, String> noTarget = baseConfig();
+        noTarget.put(MapMessage.CEL_RULES_JSON, "[{\"selector\": \"'big'\"}]");
+        assertThatThrownBy(() -> map(noTarget))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("each rule needs a 'target' field path");
+
+        Map<String, String> blankTarget = baseConfig();
+        blankTarget.put(MapMessage.CEL_RULES_JSON, "[{\"selector\": \"'big'\", \"target\": \"  \"}]");
+        assertThatThrownBy(() -> map(blankTarget))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("each rule needs a 'target' field path");
+    }
+
+    @Test
+    void celRuleExpressionsTypeCheckAtConfigure() {
+        Map<String, String> badFilter = baseConfig();
+        badFilter.put(MapMessage.CEL_RULES_JSON,
+                "[{\"filter\": \"input.no_such_field > 1\", \"target\": \"category\"}]");
+        assertThatThrownBy(() -> map(badFilter))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining(MapMessage.CEL_RULES_JSON)
+                .hasMessageContaining("does not compile");
+    }
+
+    @Test
+    void nonByteArrayValuesAreRejectedForBinaryFormats() {
+        ValueCodec protobuf = new ValueCodec(eventType, "protobuf");
+        assertThatThrownBy(() -> protobuf.decode("{\"id\":\"abc\"}", "topic events"))
+                .isInstanceOf(DataException.class)
+                .hasMessage("Record value must be byte[] for this format; got java.lang.String"
+                        + " (use the ByteArrayConverter for value.converter)");
+
+        ValueCodec confluent = new ValueCodec(eventType, "confluent");
+        assertThatThrownBy(() -> confluent.decode("framed", "topic events"))
+                .isInstanceOf(DataException.class)
+                .hasMessageContaining("Record value must be byte[] for this format");
+        assertThatThrownBy(() -> confluent.encode(event("abc", 1, ""), "framed"))
+                .isInstanceOf(DataException.class)
+                .hasMessageContaining("Record value must be byte[] for this format");
+    }
+
+    /**
+     * JSON values re-encode as the Java type they arrived as, so a worker using the
+     * ByteArrayConverter (byte[]) and one using the StringConverter (String) both round-trip.
+     */
+    @Test
+    void jsonValuesReEncodeAsTheJavaTypeTheyArrivedAs() {
+        Map<String, String> props = baseConfig();
+        props.put(ValueCodec.VALUE_FORMAT, "json");
+        props.put(MapMessage.RULES, "note = id");
+        MapMessage<SinkRecord> smt = map(props);
+
+        SinkRecord fromBytes = smt.apply(record(
+                "{\"id\": \"abc\", \"seq\": \"7\"}".getBytes(StandardCharsets.UTF_8)));
+        assertThat(fromBytes.value()).isInstanceOf(byte[].class);
+        assertThat(new String((byte[]) fromBytes.value(), StandardCharsets.UTF_8))
+                .contains("\"note\"").contains("abc");
+
+        SinkRecord fromString = smt.apply(record("{\"id\": \"abc\", \"seq\": \"7\"}"));
+        assertThat(fromString.value()).isInstanceOf(String.class);
     }
 
     @Test

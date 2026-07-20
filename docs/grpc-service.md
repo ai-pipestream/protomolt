@@ -58,10 +58,24 @@ docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --dem
 # or, from a release zip or a clone:
 ./gradlew :protomolt-serve:installDist
 serve/build/install/protomolt-serve/bin/protomolt-serve \
-    [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080] \
-    [--registry-git /srv/schemas.git [--registry-port 8081]] \
-    [--api-token <secret>] [--demo]
+    [--host <addr>] [--grpc-port <n>] [--http-port <n>] \
+    [--registry-git <path> [--registry-port <n>]] \
+    [--api-token <secret>] [--gather-cache <dir>] [--demo]
 ```
+
+That is the whole flag set; `--help` (or `-h`) prints it and exits, and any
+other argument exits 2.
+
+| Flag | Environment variable | Default | Meaning |
+|---|---|---|---|
+| `--host` | — | `0.0.0.0` | Bind address for every listener — HTTP, gRPC, and the registry |
+| `--grpc-port` | — | `9090` | Port for `ProtoMoltService` with server reflection |
+| `--http-port` | — | `8080` | Port for the REST mount, OpenAPI, Swagger UI, MCP, and the console |
+| `--registry-git` | — | — | Git repository for the registry; mounts the registry server when set |
+| `--registry-port` | — | `8081` | Port for the registry server; used only when the registry is mounted (`--registry-git` or `--demo`) |
+| `--api-token` | `PROTOMOLT_API_TOKEN` | — | Shared secret guarding every operational surface |
+| `--gather-cache` | `PROTOMOLT_GATHER_CACHE` | the library default under the process owner's home | Directory for `gather-git`'s per-repo clone caches |
+| `--demo` | — | off | Seed the sample schema described below |
 
 `--demo` seeds a sample order-management schema (validation rules, indexing
 hints, metadata, a service) into a temp-directory registry and registers its

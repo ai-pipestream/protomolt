@@ -78,6 +78,44 @@ class EnumRuleTest {
         assertThat(all(changes, "ENUM_VALUE_ADDED")).isEmpty();
     }
 
+    /**
+     * Values are matched by number, and under {@code allow_alias} several names share one
+     * number, so a dropped alias is invisible to the by-number pass. JSON payloads carry the
+     * name, so the removal has to be reported.
+     */
+    @Test
+    void removedEnumAliasIsReportedAsARemoval() throws Exception {
+        List<SchemaChange> changes = diff(
+                status("  option allow_alias = true;\n  STATUS_UNSPECIFIED = 0;\n"
+                        + "  STATUS_ACTIVE = 1;\n  STATUS_ON = 1;"),
+                status("  STATUS_UNSPECIFIED = 0;\n  STATUS_ACTIVE = 1;"));
+
+        SchemaChange change = single(changes, "ENUM_VALUE_REMOVED");
+        assertThat(change.path()).isEqualTo("example.Status.STATUS_ON");
+        assertThat(change.before()).isEqualTo("STATUS_ON = 1");
+        assertThat(change.impacts())
+                .containsExactlyInAnyOrder(Impact.JSON_BACKWARD, Impact.SOURCE);
+    }
+
+    @Test
+    void removedFirstAliasIsARemovalNotARename() throws Exception {
+        List<SchemaChange> changes = diff(
+                status("  option allow_alias = true;\n  STATUS_UNSPECIFIED = 0;\n"
+                        + "  STATUS_ACTIVE = 1;\n  STATUS_ON = 1;"),
+                status("  STATUS_UNSPECIFIED = 0;\n  STATUS_ON = 1;"));
+
+        assertThat(single(changes, "ENUM_VALUE_REMOVED").path())
+                .isEqualTo("example.Status.STATUS_ACTIVE");
+        assertThat(all(changes, "ENUM_VALUE_NAME_CHANGED")).isEmpty();
+    }
+
+    @Test
+    void keptEnumAliasProducesNoChanges() throws Exception {
+        String schema = status("  option allow_alias = true;\n  STATUS_UNSPECIFIED = 0;\n"
+                + "  STATUS_ACTIVE = 1;\n  STATUS_ON = 1;");
+        assertThat(diff(schema, schema)).isEmpty();
+    }
+
     @Test
     void identicalEnumProducesNoChanges() throws Exception {
         String schema = status("  STATUS_UNSPECIFIED = 0;\n  STATUS_ACTIVE = 1;");

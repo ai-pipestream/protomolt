@@ -152,13 +152,32 @@ public final class GraphAuth {
             throw new IOException("Token request failed: " + response.path("error").asText()
                     + " - " + response.path("error_description").asText());
         }
+        String accessToken = response.path("access_token").asText("");
+        if (accessToken.isBlank()) {
+            throw new IOException(
+                    "Token response carried neither an access_token nor an error field");
+        }
         return new Token(
-                response.path("access_token").asText(),
+                accessToken,
                 Instant.now().plusSeconds(response.path("expires_in").asLong(3600)),
                 response.path("refresh_token").isMissingNode()
                         ? null : response.path("refresh_token").asText());
     }
 
+    /** How much of an unusable response body to quote back in the failure message. */
+    private static final int ERROR_BODY_EXCERPT = 512;
+
+    /**
+     * Posts a form and returns the parsed JSON object.
+     *
+     * <p>A non-2xx status is not by itself an error: the device-code flow polls the token
+     * endpoint and Entra answers {@code 400} carrying {@code authorization_pending} until the
+     * operator approves. So a body that parses to an object with an {@code error} field is
+     * returned to the caller whatever the status, and only a body that is unusable — blank,
+     * not JSON, or not an object — or a non-2xx status with no {@code error} field is raised
+     * here. Without that check an empty 5xx body would parse to a missing node and yield a
+     * {@link Token} holding an empty access token.
+     */
     private JsonNode postForm(String url, Map<String, String> form)
             throws IOException, InterruptedException {
         Map<String, String> ordered = new LinkedHashMap<>(form);
@@ -176,6 +195,30 @@ public final class GraphAuth {
                         .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
-        return JSON.readTree(response.body());
+
+        JsonNode parsed;
+        try {
+            parsed = JSON.readTree(response.body());
+        } catch (IOException e) {
+            throw new IOException(tokenEndpointFailure(url, response, "body was not JSON"), e);
+        }
+        if (parsed == null || !parsed.isObject()) {
+            throw new IOException(
+                    tokenEndpointFailure(url, response, "body was not a JSON object"));
+        }
+        if (response.statusCode() / 100 != 2 && !parsed.has("error")) {
+            throw new IOException(
+                    tokenEndpointFailure(url, response, "no error field to explain it"));
+        }
+        return parsed;
+    }
+
+    private static String tokenEndpointFailure(
+            String url, HttpResponse<String> response, String problem) {
+        String body = response.body() == null ? "" : response.body();
+        String excerpt = body.length() > ERROR_BODY_EXCERPT
+                ? body.substring(0, ERROR_BODY_EXCERPT) + "..." : body;
+        return "OAuth request to " + url + " returned HTTP " + response.statusCode()
+                + " and " + problem + ": " + excerpt;
     }
 }

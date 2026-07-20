@@ -40,7 +40,8 @@ git-backed registry at the path is additionally served as resources.
 The same server is also reachable over MCP's streamable HTTP transport, with
 no local install: [`protomolt-serve`](grpc-service.md) mounts it at
 `/mcp` next to the gRPC and REST surfaces, so one running process makes
-every agent on the network gRPC-aware:
+every agent on the network gRPC-aware. That mount carries the full
+twenty-three-verb catalog, three tools more than the standalone binary:
 
 ```shell
 claude mcp add --transport http protomolt http://host:8080/mcp
@@ -57,6 +58,10 @@ resources ride along when the launcher mounts a registry.
 
 ## Tools
 
+The standalone binary registers twenty tools: the sixteen built-in
+[actions](actions.md) plus `reflect`, `grpc-invoke`, `generate-stubs`, and
+`gather-git`. It prints the count to stderr at startup.
+
 | Tool | Does |
 |---|---|
 | `compile` | Compile inline `.proto` sources; returns file names and a base64 descriptor set |
@@ -68,10 +73,21 @@ resources ride along when the launcher mounts a registry.
 | `render-index-mappings` | OpenSearch / Solr / Lucene field specs from indexing hints |
 | `eval-cel` | Evaluate a CEL expression against a message |
 | `map-message` | Apply text and CEL mapping rules to a message |
+| `synthesize-shape` | Derive a join/union output type (envelope, projection, or oneof union) from named sources |
+| `join-messages` | Join named source messages into an authored target or a synthesized shape |
+| `merge-schemas` | Merge two or more message types into one: clash report, caller-decided resolutions, merged proto |
+| `check-rules` | Statically validate mapping rules and CEL against descriptors; sample messages upgrade the check to a dry run |
+| `infer-schema` | Reverse-engineer a message type from JSON sample documents |
+| `mask-message` | Mask fields by their schema-declared sensitivity classes: remove, redact, or encrypt/decrypt |
 | `extract-metadata` | The declared metadata bag for a type |
 | `reflect` | Discover a live gRPC server's schema from its address (server reflection) |
 | `grpc-invoke` | Call a unary or server-streaming gRPC method, no generated stubs |
 | `generate-stubs` | Generate client/message code in eight languages (protoc as WebAssembly) |
+| `gather-git` | Gather `.proto` sources from a git repository (branch, tag, or commit) and compile them to a descriptor set |
+
+`run-chain`, `check-chain`, and `emit-okf` are not in the standalone binary's
+catalog. They are served over the HTTP transport below, which mounts the full
+twenty-three-verb catalog.
 
 Wherever a tool takes a schema it accepts exactly one of `{"type": "fully.qualified.Name"}`
 (resolved from the registry), `{"sources": {...}}` (inline `.proto`, compiled
@@ -104,9 +120,10 @@ running gRPC service and let it operate the service.** The path an agent takes:
 2. **Fall back to a schema when reflection is off.** Many production servers
    (OpenVINO Model Server, NVIDIA Triton, and others) do not enable
    reflection; `reflect` returns `ok: false` so the agent knows to get the
-   schema elsewhere — read it from the registry, or gather the service's
-   `.proto` from its Git repository and register it. Either way the agent now
-   holds a schema.
+   schema elsewhere — read it from the registry, or use `gather-git` to pull
+   the service's `.proto` from its Git repository, which returns a descriptor
+   set in the same form `reflect` does. Either way the agent now holds a
+   schema.
 
 3. **`list-types` to ground.** Enumerate the services and messages so the
    agent knows the exact method and message names before calling.

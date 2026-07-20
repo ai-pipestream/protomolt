@@ -307,6 +307,49 @@ public class TypeConverterTest {
         assertEquals("direct", directResult);
     }
 
+    /**
+     * convertToFieldType and the Struct path feed the same fields; truncating here while
+     * structToMessage rejects would let the same value land differently depending on the route.
+     */
+    @Test
+    void testConvertToFieldTypeRejectsOutOfRangeIntNumber() throws DescriptorValidationException {
+        FileDescriptor fd = createIntFieldDescriptor();
+        FieldDescriptor countField = fd.findMessageTypeByName("IntMessage").findFieldByName("count");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.convertToFieldType(5_000_000_000L, countField));
+        assertTrue(ex.getMessage().contains("count"));
+    }
+
+    @Test
+    void testConvertToFieldTypeRejectsNonIntegralNumberForIntField() throws DescriptorValidationException {
+        FileDescriptor fd = createIntFieldDescriptor();
+        FieldDescriptor countField = fd.findMessageTypeByName("IntMessage").findFieldByName("count");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.convertToFieldType(1.7, countField));
+        assertTrue(ex.getMessage().contains("count"));
+    }
+
+    @Test
+    void testConvertToFieldTypeRejectsNonIntegralNumberForLongField() {
+        FieldDescriptor ageField = testMessageDescriptor.findFieldByName("age");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.convertToFieldType(1.5, ageField));
+        assertTrue(ex.getMessage().contains("age"));
+    }
+
+    @Test
+    void testConvertToFieldTypeAcceptsIntegralNumberWithinRange() throws DescriptorValidationException {
+        FileDescriptor fd = createIntFieldDescriptor();
+        FieldDescriptor countField = fd.findMessageTypeByName("IntMessage").findFieldByName("count");
+
+        assertEquals(42, converter.convertToFieldType(42L, countField));
+        assertEquals(42, converter.convertToFieldType(42.0, countField));
+        assertEquals(7L, converter.convertToFieldType(7, testMessageDescriptor.findFieldByName("age")));
+    }
+
     @Test
     void testConvertToFieldTypeIncompatible() {
         // Try to convert incompatible types

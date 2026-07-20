@@ -20,10 +20,12 @@ import io.grpc.ServerServiceDefinition;
 import io.grpc.stub.ServerCalls;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -36,7 +38,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code grpc-invoke} at a DemoSearch-shaped dynamic server (a local stand-in for the
  * samples module's demo service) and asserts each hit arrives as its own chunk.
  */
-@Timeout(value = 60, unit = TimeUnit.SECONDS)
+// Forking a JVM and running protoc under a fully parallel build is slow; this bound only has to
+// catch a genuine hang, so it sits above the client's own request timeout rather than under it.
+@Timeout(value = 4, unit = TimeUnit.MINUTES)
+// Excluded from the default build for the same reason as
+// ProtoMoltAcpAgentTest#catalogVerbsRunThroughTheProtocol: these drive the protoc-backed verbs
+// through the SDK client, here across a real subprocess, and the client has been seen blocking
+// indefinitely on a contended machine. Run with ./gradlew :protomolt-acp:acpProtocolTest.
+@Tag("acp-protocol")
 class ProtoMoltAcpAgentProcessTest {
 
     // Same shape as the samples module's DemoSearch service.
@@ -67,8 +76,10 @@ class ProtoMoltAcpAgentProcessTest {
 
     private static Server searchServer;
 
-    private final StringBuilder messages = new StringBuilder();
-    private final StringBuilder thoughts = new StringBuilder();
+    // Written by the SDK's session-update thread, read by the test thread, so synchronized
+    // rather than StringBuilder.
+    private final StringBuffer messages = new StringBuffer();
+    private final StringBuffer thoughts = new StringBuffer();
 
     @BeforeAll
     static void startSearchServer() throws Exception {
@@ -111,6 +122,9 @@ class ProtoMoltAcpAgentProcessTest {
                         ProtoMoltAcpAgent.class.getName())
                 .build();
         return AcpClient.sync(new StdioAcpClientTransport(command))
+                // A real JVM plus a protoc-backed compile verb; see ProtoMoltAcpAgentTest for
+                // why the SDK's 30s default is too tight under a loaded parallel build.
+                .requestTimeout(Duration.ofMinutes(3))
                 .sessionUpdateConsumer(notification -> {
                     if (notification.update() instanceof AcpSchema.AgentMessageChunk message
                             && message.content() instanceof AcpSchema.TextContent text) {

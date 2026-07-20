@@ -138,7 +138,7 @@ public final class RuleChecker {
             return "target: " + to.error();
         }
         String source = sides[1].trim();
-        if (isLiteral(source)) {
+        if (Literals.isLiteral(source)) {
             return null;
         }
         Resolution from = inPlace
@@ -183,15 +183,6 @@ public final class RuleChecker {
         return null;
     }
 
-    private static boolean isLiteral(String source) {
-        if ((source.startsWith("'") && source.endsWith("'") && source.length() > 1)
-                || (source.startsWith("\"") && source.endsWith("\"") && source.length() > 1)) {
-            return true;
-        }
-        return source.equals("true") || source.equals("false")
-                || source.matches("-?\\d+(\\.\\d+)?");
-    }
-
     private static Resolution resolveScoped(Map<String, Descriptor> sources, String path) {
         int dot = path.indexOf('.');
         String name = dot < 0 ? path : path.substring(0, dot);
@@ -227,6 +218,10 @@ public final class RuleChecker {
         }
         Descriptor current = root;
         String[] segments = dotted.split("\\.");
+        if (segments.length == 0) {
+            // A path of nothing but separators, such as "." — split drops the empty segments.
+            return Resolution.error("path '" + dotted + "' names no fields");
+        }
         for (int i = 0; i < segments.length; i++) {
             String wellKnown = current.getFullName();
             if (wellKnown.equals("google.protobuf.Struct")

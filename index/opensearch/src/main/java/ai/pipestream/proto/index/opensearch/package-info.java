@@ -1,0 +1,25 @@
+/**
+ * OpenSearch plugin for the search-index SPI: maps protobuf messages into OpenSearch document
+ * maps and generates the index mappings those documents require.
+ *
+ * <p>{@link OpenSearchDocumentMapper} implements
+ * {@link ai.pipestream.proto.index.spi.SearchEngineIndexer} and turns a message plus an
+ * {@link ai.pipestream.proto.index.spi.IndexingPlan} into a {@code Map}, leaving serialization
+ * and transport to the caller's client. {@link OpenSearchIndexerProvider} is the
+ * {@code ServiceLoader} entry registered under
+ * {@link ai.pipestream.proto.index.spi.SearchEngineIndexerProvider}.
+ *
+ * <p>{@link OpenSearchMappingGenerator} derives the index {@code mappings} body from the same
+ * plan, covering field types, sub-fields, doc values, date formats, range types, and
+ * {@code knn_vector} parameters. It is the OpenSearch counterpart of the schema generator in the
+ * Solr module and of the per-field spec report in the Lucene module.
+ *
+ * <p>This module does not emit NDJSON; bulk lines come from the separate
+ * {@code protomolt-index-ndjson} module, which is engine-agnostic and does not interpret the
+ * plan.
+ *
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
+ * indexing guide</a> for the hint surface and for how declared sensitivity classes are applied to
+ * the search layer.
+ */
+package ai.pipestream.proto.index.opensearch;

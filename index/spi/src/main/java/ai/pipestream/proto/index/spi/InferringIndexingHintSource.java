@@ -36,8 +36,7 @@ public final class InferringIndexingHintSource implements IndexingHintSource {
 
     private static ResolvedFieldHint inferMessage(FieldDescriptor field) {
         Descriptor type = field.getMessageType();
-        if (Timestamp.getDescriptor().getFullName().equals(type.getFullName())
-                || "google.protobuf.Timestamp".equals(type.getFullName())) {
+        if (Timestamp.getDescriptor().getFullName().equals(type.getFullName())) {
             return ResolvedFieldHint.of(IndexFieldKind.DATE);
         }
         if ("google.protobuf.Struct".equals(type.getFullName())

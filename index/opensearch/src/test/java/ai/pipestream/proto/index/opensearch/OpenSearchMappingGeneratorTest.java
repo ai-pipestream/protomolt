@@ -2,6 +2,7 @@ package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.MapMode;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorElementType;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
@@ -41,8 +42,8 @@ class OpenSearchMappingGeneratorTest {
         assertThat(properties.get("score")).isEqualTo(Map.of("type", "double"));
         assertThat(properties.get("archived")).isEqualTo(Map.of("type", "boolean"));
         assertThat(properties.get("created")).isEqualTo(Map.of("type", "date"));
-        // BINARY defaults to unindexed, so the property carries index: false
-        assertThat(properties.get("payload")).isEqualTo(Map.of("type", "binary", "index", false));
+        // BINARY defaults to unindexed, but the binary mapper has no index parameter to carry it
+        assertThat(properties.get("payload")).isEqualTo(Map.of("type", "binary"));
         assertThat(properties.get("inner")).isEqualTo(Map.of("type", "object"));
         assertThat(properties.get("items")).isEqualTo(Map.of("type", "nested"));
     }
@@ -184,6 +185,49 @@ class OpenSearchMappingGeneratorTest {
                 field("id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
         assertThat(properties(generator.generate(plan))).containsOnlyKeys("id");
+    }
+
+    /**
+     * The binary mapper accepts only {@code doc_values} and {@code store}. Sending {@code index}
+     * fails the whole mapping put with an unsupported-parameter error, even where the hint says
+     * the field is unindexed.
+     */
+    @Test
+    void binaryNeverCarriesTheIndexParameter() {
+        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+                field("payload", ResolvedFieldHint.builder(IndexFieldKind.BINARY)
+                        .indexed(false)
+                        .build()),
+                field("id", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
+                        .indexed(false)
+                        .build())));
+
+        Map<String, Object> properties = properties(generator.generate(plan));
+
+        assertThat(properties.get("payload")).isEqualTo(Map.of("type", "binary"));
+        // other kinds still carry it
+        assertThat(properties.get("id")).isEqualTo(Map.of("type", "keyword", "index", false));
+    }
+
+    /**
+     * {@link OpenSearchDocumentMapper} renders a JSON-mode map as one JSON string, which an
+     * object mapping rejects at index time.
+     */
+    @Test
+    void jsonMapModeMapsToKeyword() {
+        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+                field("labels", ResolvedFieldHint.builder(IndexFieldKind.OBJECT)
+                        .mapMode(MapMode.JSON)
+                        .build()),
+                field("attrs", ResolvedFieldHint.builder(IndexFieldKind.OBJECT)
+                        .mapMode(MapMode.FLATTEN)
+                        .build())));
+
+        Map<String, Object> properties = properties(generator.generate(plan));
+
+        assertThat(properties.get("labels")).isEqualTo(Map.of("type", "keyword"));
+        // the other modes emit object-shaped values and keep the object mapping
+        assertThat(properties.get("attrs")).isEqualTo(Map.of("type", "object"));
     }
 
     private static IndexingPlan.IndexedField field(String name, ResolvedFieldHint hint) {

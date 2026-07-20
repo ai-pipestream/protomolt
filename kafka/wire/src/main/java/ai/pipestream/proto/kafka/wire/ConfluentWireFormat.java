@@ -1,7 +1,6 @@
-package ai.pipestream.proto.kafka.serde;
+package ai.pipestream.proto.kafka.wire;
 
 import com.google.protobuf.Descriptors.Descriptor;
-import org.apache.kafka.common.errors.SerializationException;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
@@ -75,7 +74,7 @@ public final class ConfluentWireFormat {
             return List.of(0);
         }
         if (count < 0 || count > MAX_INDEXES) {
-            throw new SerializationException("Implausible message-index count: " + count);
+            throw new ConfluentWireFormatException("Implausible message-index count: " + count);
         }
         List<Integer> path = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -98,7 +97,7 @@ public final class ConfluentWireFormat {
         Cursor cursor = new Cursor(framed, PREFIX_BYTES);
         long count = cursor.readVarint();
         if (count < 0 || count > MAX_INDEXES) {
-            throw new SerializationException("Implausible message-index count: " + count);
+            throw new ConfluentWireFormatException("Implausible message-index count: " + count);
         }
         for (long i = 0; i < count; i++) {
             cursor.readVarint();
@@ -142,8 +141,8 @@ public final class ConfluentWireFormat {
 
     private static void requireFrame(byte[] framed) {
         if (framed == null || framed.length < PREFIX_BYTES + 1 || framed[0] != MAGIC) {
-            throw new SerializationException("Not Confluent wire format: expected a zero magic "
-                    + "byte followed by a 4-byte schema id");
+            throw new ConfluentWireFormatException("Not Confluent wire format: expected a zero "
+                    + "magic byte followed by a 4-byte schema id");
         }
     }
 
@@ -183,7 +182,7 @@ public final class ConfluentWireFormat {
                     break;
                 }
             }
-            throw new SerializationException("Malformed varint in the Confluent frame");
+            throw new ConfluentWireFormatException("Malformed varint in the Confluent frame");
         }
     }
 }

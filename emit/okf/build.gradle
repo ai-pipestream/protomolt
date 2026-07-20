@@ -3,8 +3,9 @@ description = 'Open Knowledge Format renderer: descriptor sets and registry stor
 dependencies {
     api project(':protomolt-emit')
     api project(':protomolt-actions')
+    // OkfRegistryBundles.render takes SchemaRegistryStore from this module.
+    api project(':protomolt-registry')
 
     implementation project(':protomolt-protobuf-metadata')
     implementation project(':protomolt-proto-sources')
-    implementation project(':protomolt-registry')
 }

@@ -21,7 +21,13 @@ public final class Bundle {
 
     private final Map<String, byte[]> files;
 
-    private Bundle(Map<String, byte[]> files) {
+    /**
+     * Package-private rather than private so a test can build a bundle that skips
+     * {@link Builder#validate}, which is the only way to drive a sink's own path-escape guard —
+     * {@link Builder} refuses those paths, so the guard is unreachable through the public API.
+     * Callers outside this package go through {@link #builder()} and its validation.
+     */
+    Bundle(Map<String, byte[]> files) {
         this.files = files;
     }
 

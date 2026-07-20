@@ -349,6 +349,43 @@ class GitProtoGathererTest {
         assertThat(set.paths()).containsExactly("common/v1/id.proto");
     }
 
+    /**
+     * Falling back to the cached clone is only sound while it holds the requested ref;
+     * serving another ref's content under this one's origin would be silently wrong.
+     */
+    @Test
+    void fetchFailureWithAnUncachedRefFails() throws Exception {
+        String url = initUpstream();
+        writeUpstream("proto/common/v1/id.proto", COMMON_PROTO);
+        commitAll("initial");
+
+        gatherer(url).build().gather(); // warm the cache on main
+
+        // Break the remote: 'feature' was never fetched, so it cannot be served.
+        deleteRecursively(upstream);
+
+        assertThatThrownBy(gatherer(url).ref("feature").build()::gather)
+                .isInstanceOf(GatherException.class)
+                .hasMessageContaining("Could not resolve ref feature");
+    }
+
+    @Test
+    void modulesModeRejectsASubdirThatEscapesTheModule() throws Exception {
+        String url = initUpstream();
+        writeUpstream("common/proto/common/v1/id.proto", COMMON_PROTO);
+        commitAll("initial");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(outside);
+        Files.writeString(outside.resolve("other.proto"), OTHER_PROTO);
+
+        assertThatThrownBy(gatherer(url)
+                .modules(List.of("common"))
+                .subdir("../../outside")
+                .build()::gather)
+                .isInstanceOf(GatherException.class)
+                .hasMessageContaining("escapes");
+    }
+
     @Test
     void defaultsAndValidation() {
         assertThatThrownBy(() -> GitProtoGatherer.builder().build())

@@ -3,12 +3,13 @@ description = 'Action catalog: JSON-in/JSON-out verbs over the toolkit, mountabl
 dependencies {
     api project(':protomolt-descriptors')
     api libs.jackson.databind
+    // ActionContext.transcoder() returns ProtobufJsonTranscoder from this module.
+    api project(':protomolt-json')
 
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-compat')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
-    implementation project(':protomolt-json')
     implementation project(':protomolt-jsonschema')
     implementation project(':protomolt-mapper-core')
     implementation project(':protomolt-mapper-cel')

@@ -352,13 +352,59 @@ public class TypeConverter {
     }
 
     /**
+     * Converts a Java number to a long, rejecting values that cannot be represented exactly.
+     *
+     * @param number The number to convert
+     * @param field The target field descriptor (used for error reporting)
+     * @return The exact long value
+     * @throws IllegalArgumentException if the number is non-integral or outside int64 range
+     */
+    private static long numberToLong(Number number, FieldDescriptor field) {
+        if (number instanceof Long || number instanceof Integer
+                || number instanceof Short || number instanceof Byte) {
+            return number.longValue();
+        }
+        if (number instanceof java.math.BigInteger big) {
+            try {
+                return big.longValueExact();
+            } catch (ArithmeticException e) {
+                throw new IllegalArgumentException(
+                        "Value " + number + " is out of int64 range for field " + field.getFullName(), e);
+            }
+        }
+        return numberToLong(number.doubleValue(), field);
+    }
+
+    /**
+     * Converts a Java number to an int, rejecting values that cannot be represented exactly.
+     *
+     * @param number The number to convert
+     * @param field The target field descriptor (used for error reporting)
+     * @return The exact int value
+     * @throws IllegalArgumentException if the number is non-integral or outside int32 range
+     */
+    private static int numberToInt(Number number, FieldDescriptor field) {
+        long asLong = numberToLong(number, field);
+        int result = (int) asLong;
+        if (result != asLong) {
+            throw new IllegalArgumentException(
+                    "Value " + number + " is out of int32 range for field " + field.getFullName());
+        }
+        return result;
+    }
+
+    /**
      * Attempts to convert a value to match the expected type of a field.
-     * Provides intelligent type coercion where possible.
+     *
+     * <p>Numeric conversions to int32 and int64 fields are exact: a value that is non-integral or
+     * outside the target range is rejected rather than truncated, matching the Struct conversion
+     * path.</p>
      *
      * @param value The value to convert
      * @param field The target field descriptor
      * @return The converted value, or the original if no conversion is needed
-     * @throws IllegalArgumentException if conversion is not possible
+     * @throws IllegalArgumentException if conversion is not possible, or if a numeric value cannot
+     *         be represented exactly by an integral field type
      */
     public Object convertToFieldType(Object value, FieldDescriptor field) {
         if (value == null) {
@@ -373,11 +419,11 @@ public class TypeConverter {
         // Attempt type conversions
         switch (field.getJavaType()) {
             case INT:
-                if (value instanceof Number) return ((Number) value).intValue();
+                if (value instanceof Number) return numberToInt((Number) value, field);
                 if (value instanceof String) return Integer.parseInt((String) value);
                 break;
             case LONG:
-                if (value instanceof Number) return ((Number) value).longValue();
+                if (value instanceof Number) return numberToLong((Number) value, field);
                 if (value instanceof String) return Long.parseLong((String) value);
                 break;
             case FLOAT:

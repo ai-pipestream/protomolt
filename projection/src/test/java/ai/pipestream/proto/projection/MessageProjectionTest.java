@@ -170,6 +170,40 @@ class MessageProjectionTest {
         assertThat(matterMask.complete()).isTrue();
     }
 
+    /** A standalone descriptor for {@code dup.Thing}; two calls give two distinct descriptors. */
+    private static com.google.protobuf.Descriptors.Descriptor thing() throws Exception {
+        com.google.protobuf.DescriptorProtos.FileDescriptorProto file =
+                com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+                        .setName("dup/thing.proto")
+                        .setSyntax("proto3")
+                        .setPackage("dup")
+                        .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto
+                                .newBuilder().setName("Thing"))
+                        .build();
+        return com.google.protobuf.Descriptors.FileDescriptor
+                .buildFrom(file, new com.google.protobuf.Descriptors.FileDescriptor[0])
+                .findMessageTypeByName("Thing");
+    }
+
+    /**
+     * Duplicate names used to surface as the map collector's {@code IllegalStateException},
+     * which names the colliding values but not what the caller did wrong.
+     */
+    @Test
+    void twoDifferentDescriptorsForOneNameAreRejected() throws Exception {
+        assertThatThrownBy(() -> SourceResolver.of(java.util.List.of(thing(), thing())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dup.Thing")
+                .hasMessageContaining("must be unique by name");
+    }
+
+    @Test
+    void theSameDescriptorListedTwiceIsAccepted() throws Exception {
+        com.google.protobuf.Descriptors.Descriptor thing = thing();
+        assertThat(SourceResolver.of(java.util.List.of(thing, thing)).resolve("dup.Thing"))
+                .contains(thing);
+    }
+
     @Test
     void sourceMaskRejectsUndeclaredSources() {
         assertThatThrownBy(() -> searchDocProjection().sourceMask(Address.getDescriptor()))

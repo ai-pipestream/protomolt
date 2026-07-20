@@ -92,6 +92,50 @@ class SourcePumpTest {
     }
 
     @Test
+    void capacityMustBePositive() {
+        assertThatThrownBy(() -> new SourcePump(0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("capacity must be positive: 0");
+        assertThatThrownBy(() -> new SourcePump(-4))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("capacity must be positive: -4");
+    }
+
+    /**
+     * The source can push before {@code open} has returned its handle, so a queue that filled
+     * during that unattached window has to be paused the moment the handle arrives — otherwise
+     * the source stays unthrottled until the next take.
+     */
+    @Test
+    void attachPausesASourceThatFilledTheQueueBeforeTheHandleArrived() {
+        SourcePump pump = new SourcePump(2);
+        pump.onMessage(Int32Value.of(0));
+        pump.onMessage(Int32Value.of(1));
+        assertThat(pump.depth()).isEqualTo(2);
+
+        RecordingHandle handle = new RecordingHandle();
+        pump.attach(handle);
+
+        assertThat(handle.pauses.get()).isEqualTo(1);
+        assertThat(handle.paused).isTrue();
+        assertThat(handle.resumes.get()).isZero();
+        pump.close();
+    }
+
+    @Test
+    void attachDoesNotPauseASourceWhenTheQueueStillHasRoom() {
+        SourcePump pump = new SourcePump(2);
+        pump.onMessage(Int32Value.of(0));
+
+        RecordingHandle handle = new RecordingHandle();
+        pump.attach(handle);
+
+        assertThat(handle.pauses.get()).isZero();
+        assertThat(handle.paused).isFalse();
+        pump.close();
+    }
+
+    @Test
     void floodingProducerIsPausedResumedAndFullyDrainedInOrder() throws Exception {
         SourcePump pump = new SourcePump(8);
         FloodHandle handle = new FloodHandle(100, pump);

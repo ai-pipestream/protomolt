@@ -21,25 +21,7 @@ class MessageDiffTest {
 
     @BeforeAll
     static void setUp() throws Exception {
-        var proto = DescriptorProtos.DescriptorProto.newBuilder()
-                .setName("Person")
-                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
-                        .setName("name").setNumber(1)
-                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))
-                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
-                        .setName("age").setNumber(2)
-                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT64))
-                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
-                        .setName("tags").setNumber(3)
-                        .setLabel(DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED)
-                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))
-                .build();
-        FileDescriptor file = FileDescriptor.buildFrom(
-                DescriptorProtos.FileDescriptorProto.newBuilder()
-                        .setName("person.proto").setPackage("diff")
-                        .addMessageType(proto).build(),
-                new FileDescriptor[]{});
-        person = file.findMessageTypeByName("Person");
+        person = buildPersonDescriptor();
     }
 
     @Test
@@ -133,5 +115,74 @@ class MessageDiffTest {
                 MessageDiff.diff(
                         DynamicMessage.newBuilder(person).build(),
                         Struct.getDefaultInstance()));
+    }
+
+    /**
+     * The two sides are admitted on descriptor full name, so a second build of the same proto
+     * must diff by content. Reading the right-hand side with the left-hand side's FieldDescriptor
+     * is rejected by protobuf reflection.
+     */
+    @Test
+    void comparesMessagesBuiltFromDistinctDescriptorInstancesOfTheSameType() throws Exception {
+        Descriptor rebuiltPerson = buildPersonDescriptor();
+        assertThat(rebuiltPerson).isNotSameAs(person);
+
+        var left = DynamicMessage.newBuilder(person)
+                .setField(person.findFieldByName("name"), "Ada")
+                .setField(person.findFieldByName("age"), 30L)
+                .addRepeatedField(person.findFieldByName("tags"), "a")
+                .build();
+        var right = DynamicMessage.newBuilder(rebuiltPerson)
+                .setField(rebuiltPerson.findFieldByName("name"), "Ada")
+                .setField(rebuiltPerson.findFieldByName("age"), 31L)
+                .addRepeatedField(rebuiltPerson.findFieldByName("tags"), "a")
+                .build();
+
+        assertThat(MessageDiff.diff(left, right))
+                .extracting(MessageDiff.FieldChange::path)
+                .containsExactly("age");
+    }
+
+    @Test
+    void rejectsSameNamedTypeWithDifferentFields() throws Exception {
+        FileDescriptor file = FileDescriptor.buildFrom(
+                DescriptorProtos.FileDescriptorProto.newBuilder()
+                        .setName("person_v2.proto").setPackage("diff")
+                        .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
+                                .setName("Person")
+                                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                                        .setName("nickname").setNumber(7)
+                                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING)))
+                        .build(),
+                new FileDescriptor[]{});
+        Descriptor otherPerson = file.findMessageTypeByName("Person");
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () ->
+                MessageDiff.diff(
+                        DynamicMessage.newBuilder(person).build(),
+                        DynamicMessage.newBuilder(otherPerson).build()));
+        assertThat(e).hasMessageContaining("name");
+    }
+
+    private static Descriptor buildPersonDescriptor() throws Exception {
+        var proto = DescriptorProtos.DescriptorProto.newBuilder()
+                .setName("Person")
+                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                        .setName("name").setNumber(1)
+                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                        .setName("age").setNumber(2)
+                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT64))
+                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                        .setName("tags").setNumber(3)
+                        .setLabel(DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED)
+                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))
+                .build();
+        FileDescriptor file = FileDescriptor.buildFrom(
+                DescriptorProtos.FileDescriptorProto.newBuilder()
+                        .setName("person.proto").setPackage("diff")
+                        .addMessageType(proto).build(),
+                new FileDescriptor[]{});
+        return file.findMessageTypeByName("Person");
     }
 }

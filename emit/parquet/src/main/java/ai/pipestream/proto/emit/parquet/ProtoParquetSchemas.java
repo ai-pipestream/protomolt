@@ -21,7 +21,8 @@ import java.util.Set;
  * exactly what a native writer would produce.
  *
  * <p>Mapping: plain singular scalars are {@code required} (proto3 defaults are values, not
- * absence); {@code optional}-keyword scalars and singular messages are {@code optional};
+ * absence); scalars that track presence ({@code optional}-keyword, oneof members, proto2
+ * declarations) and singular messages are {@code optional};
  * repeated fields are three-level {@code LIST} groups; maps are annotated {@code MAP}
  * groups; enums are strings carrying the enum annotation; unsigned 32-bit values widen to
  * {@code int64} so no value ever changes sign. Two well-known types get lake-native
@@ -152,10 +153,13 @@ public final class ProtoParquetSchemas {
                 ? Type.Repetition.OPTIONAL : Type.Repetition.REQUIRED;
     }
 
-    /** Message fields track presence; so do scalars declared with the optional keyword. */
+    /**
+     * Presence as the descriptor defines it, which covers more than the proto3 {@code optional}
+     * keyword: oneof members and proto2 {@code optional} fields track presence too, and encoding
+     * them as {@code required} would write their default in place of "not set".
+     */
     private static boolean optional(FieldDescriptor field) {
-        return field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
-                || field.toProto().getProto3Optional();
+        return field.hasPresence();
     }
 
     private static PrimitiveType primitive(FieldDescriptor field, String name,

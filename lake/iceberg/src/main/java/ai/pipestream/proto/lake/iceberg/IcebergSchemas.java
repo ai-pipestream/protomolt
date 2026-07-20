@@ -8,9 +8,13 @@ import org.apache.iceberg.types.Types;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -115,7 +119,7 @@ public final class IcebergSchemas {
         source.append("syntax = \"proto3\";\n\npackage ").append(packageName).append(";\n");
         StringBuilder body = new StringBuilder();
         boolean[] needsTimestamp = {false};
-        List<String> nested = new ArrayList<>();
+        Nested nested = new Nested(messageName);
         body.append("\nmessage ").append(messageName).append(" {\n");
         int number = 1;
         for (Types.NestedField field : schema.columns()) {
@@ -123,7 +127,7 @@ public final class IcebergSchemas {
                     needsTimestamp)).append('\n');
         }
         body.append("}\n");
-        for (String message : nested) {
+        for (String message : nested.bodies()) {
             body.append(message);
         }
         if (needsTimestamp[0]) {
@@ -133,7 +137,7 @@ public final class IcebergSchemas {
     }
 
     private static String fieldLine(Types.NestedField field, int number, String parentName,
-                                    List<String> nested, boolean[] needsTimestamp) {
+                                    Nested nested, boolean[] needsTimestamp) {
         String name = sanitize(field.name());
         Type type = field.type();
         if (type.isListType()) {
@@ -149,14 +153,14 @@ public final class IcebergSchemas {
                         nested, needsTimestamp) + "> " + name + " = " + number + ";";
             }
             // Proto map keys must be integral or string; anything else becomes entries.
-            String entryName = upper(name) + "Entry";
+            String entryName = nested.reserve(upper(name) + "Entry");
             StringBuilder entry = new StringBuilder("\nmessage " + entryName + " {\n");
             entry.append("  ").append(typeName(map.keyType(), name + "_key", parentName,
                     nested, needsTimestamp)).append(" key = 1;\n");
             entry.append("  ").append(typeName(map.valueType(), name + "_value", parentName,
                     nested, needsTimestamp)).append(" value = 2;\n");
             entry.append("}\n");
-            nested.add(entry.toString());
+            nested.define(entryName, entry.toString());
             return "repeated " + entryName + " " + name + " = " + number + ";";
         }
         return typeName(type, name, parentName, nested, needsTimestamp)
@@ -164,12 +168,15 @@ public final class IcebergSchemas {
     }
 
     private static String typeName(Type type, String fieldName, String parentName,
-                                   List<String> nested, boolean[] needsTimestamp) {
+                                   Nested nested, boolean[] needsTimestamp) {
         if (type.isStructType()) {
-            String messageName = upper(sanitize(fieldName));
-            if (messageName.equals(parentName)) {
-                messageName = messageName + "Struct";
+            String base = upper(sanitize(fieldName));
+            if (base.equals(parentName)) {
+                base = base + "Struct";
             }
+            // Reserved before the body is generated so a struct nested inside this one cannot
+            // claim the same name.
+            String messageName = nested.reserve(base);
             StringBuilder message = new StringBuilder("\nmessage " + messageName + " {\n");
             int number = 1;
             for (Types.NestedField field : type.asStructType().fields()) {
@@ -177,8 +184,14 @@ public final class IcebergSchemas {
                         needsTimestamp)).append('\n');
             }
             message.append("}\n");
-            nested.add(message.toString());
+            nested.define(messageName, message.toString());
             return messageName;
+        }
+        if (type.isListType() || type.isMapType()) {
+            // Only reachable as a list element or map value: proto has no repeated-of-repeated
+            // and no collection-valued map, so there is no shape to generate.
+            throw new IllegalArgumentException("Column '" + fieldName + "' nests " + type
+                    + " inside a list or map, which proto cannot express");
         }
         return switch (type.typeId()) {
             case BOOLEAN -> "bool";
@@ -194,6 +207,38 @@ public final class IcebergSchemas {
             case BINARY, FIXED -> "bytes";
             default -> "string"; // variant, geometry, unknown: carried as text
         };
+    }
+
+    /**
+     * The generated nested messages of one file. Proto has no scoping that would let two of
+     * them share a name, but the names come from column names, which repeat freely across
+     * different structs — so every name is claimed once and suffixed on collision.
+     */
+    private static final class Nested {
+
+        private final Map<String, String> byName = new LinkedHashMap<>();
+        private final Set<String> taken = new LinkedHashSet<>();
+
+        private Nested(String rootMessage) {
+            taken.add(rootMessage);
+        }
+
+        /** Claims {@code base}, or the first free {@code base2}, {@code base3}, ... */
+        private String reserve(String base) {
+            String name = base;
+            for (int i = 2; !taken.add(name); i++) {
+                name = base + i;
+            }
+            return name;
+        }
+
+        private void define(String name, String body) {
+            byName.put(name, body);
+        }
+
+        private Collection<String> bodies() {
+            return byName.values();
+        }
     }
 
     private static String protoMapKey(Type keyType) {

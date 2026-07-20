@@ -158,10 +158,17 @@ public final class QualityScorer {
                 .addFunctions(QualityCelFunctions.declarations(), QualityCelFunctions.bindings())
                 .build());
         List<Dimension> dimensions = new java.util.ArrayList<>(rules.getDimensionCount());
+        java.util.Set<String> ids = new java.util.HashSet<>(rules.getDimensionCount());
         for (QualityDimension declared : rules.getDimensionList()) {
             if (declared.getId().isBlank()) {
                 throw new QualitySchemaException("A quality dimension on "
                         + descriptor.getFullName() + " has no id");
+            }
+            // The report keys dimensions by id, so a duplicate would report one score while the
+            // composite weighed both. Refuse the schema instead of scoring it inconsistently.
+            if (!ids.add(declared.getId())) {
+                throw new QualitySchemaException("Quality dimension '" + declared.getId()
+                        + "' on " + descriptor.getFullName() + " is declared more than once");
             }
             if (declared.getCel().isBlank()) {
                 throw new QualitySchemaException("Quality dimension '" + declared.getId()

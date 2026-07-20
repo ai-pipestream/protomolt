@@ -92,12 +92,16 @@ public final class McpServer {
      * client-side responses produce none.
      */
     public Optional<ObjectNode> handle(JsonNode message) {
-        if (!message.isObject() || !message.has("method")) {
-            if (JsonRpc.isNotification(message) || !message.isObject()) {
-                return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST, "Invalid request"));
+        if (!message.isObject()) {
+            return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST, "Invalid request"));
+        }
+        if (!message.has("method")) {
+            if (message.has("result") || message.has("error")) {
+                // A response to a server-initiated request; this server never sends any.
+                return Optional.empty();
             }
-            // A response to a server-initiated request; this server never sends any.
-            return Optional.empty();
+            return Optional.of(JsonRpc.error(mapper, message.get("id"), JsonRpc.INVALID_REQUEST,
+                    "Invalid request"));
         }
         if (JsonRpc.isNotification(message)) {
             return Optional.empty();

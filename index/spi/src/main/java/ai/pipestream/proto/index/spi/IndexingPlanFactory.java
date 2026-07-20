@@ -75,10 +75,13 @@ public final class IndexingPlanFactory {
             String fieldName = hint.nameOverride().orElse(qualified);
 
             if (shouldExpand(field, hint) && depth < maxDepth) {
-                walk(field.getMessageType(), path, qualified, depth + 1, out, new HashSet<>(visiting));
+                // A name override on an expanded message replaces that segment's contribution to
+                // every child name, which is what an override does on a leaf as well: it stands in
+                // for the qualified name the walk would otherwise have built.
+                walk(field.getMessageType(), path, fieldName, depth + 1, out, new HashSet<>(visiting));
                 continue;
             }
-            out.add(new IndexingPlan.IndexedField(path, fieldName, hint));
+            out.add(new IndexingPlan.IndexedField(path, fieldName, hint, field.isRepeated()));
         }
         visiting.remove(descriptor.getFullName());
     }

@@ -59,9 +59,8 @@ public final class ProtoNdjsonWriter {
         if (options.includingDefaultValueFields()) {
             p = p.alwaysPrintFieldsWithNoPresence();
         }
-        if (options.omitWhitespace()) {
-            p = p.omittingInsignificantWhitespace();
-        }
+        // Unconditional: the guard above has already rejected omitWhitespace(false).
+        p = p.omittingInsignificantWhitespace();
         this.printer = p;
     }
 

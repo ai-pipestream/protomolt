@@ -1,5 +1,6 @@
 package ai.pipestream.proto.rest;
 
+import ai.pipestream.proto.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.json.ProtobufJsonTranscoder;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
@@ -106,6 +107,48 @@ class ProtoRestGatewayTest {
         // Null verb skips enforcement (legacy signature).
         assertThat(gateway.invoke(null, "EchoService", "Echo", "{\"name\":\"v\"}", Map.of(), Map.of()))
                 .contains("hello v");
+    }
+
+    /**
+     * A decode failure already carries its own 400 mapping, so the funnel must not rewrap it
+     * as a ProtoRestInvocationException (which the host maps to 500).
+     */
+    @Test
+    void malformedRequestJsonPropagatesAsProtobufJsonException() {
+        assertThatThrownBy(() -> gateway.invoke("EchoService", "Echo", "{not json"))
+                .isInstanceOf(MalformedProtobufJsonException.class)
+                .hasMessageContaining("Failed to deserialize JSON to Struct")
+                .satisfies(e -> assertThat(((MalformedProtobufJsonException) e).getJson())
+                        .isEqualTo("{not json"));
+    }
+
+    @Test
+    void protoRestExceptionsFromTheInvokerPropagateUnwrapped() {
+        registry.register(ProtoRestMethod.builder("PickyService", "Check", request -> {
+                    throw new MalformedRequestException("bad percent-encoding in 'q'");
+                })
+                .requestType(Struct.class)
+                .build());
+
+        assertThatThrownBy(() -> gateway.invoke("PickyService", "Check", "{}"))
+                .isInstanceOf(MalformedRequestException.class)
+                .hasMessage("bad percent-encoding in 'q'")
+                .hasNoCause();
+    }
+
+    @Test
+    void otherRuntimeExceptionsFromTheInvokerAreWrappedWithTheRoute() {
+        IllegalStateException boom = new IllegalStateException("downstream unavailable");
+        registry.register(ProtoRestMethod.builder("FlakyService", "Call", request -> {
+                    throw boom;
+                })
+                .requestType(Struct.class)
+                .build());
+
+        assertThatThrownBy(() -> gateway.invoke("FlakyService", "Call", "{}"))
+                .isInstanceOf(ProtoRestInvocationException.class)
+                .hasMessage("Failed invoking FlakyService/Call: downstream unavailable")
+                .hasCause(boom);
     }
 
     @Test

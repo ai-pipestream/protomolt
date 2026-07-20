@@ -8,7 +8,8 @@ package ai.pipestream.proto.registry.server;
  *                         (see {@link SchemaRegistryServer#actualPort()})
  * @param healthPath       liveness endpoint path
  * @param nativePathPrefix prefix of the non-Confluent extras
- *                         ({@code {prefix}/subjects/{subject}/descriptor-set})
+ *                         ({@code {prefix}/subjects/{subject}/descriptor-set}); a single
+ *                         path segment, e.g. {@code /protomolt}
  * @param maxRequestBytes  maximum accepted request body size; larger bodies get 413
  * @param apiToken         shared secret required on every request except the health
  *                         endpoint ({@code api_token} header or bearer credential);
@@ -32,6 +33,12 @@ public record SchemaRegistryServerConfig(
         }
         healthPath = normalize(healthPath == null ? "/health" : healthPath);
         nativePathPrefix = normalize(nativePathPrefix == null ? "/protomolt" : nativePathPrefix);
+        // The router compares the prefix against the first decoded path segment, so a nested
+        // or empty prefix would match nothing and silently 404 every native endpoint.
+        if (nativePathPrefix.length() < 2 || nativePathPrefix.indexOf('/', 1) >= 0) {
+            throw new IllegalArgumentException(
+                    "nativePathPrefix must be a single path segment: " + nativePathPrefix);
+        }
         if (maxRequestBytes <= 0) {
             throw new IllegalArgumentException("maxRequestBytes must be positive: " + maxRequestBytes);
         }

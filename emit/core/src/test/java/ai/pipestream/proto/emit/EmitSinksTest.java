@@ -4,9 +4,14 @@ import org.eclipse.jgit.api.Git;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -84,14 +89,103 @@ class EmitSinksTest {
         assertThat(Files.readString(repo.resolve("docs/okf/index.md"))).isEqualTo("v2");
     }
 
+    /**
+     * The receipt and the commit are both scoped to the bundle's paths. An unrelated file staged
+     * in the same repository must not make an unchanged bundle look changed, and must not ride
+     * along in a commit the bundle does trigger.
+     */
+    @Test
+    void unrelatedStagedChangesNeitherTriggerNorJoinTheCommit(@TempDir Path dir) throws Exception {
+        Path repo = dir.resolve("mixed-repo");
+        GitSink sink = new GitSink(repo, "Publish knowledge bundle");
+        String first = sink.write(sample());
+
+        Files.writeString(repo.resolve("unrelated.txt"), "not ours");
+        try (Git git = Git.open(repo.toFile())) {
+            git.add().addFilepattern("unrelated.txt").call();
+        }
+
+        // The bundle is byte-identical: nothing of ours changed, so no commit.
+        assertThat(sink.write(sample())).isEqualTo(first + " (unchanged)");
+
+        String second = sink.write(Bundle.builder().add("index.md", "v2").build());
+        assertThat(second).hasSize(40).isNotEqualTo(first);
+        try (Git git = Git.open(repo.toFile())) {
+            // Still staged rather than committed: the commit carried only index.md.
+            assertThat(git.status().call().getAdded()).contains("unrelated.txt");
+        }
+    }
+
+    @Test
+    void gitSinkPrefixIsNormalizedBeforeItBecomesAPath(@TempDir Path dir) throws Exception {
+        Path repo = dir.resolve("prefix-repo");
+        // Leading and trailing slashes and Windows separators all denote the same directory.
+        new GitSink(repo, "/docs\\okf/", "Publish", "tester", "t@example.com").write(sample());
+
+        assertThat(Files.readString(repo.resolve("docs/okf/index.md"))).isEqualTo("# root\n");
+        assertThat(Files.readString(repo.resolve("docs/okf/tables/orders.md"))).isEqualTo("orders");
+        // Only the prefixed copy exists; nothing landed at the root.
+        assertThat(Files.exists(repo.resolve("index.md"))).isFalse();
+
+        try (Git git = Git.open(repo.toFile())) {
+            assertThat(git.log().call().iterator().next().getAuthorIdent().getName())
+                    .isEqualTo("tester");
+        }
+    }
+
+    @Test
+    void gitSinkRejectsAPrefixThatCouldLeaveTheRepository(@TempDir Path dir) {
+        Path repo = dir.resolve("bad-prefix-repo");
+        for (String prefix : List.of("..", "../escape", "docs/../..", ".", "docs/./okf",
+                "docs//okf", "   ")) {
+            assertThatThrownBy(() -> new GitSink(repo, prefix, "Publish", "t", "t@example.com"))
+                    .as("prefix %s", prefix)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Invalid prefix segment: " + prefix);
+        }
+        assertThatThrownBy(() -> new GitSink(repo, null, "Publish", "t", "t@example.com"))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("prefix");
+        // The rejection happens in the constructor, before any repository is created.
+        assertThat(Files.exists(repo)).isFalse();
+    }
+
+    /**
+     * {@link Bundle} already refuses escaping paths, so the sink's own check is a second line.
+     * It is kept because the sink joins prefix and path itself; this drives it with a bundle
+     * built past the builder's validation to prove the guard still throws rather than writing
+     * outside the work tree.
+     */
+    @Test
+    void gitSinkRefusesToWriteOutsideTheWorkTree(@TempDir Path dir) throws Exception {
+        Path repo = dir.resolve("guard-repo");
+        Bundle escaping = bundleBypassingValidation("../escape.md", "owned");
+
+        assertThatThrownBy(() -> new GitSink(repo, "Publish").write(escaping))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Bundle path escapes the repository: ../escape.md");
+
+        assertThat(Files.exists(dir.resolve("escape.md"))).isFalse();
+        assertThat(Files.exists(repo.resolve("escape.md"))).isFalse();
+    }
+
+    /**
+     * Builds a {@link Bundle} directly, skipping the builder's path validation. Uses the
+     * package-private constructor rather than reflection, so a change to Bundle's shape breaks
+     * this at compile time instead of at run time.
+     */
+    private static Bundle bundleBypassingValidation(String path, String content) {
+        return new Bundle(Map.of(path, content.getBytes(StandardCharsets.UTF_8)));
+    }
+
     @Test
     void zipIsCompleteOrderedAndDeterministic() throws Exception {
         byte[] once = Bundles.zip(sample());
         byte[] twice = Bundles.zip(sample());
         assertThat(once).isEqualTo(twice);
 
-        List<String> names = new java.util.ArrayList<>();
-        try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(once))) {
+        List<String> names = new ArrayList<>();
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(once))) {
             for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
                 names.add(entry.getName());
                 if (entry.getName().equals("tables/orders.md")) {

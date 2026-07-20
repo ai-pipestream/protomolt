@@ -43,6 +43,34 @@ class LuceneFieldSpecsTest {
                 .isEqualTo(DocValuesType.SORTED_NUMERIC);
     }
 
+    /**
+     * Lucene permits one doc-values type per field, so {@link ProtoLuceneMapper} emits the
+     * multi-valued form when a field is both sortable and facetable. The spec once reported the
+     * single-valued form for that combination, so consumers configuring an index from the report
+     * would build sort fields the written documents cannot serve.
+     */
+    @Test
+    void sortableAndFacetableFieldsReportTheMultiValuedDocValuesType() {
+        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+                new IndexingPlan.IndexedField("title", "title",
+                        ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
+                                .sortable(true)
+                                .facetable(true)
+                                .build()),
+                new IndexingPlan.IndexedField("count", "count",
+                        ResolvedFieldHint.builder(IndexFieldKind.INT64)
+                                .sortable(true)
+                                .facetable(true)
+                                .build())));
+
+        LuceneFieldSpecs specs = LuceneFieldSpecs.from(plan);
+
+        assertThat(specs.find("title").orElseThrow().docValuesType())
+                .isEqualTo(DocValuesType.SORTED_SET);
+        assertThat(specs.find("count").orElseThrow().docValuesType())
+                .isEqualTo(DocValuesType.SORTED_NUMERIC);
+    }
+
     @Test
     void vectorSpecExposesLuceneSimilarityAndEncoding() {
         IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(

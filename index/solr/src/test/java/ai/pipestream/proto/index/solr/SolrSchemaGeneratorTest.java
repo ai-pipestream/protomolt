@@ -206,7 +206,52 @@ class SolrSchemaGeneratorTest {
                 .containsExactly("id");
     }
 
+    /** Solr rejects every value after the first for a field the schema declares singular. */
+    @Test
+    void repeatedFieldsAreDeclaredMultiValued() {
+        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+                repeatedField("tags", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
+                field("title", ResolvedFieldHint.of(IndexFieldKind.TEXT))));
+
+        assertThat(generator.generate(plan).fields()).containsExactly(
+                Map.of("name", "tags", "type", "string", "indexed", true, "stored", true,
+                        "multiValued", true),
+                Map.of("name", "title", "type", "text_general", "indexed", true, "stored", true));
+    }
+
+    /** DenseVectorField carries the whole vector in one value and rejects multiValued. */
+    @Test
+    void repeatedVectorFieldStaysSingleValued() {
+        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+                repeatedField("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
+                        .vectorDims(4)
+                        .vectorSimilarity(VectorSimilarity.L2)
+                        .build())));
+
+        assertThat(generator.generate(plan).fields()).containsExactly(Map.of(
+                "name", "embedding", "type", "knn_vector_4_l2", "indexed", true, "stored", true));
+    }
+
+    /** A copyField destination has to accept every value its multiValued source produces. */
+    @Test
+    void subFieldsOfARepeatedFieldAreAlsoMultiValued() {
+        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+                repeatedField("tags", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
+                        .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""))
+                        .build())));
+
+        assertThat(generator.generate(plan).fields()).containsExactly(
+                Map.of("name", "tags", "type", "text_general", "indexed", true, "stored", true,
+                        "multiValued", true),
+                Map.of("name", "tags_raw", "type", "string", "indexed", true, "stored", false,
+                        "multiValued", true));
+    }
+
     private static IndexingPlan.IndexedField field(String name, ResolvedFieldHint hint) {
         return new IndexingPlan.IndexedField(name, name, hint);
+    }
+
+    private static IndexingPlan.IndexedField repeatedField(String name, ResolvedFieldHint hint) {
+        return new IndexingPlan.IndexedField(name, name, hint, true);
     }
 }

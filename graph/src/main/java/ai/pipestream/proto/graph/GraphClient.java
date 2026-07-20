@@ -25,6 +25,10 @@ public final class GraphClient {
 
     /** A Graph error, with the service's own code and message (client-relevant by design). */
     public static final class GraphApiException extends IOException {
+
+        /** {@link #status()} for a failure Graph never expressed as an HTTP status. */
+        public static final int NO_HTTP_STATUS = 0;
+
         private final int status;
         private final String code;
         private final String body;
@@ -34,12 +38,19 @@ public final class GraphClient {
         }
 
         GraphApiException(int status, String code, String message, String body) {
-            super("Graph " + status + (code.isEmpty() ? "" : " (" + code + ")") + ": " + message);
+            super("Graph " + (status == NO_HTTP_STATUS ? "operation" : Integer.toString(status))
+                    + (code.isEmpty() ? "" : " (" + code + ")") + ": " + message);
             this.status = status;
             this.code = code;
             this.body = body;
         }
 
+        /**
+         * The HTTP status of the failing Graph response, or {@link #NO_HTTP_STATUS} when the
+         * failure was not an HTTP one — an async operation that reported failure, or one this
+         * client stopped waiting on. Both arrive over a 200 poll, so reporting 200 would name
+         * a success.
+         */
         public int status() {
             return status;
         }
@@ -148,12 +159,12 @@ public final class GraphClient {
                 return operation;
             }
             if (status.equalsIgnoreCase("failed")) {
-                throw new GraphApiException(200, "operationFailed",
+                throw new GraphApiException(GraphApiException.NO_HTTP_STATUS, "operationFailed",
                         operation.path("error").path("message").asText("operation failed"),
                         operation.toString());
             }
             if (System.nanoTime() >= deadline) {
-                throw new GraphApiException(200, "operationTimeout",
+                throw new GraphApiException(GraphApiException.NO_HTTP_STATUS, "operationTimeout",
                         "Async operation still " + status + " after " + timeout);
             }
             Thread.sleep(Duration.ofSeconds(2));

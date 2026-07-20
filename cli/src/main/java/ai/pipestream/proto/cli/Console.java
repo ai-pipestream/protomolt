@@ -63,7 +63,7 @@ final class Console {
         try {
             ObjectNode input = json.isBlank()
                     ? mapper.createObjectNode()
-                    : (ObjectNode) mapper.readTree(json);
+                    : CliJson.readObject(mapper, json);
             ObjectNode result = catalog.execute(verb, input);
             out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
         } catch (ActionException e) {

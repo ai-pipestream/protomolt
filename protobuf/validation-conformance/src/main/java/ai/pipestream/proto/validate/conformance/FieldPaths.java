@@ -302,7 +302,7 @@ final class FieldPaths {
                 case 'v' -> out.append('\013');
                 case '0' -> out.append('\0');
                 case 'u' -> {
-                    if (i + 4 < body.length() + 1 && i + 5 <= body.length()) {
+                    if (i + 5 <= body.length()) {
                         out.append((char) Integer.parseInt(body.substring(i + 1, i + 5), 16));
                         i += 4;
                     } else {

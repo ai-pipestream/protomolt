@@ -6,6 +6,7 @@ dependencies {
     // The Connect worker provides the framework at runtime; plugins must not bundle it.
     compileOnly libs.kafka.connect.api
 
+    implementation project(':protomolt-kafka-wire')
     implementation libs.iceberg.core   // CatalogUtil.buildIcebergCatalog
     implementation libs.slf4j.api
     // Linking a descriptor set with the metadata extensions readable (partition hints,

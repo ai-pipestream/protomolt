@@ -116,6 +116,58 @@ class GenerateStubsActionTest {
         }
     }
 
+    /**
+     * {@code parameter} is documented as protoc's {@code --<gen>_opt}. Nothing pinned that it
+     * actually reached the generator, so a dropped pass-through would have looked like a
+     * silently ignored option: {@code annotate_code} makes protoc emit a {@code .pb.meta}
+     * companion that is absent without it.
+     */
+    @Test
+    void parameterIsPassedThroughToTheGenerator() throws Exception {
+        ObjectNode input = input("java");
+        input.put("parameter", "annotate_code");
+
+        ObjectNode result = action.execute(input, ActionContext.create());
+
+        assertThat(result.get("ok").asBoolean()).isTrue();
+        assertThat(names(result)).anySatisfy(name ->
+                assertThat(name).endsWith("OrderOuterClass.java.pb.meta"));
+        assertThat(names(action.execute(input("java"), ActionContext.create())))
+                .noneSatisfy(name -> assertThat(name).endsWith(".pb.meta"));
+    }
+
+    /**
+     * A generator-reported failure is a result, not an exception: {@code ok: false} carrying
+     * protoc's own message and the generator that produced it, with no partial file list.
+     */
+    @Test
+    void generatorFailureReturnsNotOkWithProtocsMessage() throws Exception {
+        ObjectNode input = input("java");
+        input.put("parameter", "bogus_option");
+
+        ObjectNode result = action.execute(input, ActionContext.create());
+
+        assertThat(result.get("ok").asBoolean()).isFalse();
+        assertThat(result.get("generator").asText()).isEqualTo("java");
+        assertThat(result.get("error").asText())
+                .contains("Unknown generator option: bogus_option");
+        assertThat(result.has("files")).isFalse();
+        assertThat(result.has("fileCount")).isFalse();
+    }
+
+    /** The run stops at the failing generator; a later generator's files are not returned. */
+    @Test
+    void generatorFailureShortCircuitsRemainingGenerators() throws Exception {
+        ObjectNode input = input("java", "grpc-java");
+        input.put("parameter", "bogus_option");
+
+        ObjectNode result = action.execute(input, ActionContext.create());
+
+        assertThat(result.get("ok").asBoolean()).isFalse();
+        assertThat(result.get("generator").asText()).isEqualTo("java");
+        assertThat(result.has("files")).isFalse();
+    }
+
     @Test
     void unknownGeneratorIsInvalidInput() {
         assertThatThrownBy(() -> action.execute(input("rust"), ActionContext.create()))

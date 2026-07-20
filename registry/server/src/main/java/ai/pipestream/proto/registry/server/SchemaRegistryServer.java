@@ -471,10 +471,9 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 writeError(exchange, 404, 40401, "Chain not found: " + name);
                 return;
             }
-            byte[] body = chain.get().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
+            // The stored chain is already JSON; it is written verbatim rather than reparsed.
+            writeBytes(exchange, 200, "application/json",
+                    chain.get().getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             internalError(exchange, "reading a chain", e);
         }

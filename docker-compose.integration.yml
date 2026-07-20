@@ -7,6 +7,10 @@
 # Iceberg REST catalog (S3):  http://localhost:18182  (warehouse on RustFS)
 # Gravitino Iceberg REST:    http://localhost:19002/iceberg
 # RustFS (S3 API):           http://localhost:19000
+#
+# Its own Compose project so it never shares a namespace with the application stack in
+# docker-compose.yml — otherwise each sees the other's containers as orphans.
+name: protomolt-it
 services:
   apicurio:
     image: apicurio/apicurio-registry:3.0.13

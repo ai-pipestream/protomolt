@@ -3,8 +3,9 @@ description = 'The chain manager: configured, type-checked compositions of gRPC 
 dependencies {
     api project(':protomolt-shapes')
     api project(':protomolt-grpc-invoke')
+    // RunChainAction and CheckChainAction implement ProtoAction from this module.
+    api project(':protomolt-actions')
 
-    implementation project(':protomolt-actions')
     implementation project(':protomolt-json')
     implementation project(':protomolt-protobuf-validation')
     implementation libs.protobuf.java.util

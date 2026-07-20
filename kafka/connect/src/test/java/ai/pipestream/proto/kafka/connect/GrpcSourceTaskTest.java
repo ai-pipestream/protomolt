@@ -14,6 +14,7 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.ServerCalls;
 import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTaskContext;
 import org.apache.kafka.connect.storage.OffsetStorageReader;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -288,6 +290,32 @@ class GrpcSourceTaskTest {
         List<SourceRecord> records = source.poll();
         assertThat(records.get(0).key()).isEqualTo("c0");
         assertThat(records.get(1).key()).isEqualTo("c1");
+    }
+
+    /**
+     * A key expression that compiles but fails on a message must not quietly yield a null key:
+     * the record would land on another partition and stop compacting against its predecessors.
+     */
+    @Test
+    void keyCelFailureFailsTheRecord() throws Exception {
+        Map<String, String> props = config();
+        // Compiles against Tick, then divides by zero on the first tick, whose seq is 0.
+        props.put(GrpcSourceConfig.KEY_CEL, "string(1 / input.seq)");
+        GrpcSourceTask source = startTask(props, null);
+        assertThatThrownBy(source::poll)
+                .isInstanceOf(DataException.class)
+                .hasMessageContaining(GrpcSourceConfig.KEY_CEL);
+    }
+
+    /**
+     * The worker calls stop() from a thread other than the one running poll(), so the stream
+     * poll() opened has to be safely published or stop() can read a stale null and leave the
+     * call uncancelled.
+     */
+    @Test
+    void theActiveStreamIsSafelyPublishedToStop() throws Exception {
+        assertThat(Modifier.isVolatile(
+                GrpcSourceTask.class.getDeclaredField("stream").getModifiers())).isTrue();
     }
 
     @Test

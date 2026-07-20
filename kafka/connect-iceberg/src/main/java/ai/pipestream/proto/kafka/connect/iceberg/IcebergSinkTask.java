@@ -1,5 +1,6 @@
 package ai.pipestream.proto.kafka.connect.iceberg;
 
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.lake.iceberg.IcebergSink;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
@@ -88,7 +89,7 @@ public final class IcebergSinkTask extends SinkTask {
                 }
                 case CONFLUENT -> {
                     return DynamicMessage.parseFrom(descriptor,
-                            ConfluentFraming.payload(asBytes(value)));
+                            ConfluentWireFormat.payload(asBytes(value)));
                 }
                 default -> {
                     String json = value instanceof byte[] bytes

@@ -1,16 +1,25 @@
 package ai.pipestream.proto.quality;
 
 import ai.pipestream.proto.quality.testdata.BrokenRules;
+import ai.pipestream.proto.quality.testdata.DecayingDoc;
+import ai.pipestream.proto.quality.testdata.DuplicateDimensionIds;
+import ai.pipestream.proto.quality.testdata.MissingCelExpression;
+import ai.pipestream.proto.quality.testdata.MissingDimensionId;
+import ai.pipestream.proto.quality.testdata.NegativeWeight;
 import ai.pipestream.proto.quality.testdata.ScoredDoc;
 import ai.pipestream.proto.quality.testdata.Unscored;
+import com.google.protobuf.DescriptorProtos.DescriptorProto;
+import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -86,6 +95,119 @@ class QualityScorerTest {
                 .isInstanceOf(QualitySchemaException.class)
                 .hasMessageContaining("bad")
                 .hasMessageContaining("does not compile");
+    }
+
+    /**
+     * Two dimensions sharing an id cannot both be reported: the report keys on id, so one score
+     * would be reported while the composite weighed both. The schema is refused at compile time.
+     */
+    @Test
+    void duplicateDimensionIdsAreASchemaError() {
+        assertThatThrownBy(() -> scorer.score(
+                DuplicateDimensionIds.newBuilder().setPresent("x").build()))
+                .isInstanceOf(QualitySchemaException.class)
+                .hasMessageContaining("completeness")
+                .hasMessageContaining("declared more than once");
+    }
+
+    /** The report keys on id, so a dimension without one could never be reported. */
+    @Test
+    void aDimensionWithNoIdIsASchemaError() {
+        assertThatThrownBy(() -> scorer.score(
+                MissingDimensionId.newBuilder().setPresent("x").build()))
+                .isInstanceOf(QualitySchemaException.class)
+                .hasMessage("A quality dimension on "
+                        + "ai.pipestream.proto.quality.testdata.v1.MissingDimensionId has no id");
+    }
+
+    @Test
+    void aDimensionWithNoCelExpressionIsASchemaError() {
+        assertThatThrownBy(() -> scorer.score(
+                MissingCelExpression.newBuilder().setPresent("x").build()))
+                .isInstanceOf(QualitySchemaException.class)
+                .hasMessage("Quality dimension 'completeness' on "
+                        + "ai.pipestream.proto.quality.testdata.v1.MissingCelExpression"
+                        + " has no CEL expression");
+    }
+
+    /** A negative weight would pull the composite the wrong way, or below zero outright. */
+    @Test
+    void aNegativeWeightIsASchemaError() {
+        assertThatThrownBy(() -> scorer.score(
+                NegativeWeight.newBuilder().setPresent("x").build()))
+                .isInstanceOf(QualitySchemaException.class)
+                .hasMessage("Quality dimension 'completeness' on "
+                        + "ai.pipestream.proto.quality.testdata.v1.NegativeWeight"
+                        + " has a negative weight");
+    }
+
+    /** exp() is the decay curve helper; it is not in the CEL standard library. */
+    @Test
+    void expIsAvailableToDimensionExpressions() {
+        assertThat(scorer.score(DecayingDoc.newBuilder().setAgeDays(0).build())
+                .dimensions().get("recency")).isEqualTo(1.0);
+        assertThat(scorer.score(DecayingDoc.newBuilder().setAgeDays(5).build())
+                .dimensions().get("recency")).isCloseTo(Math.exp(-0.5), offset(1e-12));
+        assertThat(scorer.score(DecayingDoc.newBuilder().setAgeDays(30).build())
+                .dimensions().get("recency")).isCloseTo(Math.exp(-3.0), offset(1e-12));
+    }
+
+    /**
+     * The per-type cache is clear-on-threshold, not an LRU: crossing the bound drops everything
+     * rather than growing without limit for a process that meets many types. This pins the
+     * discipline and that an evicted type recompiles to the same scores.
+     */
+    @Test
+    void thePerTypeCacheClearsOnceItReachesItsBound() throws Exception {
+        QualityScorer local = QualityScorer.create();
+        Map<?, ?> cache = cacheOf(local);
+        int bound = maxCachedTypes();
+
+        double composite = local.score(decent().build()).composite();
+        assertThat(cache).hasSize(1);
+
+        // Fill exactly to the bound with distinct types.
+        for (int i = 0; i < bound - 1; i++) {
+            local.score(DynamicMessage.getDefaultInstance(syntheticType(i)));
+        }
+        assertThat(cache).hasSize(bound);
+
+        // The next unseen type finds the cache full: it is cleared, then this one type is cached.
+        local.score(DynamicMessage.getDefaultInstance(syntheticType(bound)));
+        assertThat(cache).hasSize(1);
+
+        assertThat(local.score(decent().build()).composite()).isEqualTo(composite);
+        assertThat(cache).hasSize(2);
+    }
+
+    private static Map<?, ?> cacheOf(QualityScorer scorer) throws Exception {
+        Field field = QualityScorer.class.getDeclaredField("byType");
+        field.setAccessible(true);
+        return (Map<?, ?>) field.get(scorer);
+    }
+
+    private static int maxCachedTypes() throws Exception {
+        Field field = QualityScorer.class.getDeclaredField("MAX_CACHED_TYPES");
+        field.setAccessible(true);
+        return (int) field.getInt(null);
+    }
+
+    /** A distinct, unannotated message type — enough to occupy one cache slot. */
+    private static Descriptor syntheticType(int index) throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("quality/cache/synthetic" + index + ".proto")
+                .setSyntax("proto3")
+                .setPackage("quality.cache")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Synthetic" + index)
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("value")
+                                .setNumber(1)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0])
+                .findMessageTypeByName("Synthetic" + index);
     }
 
     /** The annotation must survive a descriptor linked without the quality extension. */

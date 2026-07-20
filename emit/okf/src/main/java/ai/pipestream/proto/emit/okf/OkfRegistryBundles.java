@@ -58,7 +58,7 @@ public final class OkfRegistryBundles {
             FileDescriptor root = files.stream()
                     .filter(file -> file.getName().equals(resolved.rootPath()))
                     .findFirst().orElse(null);
-            subjectDocs.put("subjects/" + sanitize(subject) + ".md",
+            subjectDocs.put(docPath(subjectDocs, subject),
                     subjectConcept(subject, store, latest, root, options));
         }
         return new OkfRenderer().render(OkfRenderer.Model.of(allFiles), options, subjectDocs);
@@ -142,11 +142,32 @@ public final class OkfRegistryBundles {
         }
         FileDescriptor[] dependencies = new FileDescriptor[proto.getDependencyCount()];
         for (int i = 0; i < proto.getDependencyCount(); i++) {
-            dependencies[i] = build(byName.get(proto.getDependency(i)), byName, built);
+            String name = proto.getDependency(i);
+            FileDescriptorProto dependency = byName.get(name);
+            if (dependency == null) {
+                throw new IllegalStateException("'" + proto.getName()
+                        + "' depends on '" + name + "', which the compiled set does not contain");
+            }
+            dependencies[i] = build(dependency, byName, built);
         }
         FileDescriptor file = FileDescriptor.buildFrom(proto, dependencies);
         built.put(proto.getName(), file);
         return file;
+    }
+
+    /**
+     * The bundle path for {@code subject}, suffixed if an earlier subject already claimed it.
+     * Sanitisation is many-to-one — {@code orders/value} and {@code orders:value} both reduce
+     * to {@code orders_value} — and without the suffix the second subject's document would
+     * replace the first one's, dropping it from the bundle.
+     */
+    private static String docPath(Map<String, String> taken, String subject) {
+        String base = "subjects/" + sanitize(subject);
+        String path = base + ".md";
+        for (int i = 2; taken.containsKey(path); i++) {
+            path = base + "-" + i + ".md";
+        }
+        return path;
     }
 
     private static String sanitize(String subject) {

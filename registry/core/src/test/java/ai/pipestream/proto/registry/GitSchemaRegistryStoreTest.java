@@ -18,6 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Runs the store contract against {@link GitSchemaRegistryStore} plus the git-specific
@@ -27,6 +28,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** A third revision of {@link #CORE_PROTO}, distinct in content from v1 and v2. */
+    private static final String CORE_PROTO_V3 = """
+            syntax = "proto3";
+            package common.v1;
+            message Core {
+              string id = 1;
+              string name = 2;
+              string label = 3;
+            }
+            """;
 
     @TempDir
     Path tempDir;
@@ -136,6 +148,35 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         }
     }
 
+    /**
+     * The counter in {@code registry.json} is advisory: an external commit can add versions
+     * without touching it. The index recomputes the floor from the ids actually present, so a
+     * stale counter cannot hand out an id that is already in use.
+     */
+    @Test
+    void aStaleCounterAfterAnExternalCommitDoesNotReissueAGlobalId() throws Exception {
+        Path dir = tempDir.resolve("stale-counter");
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            StoredSchema v1 = store.register(CORE_SUBJECT, CORE_PROTO, List.of());
+            assertThat(v1.globalId()).isEqualTo(1);
+
+            // v2 lands with globalId 5 while registry.json still claims the next id is 2.
+            commitVersionExternally(dir, CORE_SUBJECT, 2, CORE_PROTO_V2, 5, 2);
+            assertThat(nextGlobalIdOnDisk(dir)).isEqualTo(2);
+
+            StoredSchema v3 = store.register(CORE_SUBJECT, CORE_PROTO_V3, List.of());
+
+            assertThat(v3.version()).isEqualTo(3);
+            assertThat(v3.globalId()).isEqualTo(6);
+            // The externally committed schema is still reachable under its own id.
+            assertThat(store.byGlobalId(5))
+                    .map(StoredSchema::schemaText)
+                    .contains(CORE_PROTO_V2);
+            assertThat(store.byGlobalId(6)).contains(v3);
+            assertThat(nextGlobalIdOnDisk(dir)).isEqualTo(7);
+        }
+    }
+
     @Test
     void twoStoresOnOneRepositoryRegisterConcurrentlyWithoutCorruption() throws Exception {
         Path dir = tempDir.resolve("contention");
@@ -159,6 +200,91 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         assertThat(commitMessages(dir)).hasSize(2 * perStore);
     }
 
+    // ---------------------------------------------------------------- chains
+
+    @Test
+    void aChainRoundTripsAndEachPutIsOneCommit() throws Exception {
+        Path dir = tempDir.resolve("chain-roundtrip");
+        String chainJson = """
+                {"steps":[{"call":"enrich"},{"call":"index"}]}""";
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            store.putChain("ingest.v1", chainJson);
+
+            assertThat(store.chain("ingest.v1")).contains(chainJson);
+        }
+        assertThat(dir.resolve("chains").resolve("ingest.v1.json")).content().isEqualTo(chainJson);
+        assertThat(commitMessages(dir)).containsExactly("Put chain ingest.v1");
+    }
+
+    @Test
+    void puttingAnExistingNameReplacesTheDocumentAndKeepsTheOldOneInHistory() throws Exception {
+        Path dir = tempDir.resolve("chain-overwrite");
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            store.putChain("ingest", "{\"v\":1}");
+            store.putChain("ingest", "{\"v\":2}");
+
+            assertThat(store.chain("ingest")).contains("{\"v\":2}");
+            assertThat(store.chains()).containsExactly("ingest");
+        }
+        // Overwriting is a second commit, not an edit in place: the v1 document stays in the log.
+        assertThat(commitMessages(dir)).containsExactly("Put chain ingest", "Put chain ingest");
+    }
+
+    @Test
+    void anUnknownChainNameReadsAsEmpty() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-missing"))) {
+            assertThat(store.chains()).isEmpty();
+            assertThat(store.chain("never-stored")).isEmpty();
+
+            store.putChain("stored", "{}");
+            assertThat(store.chain("never-stored")).isEmpty();
+        }
+    }
+
+    @Test
+    void chainsAreListedSortedRegardlessOfWriteOrder() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-order"))) {
+            store.putChain("zeta", "{}");
+            store.putChain("alpha", "{}");
+            store.putChain("Beta_2", "{}");
+            store.putChain("mid.chain-1", "{}");
+
+            assertThat(store.chains())
+                    .containsExactly("Beta_2", "alpha", "mid.chain-1", "zeta");
+        }
+    }
+
+    @Test
+    void chainNamesOutsideTheAllowedCharacterSetAreRejected() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-names"))) {
+            for (String rejected : List.of("", "   ", "has space", "a/b", "a\\b", "a:b", "a$b",
+                    "chains/../escape", "naïve")) {
+                assertThatThrownBy(() -> store.putChain(rejected, "{}"))
+                        .as("putChain(%s)", rejected)
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage("Chain names use [A-Za-z0-9._-]; got '" + rejected + "'");
+                assertThatThrownBy(() -> store.chain(rejected))
+                        .as("chain(%s)", rejected)
+                        .isInstanceOf(IllegalArgumentException.class);
+            }
+            assertThatThrownBy(() -> store.putChain(null, "{}"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Chain names use [A-Za-z0-9._-]; got 'null'");
+
+            // Rejected names are refused before anything is written.
+            assertThat(store.chains()).isEmpty();
+        }
+    }
+
+    @Test
+    void putChainRejectsANullDocument() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-null-doc"))) {
+            assertThatThrownBy(() -> store.putChain("ingest", null))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("chainJson");
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static List<StoredSchema> registerAll(SchemaRegistryStore store, String prefix,
@@ -174,6 +300,13 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
     /** Hand-crafts a new version + counter update and commits it with plain JGit. */
     private static void commitVersionExternally(Path repoDir, String subject, int version,
                                                 String schemaText, int globalId) throws Exception {
+        commitVersionExternally(repoDir, subject, version, schemaText, globalId, globalId + 1);
+    }
+
+    /** As above, but writes an explicit {@code nextGlobalId} so it can be left stale. */
+    private static void commitVersionExternally(Path repoDir, String subject, int version,
+                                                String schemaText, int globalId,
+                                                int nextGlobalId) throws Exception {
         String encoded = URLEncoder.encode(subject, StandardCharsets.UTF_8);
         Path subjectDir = repoDir.resolve("subjects").resolve(encoded);
         Files.writeString(subjectDir.resolve("v" + version + ".proto"), schemaText);
@@ -184,7 +317,7 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         Files.writeString(subjectDir.resolve("v" + version + ".json"), meta.toString());
         Files.writeString(repoDir.resolve("registry.json"), JSON.createObjectNode()
                 .put("compatibility", "BACKWARD")
-                .put("nextGlobalId", globalId + 1)
+                .put("nextGlobalId", nextGlobalId)
                 .toString());
         try (Git git = Git.open(repoDir.toFile())) {
             git.add()
@@ -194,6 +327,11 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
                     .call();
             git.commit().setMessage("External register " + subject + " v" + version).call();
         }
+    }
+
+    private static int nextGlobalIdOnDisk(Path repoDir) throws Exception {
+        return JSON.readTree(Files.readString(repoDir.resolve("registry.json")))
+                .path("nextGlobalId").asInt();
     }
 
     private static List<String> commitMessages(Path repoDir) throws Exception {

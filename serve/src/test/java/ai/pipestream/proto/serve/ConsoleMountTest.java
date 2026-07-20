@@ -132,4 +132,15 @@ class ConsoleMountTest {
     void nestedBridgePathsAreRejected() throws Exception {
         assertThat(get("/api/serve/api/serve/grpc-json/x").statusCode()).isEqualTo(400);
     }
+
+    /**
+     * The JDK HTTP server matches a context by plain string prefix, so /api/servexyz is
+     * dispatched to the /api/serve bridge. Without a segment-boundary check the remainder
+     * has no leading slash and the forwarded URI is malformed.
+     */
+    @Test
+    void pathsThatOnlyPrefixMatchTheBridgeAreNotForwarded() throws Exception {
+        assertThat(get("/api/servexyz").statusCode()).isEqualTo(404);
+        assertThat(get("/api/protomoltxyz/subjects").statusCode()).isEqualTo(404);
+    }
 }

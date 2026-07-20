@@ -11,13 +11,10 @@ import java.util.*;
  */
 public class MappingHelper {
 
-    private final TypeConverter typeConverter;
-
     /**
      * Creates a mapping helper.
      */
     public MappingHelper() {
-        this.typeConverter = new TypeConverter();
     }
 
     /**
@@ -75,8 +72,8 @@ public class MappingHelper {
                 return ValidationResult.error("Invalid target path '" + targetPath + "': " + targetValidation.error);
             }
 
-            // Validate source path (if not a literal)
-            if (!isLiteral(sourcePath)) {
+            // Validate source path (if not a literal). Clear rules ("-target") have no source.
+            if (sourcePath != null && !isLiteral(sourcePath)) {
                 PathValidation sourceValidation = validatePath(sourcePath, sourceDescriptor);
                 if (!sourceValidation.isValid) {
                     return ValidationResult.error("Invalid source path '" + sourcePath + "': " + sourceValidation.error);
@@ -254,7 +251,6 @@ public class MappingHelper {
                         maxDepth,
                         new HashSet<>(visited)
                     );
-                    childNode.repeated = field.isRepeated();
                     node.children.add(childNode);
                 } else {
                     node.children.add(new SchemaNode(

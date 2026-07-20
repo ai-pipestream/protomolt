@@ -53,16 +53,24 @@ version listing, version envelopes with references, registration,
 content lookup, `/schemas/ids/{id}`, and global and per-subject config —
 including the protocol's quirks (`compatibility` in PUT bodies,
 `compatibilityLevel` in GET responses), verified against Confluent's error
-codes. Two native endpoints go beyond the protocol:
+codes. Three groups of native routes go beyond the protocol, all under the
+configured native path prefix (`/protomolt` by default):
 
-- `GET/PUT /protomolt/chains/{name}` and `GET /protomolt/chains` — named
-  chain definitions, versioned by Git commits, with `check-chain` as the
-  write gate when the action catalog is mounted
 - `GET /protomolt/subjects/{subject}/descriptor-set` — the subject's latest
   version and its transitive references compiled to a binary
   `FileDescriptorSet`. This is the gRPC path: build-time consumers, runtime
   loaders, and reflection all speak descriptor sets, in any language.
-- `GET /health`
+- `GET /protomolt/chains` and `GET/PUT /protomolt/chains/{name}` — named
+  chain definitions, versioned by Git commits, with `check-chain` as the
+  write gate when the action catalog is mounted.
+- `GET /protomolt/actions` and `POST /protomolt/actions/{name}` — the
+  [action catalog](actions.md) mounted on the registry: the list route
+  returns each action with its input schema, the execute route runs one
+  from a JSON body. Both routes exist only when a catalog is passed to the
+  server; without one they 404 like any unknown path.
+
+`GET /health` sits outside the prefix and is the only route an API token
+does not guard.
 
 ```java
 var server = new SchemaRegistryServer(config, store);

@@ -84,6 +84,8 @@ project(':protomolt-acp').projectDir = file('acp')
 include 'protomolt-connector'
 project(':protomolt-connector').projectDir = file('connector')
 
+include 'protomolt-kafka-wire'
+project(':protomolt-kafka-wire').projectDir = file('kafka/wire')
 include 'protomolt-connect'
 project(':protomolt-connect').projectDir = file('kafka/connect')
 include 'protomolt-connect-iceberg'

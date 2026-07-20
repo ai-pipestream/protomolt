@@ -113,15 +113,21 @@ public record LuceneFieldSpecs(String messageFullName, List<FieldSpec> fields) {
                     : VectorEncoding.FLOAT32;
         }
 
-        /** The docValues shape {@link ProtoLuceneMapper} emits for this field's flags. */
+        /**
+         * The docValues shape {@link ProtoLuceneMapper} emits for this field's flags.
+         *
+         * <p>Lucene allows one doc-values type per field, so when a field is both sortable and
+         * facetable the multi-valued form wins: it serves faceting directly and sorting via
+         * {@code SortedSetSortField} / {@code SortedNumericSortField}.
+         */
         public DocValuesType docValuesType() {
             if (!sortable && !facetable) {
                 return DocValuesType.NONE;
             }
             return switch (kind) {
                 case INT32, INT64, FLOAT, DOUBLE, DATE ->
-                        sortable ? DocValuesType.NUMERIC : DocValuesType.SORTED_NUMERIC;
-                default -> sortable ? DocValuesType.SORTED : DocValuesType.SORTED_SET;
+                        facetable ? DocValuesType.SORTED_NUMERIC : DocValuesType.NUMERIC;
+                default -> facetable ? DocValuesType.SORTED_SET : DocValuesType.SORTED;
             };
         }
     }

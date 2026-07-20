@@ -1,5 +1,6 @@
 package ai.pipestream.proto.kafka.serde;
 
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -62,6 +63,13 @@ class SerdeFakeRegistryTest {
     private static HttpServer server;
     private static String registryUrl;
 
+    /** A registered schema that resolves but declares none of the local types. */
+    private static final String UNRELATED_PROTO = """
+            syntax = "proto3";
+            package serde.other.v1;
+            message Shipment { string id = 1; }
+            """;
+
     private static final AtomicInteger schemaId66Requests = new AtomicInteger();
     private static final AtomicInteger eventsSubjectRequests = new AtomicInteger();
 
@@ -95,6 +103,9 @@ class SerdeFakeRegistryTest {
                 }
                 case "/subjects/orders-value/versions/latest" ->
                         respond(exchange, 200, "{\"id\": 42}");
+                case "/schemas/ids/99" -> respond(exchange, 200, schemaJson(UNRELATED_PROTO));
+                case "/subjects/parcels-value/versions/latest" ->
+                        respond(exchange, 200, "{\"id\": 99}");
                 default -> respond(exchange, 404,
                         "{\"error_code\": 40401, \"message\": \"not found\"}");
             }
@@ -112,6 +123,7 @@ class SerdeFakeRegistryTest {
     void reset() {
         schemaId66Requests.set(0);
         eventsSubjectRequests.set(0);
+        RecordingMetricsListener.reset();
     }
 
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status,
@@ -236,6 +248,25 @@ class SerdeFakeRegistryTest {
             byte[] framed = serializer.serialize("orders", message("A-5", 9));
             assertThat(ConfluentWireFormat.schemaId(framed)).isEqualTo(42);
             assertThat(ConfluentWireFormat.messageIndex(framed)).containsExactly(0);
+        }
+    }
+
+    /**
+     * A schema that resolves but does not declare the configured type is a failed lookup, not a
+     * property of the record: counting it per record would report an outage as traffic volume.
+     */
+    @Test
+    void aSchemaWithoutTheConfiguredTypeCountsOneFallbackPerLookup() {
+        try (var serializer = new ProtoMoltProtobufSerializer()) {
+            serializer.configure(config(Map.of(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 7)), false);
+
+            for (int i = 0; i < 50; i++) {
+                assertThat(serializer.serialize("parcels", message("A-6", 1))).isNotNull();
+            }
+
+            assertThat(RecordingMetricsListener.EVENTS.stream().filter("fallback"::equals))
+                    .as("one failed lookup inside the default backoff window")
+                    .hasSize(1);
         }
     }
 

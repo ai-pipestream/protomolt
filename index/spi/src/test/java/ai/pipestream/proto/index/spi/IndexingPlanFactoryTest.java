@@ -80,6 +80,36 @@ class IndexingPlanFactoryTest {
         assertThat(leaf.fieldName()).isEqualTo("user_address_display_name");
     }
 
+    /**
+     * A name override renames the leaf it sits on; on an expanded message it has to rename the
+     * prefix instead, or the children silently keep the un-overridden name.
+     */
+    @Test
+    void nameOverrideOnAnExpandedMessagePrefixesItsChildren() throws Exception {
+        Descriptor descriptor = nestedSampleDescriptor();
+        IndexingHintSource hints = field ->
+                field.getJavaType() == com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE
+                        ? java.util.Optional.of(
+                                ResolvedFieldHint.builder(IndexFieldKind.TEXT).name("addr").build())
+                        : java.util.Optional.empty();
+        IndexingPlan plan = new IndexingPlanFactory(hints, true, 8).create(descriptor);
+
+        assertThat(plan.find("user_address.display_name")).get()
+                .extracting(IndexingPlan.IndexedField::fieldName)
+                .isEqualTo("addr_display_name");
+    }
+
+    @Test
+    void repeatedProtoFieldsAreMarkedRepeated() throws Exception {
+        Descriptor descriptor = inferenceDescriptor();
+        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(descriptor);
+
+        assertThat(plan.find("embedding")).get()
+                .extracting(IndexingPlan.IndexedField::repeated).isEqualTo(true);
+        assertThat(plan.find("digest")).get()
+                .extracting(IndexingPlan.IndexedField::repeated).isEqualTo(false);
+    }
+
     /** Hints message fields with an expandable kind so nested fields become dotted paths. */
     private static IndexingHintSource expandingHints() {
         return field -> field.getJavaType() == com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE
@@ -259,6 +289,141 @@ class IndexingPlanFactoryTest {
                 .isInstanceOf(IndexingPlanException.class)
                 .hasMessageContaining("null_value")
                 .hasMessageContaining("page_count");
+    }
+
+    /**
+     * The visiting set is the only thing standing between a self-referential message and a
+     * StackOverflowError; without it {@code create} never returns.
+     */
+    @Test
+    void selfReferentialMessageStopsAtTheCycleInsteadOfRecursing() throws Exception {
+        Descriptor descriptor = selfReferentialDescriptor();
+        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 8).create(descriptor);
+
+        // The back-reference expands into a message already on the stack, so it contributes
+        // nothing: the plan is the scalar fields reachable before the cycle closes.
+        assertThat(plan.fields()).extracting(IndexingPlan.IndexedField::path)
+                .containsExactly("id");
+    }
+
+    /**
+     * A sibling cycle (A -> B -> A) is only caught if the guard tracks the whole path, not just
+     * the immediately preceding message.
+     */
+    @Test
+    void mutuallyRecursiveMessagesStopAtTheCycle() throws Exception {
+        Descriptor descriptor = mutuallyRecursiveDescriptor();
+        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 8).create(descriptor);
+
+        assertThat(plan.fields()).extracting(IndexingPlan.IndexedField::path)
+                .containsExactly("a_label", "b.b_label");
+    }
+
+    @Test
+    void nestingBeyondMaxDepthStopsExpandingAndKeepsTheMessageAsALeaf() throws Exception {
+        Descriptor descriptor = chainDescriptor(5);
+        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 2).create(descriptor);
+
+        // Three expansions (depths 0, 1, 2) then the cap: the fourth message stays a leaf
+        // entry rather than expanding into its own children.
+        IndexingPlan.IndexedField capped = plan.find("next.next.next").orElseThrow();
+        assertThat(capped.fieldName()).isEqualTo("next_next_next");
+        assertThat(capped.type()).isEqualTo(IndexFieldKind.TEXT);
+        assertThat(plan.find("next.next.next.next")).isEmpty();
+        assertThat(plan.fields()).hasSize(1);
+    }
+
+    @Test
+    void maxDepthOfZeroKeepsEveryTopLevelMessageAsALeaf() throws Exception {
+        Descriptor descriptor = chainDescriptor(5);
+        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 0).create(descriptor);
+
+        assertThat(plan.fields()).extracting(IndexingPlan.IndexedField::path)
+                .containsExactly("next");
+    }
+
+    private static Descriptor selfReferentialDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("self_referential.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Node")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("id")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("next")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.Node")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Node");
+    }
+
+    private static Descriptor mutuallyRecursiveDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("mutually_recursive.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("A")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("a_label")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("b")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.B")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("B")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("b_label")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("a")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.A")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("A");
+    }
+
+    /** A straight chain {@code L0.next -> L1.next -> ... -> L(levels).leaf}, rooted at L0. */
+    private static Descriptor chainDescriptor(int levels) throws Exception {
+        FileDescriptorProto.Builder file = FileDescriptorProto.newBuilder()
+                .setName("chain.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3");
+        for (int level = 0; level <= levels; level++) {
+            DescriptorProto.Builder message = DescriptorProto.newBuilder().setName("L" + level);
+            if (level < levels) {
+                message.addField(FieldDescriptorProto.newBuilder()
+                        .setName("next")
+                        .setNumber(1)
+                        .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".ai.pipestream.test.L" + (level + 1))
+                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL));
+            } else {
+                message.addField(FieldDescriptorProto.newBuilder()
+                        .setName("leaf")
+                        .setNumber(1)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL));
+            }
+            file.addMessageType(message);
+        }
+        return FileDescriptor.buildFrom(file.build(), new FileDescriptor[0]).findMessageTypeByName("L0");
     }
 
     private static Descriptor inferenceDescriptor() throws Exception {

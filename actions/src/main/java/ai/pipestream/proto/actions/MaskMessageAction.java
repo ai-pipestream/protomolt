@@ -93,6 +93,12 @@ final class MaskMessageAction implements ProtoAction {
                 throw Inputs.invalidInput("'key' must be base64", "/key");
             }
         }
+        if ((strategy == SensitivityMasker.Strategy.ENCRYPT
+                || strategy == SensitivityMasker.Strategy.DECRYPT)
+                && (key == null || (key.length != 16 && key.length != 24 && key.length != 32))) {
+            throw Inputs.invalidInput("'key' must be an AES key of 16, 24, or 32 bytes for "
+                    + strategy.name().toLowerCase(java.util.Locale.ROOT), "/key");
+        }
         DynamicMessage message;
         try {
             message = context.transcoder().fromJsonDynamic(messageNode.toString(), descriptor);
@@ -111,7 +117,9 @@ final class MaskMessageAction implements ProtoAction {
         try {
             result = SensitivityMasker.mask(message, classes, strategy, key, payloads);
         } catch (IllegalArgumentException e) {
-            throw Inputs.invalidInput(e.getMessage(), "/key");
+            // The key is validated above, so what reaches here is about the payload: a value
+            // that is not one of our envelopes, or one this key cannot open.
+            throw Inputs.invalidInput(e.getMessage(), "/message");
         }
         ObjectNode output = context.objectMapper().createObjectNode();
         output.set("message", ActionJson.messageToJson(result.message(), context));

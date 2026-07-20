@@ -163,4 +163,22 @@ class SchemaInferrerTest {
         assertThatThrownBy(() -> new SchemaInferrer().infer("x.Y", List.of(struct("{}"))))
                 .hasMessageContaining("no keys");
     }
+
+    /**
+     * A keyless object one level down used to abort inference of the whole document; it
+     * carries no more signal than an empty array, so it degrades to Value like one.
+     */
+    @Test
+    void nestedEmptyObjectsFallBackToValue() throws Exception {
+        var shape = new SchemaInferrer().infer("inferred.v1.Event", List.of(struct("""
+                {"id": "e-1", "extras": {}, "address": {"city": "Springfield"}}
+                """)));
+        Descriptor type = shape.type();
+        assertThat(type.findFieldByName("extras").getMessageType().getFullName())
+                .isEqualTo("google.protobuf.Value");
+        // The rest of the document still infers normally.
+        assertThat(type.findFieldByName("id").getType()).isEqualTo(FieldDescriptor.Type.STRING);
+        assertThat(type.findFieldByName("address").getMessageType().getName())
+                .isEqualTo("Address");
+    }
 }

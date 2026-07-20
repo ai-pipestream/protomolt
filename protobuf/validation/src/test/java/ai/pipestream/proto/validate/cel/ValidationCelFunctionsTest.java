@@ -5,6 +5,7 @@ import ai.pipestream.proto.cel.CelEvaluator;
 import dev.cel.common.types.SimpleType;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +56,24 @@ class ValidationCelFunctionsTest {
         assertThat(eval("d.isInf()", Map.of("d", Double.POSITIVE_INFINITY))).isTrue();
         assertThat(eval("d.isInf(1)", Map.of("d", Double.NEGATIVE_INFINITY))).isFalse();
         assertThat(eval("d.isInf(-1)", Map.of("d", Double.NEGATIVE_INFINITY))).isTrue();
+    }
+
+    @Test
+    void formatSubstitutesDirectivesInOrder() {
+        assertThat(ValidationCelFunctions.formatString("%s = %d", List.of("count", 3L)))
+                .isEqualTo("count = 3");
+        assertThat(ValidationCelFunctions.formatString("100%% of %s", List.of("it")))
+                .isEqualTo("100% of it");
+    }
+
+    /**
+     * An unknown verb is passed through literally. It must not consume an argument, or every
+     * directive after it renders the wrong element of the list.
+     */
+    @Test
+    void unknownFormatVerbDoesNotConsumeAnArgument() {
+        assertThat(ValidationCelFunctions.formatString("%q %s", List.of("kept")))
+                .isEqualTo("%q kept");
     }
 
     @Test

@@ -26,6 +26,7 @@ import com.google.protobuf.WrappersProto;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -91,11 +92,60 @@ class ProtoOpenApiGeneratorTest {
             assertThat(item.keySet())
                     .as("spec verbs for %s must be what the gateway enforces", method.routeKey())
                     .containsExactlyInAnyOrderElementsOf(method.allowedHttpVerbs().stream()
-                            .map(String::toLowerCase).toList());
+                            .map(verb -> verb.toLowerCase(Locale.ROOT)).toList());
         }
         @SuppressWarnings("unchecked")
         Map<String, Object> plain = (Map<String, Object>) paths.get("/grpc-json/Plain/Go");
         assertThat(plain.keySet()).containsExactly("post");
+    }
+
+    /**
+     * operationId must be unique across the whole document — client generators key their
+     * method names off it, and a collision silently drops one of the operations.
+     */
+    @Test
+    void operationIdsAreUniqueWhenAMethodDeclaresSeveralVerbs() {
+        ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
+        registry.register(ProtoRestMethod.builder("Plain", "Go", req -> req)
+                .requestType(Struct.class)
+                .build());
+        registry.register(ProtoRestMethod.builder("Declared", "Fetch", req -> req)
+                .requestType(Struct.class)
+                .httpMethods("GET", "POST")
+                .build());
+
+        Map<String, Object> doc = new ProtoOpenApiGenerator().generate(registry);
+
+        assertThat(operationIdsOf(doc))
+                .doesNotHaveDuplicates()
+                .containsExactlyInAnyOrder("Plain_Go", "Declared_Fetch_get", "Declared_Fetch_post");
+    }
+
+    /**
+     * Path-item verb keys are protocol tokens, not display text: a locale-sensitive
+     * lowercase turns a declared verb such as LINK into "lınk" under a Turkish default
+     * locale, which no OpenAPI consumer recognizes.
+     */
+    @Test
+    void verbKeysAreLowercasedIndependentlyOfTheDefaultLocale() {
+        Locale original = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr"));
+        try {
+            ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
+            registry.register(ProtoRestMethod.builder("Linker", "Bind", req -> req)
+                    .requestType(Struct.class)
+                    .httpMethods("LINK")
+                    .build());
+
+            Map<String, Object> doc = new ProtoOpenApiGenerator().generate(registry);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> paths = (Map<String, Object>) doc.get("paths");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> item = (Map<String, Object>) paths.get("/grpc-json/Linker/Bind");
+            assertThat(item.keySet()).containsExactly("link");
+        } finally {
+            Locale.setDefault(original);
+        }
     }
 
     @Test
@@ -248,6 +298,16 @@ class ProtoOpenApiGeneratorTest {
                 .containsExactly("COLOR_UNSPECIFIED", "RED", "BLUE");
         // JsonFormat prints unrecognized enum values as numbers and accepts numbers
         assertThat(anyOf.get(1)).containsEntry("type", "integer");
+    }
+
+    /** Every operationId in the document, in path/verb order. */
+    @SuppressWarnings("unchecked")
+    private static List<String> operationIdsOf(Map<String, Object> doc) {
+        List<String> ids = new java.util.ArrayList<>();
+        ((Map<String, Object>) doc.get("paths")).values().forEach(item ->
+                ((Map<String, Object>) item).values().forEach(operation ->
+                        ids.add((String) ((Map<String, Object>) operation).get("operationId"))));
+        return ids;
     }
 
     @SuppressWarnings("unchecked")

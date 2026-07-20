@@ -9,7 +9,12 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.DynamicMessage;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ForwardingClientCall;
 import io.grpc.ManagedChannel;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerServiceDefinition;
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -22,6 +27,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -45,6 +51,7 @@ class StreamJoinerTest {
             }
             service Profiles { rpc Watch(Subscribe) returns (stream Profile); }
             service Orders { rpc Watch(Subscribe) returns (stream Order); }
+            service Quiet { rpc Watch(Subscribe) returns (stream Click); }
             """;
 
     private static FileDescriptor file;
@@ -60,8 +67,10 @@ class StreamJoinerTest {
 
         ServiceDescriptor clicks = file.findServiceByName("Clicks");
         ServiceDescriptor profiles = file.findServiceByName("Profiles");
+        ServiceDescriptor quiet = file.findServiceByName("Quiet");
         var clicksWatch = DynamicGrpcCalls.methodDescriptor(clicks.findMethodByName("Watch"));
         var profilesWatch = DynamicGrpcCalls.methodDescriptor(profiles.findMethodByName("Watch"));
+        var quietWatch = DynamicGrpcCalls.methodDescriptor(quiet.findMethodByName("Watch"));
 
         Descriptor click = file.findMessageTypeByName("Click");
         Descriptor profile = file.findMessageTypeByName("Profile");
@@ -101,6 +110,15 @@ class StreamJoinerTest {
                             }
                             out.onCompleted();
                         }))
+                        .build())
+                .addService(ServerServiceDefinition
+                        .builder(io.grpc.ServiceDescriptor.newBuilder(quiet.getFullName())
+                                .addMethod(quietWatch).build())
+                        .addMethod(quietWatch, ServerCalls.asyncServerStreamingCall(
+                                (request, out) -> {
+                                    // Never sends, never completes: the stream stays open
+                                    // and quiet for as long as the client holds it.
+                                }))
                         .build())
                 .build()
                 .start();
@@ -223,6 +241,16 @@ class StreamJoinerTest {
                         subscribe(1, false), "tags"),
                 10, enriched, List.of(), List.of()))
                 .hasMessageContaining("is repeated");
+        // A path of nothing but separators names no field: it must be reported, not
+        // dereferenced as if the walk had landed somewhere.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new StreamJoiner(
+                StreamJoiner.Mode.KEYED, clicksByUser,
+                new StreamJoiner.Side("profile", channel,
+                        ChainDefinition.resolveMethod(files, "sj.test.Profiles/Watch"),
+                        subscribe(1, false), "."),
+                10, enriched, List.of(), List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("names no fields");
 
         // Both methods must be server-streaming.
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> new StreamJoiner(
@@ -232,6 +260,84 @@ class StreamJoinerTest {
                         subscribe(1, false), null),
                 clicksByUser, 10, enriched, List.of(), List.of()))
                 .hasMessageContaining("not server-streaming");
+    }
+
+    /**
+     * Nobody can call close() on a joiner whose constructor threw, so a right side that
+     * never opens must hang up the left one rather than leaving the call running.
+     */
+    @Test
+    void aFailingRightStreamClosesTheLeftOne() {
+        List<FileDescriptor> files = List.of(file);
+        AtomicBoolean leftCancelled = new AtomicBoolean();
+        Channel recording = new Channel() {
+            @Override
+            public <I, O> ClientCall<I, O> newCall(MethodDescriptor<I, O> method,
+                                                   CallOptions options) {
+                return new ForwardingClientCall.SimpleForwardingClientCall<>(
+                        channel.newCall(method, options)) {
+                    @Override
+                    public void cancel(String message, Throwable cause) {
+                        leftCancelled.set(true);
+                        super.cancel(message, cause);
+                    }
+                };
+            }
+
+            @Override
+            public String authority() {
+                return channel.authority();
+            }
+        };
+        Channel refusing = new Channel() {
+            @Override
+            public <I, O> ClientCall<I, O> newCall(MethodDescriptor<I, O> method,
+                                                   CallOptions options) {
+                throw new IllegalStateException("no channel for the right side");
+            }
+
+            @Override
+            public String authority() {
+                return "refusing";
+            }
+        };
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new StreamJoiner(
+                StreamJoiner.Mode.ZIP,
+                new StreamJoiner.Side("click", recording,
+                        ChainDefinition.resolveMethod(files, "sj.test.Quiet/Watch"),
+                        subscribe(0, false), null),
+                new StreamJoiner.Side("profile", refusing,
+                        ChainDefinition.resolveMethod(files, "sj.test.Profiles/Watch"),
+                        subscribe(0, false), null),
+                10, file.findMessageTypeByName("Enriched"), List.of(), List.of()))
+                .hasMessageContaining("no channel for the right side");
+        assertThat(leftCancelled).isTrue();
+    }
+
+    /**
+     * Both sides wait in turn inside one take(), so a quiet interval must not spend the
+     * caller's budget twice over.
+     */
+    @Test
+    void takeStaysInsideTheRequestedTimeout() throws Exception {
+        List<FileDescriptor> files = List.of(file);
+        joiner = new StreamJoiner(StreamJoiner.Mode.ZIP,
+                new StreamJoiner.Side("click", channel,
+                        ChainDefinition.resolveMethod(files, "sj.test.Quiet/Watch"),
+                        subscribe(0, false), null),
+                new StreamJoiner.Side("profile", channel,
+                        ChainDefinition.resolveMethod(files, "sj.test.Quiet/Watch"),
+                        subscribe(0, false), null),
+                10, file.findMessageTypeByName("Enriched"), List.of(), List.of());
+
+        long start = System.nanoTime();
+        for (int i = 0; i < 20; i++) {
+            assertThat(joiner.take(1, Duration.ofMillis(20))).isEmpty();
+        }
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+        // 20 x 20ms of budget; twice the budget per side would land near 800ms.
+        assertThat(elapsedMillis).isLessThan(600);
     }
 
     @Test

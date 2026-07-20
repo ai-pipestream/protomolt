@@ -67,6 +67,36 @@ class McpServerTest {
         assertThat(server.handle(notification)).isEmpty();
     }
 
+    /**
+     * A request object with no {@code method} was dropped without a reply, leaving the client
+     * waiting on an id that never comes back.
+     */
+    @Test
+    void anObjectWithoutAMethodIsAnInvalidRequest() {
+        ObjectNode message = mapper.createObjectNode();
+        message.put("jsonrpc", "2.0");
+        message.put("id", 11);
+
+        JsonNode response = respond(message);
+        assertThat(response.get("id").asInt()).isEqualTo(11);
+        assertThat(response.get("error").get("code").asInt()).isEqualTo(JsonRpc.INVALID_REQUEST);
+    }
+
+    @Test
+    void aClientResponseProducesNoResponse() {
+        ObjectNode message = mapper.createObjectNode();
+        message.put("jsonrpc", "2.0");
+        message.put("id", 12);
+        message.putObject("result");
+        assertThat(server.handle(message)).isEmpty();
+    }
+
+    @Test
+    void aNonObjectMessageIsAnInvalidRequest() {
+        JsonNode response = server.handle(mapper.createArrayNode()).orElseThrow();
+        assertThat(response.get("error").get("code").asInt()).isEqualTo(JsonRpc.INVALID_REQUEST);
+    }
+
     @Test
     void pingReturnsEmptyResult() {
         JsonNode response = respond(request(7, "ping", null));

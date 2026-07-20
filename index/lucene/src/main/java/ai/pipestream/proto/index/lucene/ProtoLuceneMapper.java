@@ -240,7 +240,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
 
         switch (kind) {
             case TEXT -> {
-                String stringValue = String.valueOf(value);
+                String stringValue = scalarText(value, path);
                 if (indexed) {
                     document.add(new TextField(name, stringValue, store));
                 } else if (stored) {
@@ -270,9 +270,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                 }
             }
             case KEYWORD, BOOLEAN -> {
-                String stringValue = value instanceof EnumValueDescriptor ev
-                        ? ev.getName()
-                        : String.valueOf(value);
+                String stringValue = scalarText(value, path);
                 if (indexed) {
                     document.add(new StringField(name, stringValue, store));
                 } else if (stored) {
@@ -433,7 +431,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                     Descriptor descriptor = entry.getDescriptorForType();
                     String key = String.valueOf(entry.getField(descriptor.findFieldByName("key")));
                     Object entryValue = entry.getField(descriptor.findFieldByName("value"));
-                    String text = flattenedText(entryValue, path);
+                    String text = scalarText(entryValue, path);
                     if (hint.indexed()) {
                         document.add(new StringField(name + "." + key, text, store));
                     } else if (hint.stored()) {
@@ -447,14 +445,19 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         }
     }
 
-    private static String flattenedText(Object entryValue, String path) throws MappingException {
-        if (entryValue instanceof Message message) {
+    /**
+     * Text form of a value being written to a string-shaped field. Message values render as
+     * proto3 canonical JSON rather than {@code toString()}, which would emit protobuf text
+     * format and diverge from every other message-valued path in this mapper.
+     */
+    private static String scalarText(Object value, String path) throws MappingException {
+        if (value instanceof Message message) {
             return messageJson(message, path);
         }
-        if (entryValue instanceof EnumValueDescriptor ev) {
+        if (value instanceof EnumValueDescriptor ev) {
             return ev.getName();
         }
-        return String.valueOf(entryValue);
+        return String.valueOf(value);
     }
 
     /** One {@code {key, value}} JSON object string per map entry. */
@@ -485,13 +488,24 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         return value == null ? "null" : value.getClass().getName();
     }
 
+    /**
+     * Adds a JSON-rendered value as text, honouring {@code stored} and {@code indexed}
+     * independently.
+     *
+     * <p>These are not alternatives. A field hinted both — the default for OBJECT and NESTED —
+     * must be searchable <em>and</em> retrievable, so it becomes one {@link TextField} carrying
+     * {@link org.apache.lucene.document.Field.Store#YES}; adding a separate {@link StoredField}
+     * as well would duplicate the value on retrieval. A field that is only stored is not
+     * searchable and needs no analysis, so it stays a plain {@link StoredField}.
+     */
     private static void addJsonText(
             Document document, String name, String json, boolean stored, boolean indexed) {
-        if (stored) {
+        if (indexed) {
+            document.add(new TextField(name, json, stored
+                    ? org.apache.lucene.document.Field.Store.YES
+                    : org.apache.lucene.document.Field.Store.NO));
+        } else if (stored) {
             document.add(new StoredField(name, json));
-        } else if (indexed) {
-            // never silently drop a hinted field: index the JSON text when storage is off
-            document.add(new TextField(name, json, org.apache.lucene.document.Field.Store.NO));
         }
     }
 
@@ -642,10 +656,18 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                         .equals(Timestamp.getDescriptor().getFullName());
     }
 
-    /** Epoch millis or seconds (per resolution) from a Timestamp-shaped value. */
+    /**
+     * Epoch millis or seconds (per resolution) from a Timestamp-shaped value.
+     *
+     * <p>Uses {@link Math#floorDiv} rather than {@code /}: Java division truncates toward zero,
+     * which for pre-epoch instants rounds <em>up</em>. A Timestamp of {@code seconds=-2,
+     * nanos=500000000} is -1500ms, and {@code -1500 / 1000} is -1 — an instant one second later
+     * than the value indexed at millisecond resolution, so the same field sorts and range-filters
+     * differently depending only on its resolution.
+     */
     private static long timestampValue(MessageOrBuilder value, DateResolution resolution) {
         long millis = timestampMillis(value);
-        return resolution == DateResolution.SECONDS ? millis / 1000L : millis;
+        return resolution == DateResolution.SECONDS ? Math.floorDiv(millis, 1000L) : millis;
     }
 
     /** Epoch millis from a value recognised by {@link #isTimestampMessage(Object)}. */

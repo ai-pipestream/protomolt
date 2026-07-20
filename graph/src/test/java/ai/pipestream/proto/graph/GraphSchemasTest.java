@@ -1,6 +1,10 @@
 package ai.pipestream.proto.graph;
 
+import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
+import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.InferringIndexingHintSource;
+import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -38,11 +42,31 @@ class GraphSchemasTest {
             message Meta { string author_name = 1; }
             """;
 
+    private static final String NESTED_PROTO = """
+            syntax = "proto3";
+            package gs.nested;
+            message Doc {
+              repeated Author authors = 1;
+            }
+            message Author { string full_name = 1; }
+            """;
+
     private static Descriptor compile() throws Exception {
+        return compile("gs/test/gs.proto", PROTO, "Doc");
+    }
+
+    private static Descriptor compile(String file, String source, String message)
+            throws Exception {
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("gs/test/gs.proto", PROTO, "test").build());
-        return compiled.descriptorFor("gs/test/gs.proto").orElseThrow()
-                .findMessageTypeByName("Doc");
+                .add(file, source, "test").build());
+        return compiled.descriptorFor(file).orElseThrow().findMessageTypeByName(message);
+    }
+
+    /** The rendered properties keyed by their Graph property name. */
+    private static Map<String, JsonNode> byName(GraphSchemas.Rendered rendered) {
+        Map<String, JsonNode> byName = new java.util.LinkedHashMap<>();
+        rendered.schema().path("properties").forEach(p -> byName.put(p.path("name").asText(), p));
+        return byName;
     }
 
     @Test
@@ -53,9 +77,7 @@ class GraphSchemasTest {
 
         assertThat(rendered.schema().path("baseType").asText())
                 .isEqualTo("microsoft.graph.externalItem");
-        Map<String, JsonNode> byName = new java.util.LinkedHashMap<>();
-        rendered.schema().path("properties").forEach(p ->
-                byName.put(p.path("name").asText(), p));
+        Map<String, JsonNode> byName = byName(rendered);
 
         // Repeated strings become a collection.
         assertThat(byName.get("tags").path("type").asText()).isEqualTo("stringCollection");
@@ -76,6 +98,42 @@ class GraphSchemasTest {
                 assertThat(reason).contains("flags").contains("no Graph property type"));
         assertThat(rendered.skipped()).anySatisfy(reason ->
                 assertThat(reason).contains("meta").contains("flat"));
+    }
+
+    /**
+     * Every other engine writes the hint's {@code name} override instead of the derived path;
+     * a Graph schema that kept the path would name properties the documents never carry.
+     */
+    @Test
+    void aHintNameOverrideNamesTheProperty() throws Exception {
+        Descriptor doc = compile();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("gs.test.Doc", "body", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
+                        .name("article_body").build());
+        var plan = new IndexingPlanFactory(catalog.orElse(new InferringIndexingHintSource()))
+                .create(doc);
+
+        Map<String, JsonNode> byName = byName(GraphSchemas.connectionSchema(doc, plan));
+        assertThat(byName).containsKey("articleBody").doesNotContainKey("body");
+    }
+
+    /**
+     * A scalar flattened out of a repeated parent arrives once per parent entry, so it needs a
+     * collection type; looking only at the leaf would declare a single string.
+     */
+    @Test
+    void aScalarUnderARepeatedParentGetsACollectionType() throws Exception {
+        Descriptor doc = compile("gs/nested/gs.proto", NESTED_PROTO, "Doc");
+        // Hinting the repeated message as TEXT flattens its leaves into the plan.
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put("gs.nested.Doc", "authors", ResolvedFieldHint.of(IndexFieldKind.TEXT));
+        var plan = new IndexingPlanFactory(catalog.orElse(new InferringIndexingHintSource()))
+                .create(doc);
+        assertThat(plan.fields()).extracting(f -> f.path()).contains("authors.full_name");
+
+        Map<String, JsonNode> byName = byName(GraphSchemas.connectionSchema(doc, plan));
+        assertThat(byName.get("authorsFullName").path("type").asText())
+                .isEqualTo("stringCollection");
     }
 
     @Test

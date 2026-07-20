@@ -7,6 +7,7 @@ import ai.pipestream.proto.chain.ChainRunner;
 import ai.pipestream.proto.chain.CheckChainAction;
 import ai.pipestream.proto.chain.RunChainAction;
 import ai.pipestream.proto.codegen.GenerateStubsAction;
+import ai.pipestream.proto.emit.okf.EmitOkfAction;
 import ai.pipestream.proto.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
@@ -14,9 +15,16 @@ import ai.pipestream.proto.grpc.invoke.ReflectAction;
 import java.nio.file.Path;
 
 /**
- * The full twenty-two-verb catalog: the built-in actions plus the gRPC verbs
- * ({@code reflect}, {@code grpc-invoke}), {@code generate-stubs}, and {@code gather-git} — the same surface the
- * MCP server exposes, and exactly the RPCs of {@code ProtoMoltService}.
+ * The full twenty-three-verb catalog: the sixteen built-in actions from
+ * {@link ActionCatalog#defaults(ActionContext)} plus the gRPC verbs ({@code reflect},
+ * {@code grpc-invoke}), {@code generate-stubs}, {@code gather-git}, the chain verbs
+ * ({@code run-chain}, {@code check-chain}) and {@code emit-okf} — exactly the RPCs of
+ * {@code ProtoMoltService}.
+ *
+ * <p>The MCP server exposes a subset: {@code protomolt-mcp} registers twenty, leaving out the
+ * three that need server-side wiring ({@code run-chain}, {@code check-chain},
+ * {@code emit-okf}), while the {@code /mcp} mount inside {@code protomolt-serve} carries all
+ * twenty-three.
  */
 public final class ProtoMoltCatalog {
 
@@ -49,6 +57,6 @@ public final class ProtoMoltCatalog {
                 .register(new GatherGitAction(gatherCacheRoot))
                 .register(new RunChainAction(new ChainRunner(), chains))
                 .register(new CheckChainAction())
-                .register(new ai.pipestream.proto.emit.okf.EmitOkfAction());
+                .register(new EmitOkfAction());
     }
 }

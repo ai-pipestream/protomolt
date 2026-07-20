@@ -3,8 +3,8 @@ description = 'Microsoft Graph integration: OAuth2 (device code + client credent
 dependencies {
     api project(':protomolt-index-spi')
     api libs.protobuf.java
-
-    implementation libs.jackson.databind
+    // GraphClient, GraphConnections and GraphSchemas return JsonNode/ObjectNode.
+    api libs.jackson.databind
 
     testImplementation project(':protomolt-proto-sources')
     // The read -> infer-schema demo: SharePoint list-item JSON becomes a typed proto.

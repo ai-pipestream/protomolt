@@ -13,6 +13,7 @@ import org.apache.parquet.hadoop.example.GroupReadSupport;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.io.InputFile;
 import org.apache.parquet.io.LocalInputFile;
+import org.apache.parquet.schema.MessageType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -53,6 +54,10 @@ class ParquetEmitterTest {
             message Location { double lat = 1; double lon = 2; }
             enum Unit { UNIT_UNSPECIFIED = 0; UNIT_CELSIUS = 1; }
             message Node { string name = 1; Node parent = 2; }
+            message Choice {
+              string label = 1;
+              oneof pick { string text = 2; int64 number = 3; }
+            }
             """;
 
     private static FileDescriptor file() throws Exception {
@@ -174,6 +179,46 @@ class ParquetEmitterTest {
             assertThat(second.getFieldRepetitionCount("note")).isZero();
 
             assertThat(reader.read()).isNull();
+        }
+    }
+
+    /**
+     * Oneof members track presence without carrying the {@code optional} keyword. Encoding them
+     * as required columns would write a proto3 default in place of "not set", leaving no way to
+     * tell which arm of the oneof a row actually carried.
+     */
+    @Test
+    void oneofMembersAreOptionalColumnsAndUnsetArmsAreNotWritten(@TempDir Path dir)
+            throws Exception {
+        Descriptor type = file().findMessageTypeByName("Choice");
+
+        MessageType schema = ProtoParquetSchemas.schema(type);
+        assertThat(schema.getType("label").getRepetition())
+                .isEqualTo(org.apache.parquet.schema.Type.Repetition.REQUIRED);
+        assertThat(schema.getType("text").getRepetition())
+                .isEqualTo(org.apache.parquet.schema.Type.Repetition.OPTIONAL);
+        assertThat(schema.getType("number").getRepetition())
+                .isEqualTo(org.apache.parquet.schema.Type.Repetition.OPTIONAL);
+
+        byte[] parquet = ParquetEmitter.toBytes(type, List.of(
+                DynamicMessage.newBuilder(type)
+                        .setField(type.findFieldByName("label"), "first")
+                        .setField(type.findFieldByName("text"), "chosen").build(),
+                DynamicMessage.newBuilder(type)
+                        .setField(type.findFieldByName("label"), "second")
+                        .setField(type.findFieldByName("number"), 7L).build()));
+
+        Path fileOnDisk = dir.resolve("choices.parquet");
+        Files.write(fileOnDisk, parquet);
+        try (ParquetReader<Group> reader =
+                     new GroupBuilder(new LocalInputFile(fileOnDisk)).build()) {
+            Group first = reader.read();
+            assertThat(first.getString("text", 0)).isEqualTo("chosen");
+            assertThat(first.getFieldRepetitionCount("number")).isZero();
+
+            Group second = reader.read();
+            assertThat(second.getLong("number", 0)).isEqualTo(7L);
+            assertThat(second.getFieldRepetitionCount("text")).isZero();
         }
     }
 

@@ -1,6 +1,7 @@
 package ai.pipestream.proto.kafka.serde;
 
 import ai.pipestream.proto.descriptors.DescriptorLoader.DescriptorLoadException;
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.schema.confluent.ConfluentSchemaRegistryLoader;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
@@ -52,6 +53,9 @@ final class SchemaIds implements AutoCloseable {
     // Failed lookups by key, each holding the System.nanoTime() after which to ask again.
     private final ConcurrentMap<String, Long> subjectRetryAt = new ConcurrentHashMap<>();
     private final ConcurrentMap<Integer, Long> schemaRetryAt = new ConcurrentHashMap<>();
+    // Lookups whose schema resolved but did not carry the type asked for, keyed by the lookup
+    // rather than by the id: another type in the same schema may still resolve.
+    private final ConcurrentMap<String, Long> missingTypeRetryAt = new ConcurrentHashMap<>();
 
     private SchemaIds(ConfluentSchemaRegistryLoader registry, long retryBackoffMillis,
                       SerdeMetricsListener metrics) {
@@ -104,17 +108,22 @@ final class SchemaIds implements AutoCloseable {
      * <p>A resolved schema that does not contain the index path is treated as unresolved rather
      * than as an error: the caller falls back to its configured type, which then either matches
      * the frame or is refused. Resolved schemas are cached by the registry client for the life of
-     * the serde; an id that failed to resolve is retried only after the backoff.</p>
+     * the serde; a lookup that failed to resolve is retried only after the backoff.</p>
      */
     Descriptor messageFor(int schemaId, List<Integer> indexPath) {
         if (inBackoff(schemaRetryAt, schemaId)) {
+            return null;
+        }
+        String lookup = schemaId + "@" + indexPath;
+        if (inBackoff(missingTypeRetryAt, lookup)) {
             return null;
         }
         try {
             FileDescriptor file = registry.schemaById(schemaId);
             Descriptor message = ConfluentWireFormat.messageAt(file, indexPath);
             if (message == null) {
-                fellBack("schema id " + schemaId + " has no message at index path " + indexPath);
+                couldNotAnswer(missingTypeRetryAt, lookup,
+                        "schema id " + schemaId + " has no message at index path " + indexPath);
             }
             return message;
         } catch (DescriptorLoadException e) {
@@ -139,12 +148,17 @@ final class SchemaIds implements AutoCloseable {
         if (inBackoff(schemaRetryAt, schemaId)) {
             return null;
         }
+        String lookup = schemaId + "#" + fullName;
+        if (inBackoff(missingTypeRetryAt, lookup)) {
+            return null;
+        }
         try {
             FileDescriptor file = registry.schemaById(schemaId);
             Descriptor type = SerdeDescriptors.findMessage(file, fullName);
             if (type == null) {
-                fellBack("the schema registered under id " + schemaId + " does not declare "
-                        + fullName);
+                couldNotAnswer(missingTypeRetryAt, lookup,
+                        "the schema registered under id " + schemaId + " does not declare "
+                                + fullName);
             }
             return type;
         } catch (DescriptorLoadException e) {
@@ -167,18 +181,18 @@ final class SchemaIds implements AutoCloseable {
         return false;
     }
 
+    /**
+     * One failed lookup: the metric counts it and the backoff is armed, so a lookup that keeps
+     * failing costs one of each per window rather than one per record. The log line fires once
+     * for the serde (see warnOnce).
+     */
     private <K> void couldNotAnswer(ConcurrentMap<K, Long> retryAt, K key, String what) {
-        fellBack(what);
+        warnOnce(what);
+        metrics.onRegistryFallback();
         if (retryAt.size() >= MAX_TRACKED_FAILURES) {
             retryAt.clear();
         }
         retryAt.put(key, System.nanoTime() + retryBackoffNanos);
-    }
-
-    /** Every fallback event reaches metrics; the log line fires once (see warnOnce). */
-    private void fellBack(String what) {
-        warnOnce(what);
-        metrics.onRegistryFallback();
     }
 
     /** Once per serde: a per-record warning during an outage is its own incident. */

@@ -1,11 +1,10 @@
-package ai.pipestream.proto.kafka.serde;
+package ai.pipestream.proto.kafka.wire;
 
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
-import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.utils.ByteUtils;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -127,10 +126,10 @@ class ConfluentWireFormatTest {
     @Test
     void rejectsBytesThatAreNotFramed() {
         assertThatThrownBy(() -> ConfluentWireFormat.payload(new byte[]{1, 2, 3, 4, 5, 6}))
-                .isInstanceOf(SerializationException.class)
+                .isInstanceOf(ConfluentWireFormatException.class)
                 .hasMessageContaining("Not Confluent wire format");
         assertThatThrownBy(() -> ConfluentWireFormat.schemaId(new byte[]{0, 1}))
-                .isInstanceOf(SerializationException.class);
+                .isInstanceOf(ConfluentWireFormatException.class);
     }
 
     private static Integer[] boxed(int[] values) {

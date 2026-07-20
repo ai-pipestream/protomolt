@@ -156,6 +156,31 @@ public class MappingHelperTest {
     }
 
     @Test
+    void testValidateRule_ClearRule() {
+        // Clear rules carry no source path; validation covers the target only.
+        MappingHelper.ValidationResult result = helper.validateRule(
+            "-title",
+            documentDescriptor,
+            openSearchDocDescriptor
+        );
+
+        assertTrue(result.isValid, () -> "expected a valid clear rule but got: " + result.message);
+        assertEquals(MappingHelper.ValidationResult.ValidationLevel.SUCCESS, result.level);
+    }
+
+    @Test
+    void testValidateRule_ClearRuleWithUnknownTarget() {
+        MappingHelper.ValidationResult result = helper.validateRule(
+            "-nonexistent_target",
+            documentDescriptor,
+            openSearchDocDescriptor
+        );
+
+        assertFalse(result.isValid);
+        assertTrue(result.message.contains("nonexistent_target"));
+    }
+
+    @Test
     void testValidateRule_NestedMapping() {
         // User creates nested mapping
         String rule = "title = search_metadata.title";
