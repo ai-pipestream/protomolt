@@ -73,7 +73,11 @@ pairs a fixture catalog with a Testcontainers LocalStack S3 store, and the
 `:protomolt-connect-iceberg` suite boots its own fixture catalog. They run
 wherever Docker is available and skip otherwise, so the compose stack's
 `iceberg-rest`, `iceberg-rest-s3`, `rustfs`, and `gravitino-iceberg-rest`
-services are not needed for tests. The Apicurio lanes self-provision the same way: the
+services are not needed for tests.
+
+The S3 store convention is three lanes by environment: LocalStack for
+tests, the compose stack's `rustfs` for live runs on a laptop or server,
+and real S3 on AWS. The Apicurio lanes self-provision the same way: the
 `:protomolt-schema-apicurio` suites and the confluent module's two ccompat
 suites each boot an `apicurio/apicurio-registry:3.3.0` container (the
 ccompat suites hit its `/apis/ccompat/v7` facade). They run wherever
