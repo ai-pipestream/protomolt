@@ -174,7 +174,7 @@ services:
       retries: 30
 
   opensearch:
-    image: opensearchproject/opensearch:2.19.1
+    image: opensearchproject/opensearch:3.7.0
     ports:
       - "19200:9200"
     environment:

@@ -50,11 +50,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class OpenSearchLiveIntegrationTest {
 
-    // Same image as docker-compose.integration.yml. The container defaults to
-    // DISABLE_SECURITY_PLUGIN=true, so the suite talks plain HTTP with no auth.
+    // Latest OpenSearch line. The container defaults to DISABLE_SECURITY_PLUGIN=true,
+    // so the suite talks plain HTTP with no auth.
     @Container
     static final OpenSearchContainer<?> OPENSEARCH = new OpenSearchContainer<>(
-            DockerImageName.parse("opensearchproject/opensearch:2.19.1"));
+            DockerImageName.parse("opensearchproject/opensearch:3.7.0"));
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
