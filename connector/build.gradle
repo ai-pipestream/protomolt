@@ -1,0 +1,12 @@
+description = 'Push-style streaming inputs behind one bounded, pausable SPI: gRPC server streams and Kafka topics feed a synchronous pipeline'
+
+dependencies {
+    api project(':protomolt-grpc-invoke')
+
+    implementation libs.kafka.clients
+
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.protobuf
+    testImplementation libs.grpc.stub
+}

@@ -29,6 +29,7 @@ def supportedModules = [
         'protomolt-serve',
         'protomolt-cli',
         'protomolt-acp',
+        'protomolt-connector',
         'protomolt-connect',
         'protomolt-connect-iceberg',
         'protomolt-serde',
