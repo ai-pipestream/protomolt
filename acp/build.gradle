@@ -14,6 +14,10 @@ dependencies {
     runtimeOnly libs.slf4j.simple
 
     testImplementation 'com.agentclientprotocol:acp-test:0.14.0'
+    // Process round-trip fixtures: compile protos and stand up a dynamic gRPC server at test time.
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-grpc-invoke')
+    testImplementation libs.grpc.stub
     testImplementation platform(libs.junit.bom)
     testImplementation libs.junit.jupiter
     testImplementation libs.assertj.core
