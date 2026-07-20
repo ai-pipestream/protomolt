@@ -44,8 +44,16 @@ final class CatalogLineRunner {
                     ? mapper.createObjectNode()
                     : (ObjectNode) mapper.readTree(json);
             context.sendThought("running " + verb);
-            ObjectNode result = catalog.execute(verb, input);
-            context.sendMessage(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+            // Streaming-capable verbs (e.g. grpc-invoke on a server-streaming method) emit
+            // per response; unary verbs emit their single result. Either way each emission
+            // is its own chunk, so the IDE renders results as they arrive.
+            catalog.executeStreaming(verb, input, node -> {
+                try {
+                    context.sendMessage(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(node));
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            });
         } catch (ActionException e) {
             context.sendMessage(e.code() + ": " + e.getMessage());
         } catch (Exception e) {

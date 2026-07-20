@@ -2,8 +2,9 @@ package ai.pipestream.proto.grpc.invoke;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
+import ai.pipestream.proto.actions.StreamEmitter;
+import ai.pipestream.proto.actions.StreamingAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -14,8 +15,10 @@ import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -32,7 +35,7 @@ import java.util.function.Function;
  * to repair. Input problems (unknown method, streaming shapes, malformed metadata) are
  * {@code invalid-input} action errors.</p>
  */
-public final class GrpcInvokeAction implements ProtoAction {
+public final class GrpcInvokeAction implements StreamingAction {
 
     private static final int DEFAULT_DEADLINE_MS = 15_000;
     private static final int DEFAULT_MAX_RESPONSES = 64;
@@ -113,42 +116,16 @@ public final class GrpcInvokeAction implements ProtoAction {
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String target = requireString(input, "target");
-        String methodName = requireString(input, "method");
-        JsonNode requestNode = input.get("request");
-        if (requestNode == null || !requestNode.isObject()) {
-            throw invalidInput("'request' must be the request message as a JSON object", "/request");
-        }
-        int deadlineMs = optionalInt(input, "deadlineMs", DEFAULT_DEADLINE_MS);
-        int maxResponses = optionalInt(input, "maxResponses", DEFAULT_MAX_RESPONSES);
-
-        SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptors.MethodDescriptor method = findMethod(schema.files(), methodName);
-        if (method.isClientStreaming()) {
-            throw invalidInput("Method " + method.getFullName() + " is "
-                    + DynamicGrpcCalls.methodType(method) + "; only unary and server-streaming "
-                    + "methods can be invoked with a single request", "/method");
-        }
-
-        DynamicMessage request;
-        try {
-            request = context.transcoder().fromJsonDynamic(requestNode.toString(), method.getInputType());
-        } catch (RuntimeException e) {
-            throw invalidInput("Request does not parse as " + method.getInputType().getFullName()
-                    + ": " + e.getMessage(), "/request");
-        }
-        Metadata headers = parseMetadata(input);
+        CallPlan plan = prepare(input, context);
 
         ObjectNode result = context.objectMapper().createObjectNode();
-        result.put("method", method.getFullName());
-        result.put("methodType", DynamicGrpcCalls.methodType(method).name());
-        boolean tls = input.path("tls").asBoolean(false);
-        ManagedChannel channel = channelFactory.open(target, tls);
+        result.put("method", plan.method().getFullName());
+        result.put("methodType", DynamicGrpcCalls.methodType(plan.method()).name());
+        ManagedChannel channel = channelFactory.open(plan.target(), plan.tls());
         try {
             List<DynamicMessage> responses = DynamicGrpcCalls.call(
-                    channel, method, request,
-                    CallOptions.DEFAULT.withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS),
-                    headers, maxResponses);
+                    channel, plan.method(), plan.request(), plan.options(), plan.headers(),
+                    plan.maxResponses());
             result.put("ok", true);
             result.put("status", "OK");
             ArrayNode out = result.putArray("responses");
@@ -176,6 +153,121 @@ public final class GrpcInvokeAction implements ProtoAction {
             channel.shutdownNow();
         }
         return result;
+    }
+
+    /**
+     * Streams each response as its own document as it arrives: unary methods emit their single
+     * response, server-streaming methods emit per message. Every run ends with a terminal
+     * status document ({@code {ok, status, description?}}), so stream consumers get a clean
+     * end marker whether the call succeeded or not.
+     */
+    @Override
+    public void executeStreaming(ObjectNode input, ActionContext context, StreamEmitter emitter)
+            throws ActionException {
+        CallPlan plan = prepare(input, context);
+        ManagedChannel channel = channelFactory.open(plan.target(), plan.tls());
+        try {
+            if (!plan.method().isServerStreaming()) {
+                List<DynamicMessage> responses = DynamicGrpcCalls.call(
+                        channel, plan.method(), plan.request(), plan.options(), plan.headers(), 1);
+                for (DynamicMessage response : responses) {
+                    emitter.emit(toJsonNode(context, response));
+                }
+            } else {
+                try (DynamicGrpcStream stream = DynamicGrpcCalls.openServerStream(
+                        channel, plan.method(), plan.request(), plan.options(), plan.headers())) {
+                    while (!stream.isClosed()) {
+                        for (DynamicMessage response
+                                : stream.take(1, Duration.ofMillis(plan.deadlineMs()))) {
+                            emitter.emit(toJsonNode(context, response));
+                        }
+                    }
+                    Status terminal = stream.terminalStatus();
+                    if (terminal != null && !terminal.isOk()) {
+                        emitter.emit(terminalNode(context, terminal));
+                        return;
+                    }
+                }
+            }
+            emitter.emit(okTerminal(context));
+        } catch (StatusRuntimeException e) {
+            emitter.emit(terminalNode(context, e.getStatus()));
+        } finally {
+            channel.shutdownNow();
+        }
+    }
+
+    private ObjectNode toJsonNode(ActionContext context, DynamicMessage response) {
+        try {
+            return (ObjectNode) context.objectMapper()
+                    .readTree(context.transcoder().toJson(response));
+        } catch (Exception e) {
+            ObjectNode failure = context.objectMapper().createObjectNode();
+            failure.put("ok", false);
+            failure.put("status", "RESPONSE_TRANSCODING_FAILED");
+            failure.put("description", e.getMessage());
+            return failure;
+        }
+    }
+
+    private static ObjectNode okTerminal(ActionContext context) {
+        ObjectNode terminal = context.objectMapper().createObjectNode();
+        terminal.put("ok", true);
+        terminal.put("status", "OK");
+        return terminal;
+    }
+
+    private static ObjectNode terminalNode(ActionContext context, Status status) {
+        ObjectNode terminal = context.objectMapper().createObjectNode();
+        terminal.put("ok", status.isOk());
+        terminal.put("status", status.getCode().name());
+        if (status.getDescription() != null) {
+            terminal.put("description", status.getDescription());
+        }
+        return terminal;
+    }
+
+    private CallPlan prepare(ObjectNode input, ActionContext context) throws ActionException {
+        String target = requireString(input, "target");
+        String methodName = requireString(input, "method");
+        JsonNode requestNode = input.get("request");
+        if (requestNode == null || !requestNode.isObject()) {
+            throw invalidInput("'request' must be the request message as a JSON object", "/request");
+        }
+        int deadlineMs = optionalInt(input, "deadlineMs", DEFAULT_DEADLINE_MS);
+        int maxResponses = optionalInt(input, "maxResponses", DEFAULT_MAX_RESPONSES);
+
+        SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
+        Descriptors.MethodDescriptor method = findMethod(schema.files(), methodName);
+        if (method.isClientStreaming()) {
+            throw invalidInput("Method " + method.getFullName() + " is "
+                    + DynamicGrpcCalls.methodType(method) + "; only unary and server-streaming "
+                    + "methods can be invoked with a single request", "/method");
+        }
+
+        DynamicMessage request;
+        try {
+            request = context.transcoder().fromJsonDynamic(requestNode.toString(), method.getInputType());
+        } catch (RuntimeException e) {
+            throw invalidInput("Request does not parse as " + method.getInputType().getFullName()
+                    + ": " + e.getMessage(), "/request");
+        }
+        return new CallPlan(method, request, parseMetadata(input), deadlineMs, maxResponses,
+                target, input.path("tls").asBoolean(false));
+    }
+
+    private record CallPlan(
+            Descriptors.MethodDescriptor method,
+            DynamicMessage request,
+            Metadata headers,
+            int deadlineMs,
+            int maxResponses,
+            String target,
+            boolean tls) {
+
+        CallOptions options() {
+            return CallOptions.DEFAULT.withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS);
+        }
     }
 
     private static Descriptors.MethodDescriptor findMethod(

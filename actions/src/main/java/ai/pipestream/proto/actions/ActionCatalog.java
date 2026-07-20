@@ -114,4 +114,20 @@ public final class ActionCatalog {
         ProtoAction action = get(name);
         return action.execute(Inputs.requireEnvelope(input), context);
     }
+
+    /**
+     * Dispatches like {@link #execute}, but lets a {@link StreamingAction} emit results
+     * incrementally. Unary actions emit their single result, so fronts that stream get one
+     * contract for every verb.
+     */
+    public void executeStreaming(String name, ObjectNode input, StreamEmitter emitter)
+            throws ActionException {
+        ProtoAction action = get(name);
+        ObjectNode envelope = Inputs.requireEnvelope(input);
+        if (action instanceof StreamingAction streaming) {
+            streaming.executeStreaming(envelope, context, emitter);
+        } else {
+            emitter.emit(action.execute(envelope, context));
+        }
+    }
 }

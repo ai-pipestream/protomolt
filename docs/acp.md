@@ -13,6 +13,16 @@ no file, terminal, or permission capabilities; it is read-only. New verbs
 (search actions, pipeline runs) appear in the IDE automatically when they
 register into the catalog.
 
+## Streaming
+
+Verbs that implement `StreamingAction` stream results as they are produced:
+each emission is its own message chunk, so the IDE renders responses live
+instead of at the end of the call. `grpc-invoke` is the first: a
+server-streaming method emits one chunk per response message, and every run
+ends with a terminal status document (`{"ok": true, "status": "OK"}` on
+success, or the gRPC status on failure). Unary verbs emit their single result,
+so the console contract is the same either way.
+
 ## Run it
 
 ```shell

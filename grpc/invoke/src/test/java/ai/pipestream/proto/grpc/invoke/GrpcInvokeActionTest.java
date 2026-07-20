@@ -27,6 +27,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -262,5 +264,44 @@ class GrpcInvokeActionTest {
                 ActionContext.create()))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
+    }
+
+    @Test
+    void streamingEmitsEachResponseInOrderWithOkTerminal() throws Exception {
+        List<ObjectNode> emitted = new ArrayList<>();
+        action.executeStreaming(
+                input("invoke.test.EchoService/Split",
+                        MAPPER.createObjectNode().put("text", "one two three")),
+                ActionContext.create(), emitted::add);
+        assertThat(emitted).hasSize(4);
+        assertThat(emitted.subList(0, 3).stream().map(n -> n.get("text").asText()))
+                .containsExactly("one", "two", "three");
+        assertThat(emitted.get(3).get("ok").asBoolean()).isTrue();
+        assertThat(emitted.get(3).get("status").asText()).isEqualTo("OK");
+    }
+
+    @Test
+    void streamingUnaryEmitsSingleResponseAndTerminal() throws Exception {
+        List<ObjectNode> emitted = new ArrayList<>();
+        action.executeStreaming(
+                input("invoke.test.EchoService/Echo",
+                        MAPPER.createObjectNode().put("text", "hello")),
+                ActionContext.create(), emitted::add);
+        assertThat(emitted).hasSize(2);
+        assertThat(emitted.get(0).get("text").asText()).isEqualTo("hello!");
+        assertThat(emitted.get(1).get("status").asText()).isEqualTo("OK");
+    }
+
+    @Test
+    void streamingStatusFailureEndsWithErrorTerminal() throws Exception {
+        List<ObjectNode> emitted = new ArrayList<>();
+        action.executeStreaming(
+                input("invoke.test.EchoService/Fail",
+                        MAPPER.createObjectNode().put("text", "x")),
+                ActionContext.create(), emitted::add);
+        assertThat(emitted).hasSize(1);
+        assertThat(emitted.get(0).get("ok").asBoolean()).isFalse();
+        assertThat(emitted.get(0).get("status").asText()).isEqualTo("INVALID_ARGUMENT");
+        assertThat(emitted.get(0).get("description").asText()).isEqualTo("bad ping");
     }
 }

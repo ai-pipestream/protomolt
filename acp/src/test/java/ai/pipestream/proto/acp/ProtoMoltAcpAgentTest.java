@@ -1,12 +1,17 @@
 package ai.pipestream.proto.acp;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.StreamEmitter;
+import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import com.agentclientprotocol.sdk.agent.AcpSyncAgent;
 import com.agentclientprotocol.sdk.client.AcpClient;
 import com.agentclientprotocol.sdk.client.AcpSyncClient;
 import com.agentclientprotocol.sdk.spec.AcpSchema;
 import com.agentclientprotocol.sdk.test.InMemoryTransportPair;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -58,6 +63,57 @@ class ProtoMoltAcpAgentTest {
             client.prompt(new AcpSchema.PromptRequest(
                     session.sessionId(), List.of(new AcpSchema.TextContent("nope"))));
             assertThat(chunks.toString()).contains("Unknown verb 'nope'");
+        }
+    }
+
+    @Test
+    void streamingVerbChunksEachEmission() throws Exception {
+        InMemoryTransportPair pair = InMemoryTransportPair.create();
+        ActionCatalog catalog = ProtoMoltCatalog.full(ActionContext.create());
+        catalog.register(new StreamingAction() {
+            @Override
+            public String name() {
+                return "tick-stream";
+            }
+
+            @Override
+            public String description() {
+                return "emits three ticks";
+            }
+
+            @Override
+            public ObjectNode inputSchema() {
+                return JsonNodeFactory.instance.objectNode();
+            }
+
+            @Override
+            public ObjectNode execute(ObjectNode input, ActionContext context) {
+                ObjectNode out = JsonNodeFactory.instance.objectNode();
+                out.put("ticks", 3);
+                return out;
+            }
+
+            @Override
+            public void executeStreaming(ObjectNode input, ActionContext context,
+                    StreamEmitter emitter) {
+                for (int i = 1; i <= 3; i++) {
+                    ObjectNode tick = JsonNodeFactory.instance.objectNode();
+                    tick.put("tick", i);
+                    emitter.emit(tick);
+                }
+            }
+        });
+        AcpSyncAgent agent = ProtoMoltAcpAgent.buildAgent(pair.agentTransport(), catalog);
+        agent.start();
+        try (AcpSyncClient client = clientOver(pair)) {
+            client.initialize();
+            var session = client.newSession(new AcpSchema.NewSessionRequest("/workspace", List.of()));
+            client.prompt(new AcpSchema.PromptRequest(
+                    session.sessionId(), List.of(new AcpSchema.TextContent("tick-stream"))));
+            assertThat(chunks.toString())
+                    .contains("\"tick\" : 1")
+                    .contains("\"tick\" : 2")
+                    .contains("\"tick\" : 3");
         }
     }
 }

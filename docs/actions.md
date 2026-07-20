@@ -51,6 +51,17 @@ registry), inline `{"sources": {...}, "root": ...}` (compiled per call), or
 with the toolkit's option extensions registered, so validation rules,
 metadata, and indexing hints behave identically however the schema arrived.
 
+## Streaming actions
+
+An action that produces results incrementally implements `StreamingAction`:
+`executeStreaming(input, context, emitter)` emits one document per result as
+it arrives, while the unary `execute` contract stays unchanged for collecting
+fronts (REST, MCP). `ActionCatalog.executeStreaming(name, input, emitter)` is
+the dispatch point; unary actions emit their single result, so streaming
+fronts (the ACP agent) get one contract for every verb. `grpc-invoke` is the
+first streaming action: server-streaming methods emit per response message
+and every run ends with a terminal status document.
+
 ## The HTTP mount
 
 Constructing the registry server with a catalog mounts it under the native
