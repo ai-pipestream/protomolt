@@ -22,6 +22,10 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.opensearch.testcontainers.OpenSearchContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -33,34 +37,38 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The generated OpenSearch mappings against a live engine: the index must accept them,
  * documents mapped from dynamic messages must land, and the analyzed / keyword / sorted /
- * kNN behaviors the hints promise must answer real queries. Start the engine with
- * {@code docker compose -f docker-compose.integration.yml up -d} (repo root); without it
- * these tests skip.
+ * kNN behaviors the hints promise must answer real queries. The engine is a
+ * Testcontainers OpenSearch instance; the suite skips when Docker is unavailable.
  */
 @Tag("integration")
+@Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class OpenSearchLiveIntegrationTest {
 
-    private static final String BASE = System.getProperty(
-            "protomolt.it.opensearch", "http://localhost:19200");
+    // Same image as docker-compose.integration.yml. The container defaults to
+    // DISABLE_SECURITY_PLUGIN=true, so the suite talks plain HTTP with no auth.
+    @Container
+    static final OpenSearchContainer<?> OPENSEARCH = new OpenSearchContainer<>(
+            DockerImageName.parse("opensearchproject/opensearch:2.19.1"));
+
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .build();
 
+    private static String base;
     private static String index;
     private static Descriptor descriptor;
     private static IndexingPlan plan;
 
     @BeforeAll
     static void setUp() {
-        assumeTrue(reachable(), "OpenSearch not reachable at " + BASE + "; skipping");
+        base = OPENSEARCH.getHttpHostAddress();
         index = "it-" + UUID.randomUUID().toString().substring(0, 12);
         descriptor = bookDescriptor();
         plan = new IndexingPlan(descriptor.getFullName(), List.of(
@@ -91,18 +99,8 @@ class OpenSearchLiveIntegrationTest {
         }
     }
 
-    private static boolean reachable() {
-        try {
-            return HTTP.send(HttpRequest.newBuilder(URI.create(BASE + "/_cluster/health"))
-                            .timeout(Duration.ofSeconds(3)).GET().build(),
-                    HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
     private static JsonNode send(String method, String path, Object body) throws Exception {
-        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(BASE + path))
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(base + path))
                 .header("content-type", "application/json");
         request.method(method, body == null
                 ? HttpRequest.BodyPublishers.noBody()
@@ -268,7 +266,7 @@ class OpenSearchLiveIntegrationTest {
 
             // ...while the engine refuses to search the ciphertext container at all.
             HttpResponse<String> refused = HTTP.send(HttpRequest.newBuilder(
-                            URI.create(BASE + "/" + secure + "/_search"))
+                            URI.create(base + "/" + secure + "/_search"))
                             .header("content-type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     "{\"query\": {\"term\": {\"content\": \"patient\"}}}"))
@@ -286,7 +284,7 @@ class OpenSearchLiveIntegrationTest {
             assertThat(recovered.getField(note.findFieldByName("content")))
                     .isEqualTo(plaintext);
         } finally {
-            HTTP.send(HttpRequest.newBuilder(URI.create(BASE + "/" + secure))
+            HTTP.send(HttpRequest.newBuilder(URI.create(base + "/" + secure))
                     .DELETE().build(), HttpResponse.BodyHandlers.discarding());
         }
     }

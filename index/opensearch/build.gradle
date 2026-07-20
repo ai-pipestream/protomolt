@@ -5,5 +5,7 @@ dependencies {
     api project(':protomolt-mapper-core')
 
     testImplementation libs.jackson.databind
+    testImplementation libs.opensearch.testcontainers
+    testImplementation libs.testcontainers.junit.jupiter
     testImplementation project(':protomolt-protobuf-metadata')
 }

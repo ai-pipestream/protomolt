@@ -7,6 +7,7 @@ assertj = "3.27.7"
 slf4j = "2.0.18"
 kafka = "3.9.1"
 testcontainers = "2.0.5"
+opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.0"
 swagger-ui = "5.25.3"
 jackson = "2.22.1"
@@ -59,6 +60,8 @@ kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafk
 testcontainers-redpanda = { module = "org.testcontainers:testcontainers-redpanda", version.ref = "testcontainers" }
 testcontainers-solr = { module = "org.testcontainers:testcontainers-solr", version.ref = "testcontainers" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
+testcontainers-localstack = { module = "org.testcontainers:testcontainers-localstack", version.ref = "testcontainers" }
+opensearch-testcontainers = { module = "org.opensearch:opensearch-testcontainers", version.ref = "opensearch-testcontainers" }
 micrometer-core = { module = "io.micrometer:micrometer-core", version.ref = "micrometer" }
 swagger-ui = { module = "org.webjars:swagger-ui", version.ref = "swagger-ui" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
