@@ -9,4 +9,6 @@ dependencies {
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.protobuf
     testImplementation libs.grpc.stub
+    testImplementation libs.testcontainers.kafka
+    testImplementation libs.testcontainers.junit.jupiter
 }

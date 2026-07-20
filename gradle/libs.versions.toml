@@ -6,6 +6,7 @@ junit = "6.1.1"
 assertj = "3.27.7"
 slf4j = "2.0.18"
 kafka = "3.9.1"
+testcontainers = "2.0.5"
 micrometer = "1.17.0"
 swagger-ui = "5.25.3"
 jackson = "2.22.1"
@@ -55,6 +56,8 @@ slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 kafka-connect-api = { module = "org.apache.kafka:connect-api", version.ref = "kafka" }
 kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
+testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka", version.ref = "testcontainers" }
+testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
 micrometer-core = { module = "io.micrometer:micrometer-core", version.ref = "micrometer" }
 swagger-ui = { module = "org.webjars:swagger-ui", version.ref = "swagger-ui" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }

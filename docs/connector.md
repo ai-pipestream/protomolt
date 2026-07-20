@@ -73,6 +73,6 @@ rebalance-safe delivery, use the Connect source instead.
 
 ## Testing
 
-Unit tests run without infrastructure. `KafkaSourceLiveIntegrationTest` runs
-against a broker at `127.0.0.1:19092` (override with `-Dprotomolt.it.kafka=`)
-and skips when none is reachable; `docker-compose.integration.yml` starts one.
+Unit tests run without infrastructure. `KafkaSourceLiveIntegrationTest` starts
+its own Apache Kafka broker as a Testcontainer and skips when Docker is
+unavailable.
