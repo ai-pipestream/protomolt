@@ -7,3 +7,13 @@ dependencies {
 
     testImplementation libs.lucene.analysis.common
 }
+
+// The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an
+// older JVM: the test launcher stays on the toolchain JDK and -PtestJdk is ignored
+// here. The module's own classes keep the release 21 baseline, but using it requires
+// a runtime that can load Lucene.
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
