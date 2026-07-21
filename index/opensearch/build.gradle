@@ -7,7 +7,14 @@ dependencies {
     // OpenSearchSink builds request bodies and parses bulk responses with Jackson.
     implementation libs.jackson.databind
 
+    // RerankedSemanticSearch orchestrates the two SPIs; consumers choose the providers.
+    implementation project(':protomolt-embeddings')
+    implementation project(':protomolt-rerank')
+
     testImplementation libs.opensearch.testcontainers
     testImplementation libs.testcontainers.junit.jupiter
     testImplementation project(':protomolt-protobuf-metadata')
+    // The live TEI lane exercises the orchestration against the real providers.
+    testImplementation project(':protomolt-embeddings-tei')
+    testImplementation project(':protomolt-rerank-tei')
 }

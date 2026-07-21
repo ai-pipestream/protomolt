@@ -171,3 +171,50 @@ With `sensitivity` present the response becomes `{mappings, security}`.
 The live integration suite proves the encrypted-store pattern end to end
 against a real OpenSearch: index the ciphertext, find it by vector,
 watch the engine refuse a term search on it, decrypt with the key.
+
+## Semantic search with a rerank head
+
+`protomolt-index-opensearch` also carries the read side of semantic search.
+`OpenSearchSearch` is the thin sibling of `OpenSearchSink`: `knn(index,
+vectorField, vector, k)` POSTs `/{index}/_search` with a `knn` query clause
+and parses the hits into `OpenSearchHit` records (id, score, source map).
+
+`RerankedSemanticSearch` builds the full pipeline on top of it, given an
+`EmbeddingProvider` and a `RerankProvider`:
+
+1. Embed the query with the same provider the index was built with.
+2. Recall a deep candidate set with kNN (`candidates` hits).
+3. Score every candidate's text against the query with the cross-encoder
+   rerank provider.
+4. Answer the reranked top-`k` as `RankedHit` records.
+
+The two passes divide the work: the kNN list is recall (cheap, approximate,
+runs over the whole index), the cross-encoder is precision (expensive per
+candidate, so it only sees the recalled set). Run `candidates` comfortably
+larger than `k`: the reranker can only reorder what the kNN pass recalled,
+so the candidate depth bounds how much reordering is possible. Each
+`RankedHit` carries both the kNN score and the rerank score; the two are
+not commensurable, so neither can stand in for the other.
+
+```java
+var search = new OpenSearchSearch("http://localhost:9200");
+var semantic = new RerankedSemanticSearch(search, embedder, reranker);
+List<RankedHit> hits = semantic.search(
+        "sentences", "embedding", "sentence", "a young dog", 10, 50);
+```
+
+The module depends only on the SPI jars (`protomolt-embeddings`,
+`protomolt-rerank`); consumers pick the providers. See
+[rerank.md](rerank.md) for the rerank SPI and the available providers.
+
+The live lanes: `RerankedSearchLiveIntegrationTest` runs the pipeline
+against a Testcontainers OpenSearch with fixture providers and needs only
+Docker. `TeiSemanticSearchLiveIntegrationTest` runs it with the real TEI
+providers and needs two servers besides Docker:
+
+| Environment variable | Points at |
+|---|---|
+| `PROTOMOLT_TEI_TARGET` | TEI embeddings server `host:port`, e.g. `localhost:8071` (384-dim all-MiniLM-L6-v2) |
+| `PROTOMOLT_RERANK_TEI_TARGET` | TEI rerank server `host:port`, e.g. `localhost:8072` |
+
+Without both variables the TEI lane skips cleanly.

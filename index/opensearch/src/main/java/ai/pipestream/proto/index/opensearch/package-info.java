@@ -20,6 +20,11 @@
  * failures. Engine-agnostic NDJSON emission stays in the separate {@code protomolt-index-ndjson}
  * module, which does not interpret the plan.
  *
+ * <p>{@link OpenSearchSearch} is the read-side sibling of the sink, running kNN queries and
+ * parsing hits. {@link RerankedSemanticSearch} builds on it: embed a query, recall a deep
+ * candidate set with kNN, score the candidates with a rerank provider, and answer the
+ * reordered top-k.
+ *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
  * indexing guide</a> for the hint surface and for how declared sensitivity classes are applied to
  * the search layer.
