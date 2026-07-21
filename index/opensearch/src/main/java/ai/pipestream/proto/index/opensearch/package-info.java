@@ -14,9 +14,11 @@
  * {@code knn_vector} parameters. It is the OpenSearch counterpart of the schema generator in the
  * Solr module and of the per-field spec report in the Lucene module.
  *
- * <p>This module does not emit NDJSON; bulk lines come from the separate
- * {@code protomolt-index-ndjson} module, which is engine-agnostic and does not interpret the
- * plan.
+ * <p>{@link OpenSearchSink} is the transport: a thin {@code java.net.http} sink that creates an
+ * index from a plan's generated mappings (with {@code index.knn} when the plan has a vector
+ * field) and writes document maps through the {@code _bulk} endpoint, surfacing per-item
+ * failures. Engine-agnostic NDJSON emission stays in the separate {@code protomolt-index-ndjson}
+ * module, which does not interpret the plan.
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
  * indexing guide</a> for the hint surface and for how declared sensitivity classes are applied to

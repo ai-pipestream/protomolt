@@ -1,0 +1,12 @@
+description = 'Model2Vec static-embedding provider backed by the OpenNLP embeddings module'
+
+dependencies {
+    api project(':protomolt-embeddings')
+    implementation libs.opennlp.embeddings
+
+    testImplementation project(':protomolt-index-opensearch')
+    testImplementation project(':protomolt-protobuf-metadata')
+    testImplementation libs.jackson.databind
+    testImplementation libs.opensearch.testcontainers
+    testImplementation libs.testcontainers.junit.jupiter
+}

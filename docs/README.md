@@ -30,6 +30,7 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 | [Field masking](masking.md) | Schema-declared sensitivity classes masked on every surface: remove, redact, and AES-GCM encrypt/decrypt; the `mask-message` verb and the `RedactMessage` transform |
 | [JSON Schema generation](json-schema.md) | Draft 2020-12 schemas from descriptors and validation rules |
 | [Search indexing](indexing.md) | Indexing hints, plans, NDJSON output, and the Lucene/OpenSearch/Solr plugins |
+| [Text embeddings](embeddings.md) | The `EmbeddingProvider` SPI; the plan-driven `PlanEmbedder` filling VECTOR fields from TEXT fields; the Model2Vec static-embedding provider |
 | [Emitting bundles](emitting.md) | The bundle/sink SPI (directory, git, zip), OKF knowledge bundles, and descriptor-driven Parquet |
 | [Microsoft Graph](msgraph.md) | OneDrive/SharePoint files and metadata, and agentless Copilot connector ingestion |
 | [Apache Iceberg](iceberg.md) | Descriptor-driven table schemas and snapshot appends through any Iceberg catalog |

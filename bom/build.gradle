@@ -56,6 +56,8 @@ def supportedModules = [
         'protomolt-index-lucene',
         'protomolt-index-opensearch',
         'protomolt-index-solr',
+        'protomolt-embeddings',
+        'protomolt-embeddings-model2vec',
         'protomolt-quarkus',
         'protomolt-quarkus-deployment',
         'protomolt-spring',

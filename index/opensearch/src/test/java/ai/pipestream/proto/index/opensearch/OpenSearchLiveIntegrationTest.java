@@ -27,22 +27,27 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The generated OpenSearch mappings against a live engine: the index must accept them,
- * documents mapped from dynamic messages must land, and the analyzed / keyword / sorted /
- * kNN behaviors the hints promise must answer real queries. The engine is a
- * Testcontainers OpenSearch instance; the suite skips when Docker is unavailable.
+ * The generated OpenSearch mappings and the HTTP sink against a live engine: the index
+ * created by {@link OpenSearchSink#ensureIndex} must carry the generated mappings, documents
+ * mapped from dynamic messages must land through {@link OpenSearchSink#bulkWrite}, and the
+ * analyzed / keyword / sorted / kNN behaviors the hints promise must answer real queries.
+ * The engine is a Testcontainers OpenSearch instance; the suite skips when Docker is
+ * unavailable.
  */
 @Tag("integration")
 @Testcontainers(disabledWithoutDocker = true)
@@ -63,6 +68,7 @@ class OpenSearchLiveIntegrationTest {
 
     private static String base;
     private static String index;
+    private static OpenSearchSink sink;
     private static Descriptor descriptor;
     private static IndexingPlan plan;
 
@@ -70,6 +76,7 @@ class OpenSearchLiveIntegrationTest {
     static void setUp() {
         base = OPENSEARCH.getHttpHostAddress();
         index = "it-" + UUID.randomUUID().toString().substring(0, 12);
+        sink = new OpenSearchSink(base, HTTP);
         descriptor = bookDescriptor();
         plan = new IndexingPlan(descriptor.getFullName(), List.of(
                 new IndexingPlan.IndexedField("title", "title",
@@ -115,12 +122,8 @@ class OpenSearchLiveIntegrationTest {
 
     @Test
     @Order(1)
-    void generatedMappingsCreateTheIndex() throws Exception {
-        Map<String, Object> mappings = new OpenSearchMappingGenerator().generate(plan);
-        JsonNode created = send("PUT", "/" + index, Map.of(
-                "settings", Map.of("index.knn", true),
-                "mappings", mappings));
-        assertThat(created.path("acknowledged").asBoolean()).isTrue();
+    void ensureIndexCreatesFromThePlan() throws Exception {
+        assertThat(sink.ensureIndex(index, plan)).isTrue();
 
         JsonNode mapping = send("GET", "/" + index + "/_mapping", null);
         JsonNode properties = mapping.path(index).path("mappings").path("properties");
@@ -128,6 +131,11 @@ class OpenSearchLiveIntegrationTest {
         assertThat(properties.path("title").path("analyzer").asText()).isEqualTo("english");
         assertThat(properties.path("genre").path("type").asText()).isEqualTo("keyword");
         assertThat(properties.path("embedding").path("type").asText()).isEqualTo("knn_vector");
+
+        // The plan has a VECTOR field, so the sink enabled knn on the index.
+        JsonNode settings = send("GET", "/" + index + "/_settings", null);
+        assertThat(settings.path(index).path("settings").path("index").path("knn").asText())
+                .isEqualTo("true");
     }
 
     @Test
@@ -135,14 +143,15 @@ class OpenSearchLiveIntegrationTest {
     void mappedDocumentsIndexAndAnswerQueries() throws Exception {
         OpenSearchDocumentMapper mapper = new OpenSearchDocumentMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()));
+        Map<String, Map<String, Object>> documents = new LinkedHashMap<>();
         int id = 0;
         for (DynamicMessage message : List.of(
                 book("Running with Scissors", "memoir", 3, 1f, 0f, 0f, 0f),
                 book("The Silent Library", "mystery", 1, 0f, 1f, 0f, 0f),
                 book("Runs in the Family", "mystery", 2, 0.9f, 0.1f, 0f, 0f))) {
-            send("PUT", "/" + index + "/_doc/" + id++ + "?refresh=true",
-                    mapper.map(message, plan));
+            documents.put(String.valueOf(id++), mapper.map(message, plan));
         }
+        sink.bulkWrite(index, documents, true);
 
         // Analyzed text: the english analyzer stems 'runs' and 'running' together.
         JsonNode stemmed = send("POST", "/" + index + "/_search", Map.of(
@@ -171,6 +180,48 @@ class OpenSearchLiveIntegrationTest {
                         "vector", List.of(1.0, 0.0, 0.0, 0.0), "k", 2)))));
         assertThat(knn.path("hits").path("hits").get(0)
                 .path("_source").path("title").asText()).contains("Running with Scissors");
+    }
+
+    @Test
+    @Order(3)
+    void ensureIndexLeavesAnExistingIndexUntouched() throws Exception {
+        JsonNode before = send("GET", "/" + index + "/_mapping", null);
+        assertThat(sink.ensureIndex(index, plan)).isFalse();
+        JsonNode after = send("GET", "/" + index + "/_mapping", null);
+        assertThat(after).isEqualTo(before);
+    }
+
+    @Test
+    @Order(4)
+    void bulkWriteWithoutIdsAutoAssignsThem() throws Exception {
+        sink.bulkWrite(index, List.of(Map.<String, Object>of(
+                "title", "Autoid Chronicle", "genre", "reference", "rank", 9L)), true);
+
+        JsonNode hits = send("POST", "/" + index + "/_search", Map.of(
+                "query", Map.of("term", Map.of("title.raw", "Autoid Chronicle"))))
+                .path("hits").path("hits");
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).path("_id").asText()).isNotBlank();
+    }
+
+    @Test
+    @Order(5)
+    void bulkItemFailureSurfacesTheItemReason() throws Exception {
+        Map<String, Map<String, Object>> documents = new LinkedHashMap<>();
+        documents.put("bulk-good", Map.of("title", "Bulk Survivor", "genre", "reference", "rank", 7L));
+        // rank is mapped long; a non-numeric string fails that item alone.
+        documents.put("bulk-bad", Map.of("title", "Bulk Casualty", "rank", "not-a-number"));
+
+        assertThatThrownBy(() -> sink.bulkWrite(index, documents, true))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("1 of 2")
+                .hasMessageContaining("bulk-bad")
+                .hasMessageContaining("mapper_parsing_exception")
+                .hasMessageContaining("[rank]");
+
+        // Bulk is not atomic: the valid document in the same request landed.
+        JsonNode good = send("GET", "/" + index + "/_doc/bulk-good", null);
+        assertThat(good.path("found").asBoolean()).isTrue();
     }
 
     // ---- fixture ----
