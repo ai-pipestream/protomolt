@@ -163,7 +163,16 @@ include 'protomolt-embeddings'
 project(':protomolt-embeddings').projectDir = file('embeddings/core')
 
 include 'protomolt-embeddings-model2vec'
-project(':protomolt-embeddings-model2vec').projectDir = file('embeddings/model2vec')
+project(':protomolt-embeddings-model2vec').projectDir = file('embeddings/providers/model2vec')
+
+include 'protomolt-embeddings-tei'
+project(':protomolt-embeddings-tei').projectDir = file('embeddings/providers/tei')
+
+include 'protomolt-embeddings-ovms'
+project(':protomolt-embeddings-ovms').projectDir = file('embeddings/providers/ovms')
+
+include 'protomolt-embeddings-harness'
+project(':protomolt-embeddings-harness').projectDir = file('embeddings/harness')
 
 include 'protomolt-json'
 project(':protomolt-json').projectDir = file('http/json')
