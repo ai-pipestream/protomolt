@@ -79,8 +79,18 @@ ext.commonPomMetadata = { pom ->
 subprojects {
     repositories {
         mavenLocal()
-        // The ai.pipestream fork snapshots (shared-floor Lucene, preview OpenNLP).
-        maven { url = 'https://git.rokkon.com/api/packages/ai-pipestream/maven' }
+        // The ai.pipestream fork artifacts (experimental Lucene) live only here. Scope the
+        // repository to exactly them: without a content filter every dependency in the build,
+        // Maven Central artifacts included, is looked up here first, so this host being slow or
+        // unreachable (it is not reachable from GitHub-hosted runners) fails resolution at
+        // configuration time. Scoped, it is consulted only for the fork and everything else
+        // resolves from Central.
+        maven {
+            url = 'https://git.rokkon.com/api/packages/ai-pipestream/maven'
+            content {
+                includeModuleByRegex('ai\\.pipestream', 'lucene-.*')
+            }
+        }
         mavenCentral()
     }
 
