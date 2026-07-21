@@ -6,6 +6,8 @@
  * {@code host:port} target, or let the ServiceLoader constructor resolve one from the
  * {@code protomolt.embeddings.tei.target} system property or the
  * {@code PROTOMOLT_TEI_TARGET} environment variable. The server-side model is a TEI process
- * property, not client configuration.
+ * property, not client configuration. Overlength inputs truncate server side by default;
+ * setting the {@code protomolt.embeddings.tei.truncate} system property or the
+ * {@code PROTOMOLT_TEI_TRUNCATE} environment variable to {@code false} rejects them instead.
  */
 package ai.pipestream.proto.embeddings.tei;

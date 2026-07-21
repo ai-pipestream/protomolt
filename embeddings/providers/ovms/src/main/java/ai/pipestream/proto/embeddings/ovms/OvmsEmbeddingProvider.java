@@ -21,9 +21,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * {@link EmbeddingProvider} that calls an OpenVINO Model Server (OVMS) embeddings servable
  * over the KServe v2 gRPC prediction protocol (the same wire protocol NVIDIA Triton speaks).
- * OVMS embeddings servables accept raw strings and tokenize server side, so each call sends
- * one {@code ModelInferRequest}: a single BYTES input tensor of shape {@code [N]} carrying the
- * N texts as UTF-8, answered with an FP32 output tensor of shape {@code [N, dim]}.
+ * OVMS embeddings servables accept raw strings and tokenize server side, so each
+ * {@code ModelInferRequest} carries a single BYTES input tensor of shape {@code [N]} with the
+ * N texts as UTF-8, answered with an FP32 output tensor of shape {@code [N, dim]}; batches
+ * larger than {@value #MAX_TEXTS_PER_REQUEST} texts go out as multiple requests.
  *
  * <p>The channel uses plaintext: OVMS serves plain gRPC behind a trusted network boundary,
  * and TLS can be added later when a deployment calls for it. Every call carries a 30 second
@@ -39,8 +40,8 @@ import java.util.concurrent.TimeUnit;
  * provider that is not actually used. The tensor names default to {@value #DEFAULT_INPUT_NAME}
  * and {@value #DEFAULT_OUTPUT_NAME} and can be overridden with the
  * {@value #INPUT_NAME_PROPERTY} and {@value #OUTPUT_NAME_PROPERTY} system properties or the
-     * {@value #INPUT_NAME_ENVIRONMENT_VARIABLE} and {@value #OUTPUT_NAME_ENVIRONMENT_VARIABLE}
-     * environment variables. The
+ * {@value #INPUT_NAME_ENVIRONMENT_VARIABLE} and {@value #OUTPUT_NAME_ENVIRONMENT_VARIABLE}
+ * environment variables. The
  * {@link #OvmsEmbeddingProvider(ManagedChannel, String, String, String)} constructor adopts a
  * caller-owned channel that {@link #close()} leaves open.
  *
@@ -82,6 +83,13 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
 
     /** Output tensor name used when {@value #OUTPUT_NAME_PROPERTY} is unset: {@value}. */
     public static final String DEFAULT_OUTPUT_NAME = "embedding";
+
+    /**
+     * Cap on texts per {@code ModelInferRequest}. Two ceilings force chunking: gRPC's default
+     * 4MB message cap turns a few thousand texts into RESOURCE_EXHAUSTED, and a big CPU batch
+     * can outrun the 30 second per-call deadline.
+     */
+    static final int MAX_TEXTS_PER_REQUEST = 256;
 
     /** Fixed text embedded once to learn the vector length; see {@link #dimension()}. */
     private static final String DIMENSION_PROBE = "dimension probe";
@@ -177,29 +185,37 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
     }
 
     /**
-     * Embeds the batch with a single {@code ModelInferRequest}: one BYTES input tensor of
-     * shape {@code [N]} holding the N texts as UTF-8, one FP32 output tensor of shape
-     * {@code [N, dim]} back. OVMS embeddings servables accept raw strings and tokenize server
-     * side, so there is no client-side tokenization to keep in sync with the model.
+     * Embeds the batch in chunks of at most {@value #MAX_TEXTS_PER_REQUEST} texts, one
+     * {@code ModelInferRequest} per chunk under its own fresh 30 second deadline: a BYTES
+     * input tensor of shape {@code [N]} holding the chunk's N texts as UTF-8, an FP32 output
+     * tensor of shape {@code [N, dim]} back, the chunks' vectors concatenated in input order.
+     * OVMS embeddings servables accept raw strings and tokenize server side, so there is no
+     * client-side tokenization to keep in sync with the model.
      *
-     * @throws IllegalStateException when the call fails or the response tensor is missing,
+     * @throws IllegalStateException when a call fails or a response tensor is missing,
      *         wrongly shaped, or carries neither {@code fp32_contents} nor raw contents
      */
     @Override
     public List<float[]> embedAll(List<String> texts) {
         Objects.requireNonNull(texts, "texts");
         resolveConfiguration();
-        ModelInferRequest request = inferRequest(texts);
-        ModelInferResponse response;
-        try {
-            response = GRPCInferenceServiceGrpc.newBlockingStub(channel)
-                    .withDeadlineAfter(30, TimeUnit.SECONDS)
-                    .modelInfer(request);
-        } catch (StatusRuntimeException e) {
-            throw new IllegalStateException("OVMS ModelInfer failed for model '" + modelName
-                    + "' against target '" + target + "'", e);
+        List<float[]> vectors = new ArrayList<>(texts.size());
+        for (int from = 0; from < texts.size(); from += MAX_TEXTS_PER_REQUEST) {
+            List<String> chunk = texts.subList(from,
+                    Math.min(from + MAX_TEXTS_PER_REQUEST, texts.size()));
+            ModelInferRequest request = inferRequest(chunk);
+            ModelInferResponse response;
+            try {
+                response = GRPCInferenceServiceGrpc.newBlockingStub(channel)
+                        .withDeadlineAfter(30, TimeUnit.SECONDS)
+                        .modelInfer(request);
+            } catch (StatusRuntimeException e) {
+                throw new IllegalStateException("OVMS ModelInfer failed for model '" + modelName
+                        + "' against target '" + target + "'", e);
+            }
+            vectors.addAll(vectors(response, chunk.size()));
         }
-        return vectors(response, texts.size());
+        return vectors;
     }
 
     /**

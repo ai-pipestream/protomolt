@@ -18,4 +18,13 @@ class EmbeddingProviderTest {
         assertThat(vectors.get(0)).containsExactly(0.1f, 0.2f, 0.3f);
         assertThat(vectors.get(1)).containsExactly(0.4f, 0.5f, 0.6f);
     }
+
+    @Test
+    void closeDefaultsToANoOpSoInProcessProvidersNeedNoOverride() {
+        EmbeddingProvider provider = new FixedTableEmbeddingProvider();
+
+        provider.close();
+
+        assertThat(provider.embed("hello world")).containsExactly(0.1f, 0.2f, 0.3f);
+    }
 }

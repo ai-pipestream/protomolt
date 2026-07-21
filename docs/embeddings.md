@@ -33,6 +33,11 @@ stable `providerId()` (e.g. `model2vec`), the fixed `dimension()` of every
 vector the provider produces, and `embed(String)`. A default `embedAll`
 loops over `embed` in order; providers with a real batch API override it.
 
+The SPI is `AutoCloseable`: providers may hold connections, and `close()`
+releases whatever the provider holds. The default is a no-op, so
+in-process providers need no override, and `close()` never throws a
+checked exception. Whoever obtained a provider closes it.
+
 `EmbeddingProviders` discovers implementations: `all()` returns every
 provider on the classpath keyed by id, and `byId(String)` resolves one —
 failing with the list of available ids when the requested provider is not
@@ -143,17 +148,29 @@ First use without the knobs fails with a message naming them.
 
 `TeiEmbeddingProvider` registers under the id `tei` and calls a Hugging Face
 Text Embeddings Inference server. TEI serves one embedding model per process,
-chosen server side, so the only knob is the gRPC target:
+chosen server side, so the knobs are the gRPC target and a truncation switch:
 
 | Property | Environment variable | Example |
 |---|---|---|
 | `protomolt.embeddings.tei.target` | `PROTOMOLT_TEI_TARGET` | `localhost:8071` |
+| `protomolt.embeddings.tei.truncate` | `PROTOMOLT_TEI_TRUNCATE` | defaults to `true` |
 
-`embedAll` issues one unary Embed call per text on virtual threads. TEI
-batches concurrent requests server side (dynamic batching), so concurrent
-unary calls get the batching benefit without a client-side batch API. TEI's
-Info RPC reports no vector dimension, so `dimension()` embeds a fixed probe
-string once and caches the vector length.
+By default every request asks the server to truncate inputs past the model's
+maximum sequence length instead of failing the batch; a deployment that wants
+hard failure on overlength input sets the truncate knob to `false`. The value
+is parsed with `Boolean.parseBoolean` and read once, on the first embed call.
+`normalize` is deliberately left unset on requests, so the TEI server's own
+default applies.
+
+`embedAll` issues one concurrent unary Embed call per text on virtual
+threads. TEI batches concurrent requests server side (dynamic batching), so
+concurrent unary calls get the batching benefit without a client-side batch
+API. Results are collected in input order; when a collected call has failed,
+every call not yet collected is cancelled and the failure propagates. A
+failure is only noticed once collection reaches it, so a still-running call
+earlier in the input order delays it, bounded by the per-call 30 second
+deadline. TEI's Info RPC reports no vector dimension, so `dimension()` embeds
+a fixed probe string once and caches the vector length.
 
 ### OVMS
 
@@ -168,13 +185,22 @@ Model Server embeddings servable over the KServe v2 gRPC prediction protocol
 | `protomolt.embeddings.ovms.input` | `PROTOMOLT_OVMS_INPUT` | defaults to `input` |
 | `protomolt.embeddings.ovms.output` | `PROTOMOLT_OVMS_OUTPUT` | defaults to `embedding` |
 
-Each `embedAll` sends one `ModelInferRequest`: a single BYTES input tensor of
-shape `[N]` carrying the N texts as UTF-8, since OVMS embeddings servables
-accept raw strings and tokenize server side. The FP32 output tensor of shape
-`[N, dim]` is read from `fp32_contents` when populated and from
-`raw_output_contents` (little-endian F32) otherwise, because KServe servers
-commonly answer with raw contents. As with TEI, `dimension()` is learned by a
-one-time probe.
+`embedAll` splits the batch into chunks of at most 256 texts
+(`OvmsEmbeddingProvider.MAX_TEXTS_PER_REQUEST`) and sends one
+`ModelInferRequest` per chunk, each under its own fresh 30 second deadline
+rather than one deadline over the whole batch: gRPC's default 4MB message cap
+means a few thousand texts in one request hit RESOURCE_EXHAUSTED, and a large
+batch on a CPU server can outrun a single 30 second deadline. Each request
+carries a single BYTES input tensor of shape `[N]` with the chunk's N texts
+as UTF-8, since OVMS embeddings servables accept raw strings and tokenize
+server side; the FP32 output tensor of shape `[N, dim]` is read from
+`fp32_contents` when populated and from `raw_output_contents` (little-endian
+F32) otherwise, because KServe servers commonly answer with raw contents. The
+chunks' vectors return concatenated in input order. `embed()` is unaffected:
+a single-text call is one request. A failed chunk call still throws
+`IllegalStateException` naming the model and target, so a multi-chunk
+`embedAll` fails as a whole — no partial results are returned. As with TEI,
+`dimension()` is learned by a one-time probe.
 
 ## Certification
 
@@ -183,7 +209,19 @@ Two providers serving the same model must produce near-identical vectors
 one and querying with the other. `EmbeddingEquivalence.compare(a, b, texts,
 threshold)` in `protomolt-embeddings-harness` embeds a corpus with both
 providers and reduces the per-text cosines to an `EquivalenceReport`: the pair
-is certified when the worst text still clears the threshold.
+is certified when the worst text still clears the threshold. `compare` is
+static — call it directly, there is no instance to construct.
+
+Besides the worst and mean cosine, the report carries `minNormRatio` and
+`maxNormRatio`: the range of per-text L2-norm ratios `norm(a) / norm(b)`,
+with two zero norms defined as 1.0 and a nonzero norm over a zero norm as
+positive infinity. Certification remains cosine-only: cosine certifies
+direction, and because cosine is scale-invariant a pair can certify at 1.0
+while disagreeing on normalization — a min/max norm ratio of 0.5, say, when
+one provider returns unnormalized vectors. The norm ratios expose that scale
+disagreement, which matters when an index scores with L2 or dot product.
+`Cosines` exposes the pieces: `cosine(float[], float[])` and the L2
+`norm(float[])`.
 
 model2vec is a different model family from the transformer models TEI and
 OVMS serve, so it never certifies against a transformer provider. It is the

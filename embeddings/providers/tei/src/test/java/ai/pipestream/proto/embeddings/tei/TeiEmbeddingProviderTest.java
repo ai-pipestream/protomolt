@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,10 +33,12 @@ class TeiEmbeddingProviderTest {
     private ManagedChannel channel;
     private FakeEmbed fake;
     private String savedTargetProperty;
+    private String savedTruncateProperty;
 
     @BeforeEach
     void startInProcessServer() throws IOException {
         savedTargetProperty = System.clearProperty(TeiEmbeddingProvider.TARGET_PROPERTY);
+        savedTruncateProperty = System.clearProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY);
         serverName = "tei-" + UUID.randomUUID();
         fake = new FakeEmbed();
         server = InProcessServerBuilder.forName(serverName)
@@ -54,6 +57,11 @@ class TeiEmbeddingProviderTest {
             System.clearProperty(TeiEmbeddingProvider.TARGET_PROPERTY);
         } else {
             System.setProperty(TeiEmbeddingProvider.TARGET_PROPERTY, savedTargetProperty);
+        }
+        if (savedTruncateProperty == null) {
+            System.clearProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY);
+        } else {
+            System.setProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY, savedTruncateProperty);
         }
     }
 
@@ -93,6 +101,43 @@ class TeiEmbeddingProviderTest {
         assertThat(first).isEqualTo(FakeEmbed.DIMENSION);
         assertThat(second).isEqualTo(FakeEmbed.DIMENSION);
         assertThat(fake.requests).hasSize(1);
+    }
+
+    @Test
+    void embedRequestsServerSideTruncationByDefault() {
+        assumeThat(System.getenv(TeiEmbeddingProvider.TRUNCATE_ENVIRONMENT_VARIABLE)).isNull();
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel);
+
+        provider.embed("possibly overlength");
+
+        assertThat(fake.requests).singleElement().satisfies(
+                request -> assertThat(request.getTruncate()).isTrue());
+    }
+
+    @Test
+    void truncatePropertySetToFalseTurnsServerSideTruncationOff() {
+        System.setProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY, "false");
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel);
+
+        provider.embed("keep whole or fail");
+
+        assertThat(fake.requests).singleElement().satisfies(
+                request -> assertThat(request.getTruncate()).isFalse());
+    }
+
+    @Test
+    void embedAllCancelsUncollectedCallsWhenACollectedCallFails() {
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel);
+
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> provider.embedAll(List.of("boom", "hang")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(channel.authority());
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        // The 'hang' call never gets an answer; only cancellation keeps embedAll from
+        // sitting on it until the 30 second per-call deadline.
+        assertThat(elapsedMillis).isLessThan(10_000L);
     }
 
     @Test
@@ -156,7 +201,9 @@ class TeiEmbeddingProviderTest {
 
     /**
      * Fake Embed service: answers every request with a deterministic three-component vector
-     * derived from the input text, records requests, and can be switched to fail.
+     * derived from the input text, records requests, and can be switched to fail. Two inputs
+     * are special: {@code boom} fails immediately with INTERNAL, {@code hang} is never
+     * answered, so its call stays open until the client cancels it or the deadline expires.
      */
     private static final class FakeEmbed extends EmbedGrpc.EmbedImplBase {
         private static final int DIMENSION = 3;
@@ -176,6 +223,13 @@ class TeiEmbeddingProviderTest {
                 return;
             }
             requests.add(request);
+            if (request.getInputs().equals("boom")) {
+                observer.onError(Status.INTERNAL.withDescription("boom").asRuntimeException());
+                return;
+            }
+            if (request.getInputs().equals("hang")) {
+                return;
+            }
             EmbedResponse.Builder response = EmbedResponse.newBuilder();
             for (float component : vectorFor(request.getInputs())) {
                 response.addEmbeddings(component);

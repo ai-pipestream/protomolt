@@ -3,7 +3,7 @@ package ai.pipestream.proto.embeddings.harness;
 import java.util.Objects;
 
 /**
- * Cosine similarity between embedding vectors.
+ * Cosine similarity and L2 norms of embedding vectors.
  */
 public final class Cosines {
 
@@ -38,5 +38,18 @@ public final class Cosines {
             return 0.0;
         }
         return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+    }
+
+    /**
+     * The L2 (Euclidean) norm of {@code v}: the square root of the sum of squared components,
+     * 0.0 for the zero vector.
+     */
+    public static double norm(float[] v) {
+        Objects.requireNonNull(v, "v");
+        double sum = 0;
+        for (float component : v) {
+            sum += (double) component * component;
+        }
+        return Math.sqrt(sum);
     }
 }

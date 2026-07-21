@@ -61,8 +61,8 @@ class TeiOvmsEquivalenceLiveIntegrationTest {
         System.setProperty(OvmsEmbeddingProvider.MODEL_PROPERTY, ovmsModel);
         try (TeiEmbeddingProvider tei = new TeiEmbeddingProvider();
                 OvmsEmbeddingProvider ovms = new OvmsEmbeddingProvider()) {
-            EquivalenceReport report = new EmbeddingEquivalence()
-                    .compare(tei, ovms, SENTENCES, THRESHOLD);
+            EquivalenceReport report = EmbeddingEquivalence.compare(
+                    tei, ovms, SENTENCES, THRESHOLD);
             assertThat(report.certified()).as("%s", report).isTrue();
         } finally {
             System.clearProperty(TeiEmbeddingProvider.TARGET_PROPERTY);

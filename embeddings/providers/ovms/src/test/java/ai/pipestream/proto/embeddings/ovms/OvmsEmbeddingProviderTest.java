@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -131,6 +132,29 @@ class OvmsEmbeddingProviderTest {
             assertThat(request.getInputs(0).getShapeList()).containsExactly(3L);
             assertThat(request.getInputs(0).getContents().getBytesContentsCount()).isEqualTo(3);
         });
+    }
+
+    @Test
+    void batchOfSixHundredChunksIntoThreeRequestsPreservingGlobalOrder() {
+        List<String> texts = new ArrayList<>(600);
+        for (int i = 0; i < 600; i++) {
+            texts.add("batch-" + i);
+        }
+        OvmsEmbeddingProvider provider = new OvmsEmbeddingProvider(
+                channel, MODEL, "input", "embedding");
+
+        List<float[]> vectors = provider.embedAll(texts);
+
+        assertThat(vectors).hasSize(600);
+        for (int i = 0; i < 600; i++) {
+            // vectorFor puts the global index first, so equality proves end-to-end order.
+            assertThat(vectors.get(i)).as("vector for global index %d", i)
+                    .containsExactly(FakeInferenceService.vectorFor("batch-" + i));
+        }
+        assertThat(fake.requests).hasSize(3);
+        assertThat(fake.requests.get(0).getInputs(0).getShapeList()).containsExactly(256L);
+        assertThat(fake.requests.get(1).getInputs(0).getShapeList()).containsExactly(256L);
+        assertThat(fake.requests.get(2).getInputs(0).getShapeList()).containsExactly(88L);
     }
 
     @Test
@@ -258,8 +282,16 @@ class OvmsEmbeddingProviderTest {
         private volatile int claimedShapeRows = -1;
         private volatile String outputName = "embedding";
 
-        /** The vector {@code text} embeds to: derived from the text, so tests see ordering. */
+        /**
+         * The vector {@code text} embeds to: derived from the text, so tests see ordering.
+         * A {@code batch-<n>} text carries the literal n as the first component, so chunked
+         * batches prove global input order collision-free.
+         */
         private static float[] vectorFor(String text) {
+            if (text.startsWith("batch-")) {
+                int index = Integer.parseInt(text.substring("batch-".length()));
+                return new float[]{index, text.length(), 1};
+            }
             return new float[]{text.length(), text.hashCode() % 1000, text.isEmpty() ? 0 : 1};
         }
 

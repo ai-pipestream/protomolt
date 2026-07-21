@@ -26,6 +26,13 @@ import java.util.concurrent.TimeUnit;
  * TLS can be added later when a deployment calls for it. Every call carries a 30 second
  * deadline.
  *
+ * <p>Every request asks the server to truncate inputs past the model's maximum sequence
+ * length instead of failing the call. A deployment that wants overlength input rejected sets
+ * the {@value #TRUNCATE_PROPERTY} system property or, when that is unset, the
+ * {@value #TRUNCATE_ENVIRONMENT_VARIABLE} environment variable to {@code false}; the knob is
+ * read once, on the first call. {@code normalize} is deliberately left unset so the server's
+ * own default applies.
+ *
  * <p>The {@link #TeiEmbeddingProvider(String)} constructor connects eagerly and
  * {@link #close()} shuts the channel down. The no-argument ServiceLoader constructor resolves
  * the target on first use from the {@value #TARGET_PROPERTY} system property, falling back to
@@ -47,6 +54,16 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     /** Environment variable consulted when {@link #TARGET_PROPERTY} is unset: {@value}. */
     public static final String TARGET_ENVIRONMENT_VARIABLE = "PROTOMOLT_TEI_TARGET";
 
+    /**
+     * System property controlling server-side truncation of overlength inputs: {@value}.
+     * Unset or {@code true}, inputs past the model's maximum sequence length truncate server
+     * side; {@code false} makes the server reject them instead.
+     */
+    public static final String TRUNCATE_PROPERTY = "protomolt.embeddings.tei.truncate";
+
+    /** Environment variable consulted when {@link #TRUNCATE_PROPERTY} is unset: {@value}. */
+    public static final String TRUNCATE_ENVIRONMENT_VARIABLE = "PROTOMOLT_TEI_TRUNCATE";
+
     /** Fixed text embedded once to learn the vector length; see {@link #dimension()}. */
     private static final String DIMENSION_PROBE = "dimension probe";
 
@@ -55,6 +72,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     private volatile ManagedChannel channel;
     private volatile String target;
     private volatile Integer dimension;
+    private volatile Boolean truncate;
 
     /**
      * ServiceLoader constructor. The target is resolved on the first {@link #dimension()},
@@ -128,7 +146,10 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         try {
             EmbedResponse response = EmbedGrpc.newBlockingStub(channel())
                     .withDeadlineAfter(30, TimeUnit.SECONDS)
-                    .embed(EmbedRequest.newBuilder().setInputs(text).build());
+                    .embed(EmbedRequest.newBuilder()
+                            .setInputs(text)
+                            .setTruncate(truncate())
+                            .build());
             float[] vector = new float[response.getEmbeddingsCount()];
             for (int i = 0; i < vector.length; i++) {
                 vector[i] = response.getEmbeddings(i);
@@ -143,14 +164,18 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     /**
      * Embeds each text with its own unary Embed call, issued concurrently on virtual threads.
      * TEI batches concurrent requests server side (dynamic batching), so per-text unary calls
-     * issued at the same time get the batching benefit without a batch API. Results come back
-     * in input order; the first failure cancels the rest and propagates.
+     * issued at the same time get the batching benefit without a batch API.
+     *
+     * <p>Results are collected in input order. When a collected call has failed, every call
+     * not yet collected is cancelled and the failure propagates. A failure is only noticed
+     * once collection reaches it, so a still-running call earlier in the input order delays
+     * it; that wait is bounded by the per-call 30 second deadline.
      *
      * <p>A structured-concurrency scope would express this fork-join directly, but
      * {@code java.util.concurrent.StructuredTaskScope} is a preview API in JDK 21 and the
      * module compiles to the Java 21 baseline without preview, so the scope is spelled out
      * with a virtual-thread executor and futures instead: one fork per text, unordered
-     * completion, input-order collection, fail on the first error.
+     * completion, input-order collection, cancellation of the uncollected on failure.
      *
      * @throws IllegalStateException when any embed call fails or the calling thread is
      *         interrupted while waiting
@@ -164,8 +189,15 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
                 futures.add(executor.submit(() -> embed(text)));
             }
             List<float[]> vectors = new ArrayList<>(texts.size());
-            for (Future<float[]> future : futures) {
-                vectors.add(await(future));
+            for (int collected = 0; collected < futures.size(); collected++) {
+                try {
+                    vectors.add(await(futures.get(collected)));
+                } catch (RuntimeException e) {
+                    for (int rest = collected + 1; rest < futures.size(); rest++) {
+                        futures.get(rest).cancel(true);
+                    }
+                    throw e;
+                }
             }
             return vectors;
         }
@@ -202,6 +234,19 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
     }
 
+    private boolean truncate() {
+        Boolean resolved = truncate;
+        if (resolved != null) {
+            return resolved;
+        }
+        synchronized (lock) {
+            if (truncate == null) {
+                truncate = configuredTruncate();
+            }
+            return truncate;
+        }
+    }
+
     private static float[] await(Future<float[]> future) {
         try {
             return future.get();
@@ -227,5 +272,13 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
                     + " environment variable to the server's host:port");
         }
         return resolved;
+    }
+
+    private static boolean configuredTruncate() {
+        String configured = System.getProperty(TRUNCATE_PROPERTY);
+        if (configured == null) {
+            configured = System.getenv(TRUNCATE_ENVIRONMENT_VARIABLE);
+        }
+        return configured == null || Boolean.parseBoolean(configured);
     }
 }
