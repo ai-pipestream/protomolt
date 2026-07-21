@@ -209,12 +209,20 @@ The module depends only on the SPI jars (`protomolt-embeddings`,
 
 The live lanes: `RerankedSearchLiveIntegrationTest` runs the pipeline
 against a Testcontainers OpenSearch with fixture providers and needs only
-Docker. `TeiSemanticSearchLiveIntegrationTest` runs it with the real TEI
-providers and needs two servers besides Docker:
+Docker. `TeiSemanticSearchLiveIntegrationTest` runs it against real models
+on a self-provisioned Testcontainers stack: OpenSearch plus two TEI CPU
+containers (sentence-transformers/all-MiniLM-L6-v2 for embeddings,
+BAAI/bge-reranker-base for reranking), with nothing running but Docker.
 
-| Environment variable | Points at |
-|---|---|
-| `PROTOMOLT_TEI_TARGET` | TEI embeddings server `host:port`, e.g. `localhost:8071` (384-dim all-MiniLM-L6-v2) |
-| `PROTOMOLT_RERANK_TEI_TARGET` | TEI rerank server `host:port`, e.g. `localhost:8072` |
+The TEI lane is tagged `tei` and excluded from the default test task, so
+GitHub CI never runs it. Run it by hand with:
 
-Without both variables the TEI lane skips cleanly.
+```
+./gradlew :protomolt-index-opensearch:teiIntegrationTest
+```
+
+In CI it runs on the Forgejo lane `.forgejo/workflows/tei-integration.yml`.
+The first run downloads about 1.2 GB of models from the HF hub. Setting
+`PROTOMOLT_TEI_CACHE` to an existing directory bind-mounts it into both
+TEI containers at `/data`, so the models persist across runs; the Forgejo
+lane points it at `/work/tei-model-cache` on the runner.
