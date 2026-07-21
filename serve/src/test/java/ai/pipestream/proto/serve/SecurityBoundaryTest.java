@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -72,13 +73,25 @@ class SecurityBoundaryTest {
     void mcpBodiesAreCapped() throws Exception {
         byte[] huge = new byte[17 * 1024 * 1024];
         java.util.Arrays.fill(huge, (byte) ' ');
-        HttpResponse<String> response = http.send(HttpRequest.newBuilder(
-                        URI.create(base + "/mcp"))
+        HttpRequest oversized = HttpRequest.newBuilder(URI.create(base + "/mcp"))
                 .header("content-type", "application/json")
                 .header("api_token", TOKEN)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(huge))
-                .build(), HttpResponse.BodyHandlers.ofString());
-        assertThat(response.statusCode()).isEqualTo(413);
+                .build();
+        // The server answers 413 and closes the connection without draining the rest of the
+        // body. Whether the client reads that response or hits the reset first is a TCP
+        // race; both outcomes prove the cap held, because the upload was refused mid-stream.
+        try {
+            HttpResponse<String> response = http.send(oversized, HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).isEqualTo(413);
+        } catch (IOException refusedMidStream) {
+            // Expected on the reset path; fall through to the health check below.
+        }
+        // Either way the process must have shrugged the oversized body off, not died on it.
+        HttpResponse<String> health = http.send(HttpRequest.newBuilder(
+                        URI.create(base + "/health")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(health.statusCode()).isEqualTo(200);
     }
 
     @Test

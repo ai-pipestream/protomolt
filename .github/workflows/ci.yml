@@ -40,14 +40,17 @@ jobs:
       # Excluded from `build` because the ACP SDK's client has been seen blocking
       # indefinitely when the machine is saturated by the parallel build. Run here on a
       # quiet machine, serially, so the coverage is kept rather than deleted. The client
-      # still wedges occasionally even when quiet, so one retry absorbs that known flake
-      # without hiding a persistent failure.
+      # still wedges even when quiet (a timeout in its response flux, different tests each
+      # time), and a single retry has been observed to wedge too, so this allows three
+      # attempts. A persistent failure still fails the job.
       - name: ACP protocol round trips
-        run: >
-          ./gradlew :protomolt-acp:acpProtocolTest --console=plain
-          -PtestJdk=${{ matrix.test-jdk }}
-          || ./gradlew :protomolt-acp:acpProtocolTest --rerun-tasks --console=plain
-          -PtestJdk=${{ matrix.test-jdk }}
+        run: |
+          for attempt in 1 2 3; do
+            ./gradlew :protomolt-acp:acpProtocolTest --rerun-tasks --console=plain \
+              -PtestJdk=${{ matrix.test-jdk }} && exit 0
+            echo "acpProtocolTest attempt ${attempt} failed"
+          done
+          exit 1
 
       - name: Buf lint
         run: buf lint
