@@ -1,0 +1,37 @@
+name: TEI integration
+
+# Forgejo-only lane: GitHub ignores .forgejo/. The suite self-provisions OpenSearch plus two
+# TEI CPU containers (embeddings and reranker) and is excluded from the default test task, so
+# GitHub CI never runs it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The repository is mirrored: mirror syncs do not necessarily emit push events,
+  # so the lane can always be started by hand or through the API.
+  workflow_dispatch:
+
+jobs:
+  tei-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The test bind-mounts this directory into both TEI containers at /data when it exists,
+      # so the ~1.2 GB of models download once and persist across runs on the runner.
+      - name: Create the TEI model cache
+        run: mkdir -p /work/tei-model-cache
+
+      - name: Run the TEI rerank lane
+        env:
+          PROTOMOLT_TEI_CACHE: /work/tei-model-cache
+        run: ./gradlew :protomolt-index-opensearch:teiIntegrationTest --no-daemon --console=plain

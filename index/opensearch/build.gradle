@@ -17,4 +17,26 @@ dependencies {
     // The live TEI lane exercises the orchestration against the real providers.
     testImplementation project(':protomolt-embeddings-tei')
     testImplementation project(':protomolt-rerank-tei')
+    // Compile-only need: javac resolves the Tei providers' (String) constructors against
+    // their (ManagedChannel) overloads; gRPC itself rides along at runtime from the TEI modules.
+    testImplementation libs.grpc.api
+}
+
+// The TEI lane self-provisions three heavyweight containers (OpenSearch plus two TEI CPU model
+// servers), so it runs as its own lane on the Forgejo workflow rather than in the default
+// test task, which GitHub CI runs.
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'tei'
+    }
+}
+
+tasks.register('teiIntegrationTest', Test) {
+    group = 'verification'
+    description = 'Runs the self-provisioned TEI rerank lane excluded from the default test task'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'tei'
+    }
 }
