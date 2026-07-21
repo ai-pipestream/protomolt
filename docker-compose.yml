@@ -1,0 +1,52 @@
+# ProtoMolt in one command. Build the distributions first, then bring it up:
+#
+#   ./gradlew :protomolt-serve:installDist :protomolt-acp:installDist
+#   docker compose build
+#   docker compose up
+#
+# `serve` exposes the whole API — gRPC, JSON/REST, Swagger, the web console, and the
+# MCP endpoint — over HTTP. `acp` is the stdio agent an IDE launches; it has no port
+# and is driven on demand (see below), so `up` does not start it.
+#
+# End-to-end proof of both surfaces: scripts/docker-smoke.sh
+name: protomolt
+
+services:
+  serve:
+    build:
+      context: serve
+      dockerfile: Dockerfile
+    image: protomolt-serve:local
+    # --demo seeds a throwaway git registry plus a sample schema and chain, so every
+    # surface has something to answer. Swap for --registry-git to keep schemas (below).
+    command: ["--demo"]
+    ports:
+      # Host ports are overridable so the stack coexists with whatever else holds 8080;
+      # container ports are fixed. e.g. PROTOMOLT_HTTP_PORT=38080 docker compose up
+      - "${PROTOMOLT_HTTP_PORT:-8080}:8080"   # JSON/REST, OpenAPI, Swagger (/docs), console (/console), MCP (/mcp)
+      - "${PROTOMOLT_GRPC_PORT:-9090}:9090"   # gRPC, reflection enabled
+      - "${PROTOMOLT_REGISTRY_PORT:-8081}:8081"   # git-backed schema registry, Confluent protocol
+    # The Dockerfile's HEALTHCHECK probes /health, which stays open in every auth mode.
+    restart: unless-stopped
+    # A persistent registry instead of the ephemeral demo one:
+    #   command: ["--registry-git", "/data/schemas.git"]
+    #   volumes:
+    #     - ./schemas.git:/data/schemas.git
+    # A shared secret on every operational surface (health, OpenAPI, Swagger stay open):
+    #   environment:
+    #     PROTOMOLT_API_TOKEN: "change-me"
+
+  acp:
+    build:
+      context: acp
+      dockerfile: Dockerfile
+    image: protomolt-acp:local
+    # The Agent Client Protocol is spoken over stdio; there is no server to keep running.
+    # `up` therefore skips this service (it is in a profile). An IDE, or the smoke driver,
+    # launches it on demand:
+    #
+    #   docker compose run --rm -T acp        # raw stdio, drive it yourself or from an IDE
+    #   ./gradlew :protomolt-acp:acpSmoke     # drives the container and prints a transcript
+    profiles: ["acp"]
+    stdin_open: true
+    tty: false

@@ -199,6 +199,52 @@ class IcebergSchemasTest {
                 .isEqualTo("RowStruct");
     }
 
+    /**
+     * Two structs under different parents both derive their message name from a column called
+     * "address". Generated nested messages are all file-level, so an undisambiguated second
+     * "Address" would redefine the first and the source would not compile at all.
+     */
+    @Test
+    void structColumnsSharingAFieldNameGetDistinctMessages() throws Exception {
+        Schema schema = new Schema(
+                Types.NestedField.optional(1, "shipper", Types.StructType.of(
+                        Types.NestedField.optional(2, "address", Types.StructType.of(
+                                Types.NestedField.optional(3, "city", Types.StringType.get()))))),
+                Types.NestedField.optional(4, "buyer", Types.StructType.of(
+                        Types.NestedField.optional(5, "address", Types.StructType.of(
+                                Types.NestedField.optional(6, "zip", Types.LongType.get()))))));
+        String source = IcebergSchemas.toProtoSource(schema, "gen.v1", "Row");
+
+        assertThat(source).contains("message Address").contains("message Address2");
+        Descriptor row = recompile(source, "Row");
+        assertThat(row.findFieldByName("shipper").getMessageType()
+                .findFieldByName("address").getMessageType().findFieldByName("city")).isNotNull();
+        assertThat(row.findFieldByName("buyer").getMessageType()
+                .findFieldByName("address").getMessageType().findFieldByName("zip")).isNotNull();
+    }
+
+    /**
+     * Proto has no repeated-of-repeated. Naming such an element "string" would compile but hand
+     * the caller a contract that has nothing to do with the table.
+     */
+    @Test
+    void collectionsNestedInsideCollectionsAreRejectedNotDegradedToStrings() {
+        Schema listOfLists = new Schema(Types.NestedField.optional(1, "matrix",
+                Types.ListType.ofOptional(2,
+                        Types.ListType.ofOptional(3, Types.LongType.get()))));
+        assertThatThrownBy(() -> IcebergSchemas.toProtoSource(listOfLists, "gen.v1", "Row"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("matrix")
+                .hasMessageContaining("proto cannot express");
+
+        Schema mapOfLists = new Schema(Types.NestedField.optional(1, "byKey",
+                Types.MapType.ofOptional(2, 3, Types.StringType.get(),
+                        Types.ListType.ofOptional(4, Types.StringType.get()))));
+        assertThatThrownBy(() -> IcebergSchemas.toProtoSource(mapOfLists, "gen.v1", "Row"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("byKey");
+    }
+
     private static Descriptor recompile(String source, String message) throws Exception {
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
                 .add("gen/v1/row.proto", source, "gen").build());

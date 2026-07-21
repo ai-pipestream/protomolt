@@ -26,6 +26,15 @@ dependencies {
 
     testImplementation project(':protomolt-grpc-invoke')
     testImplementation libs.grpc.inprocess
+    testImplementation libs.testcontainers.junit.jupiter
+}
+
+// ContainerSmokeIntegrationTest docker-builds serve/Dockerfile, whose context COPYs the
+// installDist output. The Dockerfile is a declared input so editing it re-runs the suite;
+// dependsOn alone is ordering and would leave a Dockerfile-only change stale-green.
+tasks.named('test') {
+    dependsOn 'installDist'
+    inputs.file('Dockerfile')
 }
 
 application {

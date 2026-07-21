@@ -37,6 +37,18 @@ jobs:
       - name: Build and test
         run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
+      # Excluded from `build` because the ACP SDK's client has been seen blocking
+      # indefinitely when the machine is saturated by the parallel build. Run here on a
+      # quiet machine, serially, so the coverage is kept rather than deleted. The client
+      # still wedges occasionally even when quiet, so one retry absorbs that known flake
+      # without hiding a persistent failure.
+      - name: ACP protocol round trips
+        run: >
+          ./gradlew :protomolt-acp:acpProtocolTest --console=plain
+          -PtestJdk=${{ matrix.test-jdk }}
+          || ./gradlew :protomolt-acp:acpProtocolTest --rerun-tasks --console=plain
+          -PtestJdk=${{ matrix.test-jdk }}
+
       - name: Buf lint
         run: buf lint
 

@@ -6,6 +6,7 @@ dependencies {
     // The Connect worker provides the framework at runtime; plugins must not bundle it.
     compileOnly libs.kafka.connect.api
 
+    implementation project(':protomolt-kafka-wire')
     implementation project(':protomolt-json')
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-protobuf-validation')

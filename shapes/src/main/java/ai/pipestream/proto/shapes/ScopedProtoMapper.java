@@ -17,7 +17,8 @@ import java.util.Objects;
  *
  * <p>A source path that resolves to nothing (an unset optional hop) skips its rule rather
  * than failing — join semantics for absent values; an unknown scope name is always an
- * error.</p>
+ * error. A source may also be a literal ({@code "text"}, a number, {@code true},
+ * {@code false}, or {@code null}, which clears its target), as in the unscoped dialect.</p>
  */
 public final class ScopedProtoMapper {
 
@@ -55,11 +56,21 @@ public final class ScopedProtoMapper {
             throw new MappingException("Rule is not 'target = source.path', "
                     + "'target += source.path', or '-target'", rule);
         }
-        Object value = resolve(scope, sides[1].trim(), rule);
-        if (value == null) {
-            return; // absent optional source: skip, do not fail the join
-        }
+        String source = sides[1].trim();
         String targetPath = sides[0].trim();
+        Object value;
+        if (Literals.isLiteral(source)) {
+            value = Literals.valueOf(source);
+            if (value == null) {
+                mapper.clearField(target, targetPath); // the 'null' literal clears
+                return;
+            }
+        } else {
+            value = resolve(scope, source, rule);
+            if (value == null) {
+                return; // absent optional source: skip, do not fail the join
+            }
+        }
         // Repeated values land item by item: the type converter works on elements.
         if (value instanceof List<?> items) {
             if (!append) {

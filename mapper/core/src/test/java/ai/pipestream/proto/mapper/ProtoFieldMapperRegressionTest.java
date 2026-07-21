@@ -175,6 +175,60 @@ class ProtoFieldMapperRegressionTest {
         assertEquals(List.of("a", "b"), mapper.getValue(target, "metadata.tags"));
     }
 
+    // --- Bug 9: appending null reached addRepeatedField and threw a bare NullPointerException ---
+
+    @Test
+    void appendingNullValueReportsAMappingException() {
+        var target = TestDescriptors.document();
+        MappingException e = assertThrows(MappingException.class,
+                () -> mapper.appendValue(target, "tags", null));
+        assertTrue(e.getMessage().contains("Cannot append null"));
+        assertTrue(e.getMessage().contains("tags"));
+    }
+
+    @Test
+    void appendingNullLiteralReportsAMappingException() {
+        var target = TestDescriptors.document();
+        MappingException e = assertThrows(MappingException.class,
+                () -> mapper.mapInPlace(target, List.of("tags += null")));
+        assertTrue(e.getMessage().contains("Cannot append null"));
+    }
+
+    @Test
+    void appendingUnsetSourceFieldReportsAMappingException() {
+        var source = TestDescriptors.document().build(); // body never set
+        var target = TestDescriptors.document();
+        MappingException e = assertThrows(MappingException.class,
+                () -> mapper.map(source, target, List.of("tags += body")));
+        assertTrue(e.getMessage().contains("Cannot append null"));
+    }
+
+    // --- Bug 10: assigning null through an unset parent materialised the parent as PRESENT ---
+
+    @Test
+    void assigningNullThroughUnsetParentLeavesTheParentUnset() throws Exception {
+        var target = TestDescriptors.document();
+        mapper.setValue(target, "info.version", null);
+        assertFalse(target.hasField(TestDescriptors.DOCUMENT.findFieldByName("info")));
+    }
+
+    @Test
+    void assigningNullThroughSetParentClearsOnlyTheLeaf() throws Exception {
+        var target = TestDescriptors.document();
+        mapper.setValue(target, "info.version", "v1");
+        mapper.setValue(target, "info.version", null);
+        assertTrue(target.hasField(TestDescriptors.DOCUMENT.findFieldByName("info")));
+        assertNull(mapper.getValue(target, "info.version"));
+    }
+
+    /** A null under a Struct key is a stored NullValue, so the Struct parent is still created. */
+    @Test
+    void assigningNullToStructKeyStillCreatesTheStruct() throws Exception {
+        var target = TestDescriptors.document();
+        mapper.setValue(target, "metadata.source", null);
+        assertTrue(target.hasField(TestDescriptors.DOCUMENT.findFieldByName("metadata")));
+    }
+
     // --- Bug 8: a failed Any unpack on the final path segment returned the raw packed Any ---
 
     @Test

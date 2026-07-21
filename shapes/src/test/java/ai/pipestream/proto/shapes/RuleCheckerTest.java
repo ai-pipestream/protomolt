@@ -144,6 +144,34 @@ class RuleCheckerTest {
         assertThat(findings.get(3).error()).startsWith("fallback");
     }
 
+    /**
+     * The text dialect quotes strings with double quotes only; a single-quoted source is
+     * read as a field path at runtime, so waving it through here would hide the failure.
+     */
+    @Test
+    void literalsMatchTheRuntimeDialect() {
+        List<RuleChecker.Finding> findings = checker.checkScoped(sources(), summary,
+                List.of("order_id = \"fixed\"",
+                        "total = -42",
+                        "order_id = null",
+                        "order_id = 'fixed'"),
+                List.of(), List.of());
+        assertThat(findings).hasSize(1);
+        assertThat(findings.get(0).index()).isEqualTo(3);
+        assertThat(findings.get(0).error()).contains("unknown source ''fixed''");
+    }
+
+    /** A path of nothing but separators is an invalid path, not an internal error. */
+    @Test
+    void separatorOnlyPathsAreReportedAsInvalid() {
+        List<RuleChecker.Finding> findings = checker.checkScoped(sources(), summary,
+                List.of("-.", "order_id = order.."),
+                List.of(), List.of());
+        assertThat(findings).hasSize(2);
+        assertThat(findings.get(0).error()).contains("names no fields");
+        assertThat(findings.get(1).error()).contains("names no fields");
+    }
+
     @Test
     void inPlaceModeUsesUnscopedPathsAndTheSingleVariable() {
         List<RuleChecker.Finding> clean = checker.checkInPlace("input", order,

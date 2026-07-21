@@ -79,8 +79,27 @@ ext.commonPomMetadata = { pom ->
 subprojects {
     repositories {
         mavenLocal()
-        // The ai.pipestream fork snapshots (shared-floor Lucene, preview OpenNLP).
-        maven { url = 'https://git.rokkon.com/api/packages/ai-pipestream/maven' }
+        // The experimental Lucene and OpenNLP forks (ai.pipestream:lucene-*, opennlp-*) are the
+        // only dependencies not on Maven Central. They resolve from Central's snapshot
+        // repository, which every runner can reach; the ai.pipestream Forgejo registry stays as
+        // a fallback for a clean checkout before a fresh fork snapshot has propagated. Both are
+        // scoped to exactly the forks: without the filter, every dependency in the build would
+        // be looked up here first, and a slow or (from GitHub-hosted runners) unreachable host
+        // would fail resolution at configuration time.
+        maven {
+            url = 'https://central.sonatype.com/repository/maven-snapshots'
+            content {
+                includeModuleByRegex('ai\\.pipestream', 'lucene-.*')
+                includeModuleByRegex('ai\\.pipestream', 'opennlp(-.*)?')
+            }
+        }
+        maven {
+            url = 'https://git.rokkon.com/api/packages/ai-pipestream/maven'
+            content {
+                includeModuleByRegex('ai\\.pipestream', 'lucene-.*')
+                includeModuleByRegex('ai\\.pipestream', 'opennlp(-.*)?')
+            }
+        }
         mavenCentral()
     }
 

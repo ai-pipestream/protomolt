@@ -1,0 +1,5 @@
+description = 'Embedding-provider SPI (ServiceLoader) and the plan-driven document embedder'
+
+dependencies {
+    api project(':protomolt-index-spi')
+}

@@ -1,0 +1,12 @@
+description = 'The Confluent protobuf wire format: a framework-neutral frame reader and writer'
+
+dependencies {
+    // Descriptor/FileDescriptor appear in indexPath/messageAt; the format itself is
+    // framework-neutral, so nothing Kafka reaches the main classpath.
+    api libs.protobuf.java
+
+    // The tests cross-check frames against Kafka's own ByteUtils.writeVarint and compile
+    // fixture schemas to exercise indexPath/messageAt; neither reaches the main classpath.
+    testImplementation libs.kafka.clients
+    testImplementation project(':protomolt-proto-sources')
+}

@@ -131,11 +131,9 @@ public final class ProtoRestHttpSupport {
         if (cause instanceof MalformedProtobufJsonException || cause instanceof MalformedRequestException) {
             return 400;
         }
-        // A plain ProtobufJsonException means the server failed to serialize its own
-        // response (or is misconfigured) — a server fault, not a client error.
-        if (cause instanceof ProtoRestException) {
-            return 500;
-        }
+        // Everything else is a server fault: a plain ProtobufJsonException means the server
+        // failed to serialize its own response, and a plain ProtoRestException is an
+        // invocation failure. Neither is client-repairable.
         return 500;
     }
 

@@ -21,8 +21,9 @@ import java.util.Set;
  * Microsoft 365 Search and Copilot. TEXT fields become searchable strings, KEYWORD fields
  * exact-match queryables, sortable/facetable fields refinable (never searchable at the same
  * time — Graph forbids the combination), and repeated fields the collection types Graph
- * offers. Property names are Graph-legal (alphanumeric, 32 chars): dotted proto paths
- * camel-case, with collisions numbered.
+ * offers. Property names come from the plan's field name — the hint's name override when one
+ * is set, the qualified path otherwise — made Graph-legal (alphanumeric, 32 chars) by
+ * camel-casing at the separators, with collisions numbered.
  */
 public final class GraphSchemas {
 
@@ -59,7 +60,7 @@ public final class GraphSchemas {
                 continue;
             }
             ObjectNode property = properties.addObject();
-            property.put("name", propertyName(field.path(), usedNames));
+            property.put("name", propertyName(field.fieldName(), usedNames));
             property.put("type", type);
             boolean searchable = hint.type() == IndexFieldKind.TEXT;
             boolean refinable = !searchable && !repeated
@@ -92,10 +93,10 @@ public final class GraphSchemas {
     }
 
     /** Graph property names: letters and digits only, must start with a letter, max 32. */
-    static String propertyName(String path, Set<String> used) {
-        StringBuilder name = new StringBuilder(path.length());
+    static String propertyName(String fieldName, Set<String> used) {
+        StringBuilder name = new StringBuilder(fieldName.length());
         boolean capitalizeNext = false;
-        for (char c : path.toCharArray()) {
+        for (char c : fieldName.toCharArray()) {
             if (Character.isLetterOrDigit(c)) {
                 name.append(capitalizeNext && name.length() > 0
                         ? Character.toUpperCase(c) : c);
@@ -121,21 +122,27 @@ public final class GraphSchemas {
         return unique;
     }
 
-    /** Whether the dotted proto path ends at a repeated field. */
+    /**
+     * Whether any segment of the dotted proto path is repeated. A scalar flattened out of a
+     * repeated parent message still contributes one value per parent entry, so it needs a
+     * Graph collection type just as much as a repeated leaf does.
+     */
     private static boolean repeated(Descriptor descriptor, String path) {
         Descriptor current = descriptor;
-        FieldDescriptor field = null;
         for (String segment : path.split("\\.")) {
             if (current == null) {
                 return false;
             }
-            field = current.findFieldByName(segment);
+            FieldDescriptor field = current.findFieldByName(segment);
             if (field == null) {
                 return false;
+            }
+            if (field.isRepeated()) {
+                return true;
             }
             current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
                     ? field.getMessageType() : null;
         }
-        return field != null && field.isRepeated();
+        return false;
     }
 }

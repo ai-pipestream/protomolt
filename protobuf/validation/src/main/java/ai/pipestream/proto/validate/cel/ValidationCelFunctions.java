@@ -119,13 +119,21 @@ public final class ValidationCelFunctions {
                 break;
             }
             char verb = format.charAt(j);
-            Object value = arg < args.size() ? args.get(arg++) : null;
-            out.append(formatVerb(verb, value, precision));
+            String rendered = formatVerb(verb, arg < args.size() ? args.get(arg) : null, precision);
+            if (rendered == null) {
+                // An unrecognised verb is copied through as written and consumes no argument;
+                // consuming one would substitute every later directive an argument off.
+                out.append('%').append(verb);
+            } else {
+                arg++;
+                out.append(rendered);
+            }
             i = j;
         }
         return out.toString();
     }
 
+    /** The rendering of one directive, or null when {@code verb} is not a known directive. */
     private static String formatVerb(char verb, Object value, int precision) {
         return switch (verb) {
             case 's' -> celString(value);
@@ -138,7 +146,7 @@ public final class ValidationCelFunctions {
             case 'X' -> hex(value, true);
             case 'o' -> Long.toOctalString(toLong(value));
             case 'b' -> Long.toBinaryString(toLong(value));
-            default -> "%" + verb;
+            default -> null;
         };
     }
 

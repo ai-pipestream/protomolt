@@ -12,9 +12,10 @@ services in both directions, descriptor-native with no generated stubs:
   (Watch-style) stream is consumed indefinitely with a bounded buffer, and a
   CEL-extracted resume token stored as the Connect offset lets the
   subscription pick up where Kafka left off after a restart.
-- **Three protobuf-aware transforms** — `ValidateMessage`, `MapMessage`,
-  and `CelFilter` — that drop into *any* connector's pipeline, not just
-  these two, and understand the records where stock SMTs see bytes.
+- **Four protobuf-aware transforms** — `ValidateMessage`, `MapMessage`,
+  `CelFilter`, and `RedactMessage` — that drop into *any* connector's
+  pipeline, not just these two, and understand the records where stock SMTs
+  see bytes.
 
 Everything is configured with a serialized
 `google.protobuf.FileDescriptorSet` — no proto files on the worker, no code
@@ -148,8 +149,8 @@ type) — is validated at connector start, not first poll.
 
 ## The transforms
 
-Three Single Message Transforms make protobuf records first-class in any
-Connect pipeline — theirs or ours. All three share the schema configuration
+Four Single Message Transforms make protobuf records first-class in any
+Connect pipeline — theirs or ours. All four share the schema configuration
 (`schema.descriptor.set.base64`, `message.type`, and `value.format`:
 `protobuf`, `confluent`, or `json`), pass tombstones through untouched, and
 validate everything validatable — including compiling and type-checking the

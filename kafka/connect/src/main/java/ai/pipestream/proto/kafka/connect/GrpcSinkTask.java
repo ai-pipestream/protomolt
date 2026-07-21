@@ -1,6 +1,7 @@
 package ai.pipestream.proto.kafka.connect;
 
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.util.JsonFormat;
@@ -82,15 +83,14 @@ public final class GrpcSinkTask extends SinkTask {
         for (SinkRecord record : records) {
             requests.add(decode(record));
         }
-        CallOptions options = CallOptions.DEFAULT
-                .withDeadlineAfter(config.deadlineMs(), TimeUnit.MILLISECONDS);
         try {
             if (method.isClientStreaming()) {
+                // The batch is one call, so one deadline covers it.
                 DynamicGrpcCalls.callClientStreaming(
-                        channel, method, requests.iterator(), options, cloneHeaders());
+                        channel, method, requests.iterator(), callOptions(), cloneHeaders());
             } else {
                 for (DynamicMessage request : requests) {
-                    DynamicGrpcCalls.call(channel, method, request, options, cloneHeaders(), 1);
+                    DynamicGrpcCalls.call(channel, method, request, callOptions(), cloneHeaders(), 1);
                 }
             }
         } catch (StatusRuntimeException e) {
@@ -101,6 +101,14 @@ public final class GrpcSinkTask extends SinkTask {
             throw new ConnectException("gRPC " + e.getStatus().getCode() + " from "
                     + config.target() + ": " + e.getStatus().getDescription(), e);
         }
+    }
+
+    /**
+     * A deadline is an absolute instant once set, so it is derived per call: a single one built
+     * for the batch would leave the last record of a large batch with none of it left.
+     */
+    private CallOptions callOptions() {
+        return CallOptions.DEFAULT.withDeadlineAfter(config.deadlineMs(), TimeUnit.MILLISECONDS);
     }
 
     private DynamicMessage decode(SinkRecord record) {
@@ -116,7 +124,7 @@ public final class GrpcSinkTask extends SinkTask {
                 }
                 case CONFLUENT -> {
                     return DynamicMessage.parseFrom(method.getInputType(),
-                            ConfluentFraming.payload(asBytes(value)));
+                            ConfluentWireFormat.payload(asBytes(value)));
                 }
                 default -> {
                     String json = value instanceof byte[] bytes

@@ -24,7 +24,9 @@ import java.util.Objects;
  * uses the hint's analyzer name as the fieldType name when set ({@code text_general}
  * otherwise) — analyzer names are engine-interpreted. OBJECT/NESTED values are emitted as
  * JSON strings by {@link SolrDocumentMapper}, so they map to {@code string}. Sortable or
- * facetable hints set {@code docValues: true}. Ranges have no native Solr type and become
+ * facetable hints set {@code docValues: true}; repeated proto fields set
+ * {@code multiValued: true} (vectors excepted — {@code solr.DenseVectorField} is
+ * single-valued by construction). Ranges have no native Solr type and become
  * two fields {@code field_min} / {@code field_max}. Each {@link ResolvedFieldHint.SubField}
  * becomes a {@code field_sub} field plus a copyField from the parent. Vector fieldTypes
  * carry {@code vectorDimension} / {@code similarityFunction} and, when tuned,
@@ -42,15 +44,18 @@ public final class SolrSchemaGenerator {
         List<Map<String, Object>> copyFields = new ArrayList<>();
         for (IndexingPlan.IndexedField field : plan.indexable()) {
             ResolvedFieldHint hint = field.hint();
+            // A DenseVectorField holds the whole vector in a single value, and Solr rejects the
+            // type outright when the field declares multiValued.
+            boolean multiValued = field.repeated() && hint.type() != IndexFieldKind.VECTOR;
             if (hint.type().isRange()) {
-                fields.add(fieldMap(field.fieldName() + "_min", boundType(hint.type()), hint));
-                fields.add(fieldMap(field.fieldName() + "_max", boundType(hint.type()), hint));
+                fields.add(fieldMap(field.fieldName() + "_min", boundType(hint.type()), hint, multiValued));
+                fields.add(fieldMap(field.fieldName() + "_max", boundType(hint.type()), hint, multiValued));
                 continue;
             }
             String type = hint.type() == IndexFieldKind.VECTOR
                     ? vectorType(fieldTypes, hint)
                     : fieldTypeName(hint.type(), hint.analyzer());
-            fields.add(fieldMap(field.fieldName(), type, hint));
+            fields.add(fieldMap(field.fieldName(), type, hint, multiValued));
             for (ResolvedFieldHint.SubField sub : hint.subFields()) {
                 String subName = field.fieldName() + "_" + sub.name();
                 Map<String, Object> subField = new LinkedHashMap<>();
@@ -58,6 +63,10 @@ public final class SolrSchemaGenerator {
                 subField.put("type", fieldTypeName(sub.type(), sub.analyzer()));
                 subField.put("indexed", true);
                 subField.put("stored", false);
+                // A copyField destination has to accept every value its source produces.
+                if (multiValued) {
+                    subField.put("multiValued", true);
+                }
                 fields.add(subField);
                 Map<String, Object> copyField = new LinkedHashMap<>();
                 copyField.put("source", field.fieldName());
@@ -68,12 +77,16 @@ public final class SolrSchemaGenerator {
         return new SolrSchema(List.copyOf(fieldTypes.values()), fields, copyFields);
     }
 
-    private static Map<String, Object> fieldMap(String name, String type, ResolvedFieldHint hint) {
+    private static Map<String, Object> fieldMap(
+            String name, String type, ResolvedFieldHint hint, boolean multiValued) {
         Map<String, Object> field = new LinkedHashMap<>();
         field.put("name", name);
         field.put("type", type);
         field.put("indexed", hint.indexed());
         field.put("stored", hint.stored());
+        if (multiValued) {
+            field.put("multiValued", true);
+        }
         if (hint.sortable() || hint.facetable()) {
             field.put("docValues", true);
         }

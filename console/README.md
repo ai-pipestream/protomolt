@@ -10,7 +10,7 @@ compatibility, and trying the verbs — ProtoMolt's own frontend.
 npm install
 npm run dev          # against protomolt-serve's registry on localhost:8081
 PROTOMOLT_REGISTRY_URL=http://host:port npm run dev   # any Confluent-compatible registry
-npm test             # 66 tests, vitest (jsdom for component suites)
+npm test             # vitest (jsdom for the component and view suites)
 npm run build        # static bundle in dist/
 ```
 

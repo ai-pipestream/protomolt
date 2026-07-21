@@ -5,12 +5,15 @@ import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
+import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
+import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The OKF bundle must conform to the v0.1 spec (frontmatter with a type on every concept,
@@ -179,5 +182,50 @@ class OkfRendererTest {
         assertThat(bundle.text("subjects/index.md"))
                 .contains("* [okf/reg/v1/reading.proto](/subjects/okf_reg_v1_reading.proto.md)");
         assertThat(bundle.text("index.md")).contains("(/subjects/index.md)");
+    }
+
+    /**
+     * Subject sanitisation is many-to-one, so two subjects can reduce to the same file name.
+     * Without a suffix the later one silently replaced the earlier one and a whole subject
+     * vanished from the bundle.
+     */
+    @Test
+    void subjectsWhoseNamesSanitizeAlikeEachKeepTheirDocument() {
+        InMemorySchemaRegistryStore store = new InMemorySchemaRegistryStore();
+        store.register("okf/dup/one.proto", """
+                syntax = "proto3";
+                package okf.dup.a;
+                message A { string x = 1; }
+                """, List.of());
+        store.register("okf:dup:one.proto", """
+                syntax = "proto3";
+                package okf.dup.b;
+                message B { string y = 1; }
+                """, List.of());
+
+        Bundle bundle = OkfRegistryBundles.render(store, new OkfRenderer.Options("Registry", null));
+
+        assertThat(bundle.paths()).contains(
+                "subjects/okf_dup_one.proto.md", "subjects/okf_dup_one.proto-2.md");
+        assertThat(bundle.text("subjects/okf_dup_one.proto.md")
+                + bundle.text("subjects/okf_dup_one.proto-2.md"))
+                .contains("okf/dup/one.proto")
+                .contains("okf:dup:one.proto");
+    }
+
+    /** The dependency's name is the only thing that tells an operator what the store is missing. */
+    @Test
+    void aMissingDependencyIsReportedByName() {
+        FileDescriptorSet set = FileDescriptorSet.newBuilder()
+                .addFile(FileDescriptorProto.newBuilder()
+                        .setName("okf/dep/leaf.proto")
+                        .setSyntax("proto3")
+                        .addDependency("okf/dep/absent.proto"))
+                .build();
+
+        assertThatThrownBy(() -> OkfRegistryBundles.linkWithMetadata(set))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("okf/dep/leaf.proto")
+                .hasMessageContaining("okf/dep/absent.proto");
     }
 }

@@ -1,5 +1,6 @@
 package ai.pipestream.proto.kafka.serde;
 
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -164,6 +165,29 @@ class ProtoMoltSerdeTest {
             assertThatThrownBy(() -> deserializer.deserialize("orders", wrongType))
                     .isInstanceOf(SerializationException.class)
                     .hasMessageContaining("does not expect");
+        }
+    }
+
+    /**
+     * The frame reader lives in another module now and throws its own exception; the serde
+     * boundary must still translate a malformed frame into the SerializationException that Kafka
+     * consumers depend on, naming the topic.
+     */
+    @Test
+    void surfacesMalformedFramesAsSerializationException() {
+        try (var deserializer = new ProtoMoltProtobufDeserializer()) {
+            deserializer.configure(config(Map.of()), false);
+            // Too short to hold a magic byte and a 4-byte schema id.
+            assertThatThrownBy(() -> deserializer.deserialize("orders", new byte[]{0, 1}))
+                    .isInstanceOf(SerializationException.class)
+                    .hasMessageContaining("orders")
+                    .hasMessageContaining("not a valid Confluent frame");
+            // Right length, wrong magic byte.
+            assertThatThrownBy(() -> deserializer.deserialize("orders",
+                    new byte[]{1, 0, 0, 0, 1, 0}))
+                    .isInstanceOf(SerializationException.class)
+                    .hasMessageContaining("orders")
+                    .hasMessageContaining("not a valid Confluent frame");
         }
     }
 

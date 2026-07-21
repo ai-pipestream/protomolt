@@ -1,12 +1,22 @@
 package ai.pipestream.proto.validate;
 
+import ai.pipestream.proto.validate.model.FieldConstraints;
+import ai.pipestream.proto.validate.model.IgnoreMode;
+import ai.pipestream.proto.validate.model.MapConstraints;
+import ai.pipestream.proto.validate.model.MessageConstraints;
+import ai.pipestream.proto.validate.source.AiPipestreamRuleSource;
+import ai.pipestream.proto.validate.spi.ValidationRuleSource;
 import ai.pipestream.proto.validate.testdata.MapGauntlet;
 import ai.pipestream.proto.validate.testdata.RepeatedGauntlet;
 import ai.pipestream.proto.validate.testdata.Widget;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -102,5 +112,44 @@ class CollectionRulesTest {
                         .putScores("ab", 1)
                         .putParts("ab", Widget.getDefaultInstance()).build(),
                 "parts[\"ab\"].name", "required");
+    }
+
+    /**
+     * A map value excluded by its own ignore mode is excluded entirely: the nested message must not
+     * be walked either, matching how an ignored repeated item skips its embedded validation.
+     */
+    @Test
+    void ignoredMapValuesSkipEmbeddedValidation() {
+        ProtoValidator validator = ProtoValidator.create(
+                List.of(new AiPipestreamRuleSource(), new IgnoreMapValuesRuleSource()));
+
+        MapGauntlet message = MapGauntlet.newBuilder()
+                .putScores("ab", 1)
+                .putParts("ab", Widget.getDefaultInstance())
+                .build();
+
+        assertThat(validator.validate(message).violations())
+                .noneMatch(v -> v.path().startsWith("parts[\"ab\"]"));
+    }
+
+    /** Marks the values of the {@code parts} map ignored, the way {@code IGNORE_ALWAYS} does. */
+    private static final class IgnoreMapValuesRuleSource implements ValidationRuleSource {
+        @Override
+        public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
+            if (!field.getName().equals("parts")) {
+                return Optional.empty();
+            }
+            FieldConstraints values = FieldConstraints.builder().ignore(IgnoreMode.ALWAYS).build();
+            return Optional.of(FieldConstraints.builder()
+                    .map(new MapConstraints(
+                            OptionalLong.empty(), OptionalLong.empty(),
+                            Optional.empty(), Optional.of(values)))
+                    .build());
+        }
+
+        @Override
+        public Optional<MessageConstraints> messageConstraints(Descriptor message) {
+            return Optional.empty();
+        }
     }
 }

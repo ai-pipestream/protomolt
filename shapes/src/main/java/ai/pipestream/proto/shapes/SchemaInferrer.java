@@ -18,8 +18,8 @@ import java.util.Set;
  * {@code Struct}s, infers a message type — objects become nested messages, arrays become
  * repeated fields with element inference, and JSON numbers become {@code int64} when they
  * are integral across <em>every</em> sample, {@code double} otherwise. Anything genuinely
- * dynamic (mixed-type values, empty or mixed arrays, null-only keys) falls back to
- * {@code google.protobuf.Value} rather than guessing.
+ * dynamic (mixed-type values, empty objects, empty or mixed arrays, null-only keys) falls
+ * back to {@code google.protobuf.Value} rather than guessing.
  *
  * <p>Keys are sanitized to field identifiers; when sanitization changes a key, the field
  * carries {@code json_name} with the original, so the inferred schema round-trips the very
@@ -148,10 +148,16 @@ public final class SchemaInferrer {
                         .filter(Value::hasStructValue)
                         .map(Value::getStructValue)
                         .toList();
-                String typeName = nestedTypeName(fieldName, nestedNames);
-                parent.addNestedType(inferMessage(typeName, nested, depth + 1));
-                field.setType(FieldDescriptorProto.Type.TYPE_MESSAGE);
-                field.setTypeName(typeName); // relative: resolves to the nested type
+                if (nested.stream().allMatch(struct -> struct.getFieldsCount() == 0)) {
+                    // An object with no keys in any sample carries no signal, like an empty
+                    // array: it degrades to Value instead of aborting the whole inference.
+                    valueFallback(field);
+                } else {
+                    String typeName = nestedTypeName(fieldName, nestedNames);
+                    parent.addNestedType(inferMessage(typeName, nested, depth + 1));
+                    field.setType(FieldDescriptorProto.Type.TYPE_MESSAGE);
+                    field.setTypeName(typeName); // relative: resolves to the nested type
+                }
             }
             case LIST -> {
                 field.setLabel(FieldDescriptorProto.Label.LABEL_REPEATED);

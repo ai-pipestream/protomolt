@@ -100,6 +100,35 @@ class ProtoMoltCliTest {
         assertThat(out()).contains("Usage:").contains("protomolt console");
     }
 
+    /**
+     * A dropped shell variable turns {@code --input "$JSON"} into a bare {@code --input}. Left
+     * unchecked the flag was ignored and the run blocked on stdin instead of failing.
+     */
+    @Test
+    void anInputFlagWithoutAValueIsAUsageError() throws Exception {
+        assertThat(run(new String[]{"compile", "--input"}, compileInput())).isEqualTo(2);
+        assertThat(err()).contains("Could not read input").contains("--input needs a JSON value");
+    }
+
+    @Test
+    void anInputFileFlagWithoutAPathIsAUsageError() throws Exception {
+        assertThat(run(new String[]{"compile", "--input-file"}, compileInput())).isEqualTo(2);
+        assertThat(err()).contains("--input-file needs a path");
+    }
+
+    @Test
+    void inputThatIsNotAJsonObjectIsRejected() throws Exception {
+        assertThat(run(new String[]{"compile", "[1, 2]"}, "")).isEqualTo(2);
+        assertThat(err()).contains("Input must be a JSON object").contains("array");
+    }
+
+    @Test
+    void theConsoleRejectsInputThatIsNotAJsonObject() throws Exception {
+        int code = run(new String[]{"console"}, "compile \"text\"\nexit\n");
+        assertThat(code).isZero();
+        assertThat(out()).contains("Input must be a JSON object").contains("string");
+    }
+
     @Test
     void theConsoleRunsLinesThenExits() throws Exception {
         int code = run(new String[]{"console"}, "list\ncompile " + compileInput() + "\nexit\n");

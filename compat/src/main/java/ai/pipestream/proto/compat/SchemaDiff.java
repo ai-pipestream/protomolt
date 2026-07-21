@@ -12,6 +12,7 @@ import com.google.protobuf.DescriptorProtos.MethodDescriptorProto;
 import com.google.protobuf.DescriptorProtos.ServiceDescriptorProto;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -423,14 +424,7 @@ public final class SchemaDiff {
     private static void diffReservedRanges(String fqn, DescriptorProto oldMsg,
                                            DescriptorProto newMsg, List<SchemaChange> changes) {
         for (DescriptorProto.ReservedRange range : oldMsg.getReservedRangeList()) {
-            boolean covered = true;
-            for (int number = range.getStart(); number < range.getEnd(); number++) {
-                if (!isReservedNumber(newMsg, number)) {
-                    covered = false;
-                    break;
-                }
-            }
-            if (!covered) {
+            if (!isReservedRange(newMsg, range.getStart(), range.getEnd())) {
                 changes.add(new SchemaChange(ChangeRules.RESERVED_RANGE_REMOVED, fqn,
                         reservedRangeText(range), "",
                         "Message " + fqn + " no longer reserves " + reservedRangeText(range)
@@ -438,6 +432,28 @@ public final class SchemaDiff {
                         INFO));
             }
         }
+    }
+
+    /**
+     * Whether {@code [start, end)} is entirely covered by {@code message}'s reserved ranges.
+     * The comparison is by interval: {@code reserved 2 to max} spans over half a billion
+     * numbers, so walking a range one number at a time is not viable.
+     */
+    private static boolean isReservedRange(DescriptorProto message, int start, int end) {
+        List<DescriptorProto.ReservedRange> ranges =
+                new ArrayList<>(message.getReservedRangeList());
+        ranges.sort(Comparator.comparingInt(DescriptorProto.ReservedRange::getStart));
+        int covered = start;
+        for (DescriptorProto.ReservedRange range : ranges) {
+            if (covered >= end) {
+                return true;
+            }
+            if (range.getStart() > covered) {
+                return false; // a gap opens before this range begins
+            }
+            covered = Math.max(covered, range.getEnd());
+        }
+        return covered >= end;
     }
 
     private static boolean isReservedNumber(DescriptorProto message, int number) {
@@ -507,10 +523,12 @@ public final class SchemaDiff {
                         ALL));
             }
         }
+        Set<String> reportedGoneNames = new HashSet<>();
         for (EnumValueDescriptorProto oldValue : oldByNumber.values()) {
             EnumValueDescriptorProto newValue = newByNumber.get(oldValue.getNumber());
             if (newValue == null) {
                 if (!newByName.containsKey(oldValue.getName())) { // renumber already reported
+                    reportedGoneNames.add(oldValue.getName());
                     changes.add(new SchemaChange(ChangeRules.ENUM_VALUE_REMOVED,
                             fqn + "." + oldValue.getName(),
                             oldValue.getName() + " = " + oldValue.getNumber(), "",
@@ -521,6 +539,7 @@ public final class SchemaDiff {
             } else if (!oldValue.getName().equals(newValue.getName())
                     && !newByName.containsKey(oldValue.getName())
                     && !oldByName.containsKey(newValue.getName())) {
+                reportedGoneNames.add(oldValue.getName());
                 changes.add(new SchemaChange(ChangeRules.ENUM_VALUE_NAME_CHANGED,
                         fqn + "." + newValue.getName(),
                         oldValue.getName() + " = " + oldValue.getNumber(),
@@ -530,6 +549,21 @@ public final class SchemaDiff {
                                 + newValue.getName() + "; JSON payloads carry the name.",
                         JSON_BOTH_SOURCE));
             }
+        }
+        // Under allow_alias several names share one number, and the by-number pass sees only
+        // the first declaration; a dropped alias name would otherwise go unreported even
+        // though JSON payloads carrying it no longer parse.
+        for (EnumValueDescriptorProto oldValue : oldByName.values()) {
+            if (newByName.containsKey(oldValue.getName())
+                    || reportedGoneNames.contains(oldValue.getName())) {
+                continue;
+            }
+            changes.add(new SchemaChange(ChangeRules.ENUM_VALUE_REMOVED,
+                    fqn + "." + oldValue.getName(),
+                    oldValue.getName() + " = " + oldValue.getNumber(), "",
+                    "Enum value " + fqn + "." + oldValue.getName() + " was removed; the "
+                            + "number still parses (open enum) but the JSON name does not.",
+                    Set.of(Impact.JSON_BACKWARD, Impact.SOURCE)));
         }
         for (EnumValueDescriptorProto newValue : newByNumber.values()) {
             if (!oldByNumber.containsKey(newValue.getNumber())

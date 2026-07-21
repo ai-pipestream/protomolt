@@ -3,8 +3,12 @@ package ai.pipestream.proto.acp;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
 import com.agentclientprotocol.sdk.agent.SyncPromptContext;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import java.util.Locale;
 
 /**
  * Runs one console line against the catalog: {@code list}/{@code help} name the verbs,
@@ -39,10 +43,17 @@ final class CatalogLineRunner {
             context.sendMessage("Unknown verb '" + verb + "'. Try 'list' to see them.");
             return;
         }
+        ObjectNode input;
         try {
-            ObjectNode input = json.isBlank()
-                    ? mapper.createObjectNode()
-                    : (ObjectNode) mapper.readTree(json);
+            input = json.isBlank() ? mapper.createObjectNode() : readObject(json);
+        } catch (JsonProcessingException e) {
+            context.sendMessage("error: input is not JSON: " + e.getOriginalMessage());
+            return;
+        } catch (IllegalArgumentException e) {
+            context.sendMessage("error: " + e.getMessage());
+            return;
+        }
+        try {
             context.sendThought("running " + verb);
             // Streaming-capable verbs (e.g. grpc-invoke on a server-streaming method) emit
             // per response; unary verbs emit their single result. Either way each emission
@@ -59,5 +70,19 @@ final class CatalogLineRunner {
         } catch (Exception e) {
             context.sendMessage("error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Parses verb input. Every verb takes a JSON object, so an array, string or number is
+     * reported here by the shape it was given; casting instead surfaced a raw
+     * {@link ClassCastException} message naming Jackson's internal node classes to the IDE user.
+     */
+    private ObjectNode readObject(String json) throws JsonProcessingException {
+        JsonNode node = mapper.readTree(json);
+        if (!node.isObject()) {
+            throw new IllegalArgumentException("input must be a JSON object, got "
+                    + node.getNodeType().name().toLowerCase(Locale.ROOT));
+        }
+        return (ObjectNode) node;
     }
 }

@@ -13,6 +13,7 @@ import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.kafka.common.utils.ByteUtils;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -179,6 +181,34 @@ class IcebergSinkTaskTest {
         assertThatThrownBy(() -> sink.put(List.of(record(null, 0))))
                 .isInstanceOf(DataException.class);
         assertThatThrownBy(() -> sink.put(List.of(record("{not json", 0))))
+                .isInstanceOf(DataException.class);
+    }
+
+    /**
+     * The frame reader lives in another module now; a malformed Confluent frame must still fail
+     * as a DataException the worker can route. The zigzag-negative message-index count is the case
+     * that must stay covered: skipping the index array rather than refusing it would hand the index
+     * bytes to the parser as payload. The count is built with Kafka's own ByteUtils.writeVarint.
+     */
+    @Test
+    void malformedConfluentFramesAreDataExceptions() throws Exception {
+        IcebergSinkTask sink = startTask(config("confluent"));
+
+        // Wrong magic byte / too short to hold a prefix.
+        assertThatThrownBy(() -> sink.put(List.of(record(new byte[]{1, 2, 3, 4, 5, 6}, 0))))
+                .isInstanceOf(DataException.class);
+
+        ByteBuffer count = ByteBuffer.allocate(8);
+        ByteUtils.writeVarint(-1, count);
+        count.flip();
+        byte[] countBytes = new byte[count.remaining()];
+        count.get(countBytes);
+        ByteArrayOutputStream framed = new ByteArrayOutputStream();
+        framed.write(0);
+        framed.writeBytes(new byte[]{0, 0, 0, 7});   // schema id 7
+        framed.writeBytes(countBytes);                // zigzag-negative message-index count
+        framed.writeBytes(order("c-1", 9, "us").toByteArray());
+        assertThatThrownBy(() -> sink.put(List.of(record(framed.toByteArray(), 0))))
                 .isInstanceOf(DataException.class);
     }
 

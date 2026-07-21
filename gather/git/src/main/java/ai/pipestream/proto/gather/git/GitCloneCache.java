@@ -29,7 +29,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>Offline behavior: with {@code offline=true} the cached checkout is used as-is and a cold
  * cache fails; with {@code offline=false} a failed fetch over a warm cache logs a warning and
- * falls back to the cached checkout.</p>
+ * resets to the requested ref from the cached refs, failing when it is not among them.</p>
  */
 final class GitCloneCache {
 
@@ -80,9 +80,10 @@ final class GitCloneCache {
         try {
             fetch(repoUrl, credentials, cacheDir);
         } catch (Exception e) {
-            LOG.warn("Failed fetching {} — falling back to the cached checkout in {}",
+            // Fall through to the reset regardless: the cached refs may already hold the
+            // requested ref, and if they do not, resetTo fails rather than serving another.
+            LOG.warn("Failed fetching {} — falling back to the refs cached in {}",
                     repoUrl, cacheDir, e);
-            return cacheDir;
         }
         resetTo(repoUrl, ref, cacheDir);
         return cacheDir;

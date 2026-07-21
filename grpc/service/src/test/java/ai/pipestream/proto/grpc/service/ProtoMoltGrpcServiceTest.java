@@ -96,6 +96,21 @@ class ProtoMoltGrpcServiceTest {
         }
     }
 
+    /**
+     * The other direction. {@link ProtoMoltCatalog} documents the full catalog as "exactly the
+     * RPCs of ProtoMoltService", but only RPC-to-action was pinned, so a verb added to the
+     * catalog without a matching RPC went unnoticed and the class javadoc's verb count drifted.
+     */
+    @Test
+    void everyCatalogActionHasAnRpc() {
+        var rpcNames = ProtoMoltServiceSchema.service().getMethods().stream()
+                .map(CatalogBridge::actionName)
+                .toList();
+
+        assertThat(ProtoMoltCatalog.full(ActionContext.create()).names())
+                .containsExactlyInAnyOrderElementsOf(rpcNames);
+    }
+
     @Test
     void compileRoundTripsThroughTheTypedSurface() throws Exception {
         JsonNode result = call("Compile", """

@@ -4,11 +4,10 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import com.google.protobuf.Descriptors.Descriptor;
 
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Resolves declared source type names to descriptors. Used only for eager
@@ -38,10 +37,22 @@ public interface SourceResolver {
         return of(java.util.List.of(sources));
     }
 
-    /** Resolves names against a fixed set of descriptors. */
+    /**
+     * Resolves names against a fixed set of descriptors.
+     *
+     * @throws IllegalArgumentException when two descriptors share a fully-qualified name;
+     *         resolution would otherwise depend on iteration order
+     */
     static SourceResolver of(Collection<Descriptor> sources) {
-        Map<String, Descriptor> byName = sources.stream()
-                .collect(Collectors.toMap(Descriptor::getFullName, Function.identity()));
+        Objects.requireNonNull(sources, "sources");
+        Map<String, Descriptor> byName = new LinkedHashMap<>();
+        for (Descriptor source : sources) {
+            Descriptor previous = byName.putIfAbsent(source.getFullName(), source);
+            if (previous != null && previous != source) {
+                throw new IllegalArgumentException("Two different descriptors were given for "
+                        + source.getFullName() + "; source types must be unique by name");
+            }
+        }
         return name -> Optional.ofNullable(byName.get(name));
     }
 }

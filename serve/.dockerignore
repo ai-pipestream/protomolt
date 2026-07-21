@@ -1,0 +1,4 @@
+# The image copies only the installDist output; keep sources and other build
+# artifacts out of the build context.
+*
+!build/install

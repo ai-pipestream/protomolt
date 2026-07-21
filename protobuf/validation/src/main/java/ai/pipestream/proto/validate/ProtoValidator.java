@@ -122,7 +122,6 @@ public final class ProtoValidator {
     }
 
     private final CelHandle fieldCel;
-    private final CelEvaluator messageCel;
     private final List<ValidationRuleSource> sources;
     // Message-level CEL is compiled with `this` typed as the message under validation, so a rule on
     // a nested message sees its own fields. Evaluators are built lazily and cached per descriptor.
@@ -133,23 +132,28 @@ public final class ProtoValidator {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Uses the default rule-source chain ({@link ValidationRuleSources#defaults()}). */
-    public ProtoValidator(CelEvaluator fieldCel, CelEvaluator messageCel) {
-        this(fieldCel, messageCel, ValidationRuleSources.defaults());
+    public ProtoValidator(CelEvaluator fieldCel) {
+        this(fieldCel, ValidationRuleSources.defaults());
     }
 
-    public ProtoValidator(
-            CelEvaluator fieldCel, CelEvaluator messageCel, List<ValidationRuleSource> sources) {
-        this(new CelHandle(null, Objects.requireNonNull(fieldCel, "fieldCel")), messageCel, sources);
+    /**
+     * {@code fieldCel} evaluates field-level rules. Message-level rules cannot share it: their
+     * environment types {@code this} as the message being validated, so it is built per message
+     * type (see {@link #messageCelFor}).
+     */
+    public ProtoValidator(CelEvaluator fieldCel, List<ValidationRuleSource> sources) {
+        this(new CelHandle(null, Objects.requireNonNull(fieldCel, "fieldCel")), sources);
     }
 
-    private ProtoValidator(
-            CelHandle fieldCel, CelEvaluator messageCel, List<ValidationRuleSource> sources) {
+    private ProtoValidator(CelHandle fieldCel, List<ValidationRuleSource> sources) {
         this.fieldCel = fieldCel;
-        this.messageCel = Objects.requireNonNull(messageCel, "messageCel");
         this.sources = List.copyOf(Objects.requireNonNull(sources, "sources"));
     }
 
-    /** Default CEL environments: {@code this} is DYN for field and message rules. */
+    /**
+     * Default CEL environments: {@code this} is DYN for field rules and typed as the message
+     * under validation for message rules.
+     */
     public static ProtoValidator create() {
         return create(ValidationRuleSources.defaults());
     }
@@ -157,10 +161,7 @@ public final class ProtoValidator {
     /** As {@link #create()} but with an explicit rule-source chain. */
     public static ProtoValidator create(List<ValidationRuleSource> sources) {
         Cel fieldEnv = celEnv().build();
-        return new ProtoValidator(
-                new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)),
-                new CelEvaluator(celEnv().build()),
-                sources);
+        return new ProtoValidator(new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)), sources);
     }
 
     /**
@@ -197,14 +198,11 @@ public final class ProtoValidator {
     public static ProtoValidator forMessageType(
             Descriptor descriptor, List<ValidationRuleSource> sources) {
         Objects.requireNonNull(descriptor, "descriptor");
-        Cel fieldEnv = celEnv().build();
         // Declaring `this` as the concrete message type lets message-level CEL type-check field
-        // access (this.foo), surfacing type/field mismatches as compilation errors.
-        Cel messageEnv = celEnv().addMessageVar("this", descriptor).build();
-        return new ProtoValidator(
-                new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)),
-                new CelEvaluator(messageEnv),
-                sources);
+        // access (this.foo), surfacing type/field mismatches as compilation errors. That happens
+        // per message type in messageCelFor, which covers nested messages too, so no environment
+        // is pinned to `descriptor` here.
+        return create(sources);
     }
 
     public ValidationResult validate(Message message) {
@@ -533,24 +531,30 @@ public final class ProtoValidator {
             Object value = entry.getField(valueField);
             String entryPath = path + subscript(key);
             String keyPath = entryPath + "#key";
+            boolean skipEntryValue = false;
             for (FieldConstraints c : constraints) {
                 MapConstraints m = c.map().orElse(null);
-                if (m != null) {
-                    m.keys().ifPresent(k -> {
-                        if (!skipValue(k, key, keyField)) {
-                            applyFieldConstraints(keyField, k, key, keyPath, violations);
-                            runFieldCel(k, celScalar(keyField, key), keyPath, violations);
-                        }
-                    });
-                    m.values().ifPresent(v -> {
-                        if (!skipValue(v, value, valueField)) {
-                            applyFieldConstraints(valueField, v, value, entryPath, violations);
-                            runFieldCel(v, celScalar(valueField, value), entryPath, violations);
-                        }
-                    });
+                if (m == null) {
+                    continue;
                 }
+                FieldConstraints keyRules = m.keys().orElse(null);
+                if (keyRules != null && !skipValue(keyRules, key, keyField)) {
+                    applyFieldConstraints(keyField, keyRules, key, keyPath, violations);
+                    runFieldCel(keyRules, celScalar(keyField, key), keyPath, violations);
+                }
+                FieldConstraints valueRules = m.values().orElse(null);
+                if (valueRules == null) {
+                    continue;
+                }
+                if (skipValue(valueRules, value, valueField)) {
+                    // A value ignored by its own rule (IGNORE_ALWAYS) also skips embedded validation.
+                    skipEntryValue = true;
+                    continue;
+                }
+                applyFieldConstraints(valueField, valueRules, value, entryPath, violations);
+                runFieldCel(valueRules, celScalar(valueField, value), entryPath, violations);
             }
-            if (value instanceof Message nested) {
+            if (!skipEntryValue && value instanceof Message nested) {
                 validateChildren(nested, entryPath, depth, violations);
             }
         }
@@ -773,10 +777,6 @@ public final class ProtoValidator {
         if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
             violations.add(violation(path, prefix + ".not_in", "must not be one of the forbidden values"));
         }
-    }
-
-    private static int compare(long a, long b, boolean unsigned) {
-        return unsigned ? Long.compareUnsigned(a, b) : Long.compare(a, b);
     }
 
     private static String fmt(long value, boolean unsigned) {

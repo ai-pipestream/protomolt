@@ -40,6 +40,20 @@ message Unscored {
   string anything = 1;
 }
 
+message DuplicateDimensionIds {
+  option (ai.pipestream.proto.quality.v1.quality) = {
+    dimension: {
+      id: "completeness"
+      cel: "this.present != '' ? 1.0 : 0.0"
+    }
+    dimension: {
+      id: "completeness"
+      cel: "0.0"
+    }
+  };
+  string present = 1;
+}
+
 message BrokenRules {
   option (ai.pipestream.proto.quality.v1.quality) = {
     dimension: {
@@ -48,4 +62,44 @@ message BrokenRules {
     }
   };
   string present = 1;
+}
+
+message MissingDimensionId {
+  option (ai.pipestream.proto.quality.v1.quality) = {
+    dimension: {
+      cel: "this.present != '' ? 1.0 : 0.0"
+    }
+  };
+  string present = 1;
+}
+
+message MissingCelExpression {
+  option (ai.pipestream.proto.quality.v1.quality) = {
+    dimension: {
+      id: "completeness"
+    }
+  };
+  string present = 1;
+}
+
+message NegativeWeight {
+  option (ai.pipestream.proto.quality.v1.quality) = {
+    dimension: {
+      id: "completeness"
+      weight: -1.0
+      cel: "this.present != '' ? 1.0 : 0.0"
+    }
+  };
+  string present = 1;
+}
+
+// Exercises the exp() helper: a recency decay curve, the case it exists for.
+message DecayingDoc {
+  option (ai.pipestream.proto.quality.v1.quality) = {
+    dimension: {
+      id: "recency"
+      cel: "exp(-double(this.age_days) / 10.0)"
+    }
+  };
+  int32 age_days = 1;
 }

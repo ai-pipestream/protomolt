@@ -10,6 +10,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 
 /**
@@ -104,8 +105,16 @@ public final class CelEvaluator {
                     .forEach(future -> {
                         try {
                             future.get();
-                        } catch (Exception e) {
-                            throw new CelEvaluationException("Failed to warm CEL cache", e);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new CelEvaluationException("Interrupted while warming CEL cache", e);
+                        } catch (ExecutionException e) {
+                            // Warmup is precompilation, so a broken expression must still be a
+                            // CelCompilationException here, exactly as precompile reports it.
+                            if (e.getCause() instanceof CelEvaluationException cause) {
+                                throw cause;
+                            }
+                            throw new CelEvaluationException("Failed to warm CEL cache", e.getCause());
                         }
                     });
         }

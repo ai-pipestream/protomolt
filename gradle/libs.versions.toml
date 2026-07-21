@@ -17,6 +17,7 @@ nmcp = "1.6.1"
 grpc = "1.73.0"
 chicory = "1.7.5"
 lucene = "11.0.0-experimental-SNAPSHOT"
+opennlp = "3.x-preview-SNAPSHOT"
 apicurio = "3.3.0"
 spring = "7.0.8"
 # Boot line matching Spring Framework 7
@@ -70,6 +71,7 @@ quarkus-arc = { module = "io.quarkus:quarkus-arc" }
 quarkus-arc-deployment = { module = "io.quarkus:quarkus-arc-deployment" }
 lucene-core = { module = "ai.pipestream:lucene-core", version.ref = "lucene" }
 lucene-analysis-common = { module = "ai.pipestream:lucene-analysis-common", version.ref = "lucene" }
+opennlp-embeddings = { module = "ai.pipestream:opennlp-embeddings", version.ref = "opennlp" }
 apicurio-registry-java-sdk = { module = "io.apicurio:apicurio-registry-java-sdk", version.ref = "apicurio" }
 apicurio-registry-protobuf-serde = { module = "io.apicurio:apicurio-registry-protobuf-serde-kafka", version.ref = "apicurio" }
 spring-context = { module = "org.springframework:spring-context", version.ref = "spring" }

@@ -200,7 +200,7 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
             StoredSchema stored = new StoredSchema(subject, version, fresh.nextGlobalId(),
                     schemaText, refs, SchemaContents.contentHash(schemaText, refs));
 
-            String subjectDir = SUBJECTS_DIR + "/" + encode(subject);
+            String subjectDir = subjectDir(subject);
             String protoPath = subjectDir + "/v" + version + ".proto";
             String metaPath = subjectDir + "/v" + version + ".json";
             Files.createDirectories(repoDir.resolve(subjectDir));
@@ -275,7 +275,7 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         CompatibilityModes.requireValid(mode);
         locked(() -> {
             index = loadIndex();
-            String subjectDir = SUBJECTS_DIR + "/" + encode(subject);
+            String subjectDir = subjectDir(subject);
             String configPath = subjectDir + "/" + CONFIG_FILE;
             Files.createDirectories(repoDir.resolve(subjectDir));
             Files.writeString(repoDir.resolve(configPath),
@@ -440,6 +440,25 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
 
     private static String encode(String subject) {
         return URLEncoder.encode(subject, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The repo-relative {@code subjects/<encoded>} path for a subject, checked to stay inside
+     * {@link #SUBJECTS_DIR}.
+     *
+     * <p>{@link RegistrationSupport#requireSubject} already refuses the names that can escape,
+     * so this is a second line rather than the only one: it keeps a future change to
+     * {@link #encode} from silently turning a subject name into a path traversal.
+     */
+    private String subjectDir(String subject) {
+        String relative = SUBJECTS_DIR + "/" + encode(subject);
+        Path resolved = repoDir.resolve(relative).normalize();
+        if (!resolved.startsWith(repoDir.resolve(SUBJECTS_DIR).normalize())
+                || resolved.equals(repoDir.resolve(SUBJECTS_DIR).normalize())) {
+            throw new IllegalArgumentException(
+                    "subject '" + subject + "' does not name a directory under " + SUBJECTS_DIR);
+        }
+        return relative;
     }
 
     private static String decode(String encoded) {

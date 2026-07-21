@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import static ai.pipestream.proto.actions.TestFixtures.obj;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Schema-declared masking: the sensitivity option decides, the caller picks the policy. */
 class MaskMessageActionTest {
@@ -118,6 +119,42 @@ class MaskMessageActionTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         catalog.execute("mask-message", tampered))
                 .hasMessageContaining("wrong key, wrong field, or tampered");
+    }
+
+    @Test
+    void aKeyOfTheWrongLengthPointsAtTheKey() throws Exception {
+        String tooShort = java.util.Base64.getEncoder().encodeToString(new byte[7]);
+        assertThatThrownBy(() -> catalog.execute("mask-message", maskInput(
+                "\"classes\": [\"pii\"], \"strategy\": \"encrypt\", \"key\": \"" + tooShort + "\"")))
+                .isInstanceOfSatisfying(ActionException.class, e -> {
+                    assertThat(e.code()).isEqualTo("invalid-input");
+                    assertThat(e.details().orElseThrow().get("pointer").asText()).isEqualTo("/key");
+                });
+    }
+
+    @Test
+    void encryptWithoutAKeyPointsAtTheKey() throws Exception {
+        assertThatThrownBy(() -> catalog.execute("mask-message",
+                maskInput("\"classes\": [\"pii\"], \"strategy\": \"encrypt\"")))
+                .isInstanceOfSatisfying(ActionException.class, e -> {
+                    assertThat(e.details().orElseThrow().get("pointer").asText()).isEqualTo("/key");
+                });
+    }
+
+    /**
+     * The key is well-formed here; it is the value that is not an envelope, so pointing the
+     * caller at {@code /key} would send them to fix the wrong argument.
+     */
+    @Test
+    void decryptingAValueThatIsNotAnEnvelopePointsAtTheMessage() throws Exception {
+        String key = java.util.Base64.getEncoder().encodeToString(new byte[16]);
+        assertThatThrownBy(() -> catalog.execute("mask-message", maskInput(
+                "\"classes\": [\"pii\"], \"strategy\": \"decrypt\", \"key\": \"" + key + "\"")))
+                .isInstanceOfSatisfying(ActionException.class, e -> {
+                    assertThat(e.code()).isEqualTo("invalid-input");
+                    assertThat(e.details().orElseThrow().get("pointer").asText())
+                            .isEqualTo("/message");
+                });
     }
 
     @Test

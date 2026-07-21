@@ -6,6 +6,9 @@ description = 'Kafka protobuf serde: the Confluent wire format, with the schema\
 
 dependencies {
     api libs.protobuf.java
+    // The canonical Confluent wire-format reader/writer; api because ConfluentWireFormat is
+    // part of this serde's published surface (callers and tests import it directly).
+    api project(':protomolt-kafka-wire')
 
     // The application brings its own Kafka clients; a serde must not pin them.
     compileOnly libs.kafka.clients

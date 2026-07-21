@@ -1,5 +1,7 @@
 package ai.pipestream.proto.kafka.serde;
 
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormatException;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -109,11 +111,23 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
         if (data == null) {
             return null;
         }
-        Descriptor type = resolve(topic, ConfluentWireFormat.schemaId(data),
-                ConfluentWireFormat.messageIndex(data));
+        int schemaId;
+        List<Integer> framedIndex;
+        byte[] payload;
+        // The frame reader is framework-neutral now; a byte sequence that is not a valid frame
+        // must still reach a Kafka consumer as a SerializationException naming the topic.
+        try {
+            schemaId = ConfluentWireFormat.schemaId(data);
+            framedIndex = ConfluentWireFormat.messageIndex(data);
+            payload = ConfluentWireFormat.payload(data);
+        } catch (ConfluentWireFormatException e) {
+            throw new SerializationException("A record on " + topic
+                    + " is not a valid Confluent frame: " + e.getMessage(), e);
+        }
+        Descriptor type = resolve(topic, schemaId, framedIndex);
         Message message;
         try {
-            message = generated.parse(type, ConfluentWireFormat.payload(data));
+            message = generated.parse(type, payload);
         } catch (InvalidProtocolBufferException e) {
             throw new SerializationException("A record on " + topic + " is not a valid "
                     + type.getFullName() + ": " + e.getMessage(), e);

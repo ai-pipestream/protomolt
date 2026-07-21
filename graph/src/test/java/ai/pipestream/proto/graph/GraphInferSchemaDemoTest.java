@@ -43,6 +43,9 @@ class GraphInferSchemaDemoTest {
             }
             """;
 
+    private static final String ITEM_NOT_FOUND = "{\"error\":{\"code\":\"itemNotFound\","
+            + "\"message\":\"The resource could not be found.\"}}";
+
     private HttpServer server;
     private GraphFiles files;
 
@@ -51,10 +54,17 @@ class GraphInferSchemaDemoTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1.0/drives/d1/items/i1/listItem",
                 exchange -> FakeGraphSupport.respond(exchange, 200, LIST_ITEM));
-        // A file with no backing list item (a plain personal-OneDrive file): Graph 404s.
+        server.createContext("/v1.0/drives/d1/items/i1",
+                exchange -> FakeGraphSupport.respond(exchange, 200, "{\"id\": \"i1\"}"));
+        // A file with no backing list item (a plain personal-OneDrive file): the item resolves,
+        // its listItem 404s. Graph sends the same 404 for an item that is not there at all.
+        server.createContext("/v1.0/drives/d1/items/none",
+                exchange -> FakeGraphSupport.respond(exchange, 200, "{\"id\": \"none\"}"));
         server.createContext("/v1.0/drives/d1/items/none/listItem",
-                exchange -> FakeGraphSupport.respond(exchange, 404, "{\"error\":{\"code\":"
-                        + "\"itemNotFound\",\"message\":\"The resource could not be found.\"}}"));
+                exchange -> FakeGraphSupport.respond(exchange, 404, ITEM_NOT_FOUND));
+        // Neither the item nor its listItem exists: a bad driveId/itemId, not "no columns".
+        server.createContext("/v1.0/drives/d1/items/ghost",
+                exchange -> FakeGraphSupport.respond(exchange, 404, ITEM_NOT_FOUND));
         // A genuine failure that must not be swallowed as \"no columns\".
         server.createContext("/v1.0/drives/d1/items/denied/listItem",
                 exchange -> FakeGraphSupport.respond(exchange, 403, "{\"error\":{\"code\":"
@@ -125,6 +135,19 @@ class GraphInferSchemaDemoTest {
         assertThatThrownBy(() -> files.listItemFieldsOnly("d1", "denied"))
                 .isInstanceOfSatisfying(GraphClient.GraphApiException.class,
                         e -> assertThat(e.status()).isEqualTo(403));
+    }
+
+    /**
+     * A mistyped driveId or itemId 404s exactly like a file with no list item; reporting it as
+     * "no columns" would hand infer-schema an empty sample instead of naming the bad id.
+     */
+    @Test
+    void listItemFieldsOnlyFailsWhenTheItemItselfIsMissing() {
+        assertThatThrownBy(() -> files.listItemFieldsOnly("d1", "ghost"))
+                .isInstanceOfSatisfying(GraphClient.GraphApiException.class, e -> {
+                    assertThat(e.status()).isEqualTo(404);
+                    assertThat(e.code()).isEqualTo("itemNotFound");
+                });
     }
 
     private ShapeSynthesizer.SynthesizedShape infer(String fullName) throws Exception {

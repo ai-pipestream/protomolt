@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -89,7 +90,13 @@ public final class ProtoOpenApiGenerator {
 
             for (String httpMethod : httpMethods) {
                 Map<String, Object> operation = new LinkedHashMap<>();
-                operation.put("operationId", method.serviceName() + "_" + method.methodName());
+                // operationId is document-unique, so a method exposed under several verbs
+                // needs the verb in the id; a single-verb method keeps the plain form.
+                String operationId = method.serviceName() + "_" + method.methodName();
+                if (httpMethods.length > 1) {
+                    operationId = operationId + "_" + httpMethod.toLowerCase(Locale.ROOT);
+                }
+                operation.put("operationId", operationId);
 
                 String summary = method.summary()
                         .or(() -> method.exposed().map(ProtoRestExposed::summary).filter(s -> !s.isBlank()))
@@ -129,7 +136,7 @@ public final class ProtoOpenApiGenerator {
                     }
                 });
 
-                pathItem.put(httpMethod.toLowerCase(), operation);
+                pathItem.put(httpMethod.toLowerCase(Locale.ROOT), operation);
             }
         }
 
@@ -191,7 +198,7 @@ public final class ProtoOpenApiGenerator {
         } else {
             scheme.put("type", "apiKey");
             scheme.put("name", token.name());
-            scheme.put("in", token.in().name().toLowerCase());
+            scheme.put("in", token.in().name().toLowerCase(Locale.ROOT));
         }
         if (!token.description().isBlank()) {
             scheme.put("description", token.description());

@@ -60,6 +60,11 @@ final class ApiProxyHandler implements HttpHandler {
             String path = exchange.getRequestURI().getRawPath().substring(prefix.length());
             if (path.isEmpty()) {
                 path = "/";
+            } else if (!path.startsWith("/")) {
+                // com.sun.net.httpserver matches a context by plain string prefix, so /api/servexyz
+                // lands on the /api/serve context; only a segment boundary belongs to this bridge.
+                exchange.sendResponseHeaders(404, -1);
+                return;
             }
             if (path.startsWith("/api/")) {
                 // The bridge is one hop; nesting it would bounce requests around loopback.

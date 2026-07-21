@@ -200,6 +200,25 @@ class ShapeSynthesisTest {
         assertThat(inner.hasField(order.findFieldByName("ship_to"))).isFalse();
     }
 
+    /**
+     * Literal sources are part of the shared rule syntax, so the scoped runtime must not
+     * read them as scope names — the static checker already waves them through.
+     */
+    @Test
+    void scopedRulesAcceptLiteralSources() throws Exception {
+        DynamicMessage joined = joiner.join(order, scope(),
+                List.of("ship_to = order.ship_to",
+                        "id = \"fixed\"",
+                        "qty = 7",
+                        "tags += \"extra\"",
+                        "ship_to = null"),
+                List.of());
+        assertThat(joined.getField(order.findFieldByName("id"))).isEqualTo("fixed");
+        assertThat(joined.getField(order.findFieldByName("qty"))).isEqualTo(7L);
+        assertThat(joined.getField(order.findFieldByName("tags"))).isEqualTo(List.of("extra"));
+        assertThat(joined.hasField(order.findFieldByName("ship_to"))).isFalse();
+    }
+
     @Test
     void badPathsAndNamesFailClearly() {
         List<ShapeSynthesizer.NamedType> sources =

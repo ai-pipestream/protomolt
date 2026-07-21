@@ -26,12 +26,20 @@ public record IndexingPlan(String messageFullName, List<IndexedField> fields) {
      * @param path protobuf path (dot-separated)
      * @param fieldName name written to the engine document
      * @param hint resolved indexing hint
+     * @param repeated whether the protobuf field is repeated (map fields included). Engines
+     *        with a declared schema reject a second value for a field declared singular, so
+     *        they need this to size the field they create.
      */
-    public record IndexedField(String path, String fieldName, ResolvedFieldHint hint) {
+    public record IndexedField(String path, String fieldName, ResolvedFieldHint hint, boolean repeated) {
         public IndexedField {
             Objects.requireNonNull(path, "path");
             Objects.requireNonNull(fieldName, "fieldName");
             Objects.requireNonNull(hint, "hint");
+        }
+
+        /** Singular field. */
+        public IndexedField(String path, String fieldName, ResolvedFieldHint hint) {
+            this(path, fieldName, hint, false);
         }
 
         public IndexFieldKind type() {

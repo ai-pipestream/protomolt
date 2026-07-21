@@ -89,14 +89,16 @@ public final class ProtoMoltCli {
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
                 case "-i", "--input" -> {
-                    if (i + 1 < args.length) {
-                        json = args[++i];
+                    if (i + 1 >= args.length) {
+                        throw new IllegalArgumentException(args[i] + " needs a JSON value");
                     }
+                    json = args[++i];
                 }
                 case "--input-file" -> {
-                    if (i + 1 < args.length) {
-                        json = Files.readString(Path.of(args[++i]));
+                    if (i + 1 >= args.length) {
+                        throw new IllegalArgumentException(args[i] + " needs a path");
                     }
+                    json = Files.readString(Path.of(args[++i]));
                 }
                 default -> {
                     if (json == null && !args[i].startsWith("-")) {
@@ -110,7 +112,7 @@ public final class ProtoMoltCli {
         }
         return json.isBlank()
                 ? MAPPER.createObjectNode()
-                : (ObjectNode) MAPPER.readTree(json);
+                : CliJson.readObject(MAPPER, json);
     }
 
     private static void usage(PrintStream out, ActionCatalog catalog) {

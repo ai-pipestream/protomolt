@@ -84,6 +84,8 @@ project(':protomolt-acp').projectDir = file('acp')
 include 'protomolt-connector'
 project(':protomolt-connector').projectDir = file('connector')
 
+include 'protomolt-kafka-wire'
+project(':protomolt-kafka-wire').projectDir = file('kafka/wire')
 include 'protomolt-connect'
 project(':protomolt-connect').projectDir = file('kafka/connect')
 include 'protomolt-connect-iceberg'
@@ -156,6 +158,12 @@ project(':protomolt-index-opensearch').projectDir = file('index/opensearch')
 
 include 'protomolt-index-solr'
 project(':protomolt-index-solr').projectDir = file('index/solr')
+
+include 'protomolt-embeddings'
+project(':protomolt-embeddings').projectDir = file('embeddings/core')
+
+include 'protomolt-embeddings-model2vec'
+project(':protomolt-embeddings-model2vec').projectDir = file('embeddings/model2vec')
 
 include 'protomolt-json'
 project(':protomolt-json').projectDir = file('http/json')

@@ -68,6 +68,14 @@ final class TestSchemas {
         });
     }
 
+    /** Adds one {@code reserved start to end;} range (end exclusive) to the named message. */
+    static FileDescriptorSet reserveRange(FileDescriptorSet set, String messageName,
+                                          int start, int endExclusive) {
+        return transformMessage(set, messageName,
+                message -> message.addReservedRange(DescriptorProto.ReservedRange.newBuilder()
+                        .setStart(start).setEnd(endExclusive)));
+    }
+
     /** Adds {@code reserved "name";} declarations to the named top-level message. */
     static FileDescriptorSet reserveNames(FileDescriptorSet set, String messageName,
                                           String... names) {

@@ -82,6 +82,50 @@ class ProtoSourceCompilerTest {
                 .isEqualTo("google.protobuf.FieldMask");
     }
 
+    /**
+     * The compiler stages its own {@code field_mask.proto} only when the set does not carry one.
+     * A set that supplies its own must keep it verbatim: staging the built-in stub over the
+     * caller's copy would silently drop fields the caller declared.
+     */
+    @Test
+    void callerSuppliedFieldMaskIsUsedInsteadOfTheBuiltInStub() throws Exception {
+        ProtoSourceSet set = ProtoSourceSet.builder()
+                .add("google/protobuf/field_mask.proto", """
+                        syntax = "proto3";
+                        package google.protobuf;
+                        message FieldMask {
+                          repeated string paths = 1;
+                          string origin = 7;
+                        }
+                        """, "caller")
+                .add("audit.proto", """
+                        syntax = "proto3";
+                        package example;
+                        import "google/protobuf/field_mask.proto";
+                        message Audit { google.protobuf.FieldMask mask = 1; }
+                        """, "test")
+                .build();
+
+        CompiledProtos compiled = compiler.compile(set);
+
+        Descriptor fieldMask = compiled.descriptorFor("google/protobuf/field_mask.proto")
+                .orElseThrow()
+                .findMessageTypeByName("FieldMask");
+        assertThat(fieldMask.getFields())
+                .extracting(FieldDescriptor::getName)
+                .containsExactly("paths", "origin");
+        assertThat(fieldMask.findFieldByName("origin").getNumber()).isEqualTo(7);
+
+        // The importer must link against that same file, not a second copy of the stub.
+        Descriptor audit = compiled.descriptorFor("audit.proto").orElseThrow()
+                .findMessageTypeByName("Audit");
+        assertThat(audit.findFieldByName("mask").getMessageType()).isSameAs(fieldMask);
+        assertThat(compiled.descriptorSet().getFileList())
+                .extracting(f -> f.getName())
+                .filteredOn("google/protobuf/field_mask.proto"::equals)
+                .hasSize(1);
+    }
+
     @Test
     void unresolvableImportFails() {
         ProtoSourceSet set = ProtoSourceSet.builder()

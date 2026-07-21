@@ -142,7 +142,7 @@ public final class IcebergPartitions {
             return switch (type.typeId()) {
                 case BOOLEAN -> (Boolean) raw;
                 case INTEGER -> ((Number) raw).intValue();
-                case LONG -> ((Number) raw).longValue();
+                case LONG -> longValue(field, raw);
                 case FLOAT -> ((Number) raw).floatValue();
                 case DOUBLE -> ((Number) raw).doubleValue();
                 case STRING -> field.getJavaType() == FieldDescriptor.JavaType.ENUM
@@ -152,6 +152,18 @@ public final class IcebergPartitions {
                 case TIMESTAMP -> timestampMicros((Message) raw);
                 default -> throw new IllegalArgumentException("Column '" + field.getName()
                         + "' has type " + type + ", which cannot be a partition source");
+            };
+        }
+
+        /**
+         * uint32 and fixed32 widen to a long column and are written unsigned, so the partition
+         * value has to widen the same way. Sign-extending here would route a row whose column
+         * reads 4294967295 into the partition for -1.
+         */
+        private static long longValue(FieldDescriptor field, Object raw) {
+            return switch (field.getType()) {
+                case UINT32, FIXED32 -> Integer.toUnsignedLong((Integer) raw);
+                default -> ((Number) raw).longValue();
             };
         }
 

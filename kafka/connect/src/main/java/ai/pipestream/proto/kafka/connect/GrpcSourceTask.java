@@ -73,7 +73,9 @@ public final class GrpcSourceTask extends SourceTask {
     private Map<String, String> sourcePartition;
     private Metadata headers;
     private ManagedChannel channel;
-    private DynamicGrpcStream stream;
+    // poll() opens and drops the stream; stop() reads it from the worker's thread, so the
+    // publication has to be safe or stop() can miss the stream it needs to cancel.
+    private volatile DynamicGrpcStream stream;
     private String lastToken;
     private long reopenNotBeforeNanos;
     private boolean tokenFailureLogged;
@@ -214,12 +216,22 @@ public final class GrpcSourceTask extends SourceTask {
                 key == null ? null : Schema.OPTIONAL_STRING_SCHEMA, key, valueSchema, value);
     }
 
+    /**
+     * The two expressions fail differently. A resume token that cannot be computed costs replay
+     * at worst, so the previous token stands and the stream carries on; a key that cannot be
+     * computed would emit a differently partitioned, non-compacting record under the same name,
+     * so it fails the record and the framework routes it by its error tolerance.
+     */
     private String evaluate(String expression, DynamicMessage message, boolean isToken) {
         try {
             return tokenString(prepared.evaluator()
                     .evaluateValue(expression, Map.of("input", message)));
         } catch (CelEvaluationException e) {
-            if (isToken && !tokenFailureLogged) {
+            if (!isToken) {
+                throw new DataException("'" + GrpcSourceConfig.KEY_CEL + "' (" + expression
+                        + ") failed over a streamed message: " + e.getMessage(), e);
+            }
+            if (!tokenFailureLogged) {
                 tokenFailureLogged = true;
                 LOG.warn("'{}' failed over a streamed message; keeping the previous resume "
                                 + "token (logged once): {}",

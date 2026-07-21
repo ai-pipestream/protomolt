@@ -38,7 +38,9 @@ import java.util.concurrent.ConcurrentMap;
  *
  * <p>Rules are the deployment's, not the schema's, so they apply to whatever type flows through;
  * a rule naming a field the type does not have fails that record rather than being silently
- * skipped. Syntax errors fail at configure time.</p>
+ * skipped. An entry whose shape is not a rule at all fails at configure time. CEL expressions
+ * are compiled against the message type, which is not known until a record arrives, so a CEL
+ * expression that does not compile fails the first record of that type.</p>
  */
 final class SerdeMapper {
 

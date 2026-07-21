@@ -7,6 +7,11 @@ import ai.pipestream.proto.sources.ProtoSourceSet;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.DynamicMessage;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.Deadline;
 import io.grpc.Server;
 import io.grpc.ServerServiceDefinition;
 import io.grpc.Status;
@@ -30,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -60,6 +66,10 @@ class GrpcSinkTaskTest {
     private static final List<Long> unarySeen = new CopyOnWriteArrayList<>();
     private static final AtomicLong batchTotal = new AtomicLong();
     private static final AtomicBoolean unavailable = new AtomicBoolean();
+    /** How long the unary handler dawdles, so a batch can outlive a deadline built once. */
+    private static final AtomicLong unaryDelayMs = new AtomicLong();
+    /** The deadline each outgoing call actually carried, captured client-side. */
+    private static final List<Deadline> callDeadlines = new CopyOnWriteArrayList<>();
 
     private GrpcSinkTask task;
 
@@ -85,6 +95,14 @@ class GrpcSinkTaskTest {
                         out.onError(Status.UNAVAILABLE.withDescription("draining")
                                 .asRuntimeException());
                         return;
+                    }
+                    long delay = unaryDelayMs.get();
+                    if (delay > 0) {
+                        try {
+                            Thread.sleep(delay);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
                     }
                     long seq = seqOf(request);
                     if (seq < 0) {
@@ -144,7 +162,19 @@ class GrpcSinkTaskTest {
         unarySeen.clear();
         batchTotal.set(0);
         unavailable.set(false);
+        unaryDelayMs.set(0);
+        callDeadlines.clear();
     }
+
+    /** Records the deadline every call is dispatched with, without altering the call. */
+    private static final ClientInterceptor DEADLINE_RECORDER = new ClientInterceptor() {
+        @Override
+        public <Q, S> ClientCall<Q, S> interceptCall(
+                io.grpc.MethodDescriptor<Q, S> method, CallOptions options, Channel next) {
+            callDeadlines.add(options.getDeadline());
+            return next.newCall(method, options);
+        }
+    };
 
     private static long seqOf(DynamicMessage event) {
         return (long) event.getField(event.getDescriptorForType().findFieldByName("seq"));
@@ -181,7 +211,9 @@ class GrpcSinkTaskTest {
 
     private GrpcSinkTask startTask(Map<String, String> props) {
         GrpcSinkTask started = new GrpcSinkTask();
-        started.channelFactory = config -> InProcessChannelBuilder.forName(serverName).build();
+        started.channelFactory = config -> InProcessChannelBuilder.forName(serverName)
+                .intercept(DEADLINE_RECORDER)
+                .build();
         started.start(props);
         task = started;
         return started;
@@ -200,6 +232,29 @@ class GrpcSinkTaskTest {
         }
         sink.put(records);
         assertThat(unarySeen).containsExactly(0L, 1L, 2L, 3L, 4L);
+    }
+
+    /**
+     * A gRPC deadline is an absolute instant, so one built for the whole batch leaves the last
+     * record of a slow batch less time than the first — and eventually none. Each call must
+     * carry its own, which shows up as the second call's deadline sitting later than the first's
+     * by roughly the time the first call took.
+     */
+    @Test
+    void everyRecordInABatchCarriesItsOwnDeadline() throws Exception {
+        Map<String, String> props = config("sink.test.Collector/Record", "protobuf");
+        props.put(GrpcSinkConfig.DEADLINE_MS, "30000");
+        GrpcSinkTask sink = startTask(props);
+        unaryDelayMs.set(150);
+
+        sink.put(List.of(record(event(1).toByteArray(), 0), record(event(2).toByteArray(), 1)));
+
+        assertThat(callDeadlines).hasSize(2).doesNotContainNull();
+        long first = callDeadlines.get(0).timeRemaining(TimeUnit.MILLISECONDS);
+        long second = callDeadlines.get(1).timeRemaining(TimeUnit.MILLISECONDS);
+        assertThat(second - first)
+                .as("the second call's deadline is set after the first call returned")
+                .isGreaterThanOrEqualTo(100);
     }
 
     @Test

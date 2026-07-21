@@ -11,8 +11,6 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -35,7 +33,7 @@ import java.util.stream.Collectors;
  */
 public class ProtoFieldMapperImpl implements ProtoFieldMapper {
 
-    private final RuleParser ruleParser = new RuleParser();
+    private final TextRuleParser ruleParser = new TextRuleParser();
     private final FieldAccessor fieldAccessor;
     private final DescriptorRegistry descriptorRegistry;
     private final AnyHandler anyHandler;
@@ -154,31 +152,31 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
      */
     @Override
     public void mapInPlace(Message.Builder builder, List<String> rules) throws MappingException {
-        List<MappingRule> parsedRules = ruleParser.parse(rules);
+        List<TextMappingRule> parsedRules = ruleParser.parse(rules);
 
-        for (MappingRule rule : parsedRules) {
+        for (TextMappingRule rule : parsedRules) {
             try {
                 Object value = null;
-                if (rule.sourcePath != null) {
-                    value = fieldAccessor.getValue(builder, rule.sourcePath, rule.originalRule);
+                if (rule.sourcePath() != null) {
+                    value = fieldAccessor.getValue(builder, rule.sourcePath(), rule.originalRule());
                 }
 
-                switch (rule.operation) {
+                switch (rule.operation()) {
                     case ASSIGN:
-                        fieldAccessor.setValue(builder, rule.targetPath, value, rule.originalRule);
+                        fieldAccessor.setValue(builder, rule.targetPath(), value, rule.originalRule());
                         break;
                     case APPEND:
-                        fieldAccessor.appendValue(builder, rule.targetPath, value, rule.originalRule);
+                        fieldAccessor.appendValue(builder, rule.targetPath(), value, rule.originalRule());
                         break;
                     case CLEAR:
-                        fieldAccessor.clearField(builder, rule.targetPath, rule.originalRule);
+                        fieldAccessor.clearField(builder, rule.targetPath(), rule.originalRule());
                         break;
                 }
             } catch (Exception e) {
                 if (e instanceof MappingException) {
                     throw e;
                 }
-                throw new MappingException("Failed to execute rule: " + rule.originalRule, e, rule.originalRule);
+                throw new MappingException("Failed to execute rule: " + rule.originalRule(), e, rule.originalRule());
             }
         }
     }
@@ -193,26 +191,26 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
      */
     @Override
     public void map(Message source, Message.Builder targetBuilder, List<String> rules) throws MappingException {
-        List<MappingRule> parsedRules = ruleParser.parse(rules);
+        List<TextMappingRule> parsedRules = ruleParser.parse(rules);
 
-        for (MappingRule rule : parsedRules) {
+        for (TextMappingRule rule : parsedRules) {
             try {
                 Object value = null;
                 // For assign/append, we need a value from the source path.
                 // For clear, the source path is null and so is the value.
-                if (rule.sourcePath != null) {
-                    value = fieldAccessor.getValue(source, rule.sourcePath, rule.originalRule);
+                if (rule.sourcePath() != null) {
+                    value = fieldAccessor.getValue(source, rule.sourcePath(), rule.originalRule());
                 }
 
-                switch (rule.operation) {
+                switch (rule.operation()) {
                     case ASSIGN:
-                        fieldAccessor.setValue(targetBuilder, rule.targetPath, value, rule.originalRule);
+                        fieldAccessor.setValue(targetBuilder, rule.targetPath(), value, rule.originalRule());
                         break;
                     case APPEND:
-                        fieldAccessor.appendValue(targetBuilder, rule.targetPath, value, rule.originalRule);
+                        fieldAccessor.appendValue(targetBuilder, rule.targetPath(), value, rule.originalRule());
                         break;
                     case CLEAR:
-                        fieldAccessor.clearField(targetBuilder, rule.targetPath, rule.originalRule);
+                        fieldAccessor.clearField(targetBuilder, rule.targetPath(), rule.originalRule());
                         break;
                 }
             } catch (Exception e) {
@@ -220,58 +218,12 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
                     throw e; // Re-throw if it's already our specific exception
                 }
                 // Wrap other exceptions with the rule that caused them.
-                throw new MappingException("Failed to execute rule: " + rule.originalRule, e, rule.originalRule);
+                throw new MappingException("Failed to execute rule: " + rule.originalRule(), e, rule.originalRule());
             }
         }
     }
 
     // --- Nested Helper Classes ---
-
-    private static class MappingRule {
-        final String targetPath;
-        final String sourcePath;
-        final Operation operation;
-        final String originalRule;
-
-        MappingRule(String targetPath, String sourcePath, Operation operation, String originalRule) {
-            this.targetPath = targetPath;
-            this.sourcePath = sourcePath;
-            this.operation = operation;
-            this.originalRule = originalRule;
-        }
-    }
-
-    private enum Operation { ASSIGN, APPEND, CLEAR }
-
-    private static class RuleParser {
-        private static final Pattern ASSIGN_PATTERN = Pattern.compile("^\\s*([^=+\\s]+)\\s*=\\s*(.+)\\s*$");
-        private static final Pattern APPEND_PATTERN = Pattern.compile("^\\s*([^+\\s]+)\\s*\\+=\\s*(.+)\\s*$");
-        private static final Pattern CLEAR_PATTERN = Pattern.compile("^\\s*-\\s*(\\S+)\\s*$");
-
-        public List<MappingRule> parse(List<String> ruleStrings) throws MappingException {
-            List<MappingRule> rules = new ArrayList<>();
-            for (String ruleString : ruleStrings) {
-                if (ruleString == null || ruleString.trim().isEmpty()) continue;
-                Matcher assignMatcher = ASSIGN_PATTERN.matcher(ruleString);
-                if (assignMatcher.matches()) {
-                    rules.add(new MappingRule(assignMatcher.group(1), assignMatcher.group(2).trim(), Operation.ASSIGN, ruleString));
-                    continue;
-                }
-                Matcher appendMatcher = APPEND_PATTERN.matcher(ruleString);
-                if (appendMatcher.matches()) {
-                    rules.add(new MappingRule(appendMatcher.group(1), appendMatcher.group(2).trim(), Operation.APPEND, ruleString));
-                    continue;
-                }
-                Matcher clearMatcher = CLEAR_PATTERN.matcher(ruleString);
-                if (clearMatcher.matches()) {
-                    rules.add(new MappingRule(clearMatcher.group(1), null, Operation.CLEAR, ruleString));
-                    continue;
-                }
-                throw new MappingException("Invalid rule syntax", ruleString);
-            }
-            return rules;
-        }
-    }
 
     static class FieldAccessor {
         private static final String PATH_SEPARATOR_REGEX = "\\.";
@@ -405,7 +357,14 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
         }
 
         public void setValue(Message.Builder root, String path, Object value, String rule) throws MappingException {
-            PathResolutionResult result = resolvePathToFinalContainer(root, path, rule, true);
+            // Assigning null clears the target field, so absent parents must not be materialised:
+            // that would flip hasX() on those parents while clearing something that was never set.
+            // Struct paths are excluded because a null there is a stored NullValue, not a clear.
+            boolean materializeParents = value != null || pathEntersStruct(root.getDescriptorForType(), path);
+            PathResolutionResult result = resolvePathToFinalContainer(root, path, rule, materializeParents);
+            if (result == null) {
+                return;
+            }
             String fieldName = result.finalPathPart;
             Message.Builder containerBuilder = (Message.Builder) result.container;
 
@@ -480,9 +439,19 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
             }
 
             // Convert each appended element to the field's element type, mirroring setValue.
+            // A repeated field has no representation for a null element, so nulls are rejected
+            // rather than reaching addRepeatedField, which would throw a bare NullPointerException.
             if (value instanceof List<?>) {
-                for (Object item : (List<?>) value) finalBuilder.addRepeatedField(fd, typeConverter.convertToFieldType(item, fd));
+                for (Object item : (List<?>) value) {
+                    if (item == null) {
+                        throw new MappingException("Cannot append null to field '" + fd.getName() + "'", rule);
+                    }
+                    finalBuilder.addRepeatedField(fd, typeConverter.convertToFieldType(item, fd));
+                }
             } else {
+                if (value == null) {
+                    throw new MappingException("Cannot append null to field '" + fd.getName() + "'", rule);
+                }
                 finalBuilder.addRepeatedField(fd, typeConverter.convertToFieldType(value, fd));
             }
             result.commit();
@@ -605,6 +574,30 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
             } catch (InvalidProtocolBufferException e) {
                 throw new MappingException("Failed to convert dynamic google.protobuf.Any message", e, rule);
             }
+        }
+
+        /**
+         * Reports whether the final path part addresses a key inside a google.protobuf.Struct,
+         * determined from the descriptors alone so it holds for paths whose parents are unset.
+         */
+        private static boolean pathEntersStruct(Descriptor root, String path) {
+            String[] parts = path.split(PATH_SEPARATOR_REGEX);
+            Descriptor current = root;
+            for (int i = 0; i < parts.length - 1; i++) {
+                if (isStructDescriptor(current)) {
+                    return true;
+                }
+                FieldDescriptor fd = current.findFieldByName(parts[i]);
+                if (fd == null || fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+                    return false;
+                }
+                current = fd.getMessageType();
+            }
+            return isStructDescriptor(current);
+        }
+
+        private static boolean isStructDescriptor(Descriptor descriptor) {
+            return descriptor.getFullName().equals(Struct.getDescriptor().getFullName());
         }
 
         private FieldDescriptor findField(Descriptor d, String name, String fullPath) throws MappingException {

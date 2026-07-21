@@ -119,6 +119,63 @@ class CompatibilityWriteGateTest {
         }
     }
 
+    // ------------------------------------------------- degraded comparisons
+
+    /**
+     * A candidate whose references do not resolve is a violation, not a thrown error: the gate
+     * has to return a list so the store can report every problem at once, and the store's own
+     * compile step then raises the typed failure.
+     */
+    @Test
+    void aCandidateThatDoesNotResolveIsReportedAsAViolation() throws Exception {
+        try (var store = storeWithGate()) {
+            store.register("person", V1, List.of());
+            List<StoredSchema> history = List.of(store.latest("person").orElseThrow());
+            SchemaReference dangling = new SchemaReference("missing.proto", "missing.proto", 1);
+
+            List<String> violations = new CompatibilityWriteGate().validate(
+                    "person", "BACKWARD", history, V2_COMPATIBLE, List.of(dangling), store);
+
+            assertThat(violations).singleElement().asString()
+                    .startsWith("candidate does not resolve: ")
+                    .contains("missing.proto")
+                    .contains("version 1 does not exist in the store");
+        }
+    }
+
+    /**
+     * When one historical version cannot be compared the gate reports that version and keeps
+     * going, so a single unreadable version does not mask violations in the others.
+     */
+    @Test
+    void aHistoricalVersionThatCannotBeComparedIsReportedPerVersion() throws Exception {
+        try (var store = storeWithGate()) {
+            store.register("person", V1, List.of());
+            StoredSchema real = store.latest("person").orElseThrow();
+
+            String garbage = "this is not a proto file";
+            StoredSchema uncompilable = new StoredSchema("person", 7, 99, garbage, List.of(),
+                    SchemaContents.contentHash(garbage, List.of()));
+            StoredSchema unresolvable = new StoredSchema("person", 8, 98, V1,
+                    List.of(new SchemaReference("gone.proto", "gone.proto", 3)),
+                    SchemaContents.contentHash(V1, List.of()));
+
+            List<String> violations = new CompatibilityWriteGate().validate(
+                    "person", "BACKWARD_TRANSITIVE",
+                    List.of(uncompilable, unresolvable, real),
+                    V2_INCOMPATIBLE, List.of(), store);
+
+            assertThat(violations).hasSize(3);
+            assertThat(violations.get(0)).startsWith("v7: comparison failed: ")
+                    .contains("Failed to compile old schema sources");
+            assertThat(violations.get(1)).startsWith("v8: comparison failed: ")
+                    .contains("gone.proto");
+            // The version that could be compared still yields its real rule violation.
+            assertThat(violations.get(2)).startsWith("v1: " + ChangeRules.FIELD_TYPE_CHANGED)
+                    .contains("example.Person");
+        }
+    }
+
     @Test
     void referencesResolveDuringComparison() throws Exception {
         String common = """

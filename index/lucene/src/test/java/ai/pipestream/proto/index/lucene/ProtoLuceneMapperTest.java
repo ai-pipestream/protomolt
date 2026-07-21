@@ -248,6 +248,177 @@ class ProtoLuceneMapperTest {
         assertThat(doc.get("inner")).isEqualTo("{\"name\":\"n1\"}");
     }
 
+    /**
+     * A message value reaching a string-shaped field must render as canonical JSON like every
+     * other message-valued path. These two kinds once fell through to {@code String.valueOf},
+     * which emits protobuf text format — so the same nested message indexed under two different
+     * encodings depending only on its hint.
+     */
+    @Test
+    void textAndKeywordHintedMessagesRenderAsCompactJson() throws Exception {
+        Descriptor descriptor = nestedDescriptor();
+        Descriptor innerDescriptor = descriptor.findFieldByName("inner").getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("inner"),
+                        DynamicMessage.newBuilder(innerDescriptor)
+                                .setField(innerDescriptor.findFieldByName("name"), "n1")
+                                .build())
+                .build();
+
+        for (IndexFieldKind kind : List.of(IndexFieldKind.TEXT, IndexFieldKind.KEYWORD)) {
+            IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                    new IndexingPlan.IndexedField("inner", "inner", ResolvedFieldHint.of(kind))));
+
+            Document doc = mapper.map(message, plan);
+
+            assertThat(doc.get("inner")).as("%s-hinted message", kind).isEqualTo("{\"name\":\"n1\"}");
+        }
+    }
+
+    /**
+     * {@code ResolvedFieldHint.of(OBJECT)} resolves to stored <em>and</em> indexed, so the JSON
+     * must be searchable, not merely retrievable. The two flags were once treated as alternatives
+     * with storage winning, which left every default-hinted OBJECT and NESTED field absent from
+     * the index while {@code doc.get} still returned its value — so retrieval-based assertions
+     * passed and no query ever matched.
+     */
+    @Test
+    void objectHintedMessageIsIndexedAsWellAsStored() throws Exception {
+        Descriptor descriptor = nestedDescriptor();
+        Descriptor innerDescriptor = descriptor.findFieldByName("inner").getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("inner"),
+                        DynamicMessage.newBuilder(innerDescriptor)
+                                .setField(innerDescriptor.findFieldByName("name"), "n1")
+                                .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("inner", "inner",
+                        ResolvedFieldHint.of(IndexFieldKind.OBJECT))));
+
+        Document doc = mapper.map(message, plan);
+
+        // one field carrying both duties, not two fields duplicating the value on retrieval
+        assertThat(doc.getFields("inner")).hasSize(1);
+        IndexableField field = doc.getFields("inner")[0];
+        assertThat(field.fieldType().stored()).isTrue();
+        assertThat(field.fieldType().indexOptions())
+                .isNotEqualTo(org.apache.lucene.index.IndexOptions.NONE);
+        assertThat(doc.get("inner")).isEqualTo("{\"name\":\"n1\"}");
+    }
+
+    @Test
+    void objectHintedFieldThatIsIndexedOnlyIsStillSearchableAndNotStored() throws Exception {
+        Descriptor descriptor = nestedDescriptor();
+        Descriptor innerDescriptor = descriptor.findFieldByName("inner").getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("inner"),
+                        DynamicMessage.newBuilder(innerDescriptor)
+                                .setField(innerDescriptor.findFieldByName("name"), "n1")
+                                .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("inner", "inner",
+                        ResolvedFieldHint.builder(IndexFieldKind.OBJECT)
+                                .stored(false).indexed(true).build())));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("inner")).hasSize(1);
+        assertThat(doc.getFields("inner")[0].fieldType().stored()).isFalse();
+        assertThat(doc.getFields("inner")[0].fieldType().indexOptions())
+                .isNotEqualTo(org.apache.lucene.index.IndexOptions.NONE);
+    }
+
+    @Test
+    void objectHintedFieldThatIsStoredOnlyIsNotIndexed() throws Exception {
+        Descriptor descriptor = nestedDescriptor();
+        Descriptor innerDescriptor = descriptor.findFieldByName("inner").getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("inner"),
+                        DynamicMessage.newBuilder(innerDescriptor)
+                                .setField(innerDescriptor.findFieldByName("name"), "n1")
+                                .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("inner", "inner",
+                        ResolvedFieldHint.builder(IndexFieldKind.OBJECT)
+                                .stored(true).indexed(false).build())));
+
+        Document doc = mapper.map(message, plan);
+
+        assertThat(doc.getFields("inner")).hasSize(1);
+        assertThat(doc.getFields("inner")[0].fieldType().stored()).isTrue();
+        assertThat(doc.getFields("inner")[0].fieldType().indexOptions())
+                .isEqualTo(org.apache.lucene.index.IndexOptions.NONE);
+    }
+
+    /**
+     * Java division truncates toward zero, so a pre-epoch instant at SECONDS resolution once
+     * rounded up: -1500ms became -1s rather than -2s, placing the value one second later than the
+     * same instant indexed in millis and breaking range filters that straddle the epoch.
+     */
+    @Test
+    void preEpochTimestampAtSecondsResolutionFloorsRatherThanTruncating() throws Exception {
+        Descriptor descriptor = timestampDescriptor();
+        FieldDescriptor created = descriptor.findFieldByName("created");
+        Descriptor tsDescriptor = created.getMessageType();
+        // 1969-12-31T23:59:58.500Z — protobuf keeps nanos non-negative for negative seconds
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(created, DynamicMessage.newBuilder(tsDescriptor)
+                        .setField(tsDescriptor.findFieldByName("seconds"), -2L)
+                        .setField(tsDescriptor.findFieldByName("nanos"), 500_000_000)
+                        .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("created", "created",
+                        ResolvedFieldHint.builder(IndexFieldKind.DATE)
+                                .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
+                                .build())));
+
+        Document doc = mapper.map(message, plan);
+
+        List<Long> stored = Arrays.stream(doc.getFields("created"))
+                .filter(field -> field.fieldType().stored())
+                .map(field -> field.numericValue().longValue())
+                .toList();
+        assertThat(stored).containsExactly(-2L);
+    }
+
+    @Test
+    void preEpochTimestampsKeepTheirOrderAcrossTheEpochBoundary() throws Exception {
+        assertThat(secondsResolutionValue(-2L, 500_000_000))
+                .isLessThan(secondsResolutionValue(-1L, 0));
+        assertThat(secondsResolutionValue(-1L, 0))
+                .isLessThan(secondsResolutionValue(0L, 0));
+        assertThat(secondsResolutionValue(0L, 0))
+                .isLessThan(secondsResolutionValue(1L, 0));
+    }
+
+    /** Indexes a single Timestamp at SECONDS resolution and returns the stored value. */
+    private long secondsResolutionValue(long seconds, int nanos) throws Exception {
+        Descriptor descriptor = timestampDescriptor();
+        FieldDescriptor created = descriptor.findFieldByName("created");
+        Descriptor tsDescriptor = created.getMessageType();
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor)
+                .setField(created, DynamicMessage.newBuilder(tsDescriptor)
+                        .setField(tsDescriptor.findFieldByName("seconds"), seconds)
+                        .setField(tsDescriptor.findFieldByName("nanos"), nanos)
+                        .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("created", "created",
+                        ResolvedFieldHint.builder(IndexFieldKind.DATE)
+                                .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
+                                .build())));
+
+        return Arrays.stream(mapper.map(message, plan).getFields("created"))
+                .filter(field -> field.fieldType().stored())
+                .map(field -> field.numericValue().longValue())
+                .findFirst()
+                .orElseThrow();
+    }
+
     @Test
     void objectHintedMapFieldStoresOneJsonObject() throws Exception {
         Descriptor descriptor = mapFieldDescriptor();

@@ -61,7 +61,7 @@ They run wherever Docker is available and skip otherwise.
 
 The OpenSearch index lane (`:protomolt-index-opensearch`) also provisions
 its own engine: a Testcontainers container running
-`opensearchproject/opensearch:2.19.1` (the same image the compose stack
+`opensearchproject/opensearch:3.7.0` (the same image the compose stack
 pins), started through the OpenSearch project's `opensearch-testcontainers`
 module. It likewise runs wherever Docker is available and skips otherwise,
 so the compose stack's `opensearch` service is not needed for tests.
@@ -108,6 +108,38 @@ An unreachable override endpoint still skips via a JUnit assumption (a
 quick ~2 second probe), so a plain `./gradlew build` stays green without
 containers.
 
+## ACP protocol round trips
+
+Four tests in `protomolt-acp` drive the agent through a full ACP exchange —
+two over the SDK's in-memory transport, two across a real child process over
+stdio. They carry the `acp-protocol` JUnit tag and are excluded from the
+default `test` task:
+
+```bash
+./gradlew :protomolt-acp:acpProtocolTest
+```
+
+The exclusion is not about Docker or any external dependency. When the
+machine is saturated — a full `./gradlew build --rerun-tasks` across every
+module — `AcpSyncClient.prompt` has been observed never returning: the call
+blocks until its request timeout rather than failing an assertion, so the
+build reports a failure caused by machine load rather than by a defect.
+
+What provokes it is issuing **more than one prompt on a session**. The
+single-prompt test in the in-memory suite has never been observed hanging;
+both multi-prompt tests have, on different prompts and different verbs. So it
+is not the `compile` verb, and it is not the agent — it is the SDK's reactive
+client under contention. It reproduces unchanged on the code as it stood
+before this suite was reworked. Raising the client's request timeout, and
+fixing a genuine data race on the tests' own notification buffer, each left
+it reproducing.
+
+They are quarantined rather than deleted because the coverage is real: they
+are the only tests that exercise the agent as an IDE actually drives it. CI
+runs them in the `build` job on a quiet runner, serially
+(`maxParallelForks = 1`), after the main build. Run them the same way
+locally — on an otherwise idle machine — and they pass in about a second.
+
 ## Conformance against buf's own runner
 
 Beyond the in-build gate, the conformance executor can be scored by buf's
@@ -117,18 +149,27 @@ scoring on every push, so the pass rate is enforced, not just documented.
 
 ## Continuous integration
 
-GitHub Actions (`.github/workflows/ci.yml`) runs three jobs on every push
+GitHub Actions (`.github/workflows/ci.yml`) runs four jobs on every push
 to `main` and on pull requests:
 
 - **build** — compiles all modules, runs the unit test suite and the
   in-build conformance gate, runs `buf lint`, and (for pull requests)
-  `buf breaking` against the target branch.
+  `buf breaking` against the target branch. It runs as a matrix over test
+  JDKs 21 and 25 (`-PtestJdk=…`), so both supported runtimes are exercised.
+- **console** — installs the console's npm dependencies and runs its tests,
+  its TypeScript typecheck, and its production build. The console is a
+  standalone Vite app that the JVM build does not need, so a broken bundle
+  would otherwise reach `main` unnoticed.
 - **conformance** — builds the conformance executor and scores it with
   buf's own `protovalidate-conformance` binary against the complete suite;
   any failing case fails the job.
-- **integration** — starts `docker-compose.integration.yml` (Apicurio, and
-  a Confluent Schema Registry backed by Redpanda) and runs the
-  live-registry integration suites, failing if any suite skips.
+- **integration** — starts `docker-compose.integration.yml` (Apicurio, a
+  Confluent Schema Registry backed by Redpanda, Solr, OpenSearch, the Iceberg
+  REST and Gravitino catalogs, and rustfs) and runs the integration suites
+  against it: `:protomolt-schema-apicurio`, `:protomolt-schema-confluent`,
+  `:protomolt-index-solr`, `:protomolt-index-opensearch`,
+  `:protomolt-iceberg`, `:protomolt-iceberg-s3`,
+  `:protomolt-connect-iceberg`, and `:protomolt-serde`.
 
 ## Releasing to Maven Central
 

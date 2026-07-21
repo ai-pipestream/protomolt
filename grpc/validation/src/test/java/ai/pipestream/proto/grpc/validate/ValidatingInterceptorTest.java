@@ -54,11 +54,30 @@ class ValidatingInterceptorTest {
               string note = 2;
             }
             message Pong { string id = 1; }
+            // A message-level rule naming a field that does not exist: the rules cannot compile,
+            // which is the server's schema problem and not any caller's.
+            message BadRules {
+              option (ai.pipestream.proto.validate.v1.message) = {
+                cel: { id: "impossible" expression: "this.no_such_field > 1" }
+              };
+              string id = 1;
+            }
+            // Rules compile; the quality dimension does not.
+            message BadQuality {
+              option (ai.pipestream.proto.quality.v1.quality) = {
+                dimension: { id: "impossible" cel: "this.no_such_field > 1" }
+              };
+              string id = 1;
+            }
             """;
 
     private static Descriptor pingType;
     private static Descriptor pongType;
+    private static Descriptor badRulesType;
+    private static Descriptor badQualityType;
     private static MethodDescriptor<DynamicMessage, DynamicMessage> pingMethod;
+    private static MethodDescriptor<DynamicMessage, DynamicMessage> badRulesMethod;
+    private static MethodDescriptor<DynamicMessage, DynamicMessage> badQualityMethod;
     private static final AtomicInteger SERVERS = new AtomicInteger();
 
     @BeforeAll
@@ -76,12 +95,21 @@ class ValidatingInterceptorTest {
         var file = compiled.descriptorFor("grpc/validate/test/v1/echo.proto").orElseThrow();
         pingType = file.findMessageTypeByName("Ping");
         pongType = file.findMessageTypeByName("Pong");
-        pingMethod = MethodDescriptor.<DynamicMessage, DynamicMessage>newBuilder()
+        badRulesType = file.findMessageTypeByName("BadRules");
+        badQualityType = file.findMessageTypeByName("BadQuality");
+        pingMethod = unaryMethod("Ping", pingType);
+        badRulesMethod = unaryMethod("BadRules", badRulesType);
+        badQualityMethod = unaryMethod("BadQuality", badQualityType);
+    }
+
+    private static MethodDescriptor<DynamicMessage, DynamicMessage> unaryMethod(
+            String name, Descriptor requestType) {
+        return MethodDescriptor.<DynamicMessage, DynamicMessage>newBuilder()
                 .setType(MethodDescriptor.MethodType.UNARY)
                 .setFullMethodName(MethodDescriptor.generateFullMethodName(
-                        "grpc.validate.test.v1.Echo", "Ping"))
+                        "grpc.validate.test.v1.Echo", name))
                 .setRequestMarshaller(ProtoUtils.marshaller(
-                        DynamicMessage.getDefaultInstance(pingType)))
+                        DynamicMessage.getDefaultInstance(requestType)))
                 .setResponseMarshaller(ProtoUtils.marshaller(
                         DynamicMessage.getDefaultInstance(pongType)))
                 .build();
@@ -108,15 +136,23 @@ class ValidatingInterceptorTest {
     private static Fixture serve(ServerInterceptor interceptor,
                                  io.grpc.ClientInterceptor... clientInterceptors)
             throws IOException {
+        return serve(pingMethod, pingType, interceptor, clientInterceptors);
+    }
+
+    private static Fixture serve(MethodDescriptor<DynamicMessage, DynamicMessage> method,
+                                 Descriptor requestType,
+                                 ServerInterceptor interceptor,
+                                 io.grpc.ClientInterceptor... clientInterceptors)
+            throws IOException {
         String name = "validating-interceptor-" + SERVERS.incrementAndGet();
         AtomicInteger handled = new AtomicInteger();
         ServerServiceDefinition echo = ServerServiceDefinition
                 .builder("grpc.validate.test.v1.Echo")
-                .addMethod(pingMethod, ServerCalls.asyncUnaryCall((request, observer) -> {
+                .addMethod(method, ServerCalls.asyncUnaryCall((request, observer) -> {
                     handled.incrementAndGet();
                     observer.onNext(DynamicMessage.newBuilder(pongType)
                             .setField(pongType.findFieldByName("id"),
-                                    request.getField(pingType.findFieldByName("id")))
+                                    request.getField(requestType.findFieldByName("id")))
                             .build());
                     observer.onCompleted();
                 }))
@@ -131,7 +167,13 @@ class ValidatingInterceptorTest {
     }
 
     private static DynamicMessage call(ManagedChannel channel, DynamicMessage request) {
-        return ClientCalls.blockingUnaryCall(channel, pingMethod, CallOptions.DEFAULT, request);
+        return call(channel, pingMethod, request);
+    }
+
+    private static DynamicMessage call(ManagedChannel channel,
+                                       MethodDescriptor<DynamicMessage, DynamicMessage> method,
+                                       DynamicMessage request) {
+        return ClientCalls.blockingUnaryCall(channel, method, CallOptions.DEFAULT, request);
     }
 
     @Test
@@ -178,6 +220,50 @@ class ValidatingInterceptorTest {
                             assertThat(e.getStatus().getCode())
                                     .isEqualTo(Status.Code.FAILED_PRECONDITION));
             assertThat(fixture.handled().get()).isEqualTo(1);
+        }
+    }
+
+    /**
+     * A schema whose rules cannot compile is not the caller's fault and no caller can fix it, so
+     * it is INTERNAL rather than INVALID_ARGUMENT, and the compilation detail stays in the server
+     * logs instead of leaking the service's internals onto the wire.
+     */
+    @Test
+    void unCompilableSchemaRulesAreInternalWithTheDetailOffTheWire() throws IOException {
+        try (Fixture fixture = serve(badRulesMethod, badRulesType,
+                ValidatingServerInterceptor.create())) {
+            DynamicMessage request = DynamicMessage.newBuilder(badRulesType)
+                    .setField(badRulesType.findFieldByName("id"), "A-1")
+                    .build();
+            assertThatThrownBy(() -> call(fixture.channel(), badRulesMethod, request))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
+                        assertThat(e.getStatus().getDescription())
+                                .isEqualTo("The service's schema rules are malformed");
+                        assertThat(e.getStatus().getDescription())
+                                .doesNotContain("no_such_field", "impossible");
+                    });
+            assertThat(fixture.handled().get()).isZero();
+        }
+    }
+
+    /** A malformed quality dimension is the same class of failure, mapped to its own message. */
+    @Test
+    void unCompilableQualityDimensionsAreInternal() throws IOException {
+        try (Fixture fixture = serve(badQualityMethod, badQualityType,
+                ValidatingServerInterceptor.create())) {
+            DynamicMessage request = DynamicMessage.newBuilder(badQualityType)
+                    .setField(badQualityType.findFieldByName("id"), "A-1")
+                    .build();
+            assertThatThrownBy(() -> call(fixture.channel(), badQualityMethod, request))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
+                        assertThat(e.getStatus().getDescription())
+                                .isEqualTo("The service's quality dimensions are malformed");
+                        assertThat(e.getStatus().getDescription())
+                                .doesNotContain("no_such_field");
+                    });
+            assertThat(fixture.handled().get()).isZero();
         }
     }
 

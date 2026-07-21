@@ -126,8 +126,15 @@ public final class StreamJoiner implements AutoCloseable {
         this.keys = new ProtoFieldMapperImpl(DescriptorRegistry.create());
         this.leftStream = DynamicGrpcCalls.openServerStream(left.channel(), left.method(),
                 left.request(), CallOptions.DEFAULT, new Metadata());
-        this.rightStream = DynamicGrpcCalls.openServerStream(right.channel(), right.method(),
-                right.request(), CallOptions.DEFAULT, new Metadata());
+        try {
+            this.rightStream = DynamicGrpcCalls.openServerStream(right.channel(), right.method(),
+                    right.request(), CallOptions.DEFAULT, new Metadata());
+        } catch (RuntimeException e) {
+            // Nothing will ever call close() on a joiner whose constructor threw, so the
+            // half-opened join must hang up on the left server itself.
+            this.leftStream.close();
+            throw e;
+        }
     }
 
     private static void requireServerStreaming(Side side) {
@@ -161,6 +168,11 @@ public final class StreamJoiner implements AutoCloseable {
             current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
                     ? field.getMessageType() : null;
         }
+        if (field == null) {
+            // A path of nothing but separators, such as "." — split drops the empty segments.
+            throw new IllegalArgumentException(side.name() + " keyPath '" + side.keyPath()
+                    + "' names no fields");
+        }
         if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
             throw new IllegalArgumentException(side.name() + " keyPath '" + side.keyPath()
                     + "' must end at a scalar field");
@@ -193,8 +205,10 @@ public final class StreamJoiner implements AutoCloseable {
             if (remainingNanos <= 0) {
                 break;
             }
-            Duration slice = remainingNanos < PULL_SLICE.toNanos()
-                    ? Duration.ofNanos(remainingNanos) : PULL_SLICE;
+            // Both sides wait in turn, so each gets half of what is left: a round trip must
+            // fit inside the caller's timeout rather than consuming it twice.
+            Duration slice = Duration.ofNanos(
+                    Math.min(remainingNanos / 2, PULL_SLICE.toNanos()));
             for (DynamicMessage message : leftStream.take(max, slice)) {
                 offer(message, true);
             }

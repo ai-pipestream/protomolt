@@ -2,12 +2,15 @@ package ai.pipestream.proto.lake.iceberg;
 
 import ai.pipestream.proto.meta.FieldMeta;
 import ai.pipestream.proto.meta.MetadataProto;
+import ai.pipestream.proto.sources.ProtoSourceCompiler;
+import ai.pipestream.proto.sources.ProtoSourceSet;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldOptions;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.DynamicMessage;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.exceptions.ValidationException;
@@ -96,6 +99,31 @@ class IcebergPartitionsTest {
                         FieldMeta.newBuilder()
                                 .putLabels(IcebergPartitions.PARTITION_HINT, transform).build()))
                 .build();
+    }
+
+    /**
+     * uint32 widens to a long column and the Parquet emitter writes it unsigned. Sign-extending
+     * the partition value instead would file a row whose own column reads 4294967295 under the
+     * partition for -1, so the partition would not match its data.
+     */
+    @Test
+    void unsignedInt32PartitionValuesWidenTheSameWayTheirColumnDoes() throws Exception {
+        Descriptor shard = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                        .add("p/shard.proto", """
+                                syntax = "proto3";
+                                package p;
+                                message Shard { uint32 bucket = 1; }
+                                """, "test").build())
+                .descriptorFor("p/shard.proto").orElseThrow().findMessageTypeByName("Shard");
+        Schema schema = IcebergSchemas.fromDescriptor(shard);
+        assertThat(schema.columns().get(0).type()).isInstanceOf(Types.LongType.class);
+
+        // uint32 0xFFFFFFFF arrives from protobuf as the int bit pattern -1.
+        DynamicMessage message = DynamicMessage.newBuilder(shard)
+                .setField(shard.findFieldByName("bucket"), -1).build();
+
+        assertThat(IcebergPartitions.row(message, schema).get(0, Long.class))
+                .isEqualTo(4294967295L);
     }
 
     @Test

@@ -1,6 +1,5 @@
 package ai.pipestream.proto.rest;
 
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.json.ProtobufJsonException;
 import ai.pipestream.proto.json.ProtobufJsonTranscoder;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -78,8 +77,8 @@ public final class ProtoRestGateway {
      * Invokes a registered method, enforcing its declared HTTP verbs.
      *
      * @param httpMethod the request's HTTP verb, or {@code null} to skip verb enforcement
-     * @throws HttpMethodNotAllowedException when the verb is not among the method's declared
-     *         {@code httpMethods} (empty declaration allows all standard verbs)
+     * @throws HttpMethodNotAllowedException when the verb is not among the method's
+     *         {@link ProtoRestMethod#allowedHttpVerbs()} (an empty declaration means POST only)
      */
     public String invoke(
             String httpMethod,
@@ -126,15 +125,9 @@ public final class ProtoRestGateway {
                 return "{}";
             }
             return transcoder.toJson(response);
-        } catch (MalformedProtobufJsonException | UnauthorizedProtoRestException
-                 | ServiceNotFoundException | MethodNotFoundException
-                 | HttpMethodNotAllowedException e) {
-            throw e;
-        } catch (ProtobufJsonException e) {
-            throw e;
-        } catch (ProtoRestException e) {
-            // The gateway's own vocabulary (e.g. a MalformedRequestException thrown by an
-            // invoker for a client-repairable failure) keeps its status mapping.
+        } catch (ProtobufJsonException | ProtoRestException e) {
+            // Both vocabularies already carry a status mapping (e.g. a MalformedRequestException
+            // thrown by an invoker for a client-repairable failure); pass them through unwrapped.
             throw e;
         } catch (RuntimeException e) {
             LOG.error("Invocation failed for {}/{}", serviceName, methodName, e);

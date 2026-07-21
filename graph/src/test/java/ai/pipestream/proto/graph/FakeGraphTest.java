@@ -124,6 +124,11 @@ class FakeGraphTest {
             } else if (path.endsWith("/operations/op1")) {
                 respond(exchange, 200, schemaPolls.incrementAndGet() < 2
                         ? "{\"status\": \"inprogress\"}" : "{\"status\": \"completed\"}");
+            } else if (path.endsWith("/operations/op-failed")) {
+                respond(exchange, 200, "{\"status\": \"failed\", \"error\": {\"code\": "
+                        + "\"schemaInvalid\", \"message\": \"Property name too long\"}}");
+            } else if (path.endsWith("/operations/op-stuck")) {
+                respond(exchange, 200, "{\"status\": \"inprogress\"}");
             } else if (path.contains("/items/") && method.equals("PUT")) {
                 externalItems.put(path, new String(exchange.getRequestBody().readAllBytes(),
                         StandardCharsets.UTF_8));
@@ -238,6 +243,35 @@ class FakeGraphTest {
         JsonNode ok = client("t").get("/throttled");
         assertThat(ok.path("ok").asBoolean()).isTrue();
         assertThat(throttleCount.get()).isEqualTo(3);
+    }
+
+    /**
+     * A failed or abandoned async operation is reported over a 200 poll, so carrying 200 on the
+     * exception would name a success as the cause of the failure.
+     */
+    @Test
+    void asyncOperationFailuresCarryNoHttpStatus() {
+        String operations = base + "/v1.0/external/connections/conn1/operations/";
+        assertThatThrownBy(() -> client("t")
+                .awaitOperation(operations + "op-failed", Duration.ofSeconds(30)))
+                .isInstanceOfSatisfying(GraphClient.GraphApiException.class, e -> {
+                    assertThat(e.status())
+                            .isEqualTo(GraphClient.GraphApiException.NO_HTTP_STATUS);
+                    assertThat(e.code()).isEqualTo("operationFailed");
+                    assertThat(e.getMessage()).contains("Property name too long")
+                            .doesNotContain("200");
+                    // The poll body names the real cause; the probe lane prints it.
+                    assertThat(e.body()).contains("schemaInvalid");
+                });
+
+        assertThatThrownBy(() -> client("t")
+                .awaitOperation(operations + "op-stuck", Duration.ZERO))
+                .isInstanceOfSatisfying(GraphClient.GraphApiException.class, e -> {
+                    assertThat(e.status())
+                            .isEqualTo(GraphClient.GraphApiException.NO_HTTP_STATUS);
+                    assertThat(e.code()).isEqualTo("operationTimeout");
+                    assertThat(e.getMessage()).contains("inprogress").doesNotContain("200");
+                });
     }
 
     @Test

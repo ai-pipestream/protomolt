@@ -62,6 +62,16 @@ class CelEvaluatorTest {
         assertFalse(e instanceof CelCompilationException);
         assertFalse(evaluator.evaluateBoolean("1 / 0 == 1", Map.of()));
     }
+    /**
+     * Warmup is precompilation, so callers that catch {@link CelCompilationException} to tell a
+     * broken expression from a runtime failure must see the same type they get from precompile.
+     */
+    @Test void warmupReportsACompileFailureAsACompilationException() {
+        CelEvaluator evaluator = new CelEvaluator();
+        CelCompilationException e = assertThrows(CelCompilationException.class,
+                () -> evaluator.warmup(List.of("1 + 1", "not valid(")));
+        assertTrue(e.getMessage().contains("not valid("));
+    }
     @Test void precompileCachesProgramWithoutEvaluating() {
         CelEvaluator evaluator = new CelEvaluator();
         evaluator.precompile("1 + 1");

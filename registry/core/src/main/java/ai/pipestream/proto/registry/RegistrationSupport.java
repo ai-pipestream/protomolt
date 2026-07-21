@@ -20,10 +20,25 @@ final class RegistrationSupport {
     private RegistrationSupport() {
     }
 
+    /**
+     * Validates a subject name.
+     *
+     * <p>{@code "."} and {@code ".."} are rejected because a file-backed store derives a
+     * directory name from the subject. {@link java.net.URLEncoder} leaves dots unencoded — it
+     * treats them as unreserved — so those two names survive encoding as relative path segments
+     * and resolve outside the intended subject directory. Encoding cannot be tightened without
+     * changing the on-disk name of every legitimate dotted subject, so the names are refused at
+     * the boundary instead. Stores that never touch the filesystem apply the same rule so both
+     * implementations accept the same inputs.
+     */
     static String requireSubject(String subject) {
         Objects.requireNonNull(subject, "subject");
         if (subject.isBlank()) {
             throw new IllegalArgumentException("subject must not be blank");
+        }
+        if (subject.equals(".") || subject.equals("..")) {
+            throw new IllegalArgumentException(
+                    "subject must not be '.' or '..'; got '" + subject + "'");
         }
         return subject;
     }

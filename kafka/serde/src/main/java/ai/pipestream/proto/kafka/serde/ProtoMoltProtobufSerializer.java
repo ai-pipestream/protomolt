@@ -1,5 +1,6 @@
 package ai.pipestream.proto.kafka.serde;
 
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;

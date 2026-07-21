@@ -1,5 +1,7 @@
 package ai.pipestream.proto.kafka.connect;
 
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
+import ai.pipestream.proto.kafka.wire.ConfluentWireFormatException;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
@@ -74,7 +76,7 @@ final class ValueCodec {
                 }
                 case CONFLUENT -> {
                     return DynamicMessage.parseFrom(type,
-                            ConfluentFraming.payload(asBytes(value)));
+                            ConfluentWireFormat.payload(asBytes(value)));
                 }
                 default -> {
                     String json = value instanceof byte[] bytes
@@ -102,7 +104,15 @@ final class ValueCodec {
             }
             case CONFLUENT -> {
                 byte[] original = asBytes(originalValue);
-                int offset = ConfluentFraming.payloadOffset(original);
+                int offset;
+                // The reader is framework-neutral; re-wrap so the transform still fails a
+                // malformed frame as a DataException the worker can route.
+                try {
+                    offset = ConfluentWireFormat.payloadOffset(original);
+                } catch (ConfluentWireFormatException e) {
+                    throw new DataException("Record value is not a Confluent frame, so its "
+                            + "prefix cannot be reused: " + e.getMessage(), e);
+                }
                 byte[] payload = message.toByteArray();
                 byte[] framed = new byte[offset + payload.length];
                 System.arraycopy(original, 0, framed, 0, offset);
