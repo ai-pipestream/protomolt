@@ -462,7 +462,20 @@ public final class ConfluentSchemaRegistryLoader implements DescriptorLoader, Au
                 .header("Accept", SCHEMA_REGISTRY_ACCEPT)
                 .GET()
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response;
+        try {
+            response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException first) {
+            // The registry's Jetty side closes idle connections after 30 seconds while the JDK
+            // client pools them for much longer; a GET after a quiet spell can ride a connection
+            // the server has already closed. Reads are idempotent, so retry once on a fresh one.
+            try {
+                response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            } catch (IOException second) {
+                second.addSuppressed(first);
+                throw second;
+            }
+        }
         if (response.statusCode() / 100 != 2) {
             throw new RegistryHttpException(response.statusCode(), path);
         }

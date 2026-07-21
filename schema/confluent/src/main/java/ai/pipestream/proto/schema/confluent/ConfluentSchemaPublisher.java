@@ -363,19 +363,37 @@ public final class ConfluentSchemaPublisher implements SchemaPublisher, AutoClos
     private HttpResponse<String> send(HttpRequest request, String description)
             throws SchemaPublishException {
         try {
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            // Auth failures and server errors mean the registry is unhealthy: abort everything.
-            int status = response.statusCode();
-            if (status == 401 || status == 403 || status >= 500) {
-                throw registryFailure(status, response.body(), description);
+            try {
+                return checked(client.send(request, HttpResponse.BodyHandlers.ofString()), description);
+            } catch (IOException first) {
+                // The registry's Jetty side closes idle connections after 30 seconds while the
+                // JDK client pools them for much longer, so after a quiet spell the next request
+                // can ride a connection the server has already closed and die mid-read. Registry
+                // calls are idempotent (republishing a schema yields the same id; checks are
+                // reads), so one retry on a fresh connection absorbs exactly that failure.
+                try {
+                    HttpResponse<String> retried =
+                            checked(client.send(request, HttpResponse.BodyHandlers.ofString()), description);
+                    return retried;
+                } catch (IOException second) {
+                    second.addSuppressed(first);
+                    throw new SchemaPublishException("Registry I/O failure while " + description, second);
+                }
             }
-            return response;
-        } catch (IOException e) {
-            throw new SchemaPublishException("Registry I/O failure while " + description, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SchemaPublishException("Interrupted while " + description, e);
         }
+    }
+
+    /** Auth failures and server errors mean the registry is unhealthy: abort everything. */
+    private HttpResponse<String> checked(HttpResponse<String> response, String description)
+            throws SchemaPublishException {
+        int status = response.statusCode();
+        if (status == 401 || status == 403 || status >= 500) {
+            throw registryFailure(status, response.body(), description);
+        }
+        return response;
     }
 
     private static SchemaPublishException registryFailure(int status, String body, String description) {

@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -330,6 +331,33 @@ class ConfluentSchemaPublisherTest {
      * Subjects arrive URL-encoded; the dispatcher decodes raw path segments, so a publisher
      * that failed to encode slashes would corrupt its subject names and fail the assertions.
      */
+    // ---------------------------------------------------------------- stale connections
+
+    @Test
+    void truncatedResponseIsRetriedOnceAndThePublishSucceeds() throws Exception {
+        // The registry's Jetty side closes idle connections under the JDK client's pool
+        // timeout, and the next request dies mid-read. Simulate that class of failure: the
+        // first response declares more bytes than it sends, so the client sees EOF mid-body;
+        // the publisher must retry once on a fresh connection and carry on.
+        AtomicBoolean truncateNext = new AtomicBoolean(true);
+        server.removeContext("/");
+        server.createContext("/", exchange -> {
+            if (truncateNext.compareAndSet(true, false)) {
+                exchange.sendResponseHeaders(200, 1000);
+                exchange.getResponseBody().write('{');
+                exchange.close();
+                return;
+            }
+            registry.handle(exchange);
+        });
+        ProtoSourceSet set = ProtoSourceSet.builder().add(CORE_PATH, CORE_PROTO, "test").build();
+
+        PublishResult result = publisher.publish(set, PublishOptions.defaults());
+
+        assertThat(truncateNext.get()).isFalse();
+        assertThat(result.outcomes()).extracting(FileOutcome::action).containsExactly(Action.CREATED);
+    }
+
     private static final class StubRegistry {
 
         record Request(String method, String rawPath, String subject, String body) {

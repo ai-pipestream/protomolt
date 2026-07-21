@@ -17,6 +17,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -263,6 +264,36 @@ class ConfluentSchemaRegistryLoaderTest {
     void unreachableRegistryIsNotAvailable() {
         server.stop(0);
         assertThat(new ConfluentSchemaRegistryLoader(baseUri()).isAvailable()).isFalse();
+    }
+
+    @Test
+    void truncatedResponseIsRetriedOnceAndTheLoadSucceeds() throws Exception {
+        // The registry's Jetty side closes idle connections under the JDK client's pool
+        // timeout, and the next request dies mid-read. Simulate that class of failure: the
+        // first /subjects response declares more bytes than it sends, so the client sees EOF
+        // mid-body; the loader must retry once on a fresh connection and carry on.
+        stubPersonAndTeam();
+        server.removeContext("/subjects");
+        byte[] payload = subjects("person", "team").getBytes(StandardCharsets.UTF_8);
+        AtomicBoolean truncateNext = new AtomicBoolean(true);
+        server.createContext("/subjects", exchange -> {
+            if (truncateNext.compareAndSet(true, false)) {
+                exchange.sendResponseHeaders(200, payload.length + 1000);
+                exchange.getResponseBody().write(payload, 0, 1);
+                exchange.close();
+                return;
+            }
+            exchange.getResponseHeaders().add("Content-Type", "application/vnd.schemaregistry.v1+json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+
+        List<FileDescriptor> descriptors = new ConfluentSchemaRegistryLoader(baseUri()).loadDescriptors();
+
+        assertThat(truncateNext.get()).isFalse();
+        assertThat(descriptors).extracting(FileDescriptor::getName)
+                .containsExactlyInAnyOrder("person.proto", "team.proto");
     }
 
     // ---------------------------------------------------------------- stub helpers
