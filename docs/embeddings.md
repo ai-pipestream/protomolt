@@ -10,6 +10,21 @@ produced, locating and validating both fields through the plan.
 |---|---|
 | `protomolt-embeddings` | The `EmbeddingProvider` SPI and the plan-driven `PlanEmbedder` |
 | `protomolt-embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
+| `protomolt-embeddings-tei` | A remote provider for Hugging Face Text Embeddings Inference over gRPC |
+| `protomolt-embeddings-ovms` | A remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
+| `protomolt-embeddings-harness` | Pairwise cosine-equivalence certification for providers serving the same model |
+
+The SPI lives in `embeddings/core`, the providers under `embeddings/providers`,
+and the certification harness in `embeddings/harness`:
+
+```
+embeddings/
+  core/                  protomolt-embeddings
+  providers/model2vec/   protomolt-embeddings-model2vec
+  providers/tei/         protomolt-embeddings-tei
+  providers/ovms/        protomolt-embeddings-ovms
+  harness/               protomolt-embeddings-harness
+```
 
 ## The provider SPI
 
@@ -113,3 +128,67 @@ fails, naming both knobs.
 The provider depends on `ai.pipestream:opennlp-embeddings`, which resolves
 from `mavenLocal` or the ai.pipestream registries — not from Maven Central
 release repositories.
+
+## Remote providers
+
+Two providers call remote inference servers over gRPC. Both use a plaintext
+channel, because each server serves plain gRPC behind a trusted network
+boundary; TLS can be added later when a deployment calls for it. Both follow
+the model2vec configuration pattern: the no-argument constructor ServiceLoader
+uses resolves its knobs on first use from a system property, falling back to
+an environment variable, so discovery never fails on an unconfigured provider.
+First use without the knobs fails with a message naming them.
+
+### TEI
+
+`TeiEmbeddingProvider` registers under the id `tei` and calls a Hugging Face
+Text Embeddings Inference server. TEI serves one embedding model per process,
+chosen server side, so the only knob is the gRPC target:
+
+| Property | Environment variable | Example |
+|---|---|---|
+| `protomolt.embeddings.tei.target` | `PROTOMOLT_TEI_TARGET` | `localhost:8071` |
+
+`embedAll` issues one unary Embed call per text on virtual threads. TEI
+batches concurrent requests server side (dynamic batching), so concurrent
+unary calls get the batching benefit without a client-side batch API. TEI's
+Info RPC reports no vector dimension, so `dimension()` embeds a fixed probe
+string once and caches the vector length.
+
+### OVMS
+
+`OvmsEmbeddingProvider` registers under the id `ovms` and calls an OpenVINO
+Model Server embeddings servable over the KServe v2 gRPC prediction protocol
+(the same wire protocol NVIDIA Triton speaks):
+
+| Property | Environment variable | Example |
+|---|---|---|
+| `protomolt.embeddings.ovms.target` | `PROTOMOLT_OVMS_TARGET` | `localhost:9071` |
+| `protomolt.embeddings.ovms.model` | `PROTOMOLT_OVMS_MODEL` | `bge-small-en` |
+| `protomolt.embeddings.ovms.input` | `PROTOMOLT_OVMS_INPUT` | defaults to `input` |
+| `protomolt.embeddings.ovms.output` | `PROTOMOLT_OVMS_OUTPUT` | defaults to `embedding` |
+
+Each `embedAll` sends one `ModelInferRequest`: a single BYTES input tensor of
+shape `[N]` carrying the N texts as UTF-8, since OVMS embeddings servables
+accept raw strings and tokenize server side. The FP32 output tensor of shape
+`[N, dim]` is read from `fp32_contents` when populated and from
+`raw_output_contents` (little-endian F32) otherwise, because KServe servers
+commonly answer with raw contents. As with TEI, `dimension()` is learned by a
+one-time probe.
+
+## Certification
+
+Two providers serving the same model must produce near-identical vectors
+(per-text cosine ~1) before a runtime can mix them, for example indexing with
+one and querying with the other. `EmbeddingEquivalence.compare(a, b, texts,
+threshold)` in `protomolt-embeddings-harness` embeds a corpus with both
+providers and reduces the per-text cosines to an `EquivalenceReport`: the pair
+is certified when the worst text still clears the threshold.
+
+model2vec is a different model family from the transformer models TEI and
+OVMS serve, so it never certifies against a transformer provider. It is the
+standalone CPU fast path, not a mixable provider.
+
+`TeiOvmsEquivalenceLiveIntegrationTest` runs this check against live servers
+when `PROTOMOLT_TEI_TARGET`, `PROTOMOLT_OVMS_TARGET`, and
+`PROTOMOLT_OVMS_MODEL` are all set, and skips otherwise.

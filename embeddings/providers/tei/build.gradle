@@ -1,0 +1,35 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Embedding provider for Hugging Face Text Embeddings Inference over gRPC'
+
+dependencies {
+    api project(':protomolt-embeddings')
+
+    implementation libs.grpc.stub
+    implementation libs.grpc.protobuf
+    implementation libs.grpc.netty.shaded
+    // grpc codegen emits @javax.annotation.Generated.
+    compileOnly 'org.apache.tomcat:annotations-api:6.0.53'
+
+    testImplementation libs.grpc.inprocess
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = 'io.grpc:protoc-gen-grpc-java:1.73.0'
+        }
+    }
+    generateProtoTasks {
+        all().each { task ->
+            task.plugins {
+                grpc {}
+            }
+        }
+    }
+}

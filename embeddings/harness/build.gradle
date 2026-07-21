@@ -1,0 +1,8 @@
+description = 'Pairwise cosine-equivalence certification for embedding providers serving the same model'
+
+dependencies {
+    api project(':protomolt-embeddings')
+
+    testImplementation project(':protomolt-embeddings-tei')
+    testImplementation project(':protomolt-embeddings-ovms')
+}
