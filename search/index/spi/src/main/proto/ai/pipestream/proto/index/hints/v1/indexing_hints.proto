@@ -80,6 +80,64 @@ message HnswParams {
   optional int32 ef_construction = 2;
 }
 
+// Role a field plays in a parent/child (block-join) document layout. Flat
+// engines ignore these; block engines (distributed-lucene) require CHUNKS to
+// locate the child scope. The plan factory expands the children of a CHUNKS
+// field into dotted paths while keeping the container entry itself, so block
+// engines see both the scope and its fields.
+enum BlockRole {
+  BLOCK_ROLE_UNSPECIFIED = 0;
+  // The repeated message field holding the child documents. Exactly one per
+  // indexed message; must be a repeated message field.
+  BLOCK_ROLE_CHUNKS = 1;
+  // Stable parent identity, consumed by the engine (indexed canonically on
+  // every block member rather than re-emitted as a regular field).
+  BLOCK_ROLE_DOC_ID = 2;
+  // Per-chunk identity inside the CHUNKS scope; absent chunks get
+  // "<doc_id>#<generation>#<ordinal>".
+  BLOCK_ROLE_CHUNK_ID = 3;
+}
+
+// Deterministic chunking configuration. Everything here participates in the
+// recipe digest: changing any value re-chunks a corpus, so two indexes agree
+// on their chunk boundaries exactly when their digests agree.
+message ChunkingSpec {
+  // Chunker implementation id, e.g. "sentence-packed".
+  string strategy = 1;
+  // The chunker's pinned implementation version; bumps on ANY behavior change.
+  uint32 strategy_version = 2;
+  int32 target_tokens = 3;
+  int32 overlap_tokens = 4;
+  int32 min_tokens = 5;
+  int32 max_tokens = 6;
+  // Boundary rule set id, e.g. "rules-v1". Never a floating default: a JDK or
+  // model upgrade must not silently move sentence boundaries.
+  string boundary = 7;
+}
+
+// Embedding configuration for derived vectors; participates in the recipe digest.
+message EmbeddingSpec {
+  string model = 1;
+  int32 dims = 2;
+  VectorSimilarity similarity = 3;
+  // L2-normalize vectors after embedding.
+  bool normalize = 4;
+}
+
+// An index recipe: derive chunks and vectors from the annotated source text
+// field at index time (chunk + embed on the server). Attach to a string field.
+// The recipe digest (spi ChunkRecipe.digest()) identifies the derivation
+// pipeline; index consumers pin it the way they pin a schema.
+message ChunkRecipe {
+  ChunkingSpec chunking = 1;
+  EmbeddingSpec embedding = 2;
+  // Index field name for the derived vector; empty = engine convention
+  // ("<field>#<model>").
+  string vector_field = 3;
+  // Store chunk text on child documents for highlighting.
+  bool store_chunk_text = 4;
+}
+
 // Additional index-time representation of the same value — the classic
 // "index once as text, again as keyword" pattern.
 message SubFieldHint {
@@ -119,6 +177,10 @@ message FieldIndexHint {
   // Per-engine escape hatch keyed by engine id with dot-suffixed keys,
   // e.g. "opensearch.index_options". Unknown keys are ignored.
   map<string, string> engine_params = 19;
+  // Parent/child (block-join) role for block engines; flat engines ignore it.
+  BlockRole block_role = 20;
+  // Server-side chunk-and-embed derivation from this field's text.
+  ChunkRecipe chunk_recipe = 21;
 }
 
 extend google.protobuf.FieldOptions {

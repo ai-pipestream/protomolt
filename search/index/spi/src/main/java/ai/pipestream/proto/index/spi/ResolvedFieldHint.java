@@ -19,8 +19,9 @@ import java.util.Optional;
  * <p>Unset-vs-default conventions: {@code nullValue} is {@code null} when absent (an empty
  * string is a legal substitute); {@code mapMode} is {@code null} when absent (each engine
  * keeps its documented default); {@code hnswParams} is {@code null} when absent (engine
- * tuning defaults apply). Analyzer names, {@code dateFormat}, and {@code name} use the
- * empty string for "unset".
+ * tuning defaults apply); {@code chunkRecipe} is {@code null} when absent (no server-side
+ * derivation). Analyzer names, {@code dateFormat}, and {@code name} use the empty string
+ * for "unset"; {@code blockRole} uses {@link BlockRole#UNSPECIFIED}.
  */
 public record ResolvedFieldHint(
         IndexFieldKind type,
@@ -41,7 +42,9 @@ public record ResolvedFieldHint(
         MapMode mapMode,
         String dateFormat,
         DateResolution dateResolution,
-        Map<String, String> engineParams) {
+        Map<String, String> engineParams,
+        BlockRole blockRole,
+        ChunkRecipe chunkRecipe) {
 
     public ResolvedFieldHint {
         Objects.requireNonNull(type, "type");
@@ -57,12 +60,14 @@ public record ResolvedFieldHint(
         dateFormat = dateFormat == null ? "" : dateFormat;
         dateResolution = dateResolution == null ? DateResolution.MILLIS : dateResolution;
         engineParams = engineParams == null ? Map.of() : Map.copyOf(engineParams);
+        blockRole = blockRole == null ? BlockRole.UNSPECIFIED : blockRole;
     }
 
     /** Pre-standard shape: type/stored/indexed/name/dims with every extension at its default. */
     public ResolvedFieldHint(IndexFieldKind type, boolean stored, boolean indexed, String name, int vectorDims) {
         this(type, stored, indexed, name, vectorDims,
-                null, null, null, null, "", "", null, true, false, false, null, "", null, null);
+                null, null, null, null, "", "", null, true, false, false, null, "", null, null,
+                null, null);
     }
 
     public static ResolvedFieldHint of(IndexFieldKind type) {
@@ -210,6 +215,8 @@ public record ResolvedFieldHint(
         private String dateFormat;
         private DateResolution dateResolution;
         private Map<String, String> engineParams;
+        private BlockRole blockRole;
+        private ChunkRecipe chunkRecipe;
 
         private Builder(ResolvedFieldHint hint) {
             this.type = hint.type;
@@ -231,6 +238,8 @@ public record ResolvedFieldHint(
             this.dateFormat = hint.dateFormat;
             this.dateResolution = hint.dateResolution;
             this.engineParams = hint.engineParams;
+            this.blockRole = hint.blockRole;
+            this.chunkRecipe = hint.chunkRecipe;
         }
 
         public Builder type(IndexFieldKind type) {
@@ -334,11 +343,21 @@ public record ResolvedFieldHint(
             return this;
         }
 
+        public Builder blockRole(BlockRole blockRole) {
+            this.blockRole = blockRole;
+            return this;
+        }
+
+        public Builder chunkRecipe(ChunkRecipe chunkRecipe) {
+            this.chunkRecipe = chunkRecipe;
+            return this;
+        }
+
         public ResolvedFieldHint build() {
             return new ResolvedFieldHint(type, stored, indexed, name, vectorDims,
                     vectorSimilarity, vectorElementType, hnswParams, subFields,
                     analyzer, searchAnalyzer, nullValue, skipIfMissing, sortable, facetable,
-                    mapMode, dateFormat, dateResolution, engineParams);
+                    mapMode, dateFormat, dateResolution, engineParams, blockRole, chunkRecipe);
         }
     }
 }

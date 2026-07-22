@@ -48,9 +48,13 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
                 .mapMode(toMapMode(hint.getMapMode()))
                 .dateFormat(hint.getDateFormat())
                 .dateResolution(toResolution(hint.getDateResolution()))
-                .engineParams(hint.getEngineParamsMap());
+                .engineParams(hint.getEngineParamsMap())
+                .blockRole(toBlockRole(hint.getBlockRole()));
         if (hint.hasNullValue()) {
             builder.nullValue(hint.getNullValue());
+        }
+        if (hint.hasChunkRecipe()) {
+            builder.chunkRecipe(toRecipe(hint.getChunkRecipe()));
         }
         if (hint.hasHnsw()) {
             builder.hnswParams(new ResolvedFieldHint.HnswParams(
@@ -62,6 +66,36 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
                     toKind(subField.getType()), subField.getName(), subField.getAnalyzer()));
         }
         return builder.build();
+    }
+
+    private static BlockRole toBlockRole(ai.pipestream.proto.index.hints.BlockRole role) {
+        return switch (role) {
+            case BLOCK_ROLE_CHUNKS -> BlockRole.CHUNKS;
+            case BLOCK_ROLE_DOC_ID -> BlockRole.DOC_ID;
+            case BLOCK_ROLE_CHUNK_ID -> BlockRole.CHUNK_ID;
+            case BLOCK_ROLE_UNSPECIFIED, UNRECOGNIZED -> BlockRole.UNSPECIFIED;
+        };
+    }
+
+    private static ChunkRecipe toRecipe(ai.pipestream.proto.index.hints.ChunkRecipe recipe) {
+        var chunking = recipe.getChunking();
+        var embedding = recipe.getEmbedding();
+        return new ChunkRecipe(
+                new ChunkRecipe.ChunkingSpec(
+                        chunking.getStrategy(),
+                        chunking.getStrategyVersion(),
+                        chunking.getTargetTokens(),
+                        chunking.getOverlapTokens(),
+                        chunking.getMinTokens(),
+                        chunking.getMaxTokens(),
+                        chunking.getBoundary()),
+                new ChunkRecipe.EmbeddingSpec(
+                        embedding.getModel(),
+                        embedding.getDims(),
+                        toSimilarity(embedding.getSimilarity()),
+                        embedding.getNormalize()),
+                recipe.getVectorField(),
+                recipe.getStoreChunkText());
     }
 
     private static VectorSimilarity toSimilarity(ai.pipestream.proto.index.hints.VectorSimilarity similarity) {

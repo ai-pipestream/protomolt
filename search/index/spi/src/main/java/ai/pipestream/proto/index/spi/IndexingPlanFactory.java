@@ -82,12 +82,29 @@ public final class IndexingPlanFactory {
                 continue;
             }
             out.add(new IndexingPlan.IndexedField(path, fieldName, hint, field.isRepeated()));
+            if (hint.blockRole() == BlockRole.CHUNKS && depth < maxDepth) {
+                // The chunk scope keeps its container entry (block engines key on it) AND
+                // expands its children into dotted paths, unlike plain NESTED which stays
+                // a single entry. Child names are unprefixed: within a block the children
+                // are their own documents, not properties of the parent.
+                walk(field.getMessageType(), path, "", depth + 1, out, new HashSet<>(visiting));
+            }
         }
         visiting.remove(descriptor.getFullName());
     }
 
     /** Hints that cannot possibly map surface here as planning errors, with path context. */
     private static void validate(FieldDescriptor field, ResolvedFieldHint hint, String path) {
+        if (hint.blockRole() == BlockRole.CHUNKS
+                && (!field.isRepeated() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE)) {
+            throw new IndexingPlanException(
+                    "BLOCK_ROLE_CHUNKS requires a repeated message field", path);
+        }
+        if (hint.chunkRecipe() != null
+                && field.getJavaType() != FieldDescriptor.JavaType.STRING) {
+            throw new IndexingPlanException(
+                    "chunk_recipe derives from text and requires a string field", path);
+        }
         if (hint.type().isRange()) {
             if (field.isRepeated() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
                 throw new IndexingPlanException(
