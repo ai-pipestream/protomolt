@@ -1,0 +1,43 @@
+# Publishes the current SNAPSHOT of every module to the ai.pipestream dev
+# registry on this Forgejo instance, which the CI runners resolve every
+# ai.pipestream.* artifact from (runner image global init script). This is
+# the Forgejo half of snapshot publishing: direct Maven publishing with the
+# runner's own ambient identity. The GitHub half publishes to Maven Central
+# via nmcp and never needs Forgejo credentials; neither side holds the
+# other's tokens.
+#
+# Runs on every main sync so the registry cannot drift behind the code, and
+# on manual dispatch. This repo is a pull mirror: pushes arrive via mirror
+# sync from GitHub, so "push to main" fires after each sync.
+name: Publish Registry Snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  publish-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # axion derives the version from tags; a shallow clone would
+          # mis-version the publish.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Publish snapshot to the dev registry
+        env:
+          FORGEJO_ACTOR: ${{ github.actor }}
+          # The ambient Forgejo actions token; valid for this instance's
+          # package registry and nothing else.
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew publishMavenPublicationToRegistryRepository --no-daemon --console=plain
+
+      - name: Print resolved snapshot version
+        run: ./gradlew currentVersion --no-daemon --console=plain -q
