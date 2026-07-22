@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: console
+        working-directory: apps/console
     steps:
       - uses: actions/checkout@v4
 
@@ -73,7 +73,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: apps/console/package-lock.json
 
       - name: Install, test, typecheck, build
         run: |
@@ -150,12 +150,12 @@ jobs:
           skipped=$(grep -h -o 'skipped="[0-9]*"' \
             schema/apicurio/runtime/build/test-results/test/TEST-*Integration*.xml \
             schema/confluent/build/test-results/test/TEST-*Integration*.xml \
-            index/solr/build/test-results/test/TEST-*Integration*.xml \
-            index/opensearch/build/test-results/test/TEST-*Integration*.xml \
-            lake/iceberg/build/test-results/test/TEST-*Integration*.xml \
-            lake/iceberg-s3/build/test-results/test/TEST-*Integration*.xml \
-            kafka/connect-iceberg/build/test-results/test/TEST-*Integration*.xml \
-            kafka/serde/build/test-results/test/TEST-*Integration*.xml \
+            search/index/solr/build/test-results/test/TEST-*Integration*.xml \
+            search/index/opensearch/build/test-results/test/TEST-*Integration*.xml \
+            sink/iceberg/build/test-results/test/TEST-*Integration*.xml \
+            sink/iceberg-s3/build/test-results/test/TEST-*Integration*.xml \
+            sink/kafka/connect-iceberg/build/test-results/test/TEST-*Integration*.xml \
+            sink/kafka/serde/build/test-results/test/TEST-*Integration*.xml \
             | grep -o '[0-9]*' | paste -sd+ | bc)
           echo "skipped integration tests: $skipped"
           test "$skipped" -eq 0

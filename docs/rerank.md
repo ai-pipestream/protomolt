@@ -17,8 +17,8 @@ harness compares rankings, never raw score values.
 | `protomolt-rerank-ovms` | A remote provider for OpenVINO Model Server over the REST rerank endpoint |
 | `protomolt-rerank-harness` | Ranked-list equivalence certification for providers serving the same model |
 
-The SPI lives in `rerank/core`, the providers under `rerank/providers`, and
-the certification harness in `rerank/harness`:
+The SPI lives in `search/rerank/core`, the providers under `search/rerank/providers`, and
+the certification harness in `search/rerank/harness`:
 
 ```
 rerank/

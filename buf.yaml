@@ -6,7 +6,7 @@ modules:
     name: buf.build/ai-pipestream/protobuf-metadata
   - path: protobuf/validation/src/main/proto
     name: buf.build/ai-pipestream/protobuf-validation
-  - path: index/spi/src/main/proto
+  - path: search/index/spi/src/main/proto
     name: buf.build/ai-pipestream/protobuf-indexing-hints
   - path: protobuf/metadata/src/test/proto
     name: buf.build/ai-pipestream/protobuf-metadata-testdata
@@ -14,7 +14,7 @@ modules:
     name: buf.build/ai-pipestream/protobuf-validation-testdata
   - path: protobuf/indexing/src/test/proto
     name: buf.build/ai-pipestream/protobuf-indexing-testdata
-  - path: http/jsonschema/src/test/proto
+  - path: surface/http/jsonschema/src/test/proto
     name: buf.build/ai-pipestream/jsonschema-testdata
 lint:
   use:

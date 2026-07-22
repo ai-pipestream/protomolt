@@ -14,7 +14,7 @@ name: protomolt
 services:
   serve:
     build:
-      context: serve
+      context: apps/serve
       dockerfile: Dockerfile
     image: protomolt-serve:local
     # --demo seeds a throwaway git registry plus a sample schema and chain, so every
@@ -38,7 +38,7 @@ services:
 
   acp:
     build:
-      context: acp
+      context: surface/acp
       dockerfile: Dockerfile
     image: protomolt-acp:local
     # The Agent Client Protocol is spoken over stdio; there is no server to keep running.

@@ -22,7 +22,7 @@ stdio loop, the tests, and any future transport drive it the same way.
 
 ```shell
 ./gradlew :protomolt-mcp:installDist
-mcp/core/build/install/protomolt-mcp/bin/protomolt-mcp [--registry-git <path>]
+surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp [--registry-git <path>]
 ```
 
 Register it with an MCP client, for example Claude Code:

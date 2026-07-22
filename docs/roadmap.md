@@ -80,8 +80,8 @@ time. What the gatherer does not do: run at runtime, work outside Gradle
 ### Serving and consumption — largely built
 
 The pieces a registry *server* needs already exist as libraries: a
-framework-agnostic HTTP gateway (`http/rest`), six server hosts
-(`servers/*`), JSON transcoding, OpenAPI and JSON Schema generation, and
+framework-agnostic HTTP gateway (`surface/http/rest`), six server hosts
+(`host/servers/*`), JSON transcoding, OpenAPI and JSON Schema generation, and
 schema hygiene checks (`ProtoFqnConflictDetector`,
 `BinaryProtobufIdentifierValidator`) that reject conflicting or malformed
 uploads before they reach storage. Validation, mapping, and indexing consume
@@ -91,7 +91,7 @@ whatever descriptors the registry resolves.
 
 In rough dependency order:
 
-**1. Runtime loaders with gatherer parity — done.** The `gather/` modules
+**1. Runtime loaders with gatherer parity — done.** The `acquire/gather/` modules
 implement the gatherer's source model behind the `ProtoGatherer` SPI —
 filesystem (with scan-root discovery), jars, Git (all three layout modes,
 auth, persistent clone caching), and Maven coordinates — with
@@ -119,7 +119,7 @@ how Confluent judges protobuf schemas; JSON and source rule layers are
 opt-in. This is the write-gate for the registry server below. See
 [Compatibility checking](compatibility.md).
 
-**4. The registry server — first cut done.** The `registry/` modules store
+**4. The registry server — first cut done.** The `schema/registry/` modules store
 schemas in a Git repository (one commit per registration, per-subject
 compatibility configuration, cross-process locking) behind the Confluent
 subjects protocol, with writes gated by `CompatibilityWriteGate` and a
@@ -308,7 +308,7 @@ features.
    first release exists to compare against.
 8. **Hermetic WASM protoc supply chain.** Source provenance, the exact
    protobuf4j build commit, a rebuild script, component versions, and a
-   build-enforced binary checksum now live under `codegen/provenance`. Finish
+   build-enforced binary checksum now live under `core/codegen/provenance`. Finish
    this by digest-pinning the build image and downloaded archives, then audit
    and package the required LICENSE/NOTICE attribution for every component in
    the combined binary.

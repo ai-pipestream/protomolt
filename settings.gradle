@@ -14,8 +14,7 @@ rootProject.name = 'protomolt'
 
 include 'bom'
 
-include 'protomolt-formats'
-project(':protomolt-formats').projectDir = file('formats')
+// core/ — the schema model and its zero-IO foundations.
 
 include 'protomolt-descriptors'
 project(':protomolt-descriptors').projectDir = file('core/descriptors')
@@ -26,103 +25,57 @@ project(':protomolt-helpers').projectDir = file('core/helpers')
 include 'protomolt-proto-sources'
 project(':protomolt-proto-sources').projectDir = file('core/sources')
 
-include 'protomolt-gather'
-project(':protomolt-gather').projectDir = file('gather/core')
-
-include 'protomolt-gather-git'
-project(':protomolt-gather-git').projectDir = file('gather/git')
-include 'protomolt-emit'
-project(':protomolt-emit').projectDir = file('emit/core')
-include 'protomolt-emit-okf'
-project(':protomolt-emit-okf').projectDir = file('emit/okf')
-include 'protomolt-emit-parquet'
-project(':protomolt-emit-parquet').projectDir = file('emit/parquet')
-include 'protomolt-msgraph'
-project(':protomolt-msgraph').projectDir = file('graph')
-include 'protomolt-iceberg'
-project(':protomolt-iceberg').projectDir = file('lake/iceberg')
-include 'protomolt-iceberg-s3'
-project(':protomolt-iceberg-s3').projectDir = file('lake/iceberg-s3')
-
-include 'protomolt-gather-maven'
-project(':protomolt-gather-maven').projectDir = file('gather/maven')
-
-include 'protomolt-compat'
-project(':protomolt-compat').projectDir = file('compat')
-
-include 'protomolt-actions'
-project(':protomolt-actions').projectDir = file('actions')
-
-include 'protomolt-registry'
-project(':protomolt-registry').projectDir = file('registry/core')
-
-include 'protomolt-registry-server'
-project(':protomolt-registry-server').projectDir = file('registry/server')
-
-include 'protomolt-mcp'
-project(':protomolt-mcp').projectDir = file('mcp/core')
-
-include 'protomolt-grpc-invoke'
-project(':protomolt-grpc-invoke').projectDir = file('grpc/invoke')
-
-include 'protomolt-grpc-service'
-project(':protomolt-grpc-service').projectDir = file('grpc/service')
-include 'protomolt-grpc-validation'
-project(':protomolt-grpc-validation').projectDir = file('grpc/validation')
-include 'protomolt-grpc-validation-micrometer'
-project(':protomolt-grpc-validation-micrometer').projectDir = file('grpc/validation-micrometer')
-
-include 'protomolt-serve'
-project(':protomolt-serve').projectDir = file('serve')
-
-include 'protomolt-cli'
-project(':protomolt-cli').projectDir = file('cli')
-
-include 'protomolt-acp'
-project(':protomolt-acp').projectDir = file('acp')
-
-include 'protomolt-connector'
-project(':protomolt-connector').projectDir = file('connector')
-
-include 'protomolt-kafka-wire'
-project(':protomolt-kafka-wire').projectDir = file('kafka/wire')
-include 'protomolt-connect'
-project(':protomolt-connect').projectDir = file('kafka/connect')
-include 'protomolt-connect-iceberg'
-project(':protomolt-connect-iceberg').projectDir = file('kafka/connect-iceberg')
-include 'protomolt-serde'
-project(':protomolt-serde').projectDir = file('kafka/serde')
-include 'protomolt-serde-micrometer'
-project(':protomolt-serde-micrometer').projectDir = file('kafka/serde-micrometer')
+include 'protomolt-formats'
+project(':protomolt-formats').projectDir = file('core/formats')
 
 include 'protomolt-codegen'
-project(':protomolt-codegen').projectDir = file('codegen')
+project(':protomolt-codegen').projectDir = file('core/codegen')
 
-include 'protomolt-mapper-core'
-project(':protomolt-mapper-core').projectDir = file('mapper/core')
+include 'protomolt-compat'
+project(':protomolt-compat').projectDir = file('core/compat')
 
-include 'protomolt-mapper-cel'
-project(':protomolt-mapper-cel').projectDir = file('mapper/cel')
-include 'protomolt-shapes'
-project(':protomolt-shapes').projectDir = file('shapes')
+// acquire/ — how protos and documents get in.
 
-include 'protomolt-projection'
-project(':protomolt-projection').projectDir = file('projection')
+include 'protomolt-gather'
+project(':protomolt-gather').projectDir = file('acquire/gather/core')
 
-include 'protomolt-pipeline'
-project(':protomolt-pipeline').projectDir = file('pipeline')
+include 'protomolt-gather-git'
+project(':protomolt-gather-git').projectDir = file('acquire/gather/git')
 
-include 'protomolt-chain'
-project(':protomolt-chain').projectDir = file('chain/core')
+include 'protomolt-gather-maven'
+project(':protomolt-gather-maven').projectDir = file('acquire/gather/maven')
 
-include 'protomolt-metadata'
-project(':protomolt-metadata').projectDir = file('mapper/metadata')
+include 'protomolt-msgraph'
+project(':protomolt-msgraph').projectDir = file('acquire/msgraph')
+
+include 'protomolt-connector'
+project(':protomolt-connector').projectDir = file('acquire/connector')
+
+// schema/ — the registry and its wire-compatible backends.
+
+include 'protomolt-registry'
+project(':protomolt-registry').projectDir = file('schema/registry/core')
+
+include 'protomolt-registry-server'
+project(':protomolt-registry-server').projectDir = file('schema/registry/server')
+
+include 'protomolt-schema-apicurio'
+project(':protomolt-schema-apicurio').projectDir = file('schema/apicurio/runtime')
+
+include 'protomolt-schema-apicurio-deployment'
+project(':protomolt-schema-apicurio-deployment').projectDir = file('schema/apicurio/deployment')
+
+include 'protomolt-schema-confluent'
+project(':protomolt-schema-confluent').projectDir = file('schema/confluent')
+
+// protobuf/ — message-level metadata, quality, and validation.
 
 include 'protomolt-protobuf-metadata'
 project(':protomolt-protobuf-metadata').projectDir = file('protobuf/metadata')
 
 include 'protomolt-protobuf-quality'
 project(':protomolt-protobuf-quality').projectDir = file('protobuf/quality')
+
 include 'protomolt-protobuf-validation'
 project(':protomolt-protobuf-validation').projectDir = file('protobuf/validation')
 
@@ -135,98 +88,179 @@ project(':protomolt-protobuf-validation-conformance').projectDir = file('protobu
 include 'protomolt-protobuf-indexing'
 project(':protomolt-protobuf-indexing').projectDir = file('protobuf/indexing')
 
-include 'protomolt-schema-apicurio'
-project(':protomolt-schema-apicurio').projectDir = file('schema/apicurio/runtime')
+// transform/ — mapping, shaping, and composition between messages.
 
-include 'protomolt-schema-apicurio-deployment'
-project(':protomolt-schema-apicurio-deployment').projectDir = file('schema/apicurio/deployment')
+include 'protomolt-mapper-core'
+project(':protomolt-mapper-core').projectDir = file('transform/mapper/core')
 
-include 'protomolt-schema-confluent'
-project(':protomolt-schema-confluent').projectDir = file('schema/confluent')
+include 'protomolt-mapper-cel'
+project(':protomolt-mapper-cel').projectDir = file('transform/mapper/cel')
+
+include 'protomolt-metadata'
+project(':protomolt-metadata').projectDir = file('transform/mapper/metadata')
+
+include 'protomolt-shapes'
+project(':protomolt-shapes').projectDir = file('transform/shapes')
+
+include 'protomolt-projection'
+project(':protomolt-projection').projectDir = file('transform/projection')
+
+include 'protomolt-pipeline'
+project(':protomolt-pipeline').projectDir = file('transform/pipeline')
+
+include 'protomolt-chain'
+project(':protomolt-chain').projectDir = file('transform/chain')
+
+// search/ — index mappers plus the embedding and rerank model SPIs.
 
 include 'protomolt-index-spi'
-project(':protomolt-index-spi').projectDir = file('index/spi')
+project(':protomolt-index-spi').projectDir = file('search/index/spi')
 
 include 'protomolt-index-ndjson'
-project(':protomolt-index-ndjson').projectDir = file('index/ndjson')
+project(':protomolt-index-ndjson').projectDir = file('search/index/ndjson')
 
 include 'protomolt-index-lucene'
-project(':protomolt-index-lucene').projectDir = file('index/lucene')
+project(':protomolt-index-lucene').projectDir = file('search/index/lucene')
 
 include 'protomolt-index-opensearch'
-project(':protomolt-index-opensearch').projectDir = file('index/opensearch')
+project(':protomolt-index-opensearch').projectDir = file('search/index/opensearch')
 
 include 'protomolt-index-solr'
-project(':protomolt-index-solr').projectDir = file('index/solr')
+project(':protomolt-index-solr').projectDir = file('search/index/solr')
 
 include 'protomolt-embeddings'
-project(':protomolt-embeddings').projectDir = file('embeddings/core')
+project(':protomolt-embeddings').projectDir = file('search/embeddings/core')
 
 include 'protomolt-embeddings-model2vec'
-project(':protomolt-embeddings-model2vec').projectDir = file('embeddings/providers/model2vec')
+project(':protomolt-embeddings-model2vec').projectDir = file('search/embeddings/providers/model2vec')
 
 include 'protomolt-embeddings-tei'
-project(':protomolt-embeddings-tei').projectDir = file('embeddings/providers/tei')
+project(':protomolt-embeddings-tei').projectDir = file('search/embeddings/providers/tei')
 
 include 'protomolt-embeddings-ovms'
-project(':protomolt-embeddings-ovms').projectDir = file('embeddings/providers/ovms')
+project(':protomolt-embeddings-ovms').projectDir = file('search/embeddings/providers/ovms')
 
 include 'protomolt-embeddings-harness'
-project(':protomolt-embeddings-harness').projectDir = file('embeddings/harness')
+project(':protomolt-embeddings-harness').projectDir = file('search/embeddings/harness')
 
 include 'protomolt-rerank'
-project(':protomolt-rerank').projectDir = file('rerank/core')
+project(':protomolt-rerank').projectDir = file('search/rerank/core')
 
 include 'protomolt-rerank-tei'
-project(':protomolt-rerank-tei').projectDir = file('rerank/providers/tei')
+project(':protomolt-rerank-tei').projectDir = file('search/rerank/providers/tei')
 
 include 'protomolt-rerank-ovms'
-project(':protomolt-rerank-ovms').projectDir = file('rerank/providers/ovms')
+project(':protomolt-rerank-ovms').projectDir = file('search/rerank/providers/ovms')
 
 include 'protomolt-rerank-harness'
-project(':protomolt-rerank-harness').projectDir = file('rerank/harness')
+project(':protomolt-rerank-harness').projectDir = file('search/rerank/harness')
+
+// sink/ — where rendered output goes: bundles, the lake, Kafka.
+
+include 'protomolt-emit'
+project(':protomolt-emit').projectDir = file('sink/emit/core')
+
+include 'protomolt-emit-okf'
+project(':protomolt-emit-okf').projectDir = file('sink/emit/okf')
+
+include 'protomolt-emit-parquet'
+project(':protomolt-emit-parquet').projectDir = file('sink/emit/parquet')
+
+include 'protomolt-iceberg'
+project(':protomolt-iceberg').projectDir = file('sink/iceberg')
+
+include 'protomolt-iceberg-s3'
+project(':protomolt-iceberg-s3').projectDir = file('sink/iceberg-s3')
+
+include 'protomolt-kafka-wire'
+project(':protomolt-kafka-wire').projectDir = file('sink/kafka/wire')
+
+include 'protomolt-connect'
+project(':protomolt-connect').projectDir = file('sink/kafka/connect')
+
+include 'protomolt-connect-iceberg'
+project(':protomolt-connect-iceberg').projectDir = file('sink/kafka/connect-iceberg')
+
+include 'protomolt-serde'
+project(':protomolt-serde').projectDir = file('sink/kafka/serde')
+
+include 'protomolt-serde-micrometer'
+project(':protomolt-serde-micrometer').projectDir = file('sink/kafka/serde-micrometer')
+
+// surface/ — protocol endpoints over the toolkit.
+
+include 'protomolt-grpc-invoke'
+project(':protomolt-grpc-invoke').projectDir = file('surface/grpc/invoke')
+
+include 'protomolt-grpc-service'
+project(':protomolt-grpc-service').projectDir = file('surface/grpc/service')
+
+include 'protomolt-grpc-validation'
+project(':protomolt-grpc-validation').projectDir = file('surface/grpc/validation')
+
+include 'protomolt-grpc-validation-micrometer'
+project(':protomolt-grpc-validation-micrometer').projectDir = file('surface/grpc/validation-micrometer')
 
 include 'protomolt-json'
-project(':protomolt-json').projectDir = file('http/json')
+project(':protomolt-json').projectDir = file('surface/http/json')
 
 include 'protomolt-rest'
-project(':protomolt-rest').projectDir = file('http/rest')
+project(':protomolt-rest').projectDir = file('surface/http/rest')
 
 include 'protomolt-openapi'
-project(':protomolt-openapi').projectDir = file('http/openapi')
+project(':protomolt-openapi').projectDir = file('surface/http/openapi')
 
 include 'protomolt-jsonschema'
-project(':protomolt-jsonschema').projectDir = file('http/jsonschema')
+project(':protomolt-jsonschema').projectDir = file('surface/http/jsonschema')
 
-include 'protomolt-quarkus'
-project(':protomolt-quarkus').projectDir = file('integrations/quarkus/runtime')
+include 'protomolt-mcp'
+project(':protomolt-mcp').projectDir = file('surface/mcp')
 
-include 'protomolt-quarkus-deployment'
-project(':protomolt-quarkus-deployment').projectDir = file('integrations/quarkus/deployment')
+include 'protomolt-acp'
+project(':protomolt-acp').projectDir = file('surface/acp')
 
-include 'protomolt-spring'
-project(':protomolt-spring').projectDir = file('integrations/spring')
+include 'protomolt-actions'
+project(':protomolt-actions').projectDir = file('surface/actions')
+
+// host/ — embedding the toolkit into servers and frameworks.
 
 include 'protomolt-server-common'
-project(':protomolt-server-common').projectDir = file('servers/common')
+project(':protomolt-server-common').projectDir = file('host/servers/common')
 
 include 'protomolt-server-jdk'
-project(':protomolt-server-jdk').projectDir = file('servers/jdk')
+project(':protomolt-server-jdk').projectDir = file('host/servers/jdk')
 
 include 'protomolt-server-vertx'
-project(':protomolt-server-vertx').projectDir = file('servers/vertx')
+project(':protomolt-server-vertx').projectDir = file('host/servers/vertx')
 
 include 'protomolt-server-netty'
-project(':protomolt-server-netty').projectDir = file('servers/netty')
+project(':protomolt-server-netty').projectDir = file('host/servers/netty')
 
 include 'protomolt-server-spring'
-project(':protomolt-server-spring').projectDir = file('servers/spring')
+project(':protomolt-server-spring').projectDir = file('host/servers/spring')
 
 include 'protomolt-server-micronaut'
-project(':protomolt-server-micronaut').projectDir = file('servers/micronaut')
+project(':protomolt-server-micronaut').projectDir = file('host/servers/micronaut')
 
 include 'protomolt-server-quarkus'
-project(':protomolt-server-quarkus').projectDir = file('servers/quarkus')
+project(':protomolt-server-quarkus').projectDir = file('host/servers/quarkus')
+
+include 'protomolt-quarkus'
+project(':protomolt-quarkus').projectDir = file('host/integrations/quarkus/runtime')
+
+include 'protomolt-quarkus-deployment'
+project(':protomolt-quarkus-deployment').projectDir = file('host/integrations/quarkus/deployment')
+
+include 'protomolt-spring'
+project(':protomolt-spring').projectDir = file('host/integrations/spring')
+
+// apps/ — the shipped end-user artifacts.
+
+include 'protomolt-serve'
+project(':protomolt-serve').projectDir = file('apps/serve')
+
+include 'protomolt-cli'
+project(':protomolt-cli').projectDir = file('apps/cli')
 
 include 'samples'
 

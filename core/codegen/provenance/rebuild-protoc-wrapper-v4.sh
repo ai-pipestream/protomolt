@@ -16,4 +16,4 @@ make -C "${work_dir}/protobuf4j" build-v4
 cp "${work_dir}/protobuf4j/wasm/protoc-wrapper-v4.wasm" "${destination}"
 
 cd "${repo_root}"
-sha256sum --check codegen/provenance/protoc-wrapper-v4.sha256
+sha256sum --check core/codegen/provenance/protoc-wrapper-v4.sha256

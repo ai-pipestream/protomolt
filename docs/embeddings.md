@@ -14,8 +14,8 @@ produced, locating and validating both fields through the plan.
 | `protomolt-embeddings-ovms` | A remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
 | `protomolt-embeddings-harness` | Pairwise cosine-equivalence certification for providers serving the same model |
 
-The SPI lives in `embeddings/core`, the providers under `embeddings/providers`,
-and the certification harness in `embeddings/harness`:
+The SPI lives in `search/embeddings/core`, the providers under `search/embeddings/providers`,
+and the certification harness in `search/embeddings/harness`:
 
 ```
 embeddings/

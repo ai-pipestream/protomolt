@@ -30,7 +30,7 @@ The `verifyEmbeddedWasm` Gradle task is part of `check` and fails if the
 bundled bytes do not match the recorded checksum. To reproduce an update:
 
 ```shell
-bash codegen/provenance/rebuild-protoc-wrapper-v4.sh
+bash core/codegen/provenance/rebuild-protoc-wrapper-v4.sh
 ./gradlew :protomolt-codegen:verifyEmbeddedWasm
 ./gradlew :protomolt-codegen:test
 ```

@@ -192,7 +192,7 @@ validate → enrich → reshape story without leaving the worker.
 
 ## Module layout and phasing
 
-`chain/core` → `protomolt-chain`, depending on `grpc-invoke`,
+`transform/chain` → `protomolt-chain`, depending on `grpc-invoke`,
 `mapper-cel`, `protobuf-validation`, and `descriptors`; the verbs land in
 `actions` like every other verb.
 

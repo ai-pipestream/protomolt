@@ -20,42 +20,42 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | Group | Artifacts | Purpose |
 |---|---|---|
 | `core/` | `descriptors`, `helpers`, `proto-sources` | `DescriptorRegistry` and loader SPI; `Any`/`Struct` handling, type conversion, message diff, schema hygiene checks; proto source-set model, runtime `.proto` compilation, publisher SPI |
-| `formats/` | `formats` | Zero-dependency RFC validators (email, hostname, IP, URI) backing the validation string formats |
-| `gather/` | `gather`, `gather-git`, `gather-maven` | Acquire `.proto` sources from directories, jars, Git repositories, and Maven coordinates; adapt any gatherer to a descriptor loader |
-| `compat/` | `compat` | Breaking-change detection: typed schema diffs and backward/forward/full compatibility policies |
-| `registry/` | `registry`, `registry-server` | Git-backed schema registry: subject/version store with compatibility-gated writes, served over the Confluent protocol |
-| `actions/` | `actions` | Self-describing verb catalog (compile, validate, diff, check-compat, render, evaluate) for consoles and LLM tooling |
-| `mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
-| `grpc/` | `grpc-invoke`, `grpc-service`, `grpc-validation`, `grpc-validation-micrometer` | Dynamic gRPC invocation and server reflection from descriptors; the action catalog itself as a typed gRPC service, served descriptor-natively; validating interceptors that enforce declared rules at the call boundary, with a Micrometer binding for their metrics SPI |
-| `serve/` | `serve` | One-process server: the gRPC service with reflection, the verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, optional registry |
-| `cli/` | `cli` | The command line: run any catalog verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same catalog |
-| `acp/` | `acp` | The action catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio |
-| `connector/` | `connector` | Push-style streaming inputs behind one bounded, pausable SPI: gRPC server streams and Kafka topics feed a synchronous pipeline through the `SourcePump` bridge |
-| `kafka/` | `connect`, `connect-iceberg`, `serde`, `serde-micrometer` | Kafka Connect plugin: the sink drives any gRPC method from topics, the source feeds topics from server streams with CEL resume-token offsets, and four protobuf-aware transforms (validate, map, redact, CEL filter) drop into any pipeline; a separate sink lands records as Iceberg snapshots; a protobuf serde speaking the Confluent wire format, enforcing declared rules on write, with a Micrometer metrics binding |
-| `chain/` | `chain` | The chain manager: configured, type-checked compositions of gRPC calls (verify statically, run serially with gates and deadlines, store named chains in the registry) — plus keyed/zip joins over two live gRPC streams |
-| `codegen/` | `codegen` | Live code generation: every libprotoc generator (8 languages) and the grpc-java plugin as WebAssembly, no native toolchain |
-| `shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
-| `mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
-| `projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
-| `pipeline/` | `pipeline` | The pipeline schema: chained gRPC calls, projections, and CEL steps as one protobuf message |
-| `protobuf/` | `protobuf-metadata`, `protobuf-quality`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; CEL-scored quality dimensions declared as message options; protovalidate dialect and conformance harness |
+| `core/formats/` | `formats` | Zero-dependency RFC validators (email, hostname, IP, URI) backing the validation string formats |
+| `core/codegen/` | `codegen` | Live code generation: every libprotoc generator (8 languages) and the grpc-java plugin as WebAssembly, no native toolchain |
+| `core/compat/` | `compat` | Breaking-change detection: typed schema diffs and backward/forward/full compatibility policies |
+| `acquire/gather/` | `gather`, `gather-git`, `gather-maven` | Acquire `.proto` sources from directories, jars, Git repositories, and Maven coordinates; adapt any gatherer to a descriptor loader |
+| `acquire/msgraph/` | `msgraph` | Microsoft Graph: OneDrive/SharePoint files and list-item metadata, and Copilot connector ingestion over the external connections API |
+| `acquire/connector/` | `connector` | Push-style streaming inputs behind one bounded, pausable SPI: gRPC server streams and Kafka topics feed a synchronous pipeline through the `SourcePump` bridge |
+| `schema/registry/` | `registry`, `registry-server` | Git-backed schema registry: subject/version store with compatibility-gated writes, served over the Confluent protocol |
 | `schema/` | `schema-apicurio`, `schema-apicurio-deployment`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries; the Apicurio loader's Quarkus build-time half |
-| `index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr` | Indexing plans and hints; NDJSON output; engine plugins |
-| `embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
-| `embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
-| `embeddings/providers/` | `embeddings-tei` | Remote provider for Hugging Face Text Embeddings Inference over gRPC |
-| `embeddings/providers/` | `embeddings-ovms` | Remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
-| `embeddings/` | `embeddings-harness` | Pairwise cosine-equivalence certification for two providers serving the same model |
-| `rerank/` | `rerank` | Rerank-provider SPI: score a query's candidate texts so pipelines can re-order search hits |
-| `rerank/providers/` | `rerank-tei` | Remote rerank provider for Hugging Face Text Embeddings Inference over gRPC |
-| `rerank/providers/` | `rerank-ovms` | Remote rerank provider for OpenVINO Model Server over the REST rerank endpoint |
-| `rerank/` | `rerank-harness` | Ranked-list equivalence certification (Kendall tau-b plus top-1 agreement) for two providers serving the same model |
-| `emit/` | `emit`, `emit-okf`, `emit-parquet` | Bundles of rendered files and the sinks that deliver them (directory, git, zip); the OKF v0.1 knowledge-bundle renderer; descriptor-driven Parquet with no generated classes and no native Hadoop |
-| `graph/` | `msgraph` | Microsoft Graph: OneDrive/SharePoint files and list-item metadata, and Copilot connector ingestion over the external connections API |
-| `lake/` | `iceberg`, `iceberg-s3` | Apache Iceberg: descriptor-driven table schemas and an append sink writing ProtoMolt Parquet through any catalog; `S3FileIO` wiring so tables live on any S3-compatible store |
-| `http/` | `json`, `rest`, `openapi`, `jsonschema` | Protobuf/JSON transcoding, framework-agnostic REST gateway, OpenAPI 3 and JSON Schema generation |
-| `integrations/` | `spring`, `quarkus`, `quarkus-deployment` | Dependency-injection wiring (beans and producers, not HTTP hosts); the Quarkus extension's build-time half |
-| `servers/` | `server-common`, `server-jdk`, `server-vertx`, `server-netty`, `server-spring`, `server-micronaut`, `server-quarkus` | HTTP hosts for the REST gateway, over shared config and helpers |
+| `protobuf/` | `protobuf-metadata`, `protobuf-quality`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; CEL-scored quality dimensions declared as message options; protovalidate dialect and conformance harness |
+| `transform/mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
+| `transform/shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
+| `transform/projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
+| `transform/pipeline/` | `pipeline` | The pipeline schema: chained gRPC calls, projections, and CEL steps as one protobuf message |
+| `transform/chain/` | `chain` | The chain manager: configured, type-checked compositions of gRPC calls (verify statically, run serially with gates and deadlines, store named chains in the registry) — plus keyed/zip joins over two live gRPC streams |
+| `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr` | Indexing plans and hints; NDJSON output; engine plugins |
+| `search/embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
+| `search/embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
+| `search/embeddings/providers/` | `embeddings-tei` | Remote provider for Hugging Face Text Embeddings Inference over gRPC |
+| `search/embeddings/providers/` | `embeddings-ovms` | Remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
+| `search/embeddings/` | `embeddings-harness` | Pairwise cosine-equivalence certification for two providers serving the same model |
+| `search/rerank/` | `rerank` | Rerank-provider SPI: score a query's candidate texts so pipelines can re-order search hits |
+| `search/rerank/providers/` | `rerank-tei` | Remote rerank provider for Hugging Face Text Embeddings Inference over gRPC |
+| `search/rerank/providers/` | `rerank-ovms` | Remote rerank provider for OpenVINO Model Server over the REST rerank endpoint |
+| `search/rerank/` | `rerank-harness` | Ranked-list equivalence certification (Kendall tau-b plus top-1 agreement) for two providers serving the same model |
+| `sink/emit/` | `emit`, `emit-okf`, `emit-parquet` | Bundles of rendered files and the sinks that deliver them (directory, git, zip); the OKF v0.1 knowledge-bundle renderer; descriptor-driven Parquet with no generated classes and no native Hadoop |
+| `sink/` | `iceberg`, `iceberg-s3` | Apache Iceberg: descriptor-driven table schemas and an append sink writing ProtoMolt Parquet through any catalog; `S3FileIO` wiring so tables live on any S3-compatible store |
+| `sink/kafka/` | `connect`, `connect-iceberg`, `serde`, `serde-micrometer` | Kafka Connect plugin: the sink drives any gRPC method from topics, the source feeds topics from server streams with CEL resume-token offsets, and four protobuf-aware transforms (validate, map, redact, CEL filter) drop into any pipeline; a separate sink lands records as Iceberg snapshots; a protobuf serde speaking the Confluent wire format, enforcing declared rules on write, with a Micrometer metrics binding |
+| `surface/grpc/` | `grpc-invoke`, `grpc-service`, `grpc-validation`, `grpc-validation-micrometer` | Dynamic gRPC invocation and server reflection from descriptors; the action catalog itself as a typed gRPC service, served descriptor-natively; validating interceptors that enforce declared rules at the call boundary, with a Micrometer binding for their metrics SPI |
+| `surface/http/` | `json`, `rest`, `openapi`, `jsonschema` | Protobuf/JSON transcoding, framework-agnostic REST gateway, OpenAPI 3 and JSON Schema generation |
+| `surface/mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
+| `surface/acp/` | `acp` | The action catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio |
+| `surface/actions/` | `actions` | Self-describing verb catalog (compile, validate, diff, check-compat, render, evaluate) for consoles and LLM tooling |
+| `host/servers/` | `server-common`, `server-jdk`, `server-vertx`, `server-netty`, `server-spring`, `server-micronaut`, `server-quarkus` | HTTP hosts for the REST gateway, over shared config and helpers |
+| `host/integrations/` | `spring`, `quarkus`, `quarkus-deployment` | Dependency-injection wiring (beans and producers, not HTTP hosts); the Quarkus extension's build-time half |
+| `apps/serve/` | `serve` | One-process server: the gRPC service with reflection, the verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, optional registry |
+| `apps/cli/` | `cli` | The command line: run any catalog verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same catalog |
 | `bom/` | `bom` | Version alignment for all published artifacts |
 
 ## Getting started

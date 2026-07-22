@@ -45,7 +45,7 @@ Operator flags cover every disk location the server may touch:
 placement is server configuration, never request input. Nothing else
 writes to disk.
 
-When the console has been built (`cd console && npm ci && npm run build`)
+When the console has been built (`cd apps/console && npm ci && npm run build`)
 before `protomolt-serve`, its bundle rides inside the jar and is served at
 `/console` — the schema-registry browser, type explorer, and
 connect-a-service wizard, same-origin with the verbs. The server bridges

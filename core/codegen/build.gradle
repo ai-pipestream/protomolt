@@ -30,7 +30,7 @@ tasks.register('verifyEmbeddedWasm') {
         if (actual != expected) {
             throw new GradleException(
                     "Embedded protoc wrapper checksum mismatch: expected ${expected}, got ${actual}. "
-                    + 'Rebuild it through codegen/provenance/rebuild-protoc-wrapper-v4.sh '
+                    + 'Rebuild it through core/codegen/provenance/rebuild-protoc-wrapper-v4.sh '
                     + 'and review the provenance update.')
         }
     }

@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The serve Docker image as a real protomolt: the image is built from serve/Dockerfile,
+ * The serve Docker image as a real protomolt: the image is built from apps/serve/Dockerfile,
  * started with {@code --demo}, and every published surface answers over the mapped ports —
  * REST health, MCP on streamable HTTP, gRPC reflection driving a dynamic call, and the demo
  * registry. Waiting on the image's own HEALTHCHECK exercises the /dev/tcp probe, and a

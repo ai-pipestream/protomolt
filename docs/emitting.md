@@ -1,6 +1,6 @@
 # Emitting bundles
 
-The `gather/*` modules turn places into proto sources; the `emit/*` modules
+The `acquire/gather/*` modules turn places into proto sources; the `sink/emit/*` modules
 are the mirror image: renderers turn schemas (or messages) into a **bundle**
 — an ordered set of rendered files — and **sinks** deliver a bundle to a
 destination the caller names explicitly. Nothing in the emit pipeline ever

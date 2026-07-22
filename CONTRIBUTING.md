@@ -29,7 +29,7 @@ tests.
 - Public API carries Javadoc. Follow the surrounding code's style; there is
   no separate style guide to memorize.
 - Keep modules decoupled: `core/` must not depend on any framework, engine
-  plugins communicate through `index/spi`, and validation dialects plug in
+  plugins communicate through `search/index/spi`, and validation dialects plug in
   via `ValidationRuleSource` — new capabilities should arrive as new
   modules behind existing seams rather than new dependencies in existing
   ones.
@@ -41,11 +41,11 @@ The most useful contributions tend to be implementations of existing SPIs:
 | SPI | Module | What it adds |
 |---|---|---|
 | `DescriptorLoader` | `core/descriptors` | A new place to load schemas from |
-| `ProtoGatherer` | `gather/core` | A new place to gather `.proto` sources from |
+| `ProtoGatherer` | `acquire/gather/core` | A new place to gather `.proto` sources from |
 | `SchemaPublisher` | `core/sources` | A new registry to publish schemas to |
 | `ValidationRuleSource` | `protobuf/validation` | A new annotation dialect |
-| `IndexingHintSource` | `index/spi` | A new way to resolve indexing hints |
-| `SearchEngineIndexerProvider` | `index/spi` | A new search engine backend |
+| `IndexingHintSource` | `search/index/spi` | A new way to resolve indexing hints |
+| `SearchEngineIndexerProvider` | `search/index/spi` | A new search engine backend |
 
 ## Submitting changes
 

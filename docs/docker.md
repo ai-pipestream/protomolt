@@ -118,7 +118,7 @@ ports so it does not collide with a local 8080.
 
 The serve image is also exercised end to end from the test suite.
 `ContainerSmokeIntegrationTest` in `:protomolt-serve` has Testcontainers build
-`serve/Dockerfile` from the same context CI ships — the Dockerfile plus the
+`apps/serve/Dockerfile` from the same context CI ships — the Dockerfile plus the
 `installDist` output — start it with `--demo`, and wait on the image's own
 `HEALTHCHECK`. It then asserts every published surface answers over the mapped
 ports: `/health` over REST, an MCP initialize over streamable HTTP, a dynamic

@@ -37,11 +37,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: apps/console/package-lock.json
 
       - name: Build the console
         run: |
-          cd console
+          cd apps/console
           npm ci
           npm run build
 
@@ -67,7 +67,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: serve
+          context: apps/serve
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           labels: |

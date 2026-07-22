@@ -46,13 +46,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: console/package-lock.json
+          cache-dependency-path: apps/console/package-lock.json
 
       # ---- verify everything, tag nothing -------------------------------------------
 
       - name: Console tests, typecheck, and production build
         run: |
-          cd console
+          cd apps/console
           npm ci
           npm test
           npm run typecheck
@@ -109,9 +109,9 @@ jobs:
         run: |
           V="${{ steps.ver.outputs.version }}"
           gh release create "v$V" --title "ProtoMolt $V" --generate-notes \
-            "serve/build/distributions/protomolt-serve-$V.zip#protomolt-serve $V (run bin/protomolt-serve, JRE 21+)" \
-            "mcp/core/build/distributions/protomolt-mcp-$V.zip#protomolt-mcp $V (run bin/protomolt-mcp, JRE 21+)" \
-            "kafka/connect/build/distributions/protomolt-connect-plugin-$V.zip#protomolt-connect $V (Kafka Connect plugin, unzip onto plugin.path)"
+            "apps/serve/build/distributions/protomolt-serve-$V.zip#protomolt-serve $V (run bin/protomolt-serve, JRE 21+)" \
+            "surface/mcp/build/distributions/protomolt-mcp-$V.zip#protomolt-mcp $V (run bin/protomolt-mcp, JRE 21+)" \
+            "sink/kafka/connect/build/distributions/protomolt-connect-plugin-$V.zip#protomolt-connect $V (Kafka Connect plugin, unzip onto plugin.path)"
 
   docker:
     needs: release

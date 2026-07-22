@@ -34,7 +34,7 @@ cd protomolt
 ```
 
 The launcher is now at
-`mcp/core/build/install/protomolt-mcp/bin/protomolt-mcp`. Pick a directory
+`surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp`. Pick a directory
 for it to use as a registry — it does not need to exist; the store creates
 and initializes the Git repository on first use.
 
@@ -103,7 +103,7 @@ Code:
 
 ```shell
 claude mcp add protomolt -- \
-  /path/to/protomolt/mcp/core/build/install/protomolt-mcp/bin/protomolt-mcp \
+  /path/to/protomolt/surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp \
   --registry-git /srv/schemas.git
 ```
 

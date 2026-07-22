@@ -29,7 +29,7 @@ dependencies {
     testImplementation libs.testcontainers.junit.jupiter
 }
 
-// ContainerSmokeIntegrationTest docker-builds serve/Dockerfile, whose context COPYs the
+// ContainerSmokeIntegrationTest docker-builds apps/serve/Dockerfile, whose context COPYs the
 // installDist output. The Dockerfile is a declared input so editing it re-runs the suite;
 // dependsOn alone is ordering and would leave a Dockerfile-only change stale-green.
 tasks.named('test') {
@@ -41,10 +41,10 @@ application {
     mainClass = 'ai.pipestream.proto.serve.ProtoMoltServe'
 }
 
-// Bundle the console's built assets when they exist (cd console && npm run
+// Bundle the console's built assets when they exist (cd apps/console && npm run
 // build); without them the server still builds and /console explains itself.
 processResources {
     into('ai/pipestream/proto/serve/console') {
-        from("${rootDir}/console/dist")
+        from("${rootDir}/apps/console/dist")
     }
 }
