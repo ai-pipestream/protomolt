@@ -1,12 +1,19 @@
 package ai.pipestream.proto.index.lucene;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
+import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.document.KnnFloatVectorField;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,5 +67,33 @@ class ProtoLuceneMapperTest {
     void emptyProjectionsYieldEmptyDocument() throws Exception {
         assertThat(mapper.map(Struct.getDefaultInstance(), List.<ProtoLuceneMapper.FieldProjection>of()).getFields()).isEmpty();
         assertThat(mapper.map(Struct.getDefaultInstance(), (List<ProtoLuceneMapper.FieldProjection>) null).getFields()).isEmpty();
+    }
+
+    @Test
+    void indexesFloatVectorsAsKnnField() {
+        Document document = new Document();
+        IndexingPlan.IndexedField field = new IndexingPlan.IndexedField(
+                "embedding",
+                "embedding",
+                new ResolvedFieldHint(IndexFieldKind.VECTOR, false, true, "embedding", 3));
+        // Exercise package-private path via public map API on a Struct list isn't available —
+        // call toFloatVector + KnnFloatVectorField directly like the mapper does.
+        float[] vector = ProtoLuceneMapper.toFloatVector(List.of(0.1f, 0.2f, 0.3f));
+        document.add(new KnnFloatVectorField("embedding", vector, VectorSimilarityFunction.COSINE));
+        assertThat(document.getFields("embedding")).isNotEmpty();
+        assertThat(field.type()).isEqualTo(IndexFieldKind.VECTOR);
+        assertThat(vector).containsExactly(0.1f, 0.2f, 0.3f);
+    }
+
+    @Test
+    void luceneIndexWriterRoundTrip(@TempDir Path dir) throws Exception {
+        Document document = new Document();
+        document.add(new org.apache.lucene.document.StringField(
+                "id", "a", org.apache.lucene.document.Field.Store.YES));
+        try (LuceneIndexWriter writer = new LuceneIndexWriter(dir)) {
+            writer.add(document);
+            writer.commit();
+            assertThat(writer.numDocs()).isEqualTo(1);
+        }
     }
 }

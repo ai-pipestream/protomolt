@@ -1,8 +1,18 @@
 description = 'Examples for Pipestream protobuf tools'
 
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
 dependencies {
     implementation project(':pipestream-proto-tools-mapper-cel')
     implementation project(':pipestream-proto-tools-server-jdk')
+    implementation project(':pipestream-proto-tools-index-ndjson')
+    implementation project(':pipestream-proto-tools-index-lucene')
+    implementation project(':pipestream-proto-tools-protobuf-indexing')
+    implementation 'ai.pipestream:pipestream-protos-stubs:0.8.1'
+    implementation libs.lucene.core
 }
 
 tasks.register('runCelMapping', JavaExec) {
@@ -18,4 +28,16 @@ tasks.register('runJsonRestServer', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'ai.pipestream.proto.samples.JsonRestServerSample'
     args = ['8080', 'secret']
+}
+
+tasks.register('runCourtPipeDocToLucene', JavaExec) {
+    group = 'application'
+    description = 'PipeDoc court fixtures → NDJSON + Lucene (text + HNSW vectors)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'ai.pipestream.proto.samples.CourtPipeDocIndexSample'
+    args = [
+            '/work/worktrees/proto-nd-json-worktree/opensearch-sink-input-court/src/main/resources/fixtures/court/opensearch-sink',
+            "${project.layout.buildDirectory.get().asFile}/court-index-out",
+            '50'
+    ]
 }

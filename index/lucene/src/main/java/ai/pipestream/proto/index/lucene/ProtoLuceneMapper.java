@@ -12,10 +12,12 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.document.FloatPoint;
 import org.apache.lucene.document.IntPoint;
+import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
+import org.apache.lucene.index.VectorSimilarityFunction;
 
 import java.util.List;
 import java.util.Objects;
@@ -163,12 +165,54 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                     document.add(new StoredField(name, bytes));
                 }
             }
-            case VECTOR, OBJECT, NESTED, UNSPECIFIED, SKIP -> {
+            case VECTOR -> addVector(document, name, value);
+            case OBJECT, NESTED, UNSPECIFIED, SKIP -> {
                 if (stored) {
                     document.add(new StoredField(name, String.valueOf(value)));
                 }
             }
         }
+    }
+
+    /**
+     * Indexes a float vector with Lucene HNSW ({@link KnnFloatVectorField}).
+     * Accepts {@code float[]}, {@code double[]}, or {@code List} of numbers
+     * (e.g. protobuf {@code repeated float}).
+     */
+    private static void addVector(Document document, String name, Object value) {
+        float[] vector = toFloatVector(value);
+        if (vector.length == 0) {
+            return;
+        }
+        document.add(new KnnFloatVectorField(name, vector, VectorSimilarityFunction.COSINE));
+    }
+
+    static float[] toFloatVector(Object value) {
+        if (value instanceof float[] floats) {
+            return floats;
+        }
+        if (value instanceof double[] doubles) {
+            float[] out = new float[doubles.length];
+            for (int i = 0; i < doubles.length; i++) {
+                out[i] = (float) doubles[i];
+            }
+            return out;
+        }
+        if (value instanceof List<?> list) {
+            float[] out = new float[list.size()];
+            for (int i = 0; i < list.size(); i++) {
+                Object element = list.get(i);
+                if (!(element instanceof Number number)) {
+                    throw new IllegalArgumentException(
+                            "VECTOR field values must be numeric; got " + element);
+                }
+                out[i] = number.floatValue();
+            }
+            return out;
+        }
+        throw new IllegalArgumentException(
+                "VECTOR expects float[], double[], or List<? extends Number>; got "
+                        + (value == null ? "null" : value.getClass().getName()));
     }
 
     private record ResolvedLegacy(FieldProjection projection) {
