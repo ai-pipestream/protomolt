@@ -1,8 +1,10 @@
 # Running in Docker
 
-ProtoMolt ships two images built from this repository: the server (`protomolt-serve`),
-which exposes the whole API over the network, and the ACP agent (`protomolt-acp`), which
-an IDE drives over stdio. `docker-compose.yml` at the repository root builds and runs both.
+ProtoMolt ships two images built from this repository for Compose: the server
+(`protomolt-serve`), which exposes the whole API over the network, and the ACP agent
+(`protomolt-acp`), which an IDE drives over stdio. `docker-compose.yml` at the
+repository root builds and runs both. (The release pipeline additionally publishes a
+third image, the native `protomolt-cli` — see [The published images](#the-published-images).)
 
 ## Build and run
 
@@ -159,10 +161,19 @@ MCP clients then pass it as a header:
 claude mcp add --transport http protomolt http://localhost:8080/mcp --header "api_token: change-me"
 ```
 
-## The published single image
+## The published images
 
 A release also publishes the server image on its own, for a one-line run without a clone:
 
 ```shell
 docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
+```
+
+The CLI ships as a third image, `protomolt-cli`: the GraalVM native binary on a thin
+Debian base, no JRE inside (linux/amd64 only — native-image does not cross-compile,
+so arm64 builds need an arm runner or hardware). Any verb works as the command:
+
+```shell
+docker run --rm ghcr.io/ai-pipestream/protomolt-cli list
+echo '{"samples": [{"name": "x", "n": 1}]}' | docker run --rm -i ghcr.io/ai-pipestream/protomolt-cli infer-schema
 ```

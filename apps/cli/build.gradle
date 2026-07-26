@@ -1,5 +1,6 @@
 plugins {
     id 'application'
+    alias(libs.plugins.graalvm.native)
 }
 
 description = 'The ProtoMolt command line: run any verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same action catalog the servers expose'
@@ -8,9 +9,33 @@ dependencies {
     api project(':protomolt-grpc-service')
     implementation libs.jackson.databind
 
-    runtimeOnly libs.slf4j.simple
+    runtimeOnly libs.slf4j.nop
 }
 
 application {
     mainClass = 'ai.pipestream.proto.cli.ProtoMoltCli'
+}
+
+// Native-image experiment (graalvm-test branch). Reachability metadata comes from the
+// plugin's metadata repository (grpc-netty-shaded, protobuf-java, JGit, ...).
+// slf4j-nop (not slf4j-simple) keeps netty's build-time class init from capturing a
+// SimpleLogger instance into the image heap; the CLI's contract is JSON on stdout anyway.
+graalvmNative {
+    binaries {
+        main {
+            // The root build applies java-library to every subproject, which makes the plugin
+            // default the main binary to a shared library; the CLI is an executable.
+            sharedLibrary = false
+            verbose = true
+            buildArgs.addAll([
+                    '--no-fallback',
+                    '--report-unsupported-elements-at-runtime',
+                    '-H:+ReportExceptionStackTraces',
+                    // jimfs' FileSystemProvider gets captured into the image heap via
+                    // FileSystemProvider.installedProviders during build-time class init;
+                    // its Configuration constants in turn capture Guava collections.
+                    '--initialize-at-build-time=com.google.common',
+            ])
+        }
+    }
 }

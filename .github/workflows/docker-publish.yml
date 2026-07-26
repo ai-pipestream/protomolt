@@ -1,4 +1,5 @@
-# Publishes the protomolt-serve container image to GHCR.
+# Publishes the protomolt-serve (JVM) and protomolt-cli (GraalVM native) container
+# images to GHCR.
 #
 # Called from the release workflow with the released version (tagged semver +
 # latest), or dispatched manually to publish `edge` from the chosen ref.
@@ -27,10 +28,12 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Set up JDK
+      # GraalVM CE is the build JDK for the whole job: it builds the JVM
+      # artifacts like any JDK 25 and provides native-image for the CLI.
+      - name: Set up GraalVM
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: graalvm
           java-version: 25
 
       - uses: actions/setup-node@v4
@@ -48,6 +51,11 @@ jobs:
       - name: Build the serve distribution
         run: ./gradlew :protomolt-serve:installDist --no-daemon
 
+      # Native linux/amd64 CLI binary; arm64 needs an arm runner or hardware
+      # (native-image does not cross-compile).
+      - name: Build the native CLI
+        run: ./gradlew :protomolt-cli:nativeCompile --no-daemon
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -59,20 +67,35 @@ jobs:
         id: tags
         run: |
           if [ -n "${{ inputs.version }}" ]; then
-            echo "tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:${{ inputs.version }},ghcr.io/${{ github.repository_owner }}/protomolt-serve:latest" >> "$GITHUB_OUTPUT"
+            echo "serve-tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:${{ inputs.version }},ghcr.io/${{ github.repository_owner }}/protomolt-serve:latest" >> "$GITHUB_OUTPUT"
+            echo "cli-tags=ghcr.io/${{ github.repository_owner }}/protomolt-cli:${{ inputs.version }},ghcr.io/${{ github.repository_owner }}/protomolt-cli:latest" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:edge" >> "$GITHUB_OUTPUT"
+            echo "serve-tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:edge" >> "$GITHUB_OUTPUT"
+            echo "cli-tags=ghcr.io/${{ github.repository_owner }}/protomolt-cli:edge" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build and push
+      - name: Build and push protomolt-serve
         uses: docker/build-push-action@v6
         with:
           context: apps/serve
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.tags.outputs.serve-tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=ProtoMolt one-process server: gRPC, REST/OpenAPI/Swagger, MCP, registry
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
+
+      - name: Build and push protomolt-cli
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cli
+          push: true
+          tags: ${{ steps.tags.outputs.cli-tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ProtoMolt CLI as a GraalVM native binary: any catalog verb from the terminal, JSON in and out
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
