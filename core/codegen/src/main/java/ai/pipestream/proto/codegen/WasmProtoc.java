@@ -30,8 +30,9 @@ import java.util.function.Function;
  *
  * <p>The WebAssembly module and the execution approach come from
  * <a href="https://github.com/ai-pipestream/protobuf4j">protobuf4j</a> (Apache-2.0), which
- * compiles upstream protobuf to Wasm via Chicory. The module is compiled to JVM bytecode once
- * per process on first use.</p>
+ * compiles upstream protobuf to Wasm via Chicory. On the JVM the module is compiled to JVM
+ * bytecode once per process on first use; inside a GraalVM native image (where runtime
+ * bytecode generation is impossible) it runs on Chicory's interpreter instead.</p>
  */
 public final class WasmProtoc {
 
@@ -66,8 +67,12 @@ public final class WasmProtoc {
     // The 2.6 MB module parse and its bytecode compilation happen once, lazily.
     private static final class Compiled {
         static final WasmModule MODULE = load();
+        // Runtime bytecode generation is impossible inside a GraalVM native image; leave the
+        // factory null there so the instance falls back to Chicory's interpreter (slower, works).
         static final Function<Instance, Machine> MACHINE_FACTORY =
-                MachineFactoryCompiler.compile(MODULE);
+                System.getProperty("org.graalvm.nativeimage.imagecode") == null
+                        ? MachineFactoryCompiler.compile(MODULE)
+                        : null;
 
         private static WasmModule load() {
             try (InputStream in = WasmProtoc.class.getResourceAsStream("protoc-wrapper-v4.wasm")) {
@@ -99,11 +104,13 @@ public final class WasmProtoc {
                         .addMemory(new ImportMemory("env", "memory", new ByteArrayMemory(
                                 new MemoryLimits(INITIAL_MEMORY_PAGES, MemoryLimits.MAX_PAGES, true))))
                         .build();
-                Instance.builder(Compiled.MODULE)
+                var instance = Instance.builder(Compiled.MODULE)
                         .withImportValues(imports)
-                        .withMachineFactory(Compiled.MACHINE_FACTORY)
-                        .withMemoryFactory(ByteArrayMemory::new)
-                        .build();
+                        .withMemoryFactory(ByteArrayMemory::new);
+                if (Compiled.MACHINE_FACTORY != null) {
+                    instance.withMachineFactory(Compiled.MACHINE_FACTORY);
+                }
+                instance.build();
             } catch (RuntimeException e) {
                 String detail = stderr.size() > 0
                         ? ": " + stderr.toString(StandardCharsets.UTF_8).strip()

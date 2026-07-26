@@ -35,6 +35,7 @@ iceberg = "1.11.0"
 awssdk = "2.47.5"
 maven-resolver = "1.9.24"
 maven = "3.9.11"
+graalvm-buildtools = "1.1.6"
 
 [libraries]
 grpc-api = { module = "io.grpc:grpc-api", version.ref = "grpc" }
@@ -56,6 +57,7 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+slf4j-nop = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
 kafka-connect-api = { module = "org.apache.kafka:connect-api", version.ref = "kafka" }
 kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
 testcontainers-redpanda = { module = "org.testcontainers:testcontainers-redpanda", version.ref = "testcontainers" }
@@ -113,3 +115,4 @@ axion-release = { id = "pl.allegro.tech.build.axion-release", version.ref = "axi
 nmcp-aggregation = { id = "com.gradleup.nmcp.aggregation", version.ref = "nmcp" }
 quarkus-extension = { id = "io.quarkus.extension", version.ref = "quarkus" }
 protobuf = { id = "com.google.protobuf", version.ref = "protobuf-gradle" }
+graalvm-native = { id = "org.graalvm.buildtools.native", version.ref = "graalvm-buildtools" }

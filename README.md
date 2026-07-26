@@ -140,6 +140,42 @@ server.start();
 
 Each of these is covered in depth in the documentation below.
 
+## Native CLI (GraalVM)
+
+`protomolt-cli` also builds as a GraalVM native image: sub-10 ms startup and
+~35 MB RSS for catalog verbs, no JRE needed on the target machine. Building
+the native binary is the only task that requires GraalVM (a GraalVM JDK 25,
+e.g. `sdk install java 25.1.3-graalce`); every other build and test task runs
+on any JDK via Gradle toolchains, and GraalVM CE can serve as the everyday
+build JDK too.
+
+```shell
+JAVA_HOME=<graalvm-home> ./gradlew :protomolt-cli:nativeCompile
+apps/cli/build/native/nativeCompile/protomolt-cli list
+```
+
+Releases also publish it as a container (linux/amd64; native-image does not
+cross-compile, so arm64 images need arm hardware or an arm runner):
+
+```shell
+docker run --rm ghcr.io/ai-pipestream/protomolt-cli list
+```
+
+All `generate-stubs` generators (java, kotlin, grpc-java, python, cpp, csharp,
+ruby, php, objc) work natively. The generators are one bundled WebAssembly
+module; inside a native image it runs on Chicory's interpreter rather than
+being compiled to JVM bytecode at first use — same module, same generators,
+slower per-invocation execution. (On the JVM nothing changes.)
+
+Only the CLI is a native-image target today. `apps/serve` is deliberately
+JVM-only for now: it is a runnable *example* of embedding the toolkit (gRPC
+service, REST gateway, MCP, registry) into a server build, not a supported
+native artifact. Native servers are planned through the framework
+integrations instead — the Spring, Quarkus, and Micronaut modules are the
+supported embedding paths, and following their native-image tooling (Spring
+AOT, Quarkus native, Micronaut AOT) is the intended route to a native server
+in the future.
+
 ## Documentation
 
 - [Descriptor sources](docs/descriptor-sources.md) — the loader SPI;
@@ -225,8 +261,10 @@ Each of these is covered in depth in the documentation below.
 ## Requirements
 
 - JDK 21 or newer at runtime (the build itself runs on any JDK via Gradle
-  toolchains)
+  toolchains; GraalVM CE 25 works as the build JDK)
 - Gradle 9.6+ for building from source (wrapper included)
+- GraalVM JDK 25 (e.g. CE 25.1.3) only when building the native CLI with
+  `:protomolt-cli:nativeCompile` — the resulting binary needs no JDK at all
 
 ## Building
 
