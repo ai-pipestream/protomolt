@@ -31,3 +31,8 @@ lint:
 breaking:
   use:
     - FILE
+  ignore:
+    # repo/ is pre-release (landed 2026-07-27): the wire contract is still
+    # settling (e.g. the NodeAddress consolidation). Drop this ignore once
+    # the repo API is declared stable.
+    - repo/proto/src/main/proto
