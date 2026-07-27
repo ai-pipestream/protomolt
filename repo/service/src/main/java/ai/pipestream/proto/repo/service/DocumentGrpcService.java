@@ -48,6 +48,9 @@ import ai.pipestream.proto.repo.container.ledger.DriveRecord;
 import ai.pipestream.proto.repo.container.ledger.ListDocumentsFilter;
 import ai.pipestream.proto.repo.container.ledger.ListDocumentsResult;
 import ai.pipestream.proto.repo.container.ledger.Tx;
+import ai.pipestream.proto.repo.container.ledger.DocumentPurgeRecord;
+import ai.pipestream.proto.repo.container.lifecycle.PurgeQueue;
+import ai.pipestream.proto.repo.container.lifecycle.PurgeSnapshots;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import io.grpc.stub.StreamObserver;
@@ -141,24 +144,29 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     private final BlobStore blobStore;
     private final PartStorage partStorage;
     private final PartLayout layout;
+    private final PurgeQueue purgeQueue;
 
     /**
      * @param documents the document-row ledger
      * @param drives the drive-row ledger (drive name → bucket/prefix)
      * @param tx the shared transaction wrapper, used directly for the two
      *        ad-hoc reads the ledgers deliberately do not expose (logical-row
-     *        enumeration, account-less drive lookup)
+     *        enumeration, account-less drive lookup) and for the tombstone +
+     *        purge-enqueue transaction
      * @param blobStore the object-storage port every part IO goes through
      * @param partStorage the part fan-out IO layer
+     * @param purgeQueue the purge queue the tombstone path enqueues onto
+     *        (Phase A of the two-phase delete)
      */
     public DocumentGrpcService(DocumentLedger documents, DriveLedger drives, Tx tx,
-            BlobStore blobStore, PartStorage partStorage) {
+            BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue) {
         this.documents = documents;
         this.drives = drives;
         this.tx = tx;
         this.blobStore = blobStore;
         this.partStorage = partStorage;
         this.layout = PartLayouts.document();
+        this.purgeQueue = purgeQueue;
     }
 
     // ------------------------------------------------------------------ save
@@ -537,12 +545,15 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
 
     /**
      * Delete, idempotently. {@code purge_storage=false} tombstones each
-     * matching row to PENDING_PURGE (metadata-only; the async purger lands in
-     * a later phase — and the tombstone deliberately does not bump
-     * {@code updated_at}). {@code purge_storage=true} FIRST deletes each
-     * removed row's manifest-PRESENT object keys from its drive's bucket
-     * (best-effort: failures are logged, the row removal is still reported),
-     * then hard-deletes the rows. Nothing matched → NOTHING_TO_REMOVE.
+     * matching row to PENDING_PURGE AND enqueues one purge record per row IN
+     * THE SAME TRANSACTION (Phase A of the two-phase delete: metadata-only,
+     * the snapshot of object keys captured at tombstone time, and the
+     * tombstone deliberately does not bump {@code updated_at}) — the
+     * background purger (Phase B) lands the actual object deletion.
+     * {@code purge_storage=true} FIRST deletes each removed row's
+     * manifest-PRESENT object keys from its drive's bucket (best-effort:
+     * failures are logged, the row removal is still reported), then
+     * hard-deletes the rows. Nothing matched → NOTHING_TO_REMOVE.
      */
     private DeleteDocumentResponse delete(DeleteDocumentRequest request) {
         List<DocumentRecord> targets;
@@ -597,7 +608,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         } else {
             removed = new ArrayList<>(targets.size());
             for (DocumentRecord row : targets) {
-                documents.tombstone(row.nodeId).ifPresent(removed::add);
+                tombstoneAndEnqueue(row).ifPresent(removed::add);
             }
             detail = "TOMBSTONED";
         }
@@ -623,6 +634,50 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
             }
         }
         return response.build();
+    }
+
+    /**
+     * Phase A of the two-phase delete: tombstone the row to PENDING_PURGE and
+     * enqueue its purge record IN ONE TRANSACTION, so the queue can never
+     * drift from the tombstone (the sweeper covers only pre-lifecycle rows and
+     * crashes outside this transaction). The purge record snapshots every
+     * object key to delete (manifest PRESENT keys + the intake row's raw blob
+     * key) so Phase B never recomputes. A re-delete of an already-tombstoned
+     * row enqueues a fresh record — harmless: the drain is idempotent and
+     * terminal queue transitions are conditional on PENDING.
+     */
+    private Optional<DocumentRecord> tombstoneAndEnqueue(DocumentRecord row) {
+        // The raw-blob key derivation needs the drive prefix; unresolvable
+        // drive → no raw key in the snapshot (the drain fails the record on
+        // the missing drive anyway). Best-effort, outside the transaction.
+        String drivePrefix = drives.findByName(row.accountId, row.driveName)
+                .map(d -> d.prefix)
+                .orElse(null);
+        Instant requestedAt = Instant.now();
+        // Cast disambiguates the Tx.inTransaction Function overload.
+        return Optional.ofNullable(tx.inTransaction(
+                (java.util.function.Function<jakarta.persistence.EntityManager, DocumentRecord>) em -> {
+                    DocumentRecord managed = em.find(DocumentRecord.class, row.nodeId,
+                            jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+                    if (managed == null) {
+                        return null;
+                    }
+                    // Status-only transition: updated_at deliberately NOT
+                    // bumped — the purger's staleness guard depends on it.
+                    managed.status = DocumentStatus.PENDING_PURGE;
+                    DocumentPurgeRecord record = new DocumentPurgeRecord();
+                    record.purgeId = UUID.randomUUID();
+                    record.nodeId = managed.nodeId;
+                    record.docId = managed.docId;
+                    record.graphAddressId = managed.graphAddressId;
+                    record.accountId = managed.accountId;
+                    record.graphId = managed.graphId;
+                    record.driveName = managed.driveName;
+                    record.writeObjectKeys(PurgeSnapshots.objectKeysOf(managed, drivePrefix));
+                    record.requestedAt = requestedAt;
+                    purgeQueue.enqueue(em, record);
+                    return managed;
+                }));
     }
 
     /** Best-effort deletion of one row's manifest-PRESENT part objects. */

@@ -68,6 +68,66 @@ public final class DocumentLedger {
     }
 
     /**
+     * Look up a row by primary key with a {@code PESSIMISTIC_WRITE} lock — the
+     * purger's staleness-guard re-read. NOTE: the lock is released when this
+     * call's transaction commits, so a read-decide-write sequence spread
+     * across ledger calls is NOT serialized by it; the purger re-verifies
+     * under a fresh lock before removing the row.
+     *
+     * @param nodeId the row's node id
+     * @return the row, or empty (detached)
+     */
+    public Optional<DocumentRecord> findByNodeIdForUpdate(UUID nodeId) {
+        // Cast disambiguates the Function overload (see DocumentLedger.save).
+        return tx.inTransaction((java.util.function.Function<jakarta.persistence.EntityManager, Optional<DocumentRecord>>)
+                em -> Optional.ofNullable(
+                        em.find(DocumentRecord.class, nodeId, LockModeType.PESSIMISTIC_WRITE)));
+    }
+
+    /**
+     * The first page of rows in one storage status, in stable
+     * {@code (created_at, node_id)} order — the sweeper's PENDING_PURGE scan
+     * and the coherence probe's AVAILABLE sample.
+     *
+     * @param status the {@link DocumentStatus} value to scan
+     * @param limit  the page size
+     * @return the page's rows (detached), possibly empty
+     */
+    public List<DocumentRecord> listByStatus(String status, int limit) {
+        return tx.readOnly(em -> em.createQuery(
+                        "SELECT d FROM DocumentRecord d WHERE d.status = :status"
+                                + " ORDER BY d.createdAt ASC, d.nodeId ASC",
+                        DocumentRecord.class)
+                .setParameter("status", status)
+                .setMaxResults(limit)
+                .getResultList());
+    }
+
+    /**
+     * Keyset page over ALL rows ordered by primary key — the reconciler's
+     * owned-key harvest. Keyset (not offset) pagination keeps pages stable
+     * under concurrent writes: an offset page that skips a row would leave
+     * its keys out of the owned set and mis-flag live objects as orphans.
+     *
+     * @param afterNodeId exclusive lower bound (null = first page)
+     * @param limit       the page size
+     * @return the page's rows (detached) in node_id order
+     */
+    public List<DocumentRecord> listPage(UUID afterNodeId, int limit) {
+        return tx.readOnly(em -> {
+            var query = em.createQuery(
+                    "SELECT d FROM DocumentRecord d"
+                            + (afterNodeId == null ? "" : " WHERE d.nodeId > :after")
+                            + " ORDER BY d.nodeId ASC",
+                    DocumentRecord.class);
+            if (afterNodeId != null) {
+                query.setParameter("after", afterNodeId);
+            }
+            return query.setMaxResults(limit).getResultList();
+        });
+    }
+
+    /**
      * Look up a row by its canonical storage address (the
      * {@code uq_documents_identity} unique key).
      *
@@ -208,6 +268,30 @@ public final class DocumentLedger {
                 page.setFirstResult((int) Math.min(filter.offset(), Integer.MAX_VALUE));
             }
             return new ListDocumentsResult(page.getResultList(), total);
+        });
+    }
+
+    /**
+     * Mark a row's purge as permanently failed: status →
+     * {@link DocumentStatus#PURGE_FAILED}, but ONLY from PENDING_PURGE (a
+     * revived row keeps its live state). Does NOT touch {@code updatedAt} —
+     * status-only transitions never move the staleness guard. This is the
+     * DLQ landing: the sweeper scans only PENDING_PURGE rows, so a
+     * PURGE_FAILED row is out of every automatic retry path (operator
+     * territory).
+     *
+     * @param nodeId the row's node id
+     * @return the updated row (detached), or empty if no such row or it was
+     *         not PENDING_PURGE
+     */
+    public Optional<DocumentRecord> markPurgeFailed(UUID nodeId) {
+        return tx.inTransaction(em -> {
+            DocumentRecord record = em.find(DocumentRecord.class, nodeId);
+            if (record == null || !DocumentStatus.PENDING_PURGE.equals(record.status)) {
+                return Optional.empty();
+            }
+            record.status = DocumentStatus.PURGE_FAILED;
+            return Optional.of(record);
         });
     }
 

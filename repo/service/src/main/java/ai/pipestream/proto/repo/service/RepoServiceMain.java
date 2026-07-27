@@ -33,6 +33,9 @@ public final class RepoServiceMain {
         if (config.httpPort() > 0) {
             services.startHttp(config.httpPort());
         }
+        // The two-phase delete's Phase B (plus sweeper and, when enabled, the
+        // periodic reconcile) runs as background loops next to the servers.
+        services.startLifecycle();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 services.close();

@@ -84,6 +84,69 @@ answers `deduplicated=true` with the existing coordinates. `force_save`
 bypasses the skip with a store-verified write (the SHA-256 rides the PUT as
 the checksum trailer, so the store rejects landed bytes that mismatch).
 
+## The purge lifecycle (two-phase delete)
+
+`DeleteDocument` with `purge_storage=false` is a **two-phase delete**.
+
+**Phase A** (synchronous, in the gRPC call): the row tombstones to
+`PENDING_PURGE` — metadata-only, fast, and deliberately NOT bumping
+`updated_at` — and one `document_purges` record per row is enqueued **in the
+same transaction** (Flyway V3). The record snapshots every object key to
+delete (the manifest's PRESENT part keys plus, for INTAKE rows, the derived
+raw-blob key `blobs/<accountId>/<blobId>.bin`), so Phase B never recomputes
+keys. The document is immediately unreadable; its objects still exist.
+
+**Phase B** (async, `RepoServices.startLifecycle()`): the purger
+(`S3Purger.drainOnce`) claims a batch of PENDING records
+(`SELECT ... FOR UPDATE SKIP LOCKED` — competing purgers never double-take
+from the same select, and every terminal transition is conditional on
+PENDING, so a re-claim settles to one winner) and per record:
+
+1. re-reads the document row under a row lock and applies the **staleness
+   guard**: row AVAILABLE (revived), or `updated_at` strictly after the
+   record's `requested_at` (body re-staged after the delete was requested —
+   the revive-before-PUT race) → the purge is **VOID**, objects and row left
+   alone. The guard is re-checked under a fresh lock in the same transaction
+   that removes the row, so a revive landing mid-drain still wins.
+2. batch-deletes the snapshot keys from the record's bucket (drive resolved
+   via `drive_name`; `deleteAll`, NoSuchKey-is-success — idempotent
+   throughout), removes the row, marks the record **PURGED**. A row already
+   gone still gets its snapshot objects deleted.
+3. Any store/DB error (including a missing drive or partial batch failure) →
+   `markFailed`: attempts + 1 and back to PENDING, until **10 attempts** land
+   the record in **FAILED** and the row in `PURGE_FAILED`. The FAILED record
+   IS the dead-letter queue for now — recovery is operator territory.
+
+The **sweeper** (`PurgeSweeper.sweepOnce`) periodically rescans for rows
+stuck in `PENDING_PURGE` with no PENDING purge record (crashed Phase A, or
+pre-lifecycle tombstones) and enqueues a record for each (snapshot from the
+row's manifest, `requested_at` = sweep time so a later revive voids it). It
+deliberately never re-enqueues FAILED records.
+
+The **reconciler** (`StorageReconciler.reconcile(store, bucket, prefix,
+minAge, dryRun)`) diffs the bucket listing against what the ledger owns —
+every row's manifest-PRESENT keys (rows of every status; a PENDING_PURGE
+row's keys are owned until the purger lands), plus the `blobs/` namespace by
+convention (content-addressed raw blobs are untracked by the ledger; their
+lifecycle is `DeleteBlob`'s). Orphans older than `minAge` (default 1h — the
+in-flight-upload guard) are reported, or deleted when armed. **Dry-run by
+default.** The report carries the exact orphan count, a bounded key sample
+(50), the scanned count and the skipped-too-young count.
+
+The **coherence probe** (`CoherenceProbe.probe(store, sampleSize)`) is the
+other direction: for a bounded sample of AVAILABLE rows, every
+manifest-PRESENT key is HEAD-probed, and confirmed-missing objects get their
+manifest entry tombstoned to `PART_STATE_DELETED` with
+`deleted_reason = "COHERENCE_PROBE"` (size/sha/key retained). The row stays
+AVAILABLE by design — the remaining parts are still valid — and `updated_at`
+does not move (bookkeeping, not a body rewrite). Reconciler and probe are
+library calls; when `DOCUMENT_PLATFORM_RECONCILE_ENABLED` is set, a slow
+periodic loop reconciles every drive (dry-run logging unless
+`DOCUMENT_PLATFORM_RECONCILE_DRY_RUN=false`). No RPCs yet.
+
+`purge_storage=true` keeps its synchronous behavior: objects first
+(best-effort), then hard-delete the rows — no queue involved.
+
 ## Building and testing
 
 From the repository root:
@@ -99,7 +162,13 @@ for the ledger, LocalStack for S3, the full stack booted through
 
 - `RepoServiceIT` — the gRPC surface end to end: drives (including the
   `provider_config` jsonb round trip), full/partial saves, dedupe,
-  delete/purge, `PutBlob`/`GetBlob`/`DeleteBlob`.
+  delete/purge, the tombstone→enqueue→drain lifecycle, `PutBlob`/`GetBlob`/
+  `DeleteBlob`.
+- `S3PurgerIT` / `PurgeSweeperIT` / `JdbcPurgeQueueIT` — the two-phase
+  delete: drain semantics, the staleness guard and revive race, the
+  attempts→DLQ ladder (poison-key failing store), SKIP-LOCKED claiming.
+- `StorageReconcilerIT` / `CoherenceProbeIT` — the orphan diff (min-age
+  guard, dry-run rail, `blobs/` convention) and the manifest-repair probe.
 - `UploadHttpServerIT` — the streaming upload route over a real HTTP server:
   multi-MB streaming, byte-exact round trips, dedupe, the 411/400/404
   contract, checksum-mismatch rejection.
@@ -132,6 +201,12 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
 | `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
+| `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | Run the background purge loops (purger + sweeper) when `startLifecycle()` is called |
+| `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | Purge-drain idle backoff; a non-empty drain loops again immediately |
+| `DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS` | `60000` | Sweeper rescan interval (also the reconcile loop's cadence) |
+| `DOCUMENT_PLATFORM_RECONCILE_ENABLED` | `false` | Run the slow periodic storage-reconcile loop over every drive |
+| `DOCUMENT_PLATFORM_RECONCILE_DRY_RUN` | `true` | Periodic reconcile reports only; `false` arms orphan deletion |
+| `DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS` | `3600000` | Min-age guard for the periodic reconcile (in-flight-upload protection) |
 
 ## API surface
 

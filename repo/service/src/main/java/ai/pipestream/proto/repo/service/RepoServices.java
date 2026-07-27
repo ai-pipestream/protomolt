@@ -8,8 +8,15 @@ import ai.pipestream.proto.repo.container.blob.RedisBlobStoreConfig;
 import ai.pipestream.proto.repo.container.blob.S3BlobStore;
 import ai.pipestream.proto.repo.container.ledger.DocumentLedger;
 import ai.pipestream.proto.repo.container.ledger.DriveLedger;
+import ai.pipestream.proto.repo.container.ledger.DriveRecord;
 import ai.pipestream.proto.repo.container.ledger.LedgerDatabase;
 import ai.pipestream.proto.repo.container.ledger.Tx;
+import ai.pipestream.proto.repo.container.lifecycle.CoherenceProbe;
+import ai.pipestream.proto.repo.container.lifecycle.JdbcPurgeQueue;
+import ai.pipestream.proto.repo.container.lifecycle.PurgeQueue;
+import ai.pipestream.proto.repo.container.lifecycle.PurgeSweeper;
+import ai.pipestream.proto.repo.container.lifecycle.S3Purger;
+import ai.pipestream.proto.repo.container.lifecycle.StorageReconciler;
 import ai.pipestream.proto.repo.service.client.RemoteBlobStore;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import io.grpc.BindableService;
@@ -78,15 +85,22 @@ public final class RepoServices implements AutoCloseable {
     private final Tx tx;
     private final DocumentLedger documentLedger;
     private final DriveLedger driveLedger;
+    private final PurgeQueue purgeQueue;
     private final S3Client s3Client;
     private final BlobStore blobStore;
     private final ManagedChannel remoteChannel;
     private final PartStorage partStorage;
     private final DocumentGrpcService documentService;
     private final List<BindableService> services;
+    private final S3Purger s3Purger;
+    private final PurgeSweeper purgeSweeper;
+    private final StorageReconciler storageReconciler;
+    private final CoherenceProbe coherenceProbe;
 
     private final List<Server> servers = new CopyOnWriteArrayList<>();
     private final List<UploadHttpServer> httpServers = new CopyOnWriteArrayList<>();
+    private final List<Thread> lifecycleThreads = new CopyOnWriteArrayList<>();
+    private volatile boolean lifecycleClosed;
 
     private RepoServices(RepoServiceConfig config) {
         this.config = config;
@@ -94,6 +108,7 @@ public final class RepoServices implements AutoCloseable {
         this.tx = new Tx(database.entityManagerFactory());
         this.documentLedger = new DocumentLedger(tx);
         this.driveLedger = new DriveLedger(tx);
+        this.purgeQueue = new JdbcPurgeQueue(tx);
         this.s3Client = buildS3Client(config);
         // Blob-store selection (DOCUMENT_PLATFORM_BLOB_STORE): "s3" is the
         // direct object-storage path; "repo"/"repo-inprocess" dogfood the
@@ -128,11 +143,18 @@ public final class RepoServices implements AutoCloseable {
         }
         this.partStorage = new PartStorage();
         this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
-                blobStore, partStorage);
+                blobStore, partStorage, purgeQueue);
         this.services = List.of(
                 documentService,
                 new DriveGrpcService(driveLedger, s3Client,
                         config.defaultBucketBase(), config.s3Region()));
+        // The lifecycle engine (two-phase delete): stateless workers over the
+        // same ledgers/queue, driven by startLifecycle()'s loops or, in tests,
+        // by hand via the accessors below.
+        this.s3Purger = new S3Purger(tx, documentLedger, driveLedger, purgeQueue);
+        this.purgeSweeper = new PurgeSweeper(tx, documentLedger, driveLedger, purgeQueue);
+        this.storageReconciler = new StorageReconciler(documentLedger);
+        this.coherenceProbe = new CoherenceProbe(documentLedger, driveLedger);
     }
 
     /**
@@ -223,9 +245,103 @@ public final class RepoServices implements AutoCloseable {
         return http;
     }
 
-    /** Stops all started servers, then closes the S3 client and the ledger database. */
+    /**
+     * Starts the background purge lifecycle: two single virtual-thread loops —
+     * the purger ({@code drainOnce} against the purge queue; a non-empty drain
+     * loops again immediately, an empty one backs off
+     * {@code DOCUMENT_PLATFORM_PURGE_INTERVAL_MS}, default 5000) and the
+     * sweeper ({@code sweepOnce} every {@code DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS},
+     * default 60000). When {@code DOCUMENT_PLATFORM_RECONCILE_ENABLED} is set,
+     * a third slow loop reconciles every drive (dry-run logging unless
+     * {@code DOCUMENT_PLATFORM_RECONCILE_DRY_RUN=false}). Every loop catches
+     * and logs per iteration — one bad record never kills a loop. No-op when
+     * {@code DOCUMENT_PLATFORM_LIFECYCLE_ENABLED=false}; the loops stop in
+     * {@link #close()}.
+     */
+    public void startLifecycle() {
+        if (!config.lifecycleEnabled()) {
+            LOG.info("repo lifecycle loops disabled ({})",
+                    RepoServiceConfig.ENV_LIFECYCLE_ENABLED + "=false");
+            return;
+        }
+        startLifecycleThread("repo-purger", () -> {
+            int purged = s3Purger.drainOnce(blobStore, PURGE_BATCH_SIZE);
+            // Idle backoff: work left → drain again immediately; empty → wait.
+            if (purged == 0) {
+                sleep(config.purgeIntervalMs());
+            }
+        });
+        startLifecycleThread("repo-purge-sweeper", () -> {
+            purgeSweeper.sweepOnce();
+            sleep(config.sweepIntervalMs());
+        });
+        if (config.reconcileEnabled()) {
+            startLifecycleThread("repo-storage-reconciler", () -> {
+                reconcileAllDrives();
+                sleep(config.sweepIntervalMs());
+            });
+        }
+        LOG.info("repo lifecycle loops started (purge interval {} ms, sweep interval {} ms,"
+                        + " reconcile {})", config.purgeIntervalMs(), config.sweepIntervalMs(),
+                config.reconcileEnabled()
+                        ? "enabled (dryRun=" + config.reconcileDryRun() + ")" : "disabled");
+    }
+
+    /** Purge drain batch size per loop iteration. */
+    private static final int PURGE_BATCH_SIZE = 100;
+
+    /** One reconcile pass over every drive's bucket scope. */
+    private void reconcileAllDrives() {
+        for (DriveRecord drive : driveLedger.listAll(1000)) {
+            try {
+                storageReconciler.reconcile(blobStore, drive.bucket, drive.prefix,
+                        java.time.Duration.ofMillis(config.reconcileMinAgeMs()),
+                        config.reconcileDryRun());
+            } catch (RuntimeException e) {
+                LOG.warn("Reconcile of drive '{}' (bucket {}) failed: {}",
+                        drive.name, drive.bucket, e.getMessage());
+            }
+        }
+    }
+
+    /** Runs {@code iteration} forever (until close), catching everything per iteration. */
+    private void startLifecycleThread(String name, Runnable iteration) {
+        Thread thread = Thread.ofVirtual().name(name).start(() -> {
+            while (!lifecycleClosed) {
+                try {
+                    iteration.run();
+                } catch (RuntimeException e) {
+                    LOG.warn("{} iteration failed (loop continues): {}", name, e.getMessage(), e);
+                    sleep(1000);
+                }
+            }
+        });
+        lifecycleThreads.add(thread);
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Stops the lifecycle loops, then all started servers, then closes the S3 client and the ledger database. */
     @Override
     public void close() {
+        lifecycleClosed = true;
+        for (Thread thread : lifecycleThreads) {
+            thread.interrupt();
+        }
+        for (Thread thread : lifecycleThreads) {
+            try {
+                thread.join(TimeUnit.SECONDS.toMillis(10));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        lifecycleThreads.clear();
         for (UploadHttpServer http : httpServers) {
             http.close();
         }
@@ -303,5 +419,25 @@ public final class RepoServices implements AutoCloseable {
 
     S3Client s3Client() {
         return s3Client;
+    }
+
+    PurgeQueue purgeQueue() {
+        return purgeQueue;
+    }
+
+    S3Purger s3Purger() {
+        return s3Purger;
+    }
+
+    PurgeSweeper purgeSweeper() {
+        return purgeSweeper;
+    }
+
+    StorageReconciler storageReconciler() {
+        return storageReconciler;
+    }
+
+    CoherenceProbe coherenceProbe() {
+        return coherenceProbe;
     }
 }

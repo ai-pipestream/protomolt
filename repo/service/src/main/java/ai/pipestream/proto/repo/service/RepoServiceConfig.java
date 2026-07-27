@@ -60,6 +60,21 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES}, default 8388608;
  *        0 = unbounded) — in {@code s3-redis-cache} mode this is the cache
  *        ceiling: larger objects bypass the cache
+ * @param lifecycleEnabled whether the background purge lifecycle loops run
+ *        when {@link RepoServices#startLifecycle()} is called
+ *        ({@code DOCUMENT_PLATFORM_LIFECYCLE_ENABLED}, default true)
+ * @param purgeIntervalMs idle pause between purge-drain iterations
+ *        ({@code DOCUMENT_PLATFORM_PURGE_INTERVAL_MS}, default 5000); a
+ *        non-empty drain loops again immediately, so this is the empty-queue
+ *        backoff
+ * @param sweepIntervalMs pause between sweeper rescans
+ *        ({@code DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS}, default 60000)
+ * @param reconcileEnabled whether the slow periodic storage-reconcile loop
+ *        runs ({@code DOCUMENT_PLATFORM_RECONCILE_ENABLED}, default false)
+ * @param reconcileDryRun whether the periodic reconcile only reports
+ *        ({@code DOCUMENT_PLATFORM_RECONCILE_DRY_RUN}, default true)
+ * @param reconcileMinAgeMs min-age guard for the periodic reconcile
+ *        ({@code DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS}, default 3600000)
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -75,7 +90,13 @@ public record RepoServiceConfig(
         String repoDrive,
         String redisUri,
         int redisTtlSeconds,
-        long redisMaxObjectBytes) {
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -103,6 +124,18 @@ public record RepoServiceConfig(
     public static final String ENV_REDIS_TTL_SECONDS = "DOCUMENT_PLATFORM_REDIS_TTL_SECONDS";
     /** Environment variable for the largest object admitted to Redis. */
     public static final String ENV_REDIS_MAX_OBJECT_BYTES = "DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES";
+    /** Environment variable toggling the background purge lifecycle loops. */
+    public static final String ENV_LIFECYCLE_ENABLED = "DOCUMENT_PLATFORM_LIFECYCLE_ENABLED";
+    /** Environment variable for the purge-drain idle interval in milliseconds. */
+    public static final String ENV_PURGE_INTERVAL_MS = "DOCUMENT_PLATFORM_PURGE_INTERVAL_MS";
+    /** Environment variable for the sweeper rescan interval in milliseconds. */
+    public static final String ENV_SWEEP_INTERVAL_MS = "DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS";
+    /** Environment variable toggling the periodic storage-reconcile loop. */
+    public static final String ENV_RECONCILE_ENABLED = "DOCUMENT_PLATFORM_RECONCILE_ENABLED";
+    /** Environment variable for the periodic reconcile's dry-run rail. */
+    public static final String ENV_RECONCILE_DRY_RUN = "DOCUMENT_PLATFORM_RECONCILE_DRY_RUN";
+    /** Environment variable for the periodic reconcile's min-age guard in milliseconds. */
+    public static final String ENV_RECONCILE_MIN_AGE_MS = "DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -122,6 +155,27 @@ public record RepoServiceConfig(
     static final String DEFAULT_REDIS_URI = "redis://localhost:6379";
     static final int DEFAULT_REDIS_TTL_SECONDS = 3600;
     static final long DEFAULT_REDIS_MAX_OBJECT_BYTES = 8388608L;
+    static final boolean DEFAULT_LIFECYCLE_ENABLED = true;
+    static final long DEFAULT_PURGE_INTERVAL_MS = 5000L;
+    static final long DEFAULT_SWEEP_INTERVAL_MS = 60000L;
+    static final boolean DEFAULT_RECONCILE_ENABLED = false;
+    static final boolean DEFAULT_RECONCILE_DRY_RUN = true;
+    static final long DEFAULT_RECONCILE_MIN_AGE_MS = 3600000L;
+
+    /**
+     * Compatibility constructor: the 14 pre-lifecycle components, with the
+     * lifecycle settings at their defaults.
+     */
+    public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
+            String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
+            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            int redisTtlSeconds, long redisMaxObjectBytes) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
+                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                redisMaxObjectBytes, DEFAULT_LIFECYCLE_ENABLED, DEFAULT_PURGE_INTERVAL_MS,
+                DEFAULT_SWEEP_INTERVAL_MS, DEFAULT_RECONCILE_ENABLED, DEFAULT_RECONCILE_DRY_RUN,
+                DEFAULT_RECONCILE_MIN_AGE_MS);
+    }
 
     public RepoServiceConfig {
         if (grpcPort < 0) {
@@ -176,6 +230,15 @@ public record RepoServiceConfig(
         if (redisMaxObjectBytes < 0) {
             redisMaxObjectBytes = DEFAULT_REDIS_MAX_OBJECT_BYTES;
         }
+        if (purgeIntervalMs <= 0) {
+            purgeIntervalMs = DEFAULT_PURGE_INTERVAL_MS;
+        }
+        if (sweepIntervalMs <= 0) {
+            sweepIntervalMs = DEFAULT_SWEEP_INTERVAL_MS;
+        }
+        if (reconcileMinAgeMs < 0) {
+            reconcileMinAgeMs = DEFAULT_RECONCILE_MIN_AGE_MS;
+        }
     }
 
     /**
@@ -210,7 +273,14 @@ public record RepoServiceConfig(
                 envOrDefault(ENV_REDIS_URI, DEFAULT_REDIS_URI),
                 parseIntOrDefault(System.getenv(ENV_REDIS_TTL_SECONDS), DEFAULT_REDIS_TTL_SECONDS),
                 parseLongOrDefault(System.getenv(ENV_REDIS_MAX_OBJECT_BYTES),
-                        DEFAULT_REDIS_MAX_OBJECT_BYTES));
+                        DEFAULT_REDIS_MAX_OBJECT_BYTES),
+                parseBoolOrDefault(System.getenv(ENV_LIFECYCLE_ENABLED), DEFAULT_LIFECYCLE_ENABLED),
+                parseLongOrDefault(System.getenv(ENV_PURGE_INTERVAL_MS), DEFAULT_PURGE_INTERVAL_MS),
+                parseLongOrDefault(System.getenv(ENV_SWEEP_INTERVAL_MS), DEFAULT_SWEEP_INTERVAL_MS),
+                parseBoolOrDefault(System.getenv(ENV_RECONCILE_ENABLED), DEFAULT_RECONCILE_ENABLED),
+                parseBoolOrDefault(System.getenv(ENV_RECONCILE_DRY_RUN), DEFAULT_RECONCILE_DRY_RUN),
+                parseLongOrDefault(System.getenv(ENV_RECONCILE_MIN_AGE_MS),
+                        DEFAULT_RECONCILE_MIN_AGE_MS));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */
@@ -250,5 +320,14 @@ public record RepoServiceConfig(
         } catch (NumberFormatException e) {
             return fallback;
         }
+    }
+
+    /** Boolean parse: {@code "true"/"1"/"yes"/"on"} (case-insensitive) is true, anything else false. */
+    private static boolean parseBoolOrDefault(String value, boolean fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String v = value.trim().toLowerCase(java.util.Locale.ROOT);
+        return v.equals("true") || v.equals("1") || v.equals("yes") || v.equals("on");
     }
 }
