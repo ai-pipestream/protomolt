@@ -2,6 +2,7 @@ package ai.pipestream.proto.repo.container.ledger;
 
 import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentPart;
+import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
 import ai.pipestream.proto.repo.v1.WriteProvenance;
@@ -67,10 +68,7 @@ class DocumentLedgerIT {
 
     private static DocumentManifest manifestFor(DocumentRecord record) {
         return DocumentManifest.newBuilder()
-                .setDocId(record.docId)
-                .setGraphAddressId(record.graphAddressId)
-                .setAccountId(record.accountId)
-                .setGraphId(record.graphId)
+                .setAddress(addressOf(record))
                 .setDocVersion(1)
                 .addParts(PartManifestEntry.newBuilder()
                         .setPart(DocumentPart.DOCUMENT_PART_CORE)
@@ -83,6 +81,15 @@ class DocumentLedgerIT {
                                 .setNodeId(record.graphAddressId)
                                 .setGraphId(record.graphId)
                                 .setGraphVersion(1)))
+                .build();
+    }
+
+    private static NodeAddress addressOf(DocumentRecord record) {
+        return NodeAddress.newBuilder()
+                .setDocId(record.docId)
+                .setGraphAddressId(record.graphAddressId)
+                .setAccountId(record.accountId)
+                .setGraphId(record.graphId)
                 .build();
     }
 
@@ -106,13 +113,11 @@ class DocumentLedgerIT {
         assertThat(byNodeId.get().partManifest).isNotBlank();
         assertThat(byNodeId.get().readSecurity().getInheritanceEnabled()).isTrue();
 
-        Optional<DocumentRecord> byReference = ledger.findByReference(
-                record.docId, record.graphAddressId, record.accountId, record.graphId);
+        Optional<DocumentRecord> byReference = ledger.findByReference(addressOf(record));
         assertThat(byReference).isPresent();
         assertThat(byReference.get().nodeId).isEqualTo(record.nodeId);
 
-        Optional<DocumentRecord> locked = ledger.findByReferenceForUpdate(
-                record.docId, record.graphAddressId, record.accountId, record.graphId);
+        Optional<DocumentRecord> locked = ledger.findByReferenceForUpdate(addressOf(record));
         assertThat(locked).isPresent();
         assertThat(locked.get().checksum).isEqualTo(record.checksum);
     }
@@ -264,8 +269,7 @@ class DocumentLedgerIT {
         // deleteByReference removes exactly one storage identity.
         DocumentRecord victim = intakeRow(UUID.randomUUID(), "doc-victim", "ds-victim");
         ledger.save(victim);
-        Optional<DocumentRecord> byRef = ledger.deleteByReference(
-                victim.docId, victim.graphAddressId, victim.accountId, victim.graphId);
+        Optional<DocumentRecord> byRef = ledger.deleteByReference(addressOf(victim));
         assertThat(byRef).isPresent();
         assertThat(ledger.findByNodeId(victim.nodeId)).isEmpty();
 

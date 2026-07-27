@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.repo.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.repo.v1";
+
+// ============================================================================
+// NODE ADDRESS — the single canonical addressing message of the repository.
+// ============================================================================
+
+// The storage identity of one stored document state: the four logical
+// segments the deterministic node id (UUIDv5) is derived from. This is THE
+// way to address a row; node_id strings are derived echoes, never truth.
+message NodeAddress {
+  string doc_id = 1;
+  // The stored coordinate: datasource id for intake rows, graph node id for pipeline rows.
+  string graph_address_id = 2;
+  string account_id = 3;
+  // Owning graph: "intake:<accountId>" for intake rows, the owning graph's id
+  // for pipeline rows. Required; blank-graph rows are unrepresentable.
+  string graph_id = 4;
+}

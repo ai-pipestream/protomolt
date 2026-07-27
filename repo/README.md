@@ -55,9 +55,13 @@ around that rule.
 
 ## Storage model
 
-Every stored state is one ledger row addressed by the four segments
-`doc_id | graph_address_id | account_id | graph_id`, hashed into a
-deterministic `node_id`. Intake rows are addressed at the datasource and
+Every stored state is one ledger row addressed by the canonical
+**`NodeAddress`** — the single addressing concept of the whole API. It
+carries the four segments `doc_id | graph_address_id | account_id |
+graph_id`, hashed into a deterministic `node_id`; manifests, by-reference
+reads, partial-save copy sources, deletes and list echoes all speak
+`NodeAddress`, and `node_id` strings are derived echoes, never truth.
+Intake rows are addressed at the datasource and
 carry the account's intake graph (`intake:<accountId>`); pipeline rows are
 addressed at a graph node and carry the owning graph. The raw `doc_id` never
 reaches an object key — keys are built from the deterministic UUIDs.

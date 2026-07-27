@@ -51,7 +51,11 @@ From REQUIREMENTS-identity-and-tenancy.md: accounts mesh M:M with clusters;
 **cluster is a routing domain, never an ownership credential**. Concretely:
 
 - Identity and ACLs never carry a cluster id. Claims, drives, ledger rows,
-  and the UUIDv5 input are account-scoped.
+  and the UUIDv5 input are account-scoped. The four identity segments
+  (`doc_id | graph_address_id | account_id | graph_id`) are one proto
+  message, `NodeAddress` (address.proto), shared by the whole API —
+  manifests, by-reference reads, partial-save copy sources and deletes all
+  address a row through it.
 - Any intake may share with any pipeline (cross-account by design);
   pipelines never cross account boundaries. Sharing is expressed as typed
   grants on the document (see ACL), open-by-default whitelist until the

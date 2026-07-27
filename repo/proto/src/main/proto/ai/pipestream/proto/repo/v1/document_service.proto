@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.repo.v1;
 
+import "ai/pipestream/proto/repo/v1/address.proto";
 import "ai/pipestream/proto/repo/v1/document.proto";
 import "ai/pipestream/proto/repo/v1/manifest.proto";
 
@@ -75,7 +76,7 @@ message SaveDocumentRequest {
   // parts_written is non-empty and the destination address differs from the
   // consumed hop's address. A partial save whose copy source is gone fails
   // FAILED_PRECONDITION.
-  optional DocumentReference copy_unwritten_parts_from = 12;
+  optional NodeAddress copy_unwritten_parts_from = 12;
 
   // CHUNKS refinement: the chunk-set sub_keys this save writes. Empty while
   // parts_written contains CHUNKS = replace ALL chunk sets from the supplied
@@ -113,6 +114,9 @@ message SaveDocumentResponse {
   int64 created_at_epoch_ms = 6;
   // True when the save was elided by the SHA-256 intake dedupe.
   bool deduplicated = 7;
+  // The saved row's canonical storage address (echo convenience — the same
+  // four segments node_id is derived from).
+  NodeAddress address = 8;
 }
 
 // Request to retrieve a Document by its node ID.
@@ -127,10 +131,10 @@ message GetDocumentRequest {
   repeated string chunk_sets = 3;
 }
 
-// Request to retrieve a Document using a DocumentReference — the preferred
-// method when documents are referenced via logical identifiers.
+// Request to retrieve a Document by its NodeAddress — the preferred method
+// when documents are referenced via logical identifiers.
 message GetDocumentByReferenceRequest {
-  DocumentReference document_ref = 1;
+  NodeAddress address = 1;
   // Partial read; same semantics as GetDocumentRequest.parts.
   repeated DocumentPart parts = 2;
   // CHUNKS refinement; same semantics as GetDocumentRequest.chunk_sets.
@@ -160,8 +164,8 @@ message GetDocumentManifestRequest {
   oneof coordinate {
     // Unique repository node ID.
     string node_id = 1;
-    // Logical reference (doc_id + graph_address_id + account_id + graph_id).
-    DocumentReference document_ref = 2;
+    // Canonical storage address (doc_id + graph_address_id + account_id + graph_id).
+    NodeAddress address = 2;
   }
 }
 
@@ -183,7 +187,7 @@ message DeleteLogicalDocumentCommand {
 // Delete a single hop's staged row (doc_id + graph_address_id + account_id +
 // graph_id). Used to reclaim inter-step claim-check bodies.
 message DeleteDocumentByReferenceCommand {
-  DocumentReference document_ref = 1;
+  NodeAddress address = 1;
 }
 
 // Per repository node affected by a delete.
@@ -248,6 +252,8 @@ message DocumentMetadata {
   string title = 8;
   string document_type = 9;
   string crawl_id = 10;
+  // The row's canonical storage address (echo convenience).
+  NodeAddress address = 11;
 }
 
 // Response containing a paginated list of Document metadata entries.
@@ -319,7 +325,7 @@ service DocumentService {
   // Retrieve a Document by its unique node ID (full or partial assembly).
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
 
-  // Retrieve a Document using a DocumentReference (logical identifiers).
+  // Retrieve a Document by its NodeAddress (logical identifiers).
   rpc GetDocumentByReference(GetDocumentByReferenceRequest) returns (GetDocumentResponse);
 
   // Delete by command. Logical document: all rows for the identity.
