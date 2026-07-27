@@ -18,8 +18,10 @@ import ai.pipestream.proto.repo.v1.DocumentPart;
 import ai.pipestream.proto.repo.v1.DocumentSecurity;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import ai.pipestream.proto.repo.v1.Drive;
+import ai.pipestream.proto.repo.v1.DriveProviderConfig;
 import ai.pipestream.proto.repo.v1.DriveServiceGrpc;
 import ai.pipestream.proto.repo.v1.DriveType;
+import ai.pipestream.proto.repo.v1.RedisDriveConfig;
 import ai.pipestream.proto.repo.v1.FileStorageReference;
 import ai.pipestream.proto.repo.v1.GetBlobRequest;
 import ai.pipestream.proto.repo.v1.GetDocumentByReferenceRequest;
@@ -108,7 +110,7 @@ class RepoServiceIT {
                 LOCALSTACK.getSecretKey(),
                 "it-docs",
                 0, // HTTP upload route not exercised by this IT
-                null, null, null); // blob store: the default direct-S3 path
+                null, null, null, null, 0, 0L); // blob store: the default direct-S3 path
         services = RepoServices.build(config);
         services.startInProcess("it");
         channel = InProcessChannelBuilder.forName("it").build();
@@ -232,6 +234,43 @@ class RepoServiceIT {
         // Deterministic id ⇒ re-create is idempotent.
         Drive recreated = createDrive("intake", "acct-drive");
         assertThat(recreated.getDriveId()).isEqualTo(created.getDriveId());
+    }
+
+    @Test
+    void createDrivePersistsAndEchoesProviderConfig() {
+        DriveProviderConfig providerConfig = DriveProviderConfig.newBuilder()
+                .setRedis(RedisDriveConfig.newBuilder()
+                        .setUri("redis://redis.internal:6379/3")
+                        .setTtlSeconds(600)
+                        .setMaxObjectBytes(1048576L)
+                        .setKeyPrefix("acct-pcfg:"))
+                .putOptions("eviction-policy", "volatile-lru")
+                .build();
+        Drive created = drives.createDrive(CreateDriveRequest.newBuilder()
+                        .setName("redis-backed")
+                        .setAccountId("acct-pcfg")
+                        .setDriveType(DriveType.DRIVE_TYPE_CUSTOM)
+                        .setProviderConfig(providerConfig)
+                        .build())
+                .getDrive();
+        assertThat(created.getProviderConfig()).isEqualTo(providerConfig);
+
+        // The jsonb column round-trips: every read path echoes the config
+        // verbatim (the boot-time hbm2ddl validate already proved the
+        // provider_config mapping against the V2-migrated schema).
+        Drive byId = drives.getDrive(GetDriveRequest.newBuilder()
+                .setDriveId(created.getDriveId()).build()).getDrive();
+        assertThat(byId.getProviderConfig()).isEqualTo(providerConfig);
+        Drive byName = drives.getDrive(GetDriveRequest.newBuilder()
+                .setName("redis-backed").setAccountId("acct-pcfg").build()).getDrive();
+        assertThat(byName.getProviderConfig()).isEqualTo(providerConfig);
+        assertThat(drives.listDrives(ListDrivesRequest.newBuilder()
+                .setAccountId("acct-pcfg").build()).getDrivesList())
+                .singleElement()
+                .satisfies(d -> assertThat(d.getProviderConfig()).isEqualTo(providerConfig));
+
+        // Drives created without one carry no provider config.
+        assertThat(createDrive("plain", "acct-pcfg").hasProviderConfig()).isFalse();
     }
 
     @Test

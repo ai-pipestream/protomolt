@@ -3,6 +3,7 @@ package ai.pipestream.proto.repo.service;
 import ai.pipestream.proto.repo.v1.CreateDriveRequest;
 import ai.pipestream.proto.repo.v1.CreateDriveResponse;
 import ai.pipestream.proto.repo.v1.Drive;
+import ai.pipestream.proto.repo.v1.DriveProviderConfig;
 import ai.pipestream.proto.repo.v1.DriveServiceGrpc;
 import ai.pipestream.proto.repo.v1.DriveStatus;
 import ai.pipestream.proto.repo.v1.DriveType;
@@ -117,6 +118,9 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
                     ? null : request.getCredentialsRef();
             record.status = STATUS_ACTIVE;
             record.metadata = metadataJson(request.getMetadataMap());
+            if (request.hasProviderConfig()) {
+                record.writeProviderConfig(request.getProviderConfig());
+            }
             try {
                 drives.insert(record);
             } catch (PersistenceException race) {
@@ -228,6 +232,10 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
             drive.setStatus(DriveStatus.valueOf("DRIVE_STATUS_" + record.status));
         } catch (IllegalArgumentException unknown) {
             drive.setStatus(DriveStatus.DRIVE_STATUS_UNSPECIFIED);
+        }
+        DriveProviderConfig providerConfig = record.readProviderConfig();
+        if (providerConfig != null) {
+            drive.setProviderConfig(providerConfig);
         }
         return drive.build();
     }

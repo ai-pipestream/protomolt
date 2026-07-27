@@ -58,7 +58,7 @@ class RemoteBlobStoreIT {
                 LOCALSTACK.getAccessKey(),
                 LOCALSTACK.getSecretKey(),
                 "it-remote-docs",
-                0, null, null, null);
+                0, null, null, null, null, 0, 0L);
         services = RepoServices.build(config);
         services.startInProcess("it-remote");
         channel = InProcessChannelBuilder.forName("it-remote").build();

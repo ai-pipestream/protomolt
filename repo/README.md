@@ -50,7 +50,7 @@ around that rule.
 | Module | Gradle project | Role |
 |--------|----------------|------|
 | `repo/proto` | `:protomolt-repo-proto` | The wire contract: `Document`, manifest, `DocumentService`, `DriveService` |
-| `repo/container` | `:protomolt-repo-container` | The storage engine: part codec, `BlobStore` port + `S3BlobStore`, part fan-out IO, the Postgres ledger (Hibernate + HikariCP + Flyway) |
+| `repo/container` | `:protomolt-repo-container` | The storage engine: part codec, `BlobStore` port + `S3BlobStore`/`RedisBlobStore`/`CachingBlobStore`, part fan-out IO, the Postgres ledger (Hibernate + HikariCP + Flyway) |
 | `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring, the dogfood `RemoteBlobStore` |
 
 ## Storage model
@@ -97,13 +97,19 @@ Tests are testcontainers integration tests (Docker required): PostgreSQL 17
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
-- `RepoServiceIT` — the gRPC surface end to end: drives, full/partial saves,
-  dedupe, delete/purge, `PutBlob`/`GetBlob`/`DeleteBlob`.
+- `RepoServiceIT` — the gRPC surface end to end: drives (including the
+  `provider_config` jsonb round trip), full/partial saves, dedupe,
+  delete/purge, `PutBlob`/`GetBlob`/`DeleteBlob`.
 - `UploadHttpServerIT` — the streaming upload route over a real HTTP server:
   multi-MB streaming, byte-exact round trips, dedupe, the 411/400/404
   contract, checksum-mismatch rejection.
 - `RemoteBlobStoreIT` — the dogfood blob store over the in-process gRPC
   transport.
+- `RedisBlobStoreIT` — the Redis blob store against `redis:7-alpine`:
+  verified writes, the two-entries-per-object mapping, 1000-key pipelined
+  deletes, SCAN listing, TTL expiry.
+- `CachingBlobStoreTest` — the caching decorator's read-through/write-through
+  semantics over in-memory stores.
 
 ## Running
 
@@ -120,9 +126,12 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | S3 region |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` / `_SECRET_KEY` | _(SDK default chain)_ | Static credentials; both or neither. Blank = the AWS default credentials chain (IRSA/instance profile in prod) |
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | Provisioned drives without an explicit bucket get `<base>-<accountId>-<name>` |
-| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (direct object storage), `repo` (delegate bytes to another repo-service over gRPC), `repo-inprocess` (same, in-process transport) |
+| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (direct object storage), `repo` (delegate bytes to another repo-service over gRPC), `repo-inprocess` (same, in-process transport), `redis` (objects live in Redis), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache) |
 | `DOCUMENT_PLATFORM_REPO_TARGET` | _(none)_ | Required for the `repo` modes: `host:port` for `repo`, an in-process server name for `repo-inprocess` |
 | `DOCUMENT_PLATFORM_REPO_DRIVE` | `default` | The drive the repo-backed store addresses on the remote service |
+| `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
+| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
+| `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
 
 ## API surface
 
@@ -211,10 +220,50 @@ both ends — huge payloads belong on the HTTP upload route.
 The repo modes must point at a DIFFERENT service set — pointing one back at
 itself would recurse `PutBlob` into itself.
 
+## The Redis blob stores
+
+`RedisBlobStore` (`repo/container/.../blob`) is the port's second provider:
+blocking Jedis on virtual threads, sample-grade but honest. Redis has no
+buckets, so the physical key is `<keyPrefix><bucket>/<key>` — the bucket is a
+namespace label, which keeps per-bucket `list`/`deleteAll` working and
+buckets collision-free. Each object is two entries: the bytes, plus a
+`$meta` hash (content type, etag, last-modified). Verified writes are
+client-side: the SHA-256 is computed before the write and a mismatch rejects
+the put (Redis has no server-side checksum trailer like S3's). Listing is
+`SCAN MATCH` — a full-database walk, which is the sample-grade part.
+
+`CachingBlobStore` is the read-through/write-through decorator:
+`CachingBlobStore(backing, cache, ttlSeconds, maxCacheableBytes)`. The cache
+is always expendable and the backing store is truth — every write lands on
+backing first and is mirrored into the cache best-effort; reads serve cache
+hits and populate on misses; `list`/`headBucket` never touch the cache.
+
+Two more `DOCUMENT_PLATFORM_BLOB_STORE` modes wire them:
+
+- **`redis`** — objects live in Redis outright.
+- **`s3-redis-cache`** — S3 (of record) behind a Redis cache; the Redis TTL
+  and max-object-bytes props become the cache TTL and ceiling.
+
+## Drive provider_config and the field-99 convention
+
+`Drive.provider_config` (and `CreateDriveRequest.provider_config`) carries
+the drive's pronounced per-provider knobs as a `DriveProviderConfig` —
+a `oneof` of `S3DriveConfig` / `RedisDriveConfig` plus an `options` map.
+The oneof is for the pronounced knobs; the tuning long tail goes in the
+`options` map at field 99. It is persisted verbatim on the drive row (a
+`provider_config` jsonb column, Flyway V2) and echoed on Get/List.
+
+Field-99 convention (all repo protos): field 99 is the extension-metadata
+map (`map<string, string> metadata`) on every message that carries one.
+`Struct` fields with distinct names (`Blob.metadata`,
+`SearchMetadata.custom_fields`) are for genuinely nested values and keep
+their own field numbers.
+
 ## Future work
 
-The `BlobStore` port currently lives in `repo/container` next to its only
-implementation (`S3BlobStore`). As more backends land, the storage layer
-splits into `repo/blob-store/spi` (the port), `repo/blob-store/s3`, and
-`repo/blob-store/azure` — one new implementation per backend, no sweep
-through the handlers.
+The `BlobStore` port currently lives in `repo/container` next to its
+implementations (`S3BlobStore`, and `RedisBlobStore` as the second provider).
+The storage layer still splits into `repo/blob-store/spi` (the port),
+`repo/blob-store/s3`, `repo/blob-store/redis` etc. — one new implementation
+per backend, no sweep through the handlers — when the next real backend
+(Azure) lands.

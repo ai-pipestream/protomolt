@@ -20,7 +20,7 @@ class RepoServiceConfigTest {
     private static RepoServiceConfig config(int httpPort, String blobStore,
             String repoTarget, String repoDrive) {
         return new RepoServiceConfig(0, LEDGER, null, null, null, null, null,
-                httpPort, blobStore, repoTarget, repoDrive);
+                httpPort, blobStore, repoTarget, repoDrive, null, -1, -1L);
     }
 
     @Test
@@ -30,6 +30,9 @@ class RepoServiceConfigTest {
         assertThat(config.blobStore()).isEqualTo("s3");
         assertThat(config.repoDrive()).isEqualTo("default");
         assertThat(config.repoTarget()).isNull();
+        assertThat(config.redisUri()).isEqualTo("redis://localhost:6379");
+        assertThat(config.redisTtlSeconds()).isEqualTo(3600);
+        assertThat(config.redisMaxObjectBytes()).isEqualTo(8388608L);
     }
 
     @Test
@@ -58,5 +61,22 @@ class RepoServiceConfigTest {
         assertThat(repo.blobStore()).isEqualTo("repo");
         RepoServiceConfig inProcess = config(0, "repo-inprocess", "backend-inproc", "blobs");
         assertThat(inProcess.repoDrive()).isEqualTo("blobs");
+    }
+
+    @Test
+    void redisModesNeedNoTargetAndCarryRedisProps() {
+        RepoServiceConfig redis = config(0, "redis", null, null);
+        assertThat(redis.blobStore()).isEqualTo("redis");
+        assertThat(redis.repoTarget()).isNull();
+
+        RepoServiceConfig cache = config(0, "s3-redis-cache", null, null);
+        assertThat(cache.blobStore()).isEqualTo("s3-redis-cache");
+
+        RepoServiceConfig explicit = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, "redis", null, null,
+                "redis://redis.internal:6380/2", 60, 4096L);
+        assertThat(explicit.redisUri()).isEqualTo("redis://redis.internal:6380/2");
+        assertThat(explicit.redisTtlSeconds()).isEqualTo(60);
+        assertThat(explicit.redisMaxObjectBytes()).isEqualTo(4096L);
     }
 }

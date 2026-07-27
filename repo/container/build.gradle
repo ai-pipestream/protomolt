@@ -6,6 +6,7 @@ dependencies {
     api libs.awssdk.s3
     api libs.hibernate.core
     api libs.hikari
+    api libs.jedis
 
     implementation libs.protobuf.java.util
     implementation libs.awssdk.url.connection.client

@@ -1,7 +1,10 @@
 package ai.pipestream.proto.repo.service;
 
 import ai.pipestream.proto.repo.container.blob.BlobStore;
+import ai.pipestream.proto.repo.container.blob.CachingBlobStore;
 import ai.pipestream.proto.repo.container.blob.PartStorage;
+import ai.pipestream.proto.repo.container.blob.RedisBlobStore;
+import ai.pipestream.proto.repo.container.blob.RedisBlobStoreConfig;
 import ai.pipestream.proto.repo.container.blob.S3BlobStore;
 import ai.pipestream.proto.repo.container.ledger.DocumentLedger;
 import ai.pipestream.proto.repo.container.ledger.DriveLedger;
@@ -97,16 +100,31 @@ public final class RepoServices implements AutoCloseable {
         // service's own blob API — bytes delegate to another repo-service
         // (netty or in-process target) via RemoteBlobStore. Note the target
         // must be a DIFFERENT service set: pointing a repo mode back at this
-        // one would recurse PutBlob into itself.
-        if (RepoServiceConfig.BLOB_STORE_S3.equals(config.blobStore())) {
-            this.blobStore = new S3BlobStore(s3Client);
-            this.remoteChannel = null;
-        } else {
-            this.remoteChannel = RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
-                    ? NettyChannelBuilder.forTarget(config.repoTarget()).usePlaintext().build()
-                    : InProcessChannelBuilder.forName(config.repoTarget()).build();
-            this.blobStore = new RemoteBlobStore(
-                    DocumentServiceGrpc.newBlockingStub(remoteChannel), config.repoDrive());
+        // one would recurse PutBlob into itself. "redis" keeps objects in
+        // Redis outright; "s3-redis-cache" puts an expendable Redis
+        // read-through/write-through cache in front of the S3 store of truth.
+        switch (config.blobStore()) {
+            case RepoServiceConfig.BLOB_STORE_S3 -> {
+                this.blobStore = new S3BlobStore(s3Client);
+                this.remoteChannel = null;
+            }
+            case RepoServiceConfig.BLOB_STORE_REDIS -> {
+                this.blobStore = new RedisBlobStore(redisConfig(config));
+                this.remoteChannel = null;
+            }
+            case RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
+                this.blobStore = new CachingBlobStore(new S3BlobStore(s3Client),
+                        new RedisBlobStore(redisConfig(config)),
+                        config.redisTtlSeconds(), config.redisMaxObjectBytes());
+                this.remoteChannel = null;
+            }
+            default -> {
+                this.remoteChannel = RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
+                        ? NettyChannelBuilder.forTarget(config.repoTarget()).usePlaintext().build()
+                        : InProcessChannelBuilder.forName(config.repoTarget()).build();
+                this.blobStore = new RemoteBlobStore(
+                        DocumentServiceGrpc.newBlockingStub(remoteChannel), config.repoDrive());
+            }
         }
         this.partStorage = new PartStorage();
         this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
@@ -229,9 +247,24 @@ public final class RepoServices implements AutoCloseable {
         if (remoteChannel != null) {
             remoteChannel.shutdownNow();
         }
+        // Close Redis pools (direct redis store, or the cache inside the
+        // caching decorator — CachingBlobStore.close closes both arms that
+        // are closeable; S3BlobStore is not).
+        if (blobStore instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                LOG.warn("blob store close failed", e);
+            }
+        }
         s3Client.close();
         database.close();
         LOG.info("repo-service stopped");
+    }
+
+    private static RedisBlobStoreConfig redisConfig(RepoServiceConfig config) {
+        return new RedisBlobStoreConfig(config.redisUri(), config.redisTtlSeconds(),
+                config.redisMaxObjectBytes(), "");
     }
 
     private static S3Client buildS3Client(RepoServiceConfig config) {

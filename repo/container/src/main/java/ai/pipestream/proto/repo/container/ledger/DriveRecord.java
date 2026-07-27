@@ -1,5 +1,8 @@
 package ai.pipestream.proto.repo.container.ledger;
 
+import ai.pipestream.proto.repo.v1.DriveProviderConfig;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -84,6 +87,18 @@ public class DriveRecord {
     @Column(name = "metadata")
     public String metadata;
 
+    /**
+     * Pronounced per-provider knobs as JSON ({@code jsonb}): a typed
+     * {@link DriveProviderConfig} (oneof of S3/Redis config + the options
+     * long-tail map), persisted verbatim from {@code CreateDriveRequest} and
+     * echoed on Get/List. Null when the drive carries no pronounced knobs.
+     * Use {@link #readProviderConfig()}/{@link #writeProviderConfig(DriveProviderConfig)}
+     * rather than handling the raw JSON.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "provider_config")
+    public String providerConfig;
+
     /** Timestamp when this record was first created. */
     @Column(name = "created_at", nullable = false)
     public Instant createdAt;
@@ -93,6 +108,43 @@ public class DriveRecord {
     void onPrePersist() {
         if (createdAt == null) {
             createdAt = Instant.now();
+        }
+    }
+
+    /**
+     * Deserialize {@link #providerConfig} into the typed provider config.
+     * Null when the row carries no provider config.
+     *
+     * @return the parsed provider config, or null
+     */
+    public DriveProviderConfig readProviderConfig() {
+        if (providerConfig == null) {
+            return null;
+        }
+        DriveProviderConfig.Builder builder = DriveProviderConfig.newBuilder();
+        try {
+            JsonFormat.parser().ignoringUnknownFields().merge(providerConfig, builder);
+        } catch (InvalidProtocolBufferException e) {
+            throw new LedgerException("unparseable provider_config JSON on drive row " + driveId, e);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Serialize the typed provider config into {@link #providerConfig}. Null
+     * clears the column.
+     *
+     * @param config the provider config to store, or null
+     */
+    public void writeProviderConfig(DriveProviderConfig config) {
+        if (config == null) {
+            this.providerConfig = null;
+            return;
+        }
+        try {
+            this.providerConfig = JsonFormat.printer().print(config);
+        } catch (InvalidProtocolBufferException e) {
+            throw new LedgerException("unprintable DriveProviderConfig", e);
         }
     }
 }

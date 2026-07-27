@@ -54,8 +54,29 @@ message Drive {
   // themselves). Blank = the service default credentials chain.
   string credentials_ref = 9;
   DriveStatus status = 10;
-  map<string, string> metadata = 11;
+  map<string, string> metadata = 99;
   google.protobuf.Timestamp created_at = 12;
+  // Pronounced per-provider knobs for this drive's backing store.
+  DriveProviderConfig provider_config = 13;
+}
+
+// Pronounced per-provider knobs. Tuning long tail goes in options.
+message S3DriveConfig {
+  string endpoint_override = 1;   // S3-compatible stores (LocalStack, Ceph, rustfs)
+  bool force_path_style = 2;
+}
+message RedisDriveConfig {
+  string uri = 1;                 // redis://[:password@]host:port[/db]
+  int32 ttl_seconds = 2;          // 0 = no expiry
+  int64 max_object_bytes = 3;     // 0 = unbounded
+  string key_prefix = 4;
+}
+message DriveProviderConfig {
+  oneof config {
+    S3DriveConfig s3 = 1;
+    RedisDriveConfig redis = 2;
+  }
+  map<string, string> options = 99;
 }
 
 message CreateDriveRequest {
@@ -71,7 +92,9 @@ message CreateDriveRequest {
   string prefix = 6;
   string region = 7;
   string credentials_ref = 8;
-  map<string, string> metadata = 9;
+  map<string, string> metadata = 99;
+  // Pronounced per-provider knobs; persisted verbatim on the drive row.
+  DriveProviderConfig provider_config = 10;
 }
 
 message CreateDriveResponse {

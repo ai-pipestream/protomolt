@@ -188,8 +188,10 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
   `repo/blob-store/spi` and each provider becomes a leaf module
   (`repo/blob-store/s3`, `repo/blob-store/azure`, and `repo/blob-store/repo`
   for the dogfood port-over-repo-service-stub). Pure move, no call-site
-  changes: nothing outside the adapters imports a provider SDK. Deliberately
-  NOT split yet — one provider does not justify the ceremony.
+  changes: nothing outside the adapters imports a provider SDK. Redis
+  (`RedisBlobStore` + the `CachingBlobStore` decorator, in `container.blob`)
+  is now the second provider; the split still waits for Azure — two
+  providers in one package do not justify the ceremony yet.
 - `apps/account-service` — CRUD + activation + IdentityResolver SPI +
   drive provisioning via repo-service stub (later).
 

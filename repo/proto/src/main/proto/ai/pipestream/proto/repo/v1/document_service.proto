@@ -41,7 +41,7 @@ message SaveDocumentRequest {
   }
 
   // Additional key-value metadata to associate with this document.
-  map<string, string> metadata = 6;
+  map<string, string> metadata = 99;
 
   // Cluster routing hint (optional). Routing metadata only — never part of
   // the storage identity. Must be omitted for intake saves.
@@ -248,7 +248,7 @@ message DocumentMetadata {
   string connector_id = 4;
   int64 size_bytes = 5;
   int64 created_at_epoch_ms = 6;
-  map<string, string> metadata = 7;
+  map<string, string> metadata = 99;
   string title = 8;
   string document_type = 9;
   string crawl_id = 10;
