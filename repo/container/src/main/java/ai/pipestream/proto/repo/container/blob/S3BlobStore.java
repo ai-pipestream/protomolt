@@ -134,12 +134,17 @@ public final class S3BlobStore implements BlobStore {
 
     @Override
     public boolean delete(String bucket, String key) {
+        // S3's DeleteObject is success-even-when-absent by design, so the
+        // port's "false when the key did not exist" contract needs an
+        // existence probe first — one extra HEAD round trip per delete.
         try {
-            client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
-            return true;
+            client.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
+                    .bucket(bucket).key(key).build());
         } catch (NoSuchKeyException e) {
             return false;
         }
+        client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
+        return true;
     }
 
     @Override

@@ -9,6 +9,9 @@ dependencies {
     // S3 client construction lives here (UrlConnectionHttpClient is only an
     // `implementation` dep of repo-container, so it is not exposed).
     implementation libs.awssdk.url.connection.client
+    // The HTTP upload route's JSON receipts/errors (Jackson is the repo-wide
+    // JSON library; see libs.versions.toml).
+    implementation libs.jackson.databind
     implementation libs.slf4j.api
 
     runtimeOnly libs.slf4j.simple

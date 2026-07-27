@@ -4,6 +4,8 @@ import ai.pipestream.proto.repo.v1.DeleteDocumentByReferenceCommand;
 import ai.pipestream.proto.repo.v1.DeleteDocumentOutcome;
 import ai.pipestream.proto.repo.v1.DeleteDocumentRequest;
 import ai.pipestream.proto.repo.v1.DeleteDocumentResponse;
+import ai.pipestream.proto.repo.v1.DeleteBlobRequest;
+import ai.pipestream.proto.repo.v1.DeleteBlobResponse;
 import ai.pipestream.proto.repo.v1.DeleteLogicalDocumentCommand;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.DocumentManifest;
@@ -24,6 +26,8 @@ import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
+import ai.pipestream.proto.repo.v1.PutBlobRequest;
+import ai.pipestream.proto.repo.v1.PutBlobResponse;
 import ai.pipestream.proto.repo.v1.RemovedDocumentNode;
 import ai.pipestream.proto.repo.v1.SaveDocumentRequest;
 import ai.pipestream.proto.repo.v1.SaveDocumentResponse;
@@ -160,10 +164,19 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
 
     @Override
     public void saveDocument(SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> observer) {
-        GrpcErrors.run(observer, () -> save(request));
+        GrpcErrors.run(observer, () -> saveBlocking(request));
     }
 
-    private SaveDocumentResponse save(SaveDocumentRequest request) {
+    /**
+     * The blocking body of {@link #saveDocument}, package-private so the HTTP
+     * upload route ({@code UploadHttpServer}) runs its assembled Document
+     * through the SAME intake-save path as the gRPC SaveDocument — one dedupe,
+     * one upsert, one revive semantic, no second implementation to drift.
+     *
+     * @param request the save request (validated exactly as on the wire)
+     * @return the save response
+     */
+    SaveDocumentResponse saveBlocking(SaveDocumentRequest request) {
         ResolvedSave r = resolve(request);
         DriveRecord drive = drives.findByName(r.accountId(), request.getDrive())
                 .orElseThrow(() -> notFound("drive '" + request.getDrive() + "' not found for account '"
@@ -739,6 +752,71 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
             }
             return response.build();
         });
+    }
+
+    @Override
+    public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
+        GrpcErrors.run(observer, () -> {
+            if (request.getDriveName().isBlank()) {
+                throw invalidArgument("drive_name is required");
+            }
+            DriveRecord drive = findDriveByName(request.getDriveName())
+                    .orElseThrow(() -> notFound("drive '" + request.getDriveName() + "' not found"));
+            byte[] data = request.getData().toByteArray();
+            String sha256 = DocumentPartCodec.sha256Hex(data);
+            // Content-addressed default key: identical puts land on the same
+            // object, so a retried upload is an idempotent overwrite, never a
+            // second randomly-keyed copy.
+            String objectKey = request.getObjectKey().isBlank()
+                    ? generatedBlobKey(drive, sha256)
+                    : request.getObjectKey();
+            String contentType = request.getMimeType().isBlank()
+                    ? "application/octet-stream" : request.getMimeType();
+            // Verified write: the store's checksum trailer makes it reject
+            // the PUT when the landed bytes mismatch the computed digest.
+            blobStore.put(new BlobStore.PutSpec(drive.bucket, objectKey, contentType, null, sha256),
+                    data);
+            return PutBlobResponse.newBuilder()
+                    .setStorageRef(FileStorageReference.newBuilder()
+                            .setDriveName(request.getDriveName())
+                            .setObjectKey(objectKey))
+                    .setSizeBytes(data.length)
+                    .setSha256(sha256)
+                    .build();
+        });
+    }
+
+    @Override
+    public void deleteBlob(DeleteBlobRequest request, StreamObserver<DeleteBlobResponse> observer) {
+        GrpcErrors.run(observer, () -> {
+            if (!request.hasStorageRef()) {
+                throw invalidArgument("storage_ref is required");
+            }
+            FileStorageReference ref = request.getStorageRef();
+            if (ref.getDriveName().isBlank()) {
+                throw invalidArgument("storage_ref.drive_name is required");
+            }
+            if (ref.getObjectKey().isBlank()) {
+                throw invalidArgument("storage_ref.object_key is required");
+            }
+            DriveRecord drive = findDriveByName(ref.getDriveName())
+                    .orElseThrow(() -> notFound("drive '" + ref.getDriveName() + "' not found"));
+            // Idempotent: delete-of-absent reports deleted=false, not an error.
+            boolean deleted = blobStore.delete(drive.bucket, ref.getObjectKey());
+            return DeleteBlobResponse.newBuilder().setDeleted(deleted).build();
+        });
+    }
+
+    /** Content-addressed default blob key: {@code <drive.prefix>/blobs/<name-uuid of the sha256>}. */
+    private static String generatedBlobKey(DriveRecord drive, String sha256Hex) {
+        String prefix = drive.prefix == null ? "" : drive.prefix;
+        if (prefix.endsWith("/")) {
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
+        String nameUuid = UUID.nameUUIDFromBytes(
+                ("blob-content|" + sha256Hex).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .toString();
+        return (prefix.isBlank() ? "" : prefix + "/") + "blobs/" + nameUuid;
     }
 
     /**
