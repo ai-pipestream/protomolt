@@ -15,7 +15,6 @@ import ai.pipestream.proto.repo.v1.DeleteLogicalDocumentCommand;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentPart;
-import ai.pipestream.proto.repo.v1.DocumentReference;
 import ai.pipestream.proto.repo.v1.DocumentSecurity;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import ai.pipestream.proto.repo.v1.Drive;
@@ -32,6 +31,7 @@ import ai.pipestream.proto.repo.v1.GetDriveRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.repo.v1.ListDrivesRequest;
+import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
 import ai.pipestream.proto.repo.v1.ParsedMetadata;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
@@ -180,9 +180,9 @@ class RepoServiceIT {
                 .setGraphId("intake:" + accountId);
     }
 
-    private static DocumentReference reference(String docId, String graphAddressId,
+    private static NodeAddress address(String docId, String graphAddressId,
             String accountId, String graphId) {
-        return DocumentReference.newBuilder()
+        return NodeAddress.newBuilder()
                 .setDocId(docId)
                 .setGraphAddressId(graphAddressId)
                 .setAccountId(accountId)
@@ -253,6 +253,9 @@ class RepoServiceIT {
         assertThat(saved.getStoragePrefix())
                 .startsWith("full-docs/documents/" + account + "/")
                 .endsWith(saved.getNodeId());
+        // The response echoes the canonical address the node_id derives from.
+        assertThat(saved.getAddress())
+                .isEqualTo(address("doc-full-1", "ds-1", account, "intake:" + account));
 
         GetDocumentResponse got = documents.getDocument(
                 GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build());
@@ -262,7 +265,7 @@ class RepoServiceIT {
 
         GetDocumentResponse byRef = documents.getDocumentByReference(
                 GetDocumentByReferenceRequest.newBuilder()
-                        .setDocumentRef(reference("doc-full-1", "ds-1", account, "intake:" + account))
+                        .setAddress(address("doc-full-1", "ds-1", account, "intake:" + account))
                         .build());
         assertThat(byRef.getDocument().toByteArray()).isEqualTo(doc.toByteArray());
         assertThat(byRef.getNodeId()).isEqualTo(saved.getNodeId());
@@ -273,6 +276,8 @@ class RepoServiceIT {
                 GetDocumentManifestRequest.newBuilder().setNodeId(saved.getNodeId()).build());
         assertThat(manifest.getDrive()).isEqualTo("full-docs");
         DocumentManifest m = manifest.getManifest();
+        assertThat(m.getAddress())
+                .isEqualTo(address("doc-full-1", "ds-1", account, "intake:" + account));
         assertThat(m.getDocVersion()).isEqualTo(1);
         assertThat(m.getPartsList()).allSatisfy(e -> {
             assertThat(e.getState()).isEqualTo(PartState.PART_STATE_PRESENT);
@@ -382,9 +387,9 @@ class RepoServiceIT {
                 .setGraphId("graph-a")
                 .setWrittenBy(hop0Writer)
                 .build());
-        DocumentReference hop1Ref = reference("doc-psave-1", "hop-1", account, "graph-a");
+        NodeAddress hop1Ref = address("doc-psave-1", "hop-1", account, "graph-a");
         DocumentManifest hop1Manifest = documents.getDocumentManifest(
-                GetDocumentManifestRequest.newBuilder().setDocumentRef(hop1Ref).build())
+                GetDocumentManifestRequest.newBuilder().setAddress(hop1Ref).build())
                 .getManifest();
 
         // hop-2: the chunker re-stages with ONLY new chunks; the rest copies.
@@ -448,7 +453,7 @@ class RepoServiceIT {
                 .setGraphLocationId("hop-3")
                 .setGraphId("graph-a")
                 .addPartsWritten(DocumentPart.DOCUMENT_PART_CHUNKS)
-                .setCopyUnwrittenPartsFrom(reference("doc-psave-1", "nowhere", account, "graph-a"))
+                .setCopyUnwrittenPartsFrom(address("doc-psave-1", "nowhere", account, "graph-a"))
                 .build()))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode())
@@ -462,7 +467,7 @@ class RepoServiceIT {
         Document doc = fixture("doc-del-1", account, "ds-3");
         SaveDocumentResponse saved = documents.saveDocument(intakeSave(doc, "docs", account).build());
         UUID nodeId = UUID.fromString(saved.getNodeId());
-        DocumentReference ref = reference("doc-del-1", "ds-3", account, "intake:" + account);
+        NodeAddress ref = address("doc-del-1", "ds-3", account, "intake:" + account);
 
         DocumentRecord before = services.documentLedger().findByNodeId(nodeId).orElseThrow();
         List<String> partKeys = before.readManifest().getPartsList().stream()
@@ -474,7 +479,7 @@ class RepoServiceIT {
         // Metadata-only delete: tombstone to PENDING_PURGE; updated_at must
         // NOT move (the staleness guard only trusts body rewrites).
         DeleteDocumentResponse tombstoned = documents.deleteDocument(DeleteDocumentRequest.newBuilder()
-                .setByReference(DeleteDocumentByReferenceCommand.newBuilder().setDocumentRef(ref))
+                .setByReference(DeleteDocumentByReferenceCommand.newBuilder().setAddress(ref))
                 .build());
         assertThat(tombstoned.getOutcome())
                 .isEqualTo(DeleteDocumentOutcome.DELETE_DOCUMENT_OUTCOME_REMOVED);
@@ -628,6 +633,8 @@ class RepoServiceIT {
             assertThat(d.getConnectorId()).isEqualTo(CONNECTOR);
             assertThat(d.getCrawlId()).isEqualTo("crawl-1");
             assertThat(d.getTitle()).isEqualTo("Quarterly Report");
+            assertThat(d.getAddress().getAccountId()).isEqualTo(account);
+            assertThat(d.getAddress().getGraphId()).isEqualTo("intake:" + account);
         });
 
         assertThat(documents.listDocuments(ListDocumentsRequest.newBuilder()

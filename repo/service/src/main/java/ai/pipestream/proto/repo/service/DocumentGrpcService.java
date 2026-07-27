@@ -11,7 +11,6 @@ import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.DocumentPart;
-import ai.pipestream.proto.repo.v1.DocumentReference;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import ai.pipestream.proto.repo.v1.FileStorageReference;
 import ai.pipestream.proto.repo.v1.GetBlobRequest;
@@ -23,6 +22,7 @@ import ai.pipestream.proto.repo.v1.GetDocumentRequest;
 import ai.pipestream.proto.repo.v1.GetDocumentResponse;
 import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
+import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
@@ -77,7 +77,8 @@ import static io.grpc.Status.UNAVAILABLE;
  * identity + lifecycle) as one ledger row. Payload bytes live only in object
  * storage; the database row is the claim check.
  *
- * <p><b>Storage identity.</b> Every row is addressed by the four segments
+ * <p><b>Storage identity.</b> Every row is addressed by the canonical
+ * {@link NodeAddress} — the four segments
  * {@code doc_id | graph_address_id | account_id | graph_id}, hashed into a
  * deterministic {@code node_id} by {@link DocumentIds#nodeId}. The save
  * request's {@code graph_address} oneof arm is the EXPLICIT origin
@@ -178,11 +179,11 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
      */
     SaveDocumentResponse saveBlocking(SaveDocumentRequest request) {
         ResolvedSave r = resolve(request);
-        DriveRecord drive = drives.findByName(r.accountId(), request.getDrive())
+        DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
                 .orElseThrow(() -> notFound("drive '" + request.getDrive() + "' not found for account '"
-                        + r.accountId() + "'"));
-        UUID nodeId = DocumentIds.nodeId(r.docId(), r.graphAddressId(), r.accountId(), r.graphId());
-        String basePrefix = basePrefix(drive, r.accountId(), nodeId);
+                        + r.address().getAccountId() + "'"));
+        UUID nodeId = DocumentIds.nodeId(r.address());
+        String basePrefix = basePrefix(drive, r.address().getAccountId(), nodeId);
 
         if (request.getPartsWrittenList().isEmpty()) {
             return saveFull(r, request, drive, nodeId, basePrefix);
@@ -210,27 +211,26 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         record Decision(boolean deduplicated, DocumentRecord existing, long nextDocVersion) {
         }
         boolean intake = DocumentRowKind.INTAKE.equals(r.rowKind());
-        Decision decision = documents.withLockedReference(
-                r.docId(), r.graphAddressId(), r.accountId(), r.graphId(), existing -> {
-                    if (existing.isEmpty()) {
-                        return new Decision(false, null, 1L);
-                    }
-                    DocumentRecord row = existing.get();
-                    long nextVersion = manifestVersion(row) + 1;
-                    if (intake && !request.getForceSave()
-                            && DocumentStatus.AVAILABLE.equals(row.status)
-                            && rootChecksum.equals(row.checksum)) {
-                        row.reprocessCount = row.reprocessCount + 1;
-                        row.lastReprocessedAt = Instant.now();
-                        return new Decision(true, row, nextVersion);
-                    }
-                    return new Decision(false, row, nextVersion);
-                });
+        Decision decision = documents.withLockedReference(r.address(), existing -> {
+            if (existing.isEmpty()) {
+                return new Decision(false, null, 1L);
+            }
+            DocumentRecord row = existing.get();
+            long nextVersion = manifestVersion(row) + 1;
+            if (intake && !request.getForceSave()
+                    && DocumentStatus.AVAILABLE.equals(row.status)
+                    && rootChecksum.equals(row.checksum)) {
+                row.reprocessCount = row.reprocessCount + 1;
+                row.lastReprocessedAt = Instant.now();
+                return new Decision(true, row, nextVersion);
+            }
+            return new Decision(false, row, nextVersion);
+        });
 
         if (decision.deduplicated()) {
             DocumentRecord row = decision.existing();
             LOG.debug("Dedupe hit for {} (node_id={}, reprocess_count={})",
-                    r.docId(), nodeId, row.reprocessCount);
+                    r.address().getDocId(), nodeId, row.reprocessCount);
             return SaveDocumentResponse.newBuilder()
                     .setNodeId(row.nodeId.toString())
                     .setDrive(row.driveName)
@@ -239,6 +239,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                     .setChecksum(row.checksum)
                     .setCreatedAtEpochMs(row.createdAt.toEpochMilli())
                     .setDeduplicated(true)
+                    .setAddress(r.address())
                     .build();
         }
 
@@ -248,7 +249,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         // the earlier body. force_save flips verifyChecksums on so the store
         // rejects a PUT whose landed bytes mismatch the part hash.
         PartStorage.WriteResult written = partStorage.writeParts(blobStore, drive.bucket, basePrefix,
-                r.doc(), layout, r.docId(), r.graphAddressId(), r.accountId(), r.graphId(),
+                r.doc(), layout, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
                 PART_CONTENT_TYPE, s3Metadata(r), request.getForceSave(), decision.nextDocVersion());
 
@@ -256,7 +257,8 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 written.rootChecksum(), written.totalSizeBytes(), written.coreEtag(),
                 written.coreVersionId(), decision.existing());
         LOG.debug("Saved {} at {} (node_id={}, version={}, bytes={})",
-                r.docId(), r.graphAddressId(), nodeId, decision.nextDocVersion(), written.totalSizeBytes());
+                r.address().getDocId(), r.address().getGraphAddressId(), nodeId,
+                decision.nextDocVersion(), written.totalSizeBytes());
         return saveResponse(row, written.rootChecksum());
     }
 
@@ -272,14 +274,13 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         if (!request.hasCopyUnwrittenPartsFrom()) {
             throw invalidArgument("copy_unwritten_parts_from is required when parts_written is non-empty");
         }
-        DocumentReference srcRef = validateReference(request.getCopyUnwrittenPartsFrom(),
+        NodeAddress srcRef = validateAddress(request.getCopyUnwrittenPartsFrom(),
                 "copy_unwritten_parts_from");
 
         // The copy source must be a live row with a manifest; a gone source is
         // FAILED_PRECONDITION (not NOT_FOUND) so the caller's
         // retry-as-full-save policy engages.
-        DocumentRecord srcRow = documents.findByReference(srcRef.getDocId(), srcRef.getGraphAddressId(),
-                srcRef.getAccountId(), srcRef.getGraphId())
+        DocumentRecord srcRow = documents.findByReference(srcRef)
                 .orElseThrow(() -> failedPrecondition("partial-save copy source row not found: " + describe(srcRef)));
         if (!DocumentStatus.AVAILABLE.equals(srcRow.status)) {
             throw failedPrecondition("partial-save copy source row is " + srcRow.status
@@ -323,7 +324,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         }
 
         PartStorage.WriteResult written = partStorage.writePartObjects(blobStore, drive.bucket, basePrefix,
-                toWrite, r.docId(), r.graphAddressId(), r.accountId(), r.graphId(),
+                toWrite, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
                 PART_CONTENT_TYPE, s3Metadata(r), request.getForceSave(), docVersion);
 
@@ -364,7 +365,8 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         DocumentRecord row = upsertRow(r, request, drive, nodeId, basePrefix, combined,
                 rootChecksum, totalSize, coreEtag, coreVersionId, destExisting);
         LOG.debug("Partial save {} at {} (node_id={}, version={}, parts={}, copied={})",
-                r.docId(), r.graphAddressId(), nodeId, docVersion, partsWritten, carried.size());
+                r.address().getDocId(), r.address().getGraphAddressId(), nodeId, docVersion,
+                partsWritten, carried.size());
         return saveResponse(row, rootChecksum);
     }
 
@@ -419,10 +421,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
             }
         }
         return DocumentManifest.newBuilder()
-                .setDocId(written.getDocId())
-                .setGraphAddressId(written.getGraphAddressId())
-                .setAccountId(written.getAccountId())
-                .setGraphId(written.getGraphId())
+                .setAddress(written.getAddress())
                 .setDocVersion(docVersion)
                 .addAllParts(ordered)
                 .build();
@@ -460,10 +459,9 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     public void getDocumentByReference(GetDocumentByReferenceRequest request,
             StreamObserver<GetDocumentResponse> observer) {
         GrpcErrors.run(observer, () -> {
-            DocumentReference ref = validateReference(request.getDocumentRef(), "document_ref");
-            DocumentRecord row = documents.findByReference(ref.getDocId(), ref.getGraphAddressId(),
-                            ref.getAccountId(), ref.getGraphId())
-                    .orElseThrow(() -> notFound("no document row for " + describe(ref)));
+            NodeAddress address = validateAddress(request.getAddress(), "address");
+            DocumentRecord row = documents.findByReference(address)
+                    .orElseThrow(() -> notFound("no document row for " + describe(address)));
             return assemble(row, partsOrThrow(request.getPartsList(), "parts"),
                     Set.copyOf(request.getChunkSetsList()));
         });
@@ -510,14 +508,13 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                     yield documents.findByNodeId(nodeId)
                             .orElseThrow(() -> notFound("no document row for node_id " + nodeId));
                 }
-                case DOCUMENT_REF -> {
-                    DocumentReference ref = validateReference(request.getDocumentRef(), "document_ref");
-                    yield documents.findByReference(ref.getDocId(), ref.getGraphAddressId(),
-                                    ref.getAccountId(), ref.getGraphId())
-                            .orElseThrow(() -> notFound("no document row for " + describe(ref)));
+                case ADDRESS -> {
+                    NodeAddress address = validateAddress(request.getAddress(), "address");
+                    yield documents.findByReference(address)
+                            .orElseThrow(() -> notFound("no document row for " + describe(address)));
                 }
                 default -> throw invalidArgument(
-                        "exactly one coordinate (node_id or document_ref) must be set");
+                        "exactly one coordinate (node_id or address) must be set");
             };
             DocumentManifest manifest = row.readManifest();
             if (manifest == null) {
@@ -549,14 +546,13 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
      */
     private DeleteDocumentResponse delete(DeleteDocumentRequest request) {
         List<DocumentRecord> targets;
-        DocumentReference byRef = null;
+        NodeAddress byRef = null;
         DeleteLogicalDocumentCommand logical = null;
         switch (request.getCommandCase()) {
             case BY_REFERENCE -> {
-                byRef = validateReference(request.getByReference().getDocumentRef(),
-                        "by_reference.document_ref");
-                targets = documents.findByReference(byRef.getDocId(), byRef.getGraphAddressId(),
-                                byRef.getAccountId(), byRef.getGraphId())
+                byRef = validateAddress(request.getByReference().getAddress(),
+                        "by_reference.address");
+                targets = documents.findByReference(byRef)
                         .map(List::of)
                         .orElse(List.of());
             }
@@ -590,8 +586,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
             // Re-delete through the ledger so the returned rows are the rows
             // actually removed (a concurrent delete settles to empty).
             if (byRef != null) {
-                removed = documents.deleteByReference(byRef.getDocId(), byRef.getGraphAddressId(),
-                                byRef.getAccountId(), byRef.getGraphId())
+                removed = documents.deleteByReference(byRef)
                         .map(List::of)
                         .orElse(List.of());
             } else {
@@ -704,7 +699,8 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                         .setDocId(row.docId)
                         .setDrive(row.driveName)
                         .setSizeBytes(row.sizeBytes)
-                        .setCreatedAtEpochMs(row.createdAt.toEpochMilli());
+                        .setCreatedAtEpochMs(row.createdAt.toEpochMilli())
+                        .setAddress(addressOf(row));
                 if (row.connectorId != null) {
                     meta.setConnectorId(row.connectorId);
                 }
@@ -838,12 +834,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
 
     /**
      * Everything validation and defaulting settled about a save: the document
-     * (always carrying a doc id) plus the four storage-identity segments, the
-     * row kind and the cluster hint. {@code graphId} is never blank on either
-     * kind — blank-graph rows are unrepresentable.
+     * (always carrying a doc id) plus the canonical {@link NodeAddress} of the
+     * storage identity, the row kind and the cluster hint. The address's
+     * {@code graph_id} is never blank on either kind — blank-graph rows are
+     * unrepresentable.
      */
-    private record ResolvedSave(Document doc, String docId, String graphAddressId, String accountId,
-            String graphId, String rowKind, String clusterId) {
+    private record ResolvedSave(Document doc, NodeAddress address, String rowKind, String clusterId) {
     }
 
     /**
@@ -895,8 +891,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                             "document.ownership.datasource_id is required on intake saves"
                                     + " (use_datasource_id) — it is the storage address");
                 }
-                yield new ResolvedSave(doc, doc.getDocId(), datasourceId, accountId,
-                        requestGraphId, DocumentRowKind.INTAKE, null);
+                yield new ResolvedSave(doc, NodeAddress.newBuilder()
+                        .setDocId(doc.getDocId())
+                        .setGraphAddressId(datasourceId)
+                        .setAccountId(accountId)
+                        .setGraphId(requestGraphId)
+                        .build(), DocumentRowKind.INTAKE, null);
             }
             case GRAPH_LOCATION_ID -> {
                 String graphAddressId = request.getGraphLocationId();
@@ -913,8 +913,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 }
                 String clusterId = request.hasClusterId() && !request.getClusterId().isBlank()
                         ? request.getClusterId() : null;
-                yield new ResolvedSave(doc, doc.getDocId(), graphAddressId, accountId,
-                        requestGraphId, DocumentRowKind.PIPELINE, clusterId);
+                yield new ResolvedSave(doc, NodeAddress.newBuilder()
+                        .setDocId(doc.getDocId())
+                        .setGraphAddressId(graphAddressId)
+                        .setAccountId(accountId)
+                        .setGraphId(requestGraphId)
+                        .build(), DocumentRowKind.PIPELINE, clusterId);
             }
             default -> throw invalidArgument(
                     "exactly one graph address arm (use_datasource_id or graph_location_id) must be set");
@@ -934,12 +938,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         OwnershipContext ownership = r.doc().getOwnership();
         DocumentRecord row = new DocumentRecord();
         row.nodeId = nodeId;
-        row.docId = r.docId();
-        row.graphAddressId = r.graphAddressId();
-        row.graphId = r.graphId();
+        row.docId = r.address().getDocId();
+        row.graphAddressId = r.address().getGraphAddressId();
+        row.graphId = r.address().getGraphId();
         row.rowKind = r.rowKind();
         row.clusterId = r.clusterId();
-        row.accountId = r.accountId();
+        row.accountId = r.address().getAccountId();
         row.datasourceId = ownership.getDatasourceId();
         row.connectorId = !request.getConnectorId().isBlank() ? request.getConnectorId()
                 : (ownership.hasConnectorId() ? ownership.getConnectorId() : null);
@@ -951,7 +955,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         row.sizeBytes = totalSize;
         row.contentType = PART_CONTENT_TYPE;
         row.filename = r.doc().hasSearchMetadata() && r.doc().getSearchMetadata().hasTitle()
-                ? r.doc().getSearchMetadata().getTitle() : r.docId();
+                ? r.doc().getSearchMetadata().getTitle() : r.address().getDocId();
         row.writeManifest(manifest);
         row.writeSecurity(ownership.hasSecurity() ? ownership.getSecurity() : null);
         boolean intake = DocumentRowKind.INTAKE.equals(r.rowKind());
@@ -984,6 +988,17 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 .setChecksum(rootChecksum)
                 .setCreatedAtEpochMs(row.createdAt.toEpochMilli())
                 .setDeduplicated(false)
+                .setAddress(addressOf(row))
+                .build();
+    }
+
+    /** The row's canonical storage address, rebuilt from its identity columns. */
+    private static NodeAddress addressOf(DocumentRecord row) {
+        return NodeAddress.newBuilder()
+                .setDocId(row.docId)
+                .setGraphAddressId(row.graphAddressId)
+                .setAccountId(row.accountId)
+                .setGraphId(row.graphId)
                 .build();
     }
 
@@ -999,11 +1014,11 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     /** Provider metadata stamped on every part object for observability. */
     private static Map<String, String> s3Metadata(ResolvedSave r) {
         Map<String, String> metadata = new HashMap<>();
-        metadata.put("doc-id", r.docId());
-        metadata.put("account-id", r.accountId());
-        metadata.put("graph-id", r.graphId());
+        metadata.put("doc-id", r.address().getDocId());
+        metadata.put("account-id", r.address().getAccountId());
+        metadata.put("graph-id", r.address().getGraphId());
         metadata.put("row-kind", r.rowKind());
-        metadata.put("graph-address-id", r.graphAddressId());
+        metadata.put("graph-address-id", r.address().getGraphAddressId());
         return metadata;
     }
 
@@ -1031,17 +1046,17 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         return out;
     }
 
-    private static DocumentReference validateReference(DocumentReference ref, String field) {
-        if (ref.getDocId().isBlank() || ref.getGraphAddressId().isBlank()
-                || ref.getAccountId().isBlank() || ref.getGraphId().isBlank()) {
+    private static NodeAddress validateAddress(NodeAddress address, String field) {
+        if (address.getDocId().isBlank() || address.getGraphAddressId().isBlank()
+                || address.getAccountId().isBlank() || address.getGraphId().isBlank()) {
             throw invalidArgument(field + " requires doc_id, graph_address_id, account_id and graph_id");
         }
-        return ref;
+        return address;
     }
 
-    private static String describe(DocumentReference ref) {
-        return "doc_id=" + ref.getDocId() + ", graph_address_id=" + ref.getGraphAddressId()
-                + ", account_id=" + ref.getAccountId() + ", graph_id=" + ref.getGraphId();
+    private static String describe(NodeAddress address) {
+        return "doc_id=" + address.getDocId() + ", graph_address_id=" + address.getGraphAddressId()
+                + ", account_id=" + address.getAccountId() + ", graph_id=" + address.getGraphId();
     }
 
     private static UUID parseUuid(String raw, String field) {

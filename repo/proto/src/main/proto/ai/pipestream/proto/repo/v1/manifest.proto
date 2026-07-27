@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.repo.v1;
 
+import "ai/pipestream/proto/repo/v1/address.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -12,9 +13,9 @@ option java_package = "ai.pipestream.proto.repo.v1";
 //
 // A stored Document is split into four independently addressable parts on
 // clean proto boundaries; CHUNKS is further sub-keyed per chunk set. The
-// manifest is the machine-readable map of every piece: locations, hashes,
-// sizes and lifecycle states live in the database; payload bytes live only
-// in object storage. The part boundaries themselves are descriptor-driven
+// manifest is the machine-readable map of every piece: it carries the stored
+// state's canonical NodeAddress, and locations, hashes, sizes and lifecycle
+// states live in the database; payload bytes live only in object storage. The part boundaries themselves are descriptor-driven
 // (a PartLayout over the message descriptor), so any message type can be
 // decomposed the same way.
 // ============================================================================
@@ -91,17 +92,12 @@ message PartManifestEntry {
 // The machine-readable map of one stored document state: which parts exist,
 // where they live, what they hash to, and what happened to them.
 message DocumentManifest {
-  // Logical document identifier.
-  string doc_id = 1;
-  // The stored coordinate (destination node) this manifest describes.
-  string graph_address_id = 2;
-  // Owning account.
-  string account_id = 3;
-  // Owning graph (fourth segment of the storage identity).
-  string graph_id = 4;
+  // The storage identity of the stored state this manifest describes (the
+  // four logical segments of the canonical NodeAddress).
+  NodeAddress address = 1;
   // Single per-address version, bumped on ANY part write at this address.
-  int64 doc_version = 5;
+  int64 doc_version = 2;
   // One entry per part object, in assembly order (CHUNKS sub-objects keep
   // their original semantic_results ordering via this list's order).
-  repeated PartManifestEntry parts = 6;
+  repeated PartManifestEntry parts = 3;
 }

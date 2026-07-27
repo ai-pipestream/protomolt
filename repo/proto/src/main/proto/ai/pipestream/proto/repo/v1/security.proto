@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.repo.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.repo.v1";
+
+// ============================================================================
+// DOCUMENT SECURITY — the typed, OIS-aligned access-control model.
+//
+// Extraction rides the document as first-class metadata; evaluation is
+// deny-wins with case-insensitive identity match against the caller's
+// principal + groups.
+// ============================================================================
+
+// Access decision of one ACL rule. Explicit DENY always wins over any grant.
+enum Access {
+  ACCESS_UNSPECIFIED = 0;
+  ACCESS_READ = 1;
+  ACCESS_WRITE = 2;
+  ACCESS_DENY = 3;
+}
+
+// One typed access rule (OIS-style: identity + identity type + display label).
+message AccessRule {
+  // SID, email, group id, or "public".
+  string identity = 1;
+  // "windows-sid" | "oauth-group" | "user-principal-name" | "cmis-user" |
+  // "local-role" | "public" | <custom>.
+  string identity_type = 2;
+  // Audit/debug label.
+  string display_name = 3;
+  Access access = 4;
+}
+
+// Document-level security. Extraction rides the document as first-class
+// metadata; evaluation is deny-wins with case-insensitive identity match
+// against the caller's principal + groups.
+message DocumentSecurity {
+  // When true, rules inherited from the container/source apply in addition
+  // to the explicit permissions below.
+  bool inheritance_enabled = 1;
+  repeated AccessRule permissions = 2;
+}

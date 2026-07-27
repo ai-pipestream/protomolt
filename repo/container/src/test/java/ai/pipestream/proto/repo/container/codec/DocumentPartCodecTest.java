@@ -151,7 +151,8 @@ class DocumentPartCodecTest {
         assertThat(DocumentPartCodec.rootChecksum(DocumentPartCodec.split(doc, LAYOUT))).isEqualTo(root);
 
         // The manifest-derived root (partial-save path) matches the split-derived one.
-        DocumentManifest.Builder m = DocumentManifest.newBuilder().setDocId(doc.getDocId());
+        DocumentManifest.Builder m = DocumentManifest.newBuilder().setAddress(
+                ai.pipestream.proto.repo.v1.NodeAddress.newBuilder().setDocId(doc.getDocId()));
         for (PartObject p : parts) {
             m.addParts(PartManifestEntry.newBuilder()
                     .setPart(p.part())
@@ -178,14 +179,20 @@ class DocumentPartCodecTest {
     @Test
     void manifestJson_roundTrips() {
         DocumentManifest manifest = DocumentManifest.newBuilder()
-                .setDocId("d1").setGraphAddressId("a1").setAccountId("acct").setDocVersion(3)
+                .setAddress(ai.pipestream.proto.repo.v1.NodeAddress.newBuilder()
+                        .setDocId("d1").setGraphAddressId("a1").setAccountId("acct"))
+                .setDocVersion(3)
                 .addParts(PartManifestEntry.newBuilder()
                         .setPart(DocumentPart.DOCUMENT_PART_CHUNKS)
                         .setState(PartState.PART_STATE_PRESENT)
                         .setSubKey("title-384").setSha256("ab").setObjectKey("x/chunks/title-384-i.pb"))
                 .build();
         String json = DocumentPartCodec.manifestToJson(manifest);
-        assertThat(DocumentPartCodec.manifestFromJson(json)).isEqualTo(manifest);
+        DocumentManifest back = DocumentPartCodec.manifestFromJson(json);
+        assertThat(back).isEqualTo(manifest);
+        assertThat(back.getAddress().getDocId()).isEqualTo("d1");
+        assertThat(back.getAddress().getGraphAddressId()).isEqualTo("a1");
+        assertThat(back.getAddress().getAccountId()).isEqualTo("acct");
     }
 
     @Test

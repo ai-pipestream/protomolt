@@ -2,6 +2,7 @@ package ai.pipestream.proto.repo.container.blob;
 
 import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentPart;
+import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
 import ai.pipestream.proto.repo.v1.WriteProvenance;
@@ -74,10 +75,7 @@ public class PartStorage {
      * @param basePrefix the address prefix ({@code …/{nodeId}}) the parts live under
      * @param doc the document to store
      * @param layout the part layout decomposing the document's type
-     * @param docId the logical document id (manifest identity)
-     * @param graphAddressId the stored coordinate (manifest identity)
-     * @param accountId the owning account (manifest identity)
-     * @param graphId the owning graph (manifest identity)
+     * @param address the canonical storage address (manifest identity)
      * @param writtenBy writer provenance recorded on each entry (may be {@code null};
      *        when present it is stamped verbatim)
      * @param contentType the MIME type stored with each object
@@ -88,11 +86,11 @@ public class PartStorage {
      * @return the write result feeding the row upsert
      */
     public WriteResult writeParts(BlobStore store, String bucket, String basePrefix, Message doc,
-            PartLayout layout, String docId, String graphAddressId, String accountId, String graphId,
+            PartLayout layout, NodeAddress address,
             WriteProvenance writtenBy, String contentType, Map<String, String> s3Metadata,
             boolean verifyChecksums, long docVersion) {
         List<PartObject> parts = DocumentPartCodec.split(doc, layout);
-        return writePartObjects(store, bucket, basePrefix, parts, docId, graphAddressId, accountId, graphId,
+        return writePartObjects(store, bucket, basePrefix, parts, address,
                 writtenBy, contentType, s3Metadata, verifyChecksums, docVersion);
     }
 
@@ -104,10 +102,7 @@ public class PartStorage {
      * @param bucket the target bucket
      * @param basePrefix the address prefix the parts live under
      * @param parts the split fragments in manifest order
-     * @param docId the logical document id
-     * @param graphAddressId the stored coordinate
-     * @param accountId the owning account
-     * @param graphId the owning graph
+     * @param address the canonical storage address (manifest identity)
      * @param writtenBy writer provenance for the entries (may be {@code null});
      *        when present it is stamped verbatim
      * @param contentType the MIME type stored with each object
@@ -117,7 +112,7 @@ public class PartStorage {
      * @return the write result feeding the row upsert
      */
     public WriteResult writePartObjects(BlobStore store, String bucket, String basePrefix,
-            List<PartObject> parts, String docId, String graphAddressId, String accountId, String graphId,
+            List<PartObject> parts, NodeAddress address,
             WriteProvenance writtenBy, String contentType,
             Map<String, String> s3Metadata, boolean verifyChecksums, long docVersion) {
 
@@ -135,10 +130,7 @@ public class PartStorage {
         Instant now = Instant.now();
         Timestamp ts = Timestamp.newBuilder().setSeconds(now.getEpochSecond()).setNanos(now.getNano()).build();
         DocumentManifest.Builder manifest = DocumentManifest.newBuilder()
-                .setDocId(docId)
-                .setGraphAddressId(graphAddressId)
-                .setAccountId(accountId)
-                .setGraphId(graphId)
+                .setAddress(address)
                 .setDocVersion(docVersion);
 
         long total = 0;
@@ -294,11 +286,11 @@ public class PartStorage {
                     // was transient; preserve the prior null contract.
                     LOG.warn("Part read reported not-found but re-check found all present "
                                     + "(doc_id={}, address={}) — treating as transient",
-                            manifest.getDocId(), manifest.getGraphAddressId());
+                            manifest.getAddress().getDocId(), manifest.getAddress().getGraphAddressId());
                     return null;
                 }
                 LOG.warn("Part object(s) missing during assembly (doc_id={}, address={}, parts={}): {}",
-                        manifest.getDocId(), manifest.getGraphAddressId(), missing, ex.getMessage());
+                        manifest.getAddress().getDocId(), manifest.getAddress().getGraphAddressId(), missing, ex.getMessage());
                 throw new PartObjectMissingException(
                         "part object(s) gone from storage: " + missing, missing);
             }
@@ -308,7 +300,7 @@ public class PartStorage {
             return DocumentPartCodec.assemble(fragments, prototype);
         } catch (InvalidProtocolBufferException e) {
             LOG.error("Part fragment parse failed (doc_id={}, address={})",
-                    manifest.getDocId(), manifest.getGraphAddressId(), e);
+                    manifest.getAddress().getDocId(), manifest.getAddress().getGraphAddressId(), e);
             return null;
         }
     }

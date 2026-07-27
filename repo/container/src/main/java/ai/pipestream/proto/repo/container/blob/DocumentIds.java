@@ -1,5 +1,7 @@
 package ai.pipestream.proto.repo.container.blob;
 
+import ai.pipestream.proto.repo.v1.NodeAddress;
+
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -38,6 +40,20 @@ public final class DocumentIds {
     private static final String SEPARATOR = "|";
 
     private DocumentIds() {
+    }
+
+    /**
+     * Generates a deterministic UUID for a repository node identifier from
+     * the canonical {@link NodeAddress} — delegates to
+     * {@link #nodeId(String, String, String, String)} over the address's four
+     * segments.
+     *
+     * @param address the canonical storage address
+     * @return A deterministic UUID generated from the address's composite key
+     */
+    public static UUID nodeId(NodeAddress address) {
+        return nodeId(address.getDocId(), address.getGraphAddressId(),
+                address.getAccountId(), address.getGraphId());
     }
 
     /**

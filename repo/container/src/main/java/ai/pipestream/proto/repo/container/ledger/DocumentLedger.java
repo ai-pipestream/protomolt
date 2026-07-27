@@ -1,5 +1,6 @@
 package ai.pipestream.proto.repo.container.ledger;
 
+import ai.pipestream.proto.repo.v1.NodeAddress;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.TypedQuery;
 
@@ -67,14 +68,14 @@ public final class DocumentLedger {
     }
 
     /**
-     * Look up a row by its four-segment storage identity (the
+     * Look up a row by its canonical storage address (the
      * {@code uq_documents_identity} unique key).
      *
+     * @param address the row's canonical storage address
      * @return the row, or empty
      */
-    public Optional<DocumentRecord> findByReference(
-            String docId, String graphAddressId, String accountId, String graphId) {
-        return tx.readOnly(em -> referenceQuery(em, docId, graphAddressId, accountId, graphId)
+    public Optional<DocumentRecord> findByReference(NodeAddress address) {
+        return tx.readOnly(em -> referenceQuery(em, address)
                 .getResultStream()
                 .findFirst());
     }
@@ -87,37 +88,35 @@ public final class DocumentLedger {
      * serialized by it. Use {@link #withLockedReference} to run the whole
      * decision inside the lock's lifetime.
      *
+     * @param address the row's canonical storage address
      * @return the row, or empty (detached)
      */
-    public Optional<DocumentRecord> findByReferenceForUpdate(
-            String docId, String graphAddressId, String accountId, String graphId) {
+    public Optional<DocumentRecord> findByReferenceForUpdate(NodeAddress address) {
         return tx.inTransaction(em -> {
-            TypedQuery<DocumentRecord> query =
-                    referenceQuery(em, docId, graphAddressId, accountId, graphId);
+            TypedQuery<DocumentRecord> query = referenceQuery(em, address);
             query.setLockMode(LockModeType.PESSIMISTIC_WRITE);
             return query.getResultStream().findFirst();
         });
     }
 
     /**
-     * Lock the row for a storage identity ({@code FOR UPDATE}) and run
+     * Lock the row for a storage address ({@code FOR UPDATE}) and run
      * {@code work} against it — and against the SAME EntityManager — inside
      * the lock's lifetime. This is the save path's dedupe/revive primitive:
      * the checksum comparison, the revive decision and the resulting write
      * all happen while no other writer can touch the row.
      *
+     * @param address the row's canonical storage address
      * @param work the decision to run against the locked row (empty when no
      *             row exists for the identity — the caller then holds no lock
      *             and races are settled by the unique constraint instead)
      * @param <T>  result type
      * @return the work's result
      */
-    public <T> T withLockedReference(
-            String docId, String graphAddressId, String accountId, String graphId,
+    public <T> T withLockedReference(NodeAddress address,
             Function<Optional<DocumentRecord>, T> work) {
         return tx.inTransaction(em -> {
-            TypedQuery<DocumentRecord> query =
-                    referenceQuery(em, docId, graphAddressId, accountId, graphId);
+            TypedQuery<DocumentRecord> query = referenceQuery(em, address);
             query.setLockMode(LockModeType.PESSIMISTIC_WRITE);
             return work.apply(query.getResultStream().findFirst());
         });
@@ -231,15 +230,15 @@ public final class DocumentLedger {
     }
 
     /**
-     * Hard-delete the row for a storage identity.
+     * Hard-delete the row for a storage address.
      *
+     * @param address the row's canonical storage address
      * @return the removed row (detached), or empty if no such row
      */
-    public Optional<DocumentRecord> deleteByReference(
-            String docId, String graphAddressId, String accountId, String graphId) {
+    public Optional<DocumentRecord> deleteByReference(NodeAddress address) {
         return tx.inTransaction(em -> {
             Optional<DocumentRecord> record =
-                    referenceQuery(em, docId, graphAddressId, accountId, graphId)
+                    referenceQuery(em, address)
                             .getResultStream()
                             .findFirst();
             record.ifPresent(em::remove);
@@ -272,14 +271,13 @@ public final class DocumentLedger {
     }
 
     private static TypedQuery<DocumentRecord> referenceQuery(
-            jakarta.persistence.EntityManager em,
-            String docId, String graphAddressId, String accountId, String graphId) {
+            jakarta.persistence.EntityManager em, NodeAddress address) {
         return em.createQuery(
                         "SELECT d FROM DocumentRecord d WHERE " + REFERENCE_WHERE,
                         DocumentRecord.class)
-                .setParameter("docId", docId)
-                .setParameter("graphAddressId", graphAddressId)
-                .setParameter("accountId", accountId)
-                .setParameter("graphId", graphId);
+                .setParameter("docId", address.getDocId())
+                .setParameter("graphAddressId", address.getGraphAddressId())
+                .setParameter("accountId", address.getAccountId())
+                .setParameter("graphId", address.getGraphId());
     }
 }

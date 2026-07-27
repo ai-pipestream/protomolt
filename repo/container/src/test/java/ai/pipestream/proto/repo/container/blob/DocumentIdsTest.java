@@ -1,5 +1,6 @@
 package ai.pipestream.proto.repo.container.blob;
 
+import ai.pipestream.proto.repo.v1.NodeAddress;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -8,6 +9,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DocumentIdsTest {
+
+    @Test
+    void nodeIdFromAddressEqualsTheFourArgForm() {
+        NodeAddress address = NodeAddress.newBuilder()
+                .setDocId("doc-1")
+                .setGraphAddressId("node-a")
+                .setAccountId("acct-1")
+                .setGraphId("graph-1")
+                .build();
+        assertThat(DocumentIds.nodeId(address))
+                .isEqualTo(DocumentIds.nodeId("doc-1", "node-a", "acct-1", "graph-1"));
+    }
 
     @Test
     void nodeIdIsDeterministic() {

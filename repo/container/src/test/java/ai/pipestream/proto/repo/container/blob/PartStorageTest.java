@@ -5,6 +5,7 @@ import ai.pipestream.proto.repo.v1.BlobBag;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentPart;
+import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
 import ai.pipestream.proto.repo.v1.ParsedMetadata;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
@@ -32,6 +33,12 @@ class PartStorageTest {
     private static final String BUCKET = "documents";
     private static final String PREFIX = "accounts/acct-1/nodes/node-a";
     private static final PartLayout LAYOUT = PartLayouts.document();
+    private static final NodeAddress ADDRESS = NodeAddress.newBuilder()
+            .setDocId("doc-1")
+            .setGraphAddressId("node-a")
+            .setAccountId("acct-1")
+            .setGraphId("graph-1")
+            .build();
     private static final WriteProvenance PROVENANCE = WriteProvenance.newBuilder()
             .setModuleId("chunker")
             .setNodeId("node-a")
@@ -54,10 +61,11 @@ class PartStorageTest {
         PartStorage.WriteResult result = write(doc, PREFIX);
 
         DocumentManifest manifest = result.manifest();
-        assertThat(manifest.getDocId()).isEqualTo("doc-1");
-        assertThat(manifest.getGraphAddressId()).isEqualTo("node-a");
-        assertThat(manifest.getAccountId()).isEqualTo("acct-1");
-        assertThat(manifest.getGraphId()).isEqualTo("graph-1");
+        assertThat(manifest.getAddress()).isEqualTo(ADDRESS);
+        assertThat(manifest.getAddress().getDocId()).isEqualTo("doc-1");
+        assertThat(manifest.getAddress().getGraphAddressId()).isEqualTo("node-a");
+        assertThat(manifest.getAddress().getAccountId()).isEqualTo("acct-1");
+        assertThat(manifest.getAddress().getGraphId()).isEqualTo("graph-1");
         assertThat(manifest.getDocVersion()).isEqualTo(7L);
 
         // CORE, BLOBS, PARSED: one PRESENT entry each, fully described.
@@ -236,8 +244,7 @@ class PartStorageTest {
     }
 
     private PartStorage.WriteResult write(Document doc, String prefix) {
-        return storage.writeParts(store, BUCKET, prefix, doc, LAYOUT,
-                "doc-1", "node-a", "acct-1", "graph-1", PROVENANCE,
+        return storage.writeParts(store, BUCKET, prefix, doc, LAYOUT, ADDRESS, PROVENANCE,
                 "application/x-protobuf", Map.of("origin", "test"), true, 7L);
     }
 

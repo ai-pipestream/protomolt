@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.repo.v1;
 
+import "ai/pipestream/proto/repo/v1/security.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
@@ -14,39 +15,9 @@ option java_package = "ai.pipestream.proto.repo.v1";
 //
 // Reshaped from pipestream's PipeDoc: same part-decomposable shape (the
 // claim-check codec splits on search_metadata / blob_bag / parsed_metadata
-// boundaries), generic names, and a typed security model (OIS-aligned)
-// instead of bare ACL strings.
+// boundaries), generic names, and a typed security model (OIS-aligned,
+// see security.proto) instead of bare ACL strings.
 // ============================================================================
-
-// Access decision of one ACL rule. Explicit DENY always wins over any grant.
-enum Access {
-  ACCESS_UNSPECIFIED = 0;
-  ACCESS_READ = 1;
-  ACCESS_WRITE = 2;
-  ACCESS_DENY = 3;
-}
-
-// One typed access rule (OIS-style: identity + identity type + display label).
-message AccessRule {
-  // SID, email, group id, or "public".
-  string identity = 1;
-  // "windows-sid" | "oauth-group" | "user-principal-name" | "cmis-user" |
-  // "local-role" | "public" | <custom>.
-  string identity_type = 2;
-  // Audit/debug label.
-  string display_name = 3;
-  Access access = 4;
-}
-
-// Document-level security. Extraction rides the document as first-class
-// metadata; evaluation is deny-wins with case-insensitive identity match
-// against the caller's principal + groups.
-message DocumentSecurity {
-  // When true, rules inherited from the container/source apply in addition
-  // to the explicit permissions below.
-  bool inheritance_enabled = 1;
-  repeated AccessRule permissions = 2;
-}
 
 // Ownership tracking for security, auditing, and access control.
 message OwnershipContext {
@@ -254,13 +225,3 @@ message SemanticProcessingResult {
   map<string, string> metadata = 6;
 }
 
-// Logical reference to a stored document state. Resolves to exactly one
-// repository row together with the graph segment of the storage identity.
-message DocumentReference {
-  string doc_id = 1;
-  string graph_address_id = 2;
-  string account_id = 3;
-  // Owning graph: the account's intake graph ("intake:<accountId>") for
-  // intake rows, the owning graph's id for pipeline rows. Required.
-  string graph_id = 4;
-}
