@@ -170,8 +170,9 @@ docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --dem
 ```
 
 The CLI ships as a third image, `protomolt-cli`: the GraalVM native binary on a thin
-Debian base, no JRE inside (linux/amd64 only — native-image does not cross-compile,
-so arm64 builds need an arm runner or hardware). Any verb works as the command:
+Debian base, no JRE inside. It is multi-arch (linux/amd64 + linux/arm64) — native-image
+does not cross-compile, so each architecture builds on a matching runner and a manifest
+joins them. Any verb works as the command:
 
 ```shell
 docker run --rm ghcr.io/ai-pipestream/protomolt-cli list
