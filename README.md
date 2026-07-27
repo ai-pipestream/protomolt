@@ -154,8 +154,9 @@ JAVA_HOME=<graalvm-home> ./gradlew :protomolt-cli:nativeCompile
 apps/cli/build/native/nativeCompile/protomolt-cli list
 ```
 
-Releases also publish it as a container (linux/amd64; native-image does not
-cross-compile, so arm64 images need arm hardware or an arm runner):
+Releases also publish it as a multi-arch container (linux/amd64 +
+linux/arm64; native-image does not cross-compile, so each architecture builds
+on a matching runner and a manifest joins them):
 
 ```shell
 docker run --rm ghcr.io/ai-pipestream/protomolt-cli list
