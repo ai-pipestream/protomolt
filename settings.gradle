@@ -222,6 +222,17 @@ project(':protomolt-acp').projectDir = file('surface/acp')
 include 'protomolt-actions'
 project(':protomolt-actions').projectDir = file('surface/actions')
 
+// repo/ — the claim-check document store.
+
+include 'protomolt-repo-proto'
+project(':protomolt-repo-proto').projectDir = file('repo/proto')
+
+include 'protomolt-repo-container'
+project(':protomolt-repo-container').projectDir = file('repo/container')
+
+include 'protomolt-repo-service'
+project(':protomolt-repo-service').projectDir = file('repo/service')
+
 // host/ — embedding the toolkit into servers and frameworks.
 
 include 'protomolt-server-common'

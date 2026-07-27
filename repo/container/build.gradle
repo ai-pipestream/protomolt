@@ -1,0 +1,21 @@
+description = 'The claim-check storage engine: descriptor-driven part codec, S3 blob store with virtual-thread part fan-out, and the Postgres ledger (Hibernate + HikariCP + Flyway)'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api libs.protobuf.java
+    api libs.awssdk.s3
+    api libs.hibernate.core
+    api libs.hikari
+
+    implementation libs.protobuf.java.util
+    implementation libs.awssdk.url.connection.client
+    implementation libs.flyway.core
+    implementation libs.flyway.database.postgresql
+    implementation libs.postgresql
+    implementation libs.slf4j.api
+
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}

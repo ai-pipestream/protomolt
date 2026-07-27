@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The document-ledger persistence unit. Deliberately carries NO datasource
+  configuration: the DataSource (a HikariCP pool managed by LedgerDatabase)
+  is injected programmatically via the "hibernate.connection.datasource"
+  property when the EntityManagerFactory is built, so the same unit works
+  against any pool/config without XML edits.
+-->
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence https://jakarta.ee/xml/ns/persistence/persistence_3_0.xsd"
+             version="3.0">
+    <persistence-unit name="document-ledger" transaction-type="RESOURCE_LOCAL">
+        <provider>org.hibernate.jpa.HibernatePersistenceProvider</provider>
+        <class>ai.pipestream.proto.repo.container.ledger.DocumentRecord</class>
+        <class>ai.pipestream.proto.repo.container.ledger.DriveRecord</class>
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+        <properties>
+            <!-- Schema is owned by Flyway (db/migration); hbm2ddl is set to
+                 validate programmatically so entity<->schema drift fails fast
+                 at boot. -->
+        </properties>
+    </persistence-unit>
+</persistence>
