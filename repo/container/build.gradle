@@ -14,9 +14,14 @@ dependencies {
     implementation libs.flyway.database.postgresql
     implementation libs.postgresql
     implementation libs.slf4j.api
+    // Kafka eventing: the outbox relay publishes through the protomolt serde
+    // (Confluent wire format over the packaged document_events.proto contract).
+    implementation project(':protomolt-serde')
+    implementation libs.kafka.clients
 
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
 }

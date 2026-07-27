@@ -204,7 +204,10 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
 2. Lifecycle: purge queue, reconciler, coherence probe. **(Landed — the
    `document_purges` queue (V3) replaces the Kafka event, the JDBC
    `PurgeQueue` is the SPI; see repo/README.md § The purge lifecycle.)**
-3. DocumentStream upload; replay stream; drive API.
+3. DocumentStream upload; replay stream; drive API. Kafka eventing:
+   **(Landed: transactional outbox (`document_events_outbox`, V4) drained
+   by a virtual-thread relay to the `document-events` topic through the
+   protomolt serde; see repo/README.md § Kafka eventing.)**
 4. account-service + IdentityResolver SPI; account-events.
 5. Parquet projections; Document AI emitter.
 6. Engine/search/frontend (separate tracks).

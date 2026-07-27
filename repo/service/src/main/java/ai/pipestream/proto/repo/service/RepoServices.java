@@ -12,6 +12,8 @@ import ai.pipestream.proto.repo.container.ledger.DriveRecord;
 import ai.pipestream.proto.repo.container.ledger.LedgerDatabase;
 import ai.pipestream.proto.repo.container.ledger.Tx;
 import ai.pipestream.proto.repo.container.lifecycle.CoherenceProbe;
+import ai.pipestream.proto.repo.container.lifecycle.EventRelay;
+import ai.pipestream.proto.repo.container.lifecycle.JdbcEventOutbox;
 import ai.pipestream.proto.repo.container.lifecycle.JdbcPurgeQueue;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeQueue;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeSweeper;
@@ -29,6 +31,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.services.HealthStatusManager;
+import org.apache.kafka.clients.producer.KafkaProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -96,6 +99,9 @@ public final class RepoServices implements AutoCloseable {
     private final PurgeSweeper purgeSweeper;
     private final StorageReconciler storageReconciler;
     private final CoherenceProbe coherenceProbe;
+    private final JdbcEventOutbox eventOutbox;
+    private final EventRelay eventRelay;
+    private final KafkaProducer<String, com.google.protobuf.Message> eventProducer;
 
     private final List<Server> servers = new CopyOnWriteArrayList<>();
     private final List<UploadHttpServer> httpServers = new CopyOnWriteArrayList<>();
@@ -142,8 +148,15 @@ public final class RepoServices implements AutoCloseable {
             }
         }
         this.partStorage = new PartStorage();
+        // Kafka eventing (DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS): the
+        // transactional outbox. Unset = no outbox, no relay, no producer, and
+        // the commit points skip the outbox entirely (zero overhead).
+        this.eventOutbox = config.kafkaEnabled() ? new JdbcEventOutbox(tx) : null;
+        this.eventRelay = eventOutbox != null ? new EventRelay(eventOutbox) : null;
+        this.eventProducer = eventOutbox != null
+                ? EventRelay.newProducer(config.kafkaBootstrapServers()) : null;
         this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
-                blobStore, partStorage, purgeQueue);
+                blobStore, partStorage, purgeQueue, eventOutbox);
         this.services = List.of(
                 documentService,
                 new DriveGrpcService(driveLedger, s3Client,
@@ -151,7 +164,7 @@ public final class RepoServices implements AutoCloseable {
         // The lifecycle engine (two-phase delete): stateless workers over the
         // same ledgers/queue, driven by startLifecycle()'s loops or, in tests,
         // by hand via the accessors below.
-        this.s3Purger = new S3Purger(tx, documentLedger, driveLedger, purgeQueue);
+        this.s3Purger = new S3Purger(tx, documentLedger, driveLedger, purgeQueue, eventOutbox);
         this.purgeSweeper = new PurgeSweeper(tx, documentLedger, driveLedger, purgeQueue);
         this.storageReconciler = new StorageReconciler(documentLedger);
         this.coherenceProbe = new CoherenceProbe(documentLedger, driveLedger);
@@ -253,7 +266,10 @@ public final class RepoServices implements AutoCloseable {
      * sweeper ({@code sweepOnce} every {@code DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS},
      * default 60000). When {@code DOCUMENT_PLATFORM_RECONCILE_ENABLED} is set,
      * a third slow loop reconciles every drive (dry-run logging unless
-     * {@code DOCUMENT_PLATFORM_RECONCILE_DRY_RUN=false}). Every loop catches
+     * {@code DOCUMENT_PLATFORM_RECONCILE_DRY_RUN=false}). When
+     * {@code DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS} is set, a fourth loop
+     * relays the document-events outbox to Kafka (same drain/backoff shape as
+     * the purger). Every loop catches
      * and logs per iteration — one bad record never kills a loop. No-op when
      * {@code DOCUMENT_PLATFORM_LIFECYCLE_ENABLED=false}; the loops stop in
      * {@link #close()}.
@@ -275,6 +291,16 @@ public final class RepoServices implements AutoCloseable {
             purgeSweeper.sweepOnce();
             sleep(config.sweepIntervalMs());
         });
+        if (eventRelay != null) {
+            startLifecycleThread("repo-event-relay", () -> {
+                int published = eventRelay.relayOnce(eventProducer, config.kafkaTopic(),
+                        RELAY_BATCH_SIZE);
+                // Idle backoff: work left → drain again immediately; empty → wait.
+                if (published == 0) {
+                    sleep(config.purgeIntervalMs());
+                }
+            });
+        }
         if (config.reconcileEnabled()) {
             startLifecycleThread("repo-storage-reconciler", () -> {
                 reconcileAllDrives();
@@ -289,6 +315,9 @@ public final class RepoServices implements AutoCloseable {
 
     /** Purge drain batch size per loop iteration. */
     private static final int PURGE_BATCH_SIZE = 100;
+
+    /** Event-relay drain batch size per loop iteration. */
+    private static final int RELAY_BATCH_SIZE = 100;
 
     /** One reconcile pass over every drive's bucket scope. */
     private void reconcileAllDrives() {
@@ -360,6 +389,9 @@ public final class RepoServices implements AutoCloseable {
             }
         }
         servers.clear();
+        if (eventProducer != null) {
+            eventProducer.close();
+        }
         if (remoteChannel != null) {
             remoteChannel.shutdownNow();
         }
@@ -439,5 +471,17 @@ public final class RepoServices implements AutoCloseable {
 
     CoherenceProbe coherenceProbe() {
         return coherenceProbe;
+    }
+
+    JdbcEventOutbox eventOutbox() {
+        return eventOutbox;
+    }
+
+    EventRelay eventRelay() {
+        return eventRelay;
+    }
+
+    KafkaProducer<String, com.google.protobuf.Message> eventProducer() {
+        return eventProducer;
     }
 }

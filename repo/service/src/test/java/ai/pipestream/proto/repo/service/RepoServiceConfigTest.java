@@ -79,4 +79,27 @@ class RepoServiceConfigTest {
         assertThat(explicit.redisTtlSeconds()).isEqualTo(60);
         assertThat(explicit.redisMaxObjectBytes()).isEqualTo(4096L);
     }
+
+    @Test
+    void kafkaIsOffUnlessBootstrapServersAreSet() {
+        RepoServiceConfig off = config(-1, null, null, null);
+        assertThat(off.kafkaEnabled()).isFalse();
+        assertThat(off.kafkaBootstrapServers()).isNull();
+        assertThat(off.kafkaTopic()).isEqualTo("document-events");
+
+        RepoServiceConfig on = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "broker-1:9092,broker-2:9092", null);
+        assertThat(on.kafkaEnabled()).isTrue();
+        assertThat(on.kafkaBootstrapServers()).isEqualTo("broker-1:9092,broker-2:9092");
+        assertThat(on.kafkaTopic()).isEqualTo("document-events");
+
+        RepoServiceConfig blank = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "  ", "other-topic");
+        assertThat(blank.kafkaEnabled()).isFalse();
+        assertThat(blank.kafkaTopic()).isEqualTo("other-topic");
+    }
 }

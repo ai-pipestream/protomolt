@@ -13,10 +13,15 @@ dependencies {
     // JSON library; see libs.versions.toml).
     implementation libs.jackson.databind
     implementation libs.slf4j.api
+    // Kafka eventing: the event relay's producer type is part of the wiring
+    // here (the serde itself stays behind repo-container's EventRelay).
+    implementation libs.kafka.clients
 
     runtimeOnly libs.slf4j.simple
 
+    testImplementation project(':protomolt-serde')
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
 }
