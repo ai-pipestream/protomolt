@@ -35,10 +35,12 @@ jobs:
 
       # GraalVM CE is the build JDK for the whole job: it builds the JVM
       # artifacts like any JDK 25 and provides native-image for the CLI.
+      # (graalvm-community, not graalvm: setup-java's 'graalvm' is the Oracle
+      # distribution, whose native-image fails on netty-tcnative class init.)
       - name: Set up GraalVM
         uses: actions/setup-java@v4
         with:
-          distribution: graalvm
+          distribution: graalvm-community
           java-version: 25
 
       - uses: actions/setup-node@v4
@@ -116,7 +118,7 @@ jobs:
       - name: Set up GraalVM
         uses: actions/setup-java@v4
         with:
-          distribution: graalvm
+          distribution: graalvm-community
           java-version: 25
 
       - name: Build the native CLI (arm64)
