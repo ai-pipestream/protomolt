@@ -11,6 +11,13 @@ option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.repo.v1";
 
 // ============================================================================
+// CONVENTION — extension metadata: field 99 is the extension-metadata map
+// (map<string, string> metadata) on every message that carries one. Struct
+// fields with distinct names (e.g. Blob.metadata, SearchMetadata.custom_fields)
+// are for genuinely nested values and keep their own field numbers.
+// ============================================================================
+
+// ============================================================================
 // DOCUMENT — the generic core document container of the platform.
 //
 // Reshaped from pipestream's PipeDoc: same part-decomposable shape (the
@@ -89,8 +96,8 @@ message ParsedMetadata {
   string parser_name = 2;
   // Parser-specific protobuf payload.
   google.protobuf.Any data = 3;
-  // Extensible key-value metadata.
-  map<string, string> metadata = 4;
+  // Extensible key-value metadata (extension-metadata map — see convention).
+  map<string, string> metadata = 99;
 }
 
 // Standardized search engine metadata.
@@ -118,7 +125,7 @@ message SearchMetadata {
   // Category or classification label for the document.
   optional string category = 11;
   // Generic key-value metadata for extensibility.
-  map<string, string> metadata = 12;
+  map<string, string> metadata = 99;
   // Results from semantic chunking and embedding processes. One entry per
   // processing configuration applied to the document; consecutive entries
   // sharing a result_id form one chunk set (the CHUNKS storage part).
@@ -210,7 +217,7 @@ message SemanticChunk {
   optional int32 start_offset = 4;
   optional int32 end_offset = 5;
   repeated ChunkEmbedding embeddings = 6;
-  map<string, string> metadata = 7;
+  map<string, string> metadata = 99;
 }
 
 // Output of one semantic processing configuration: a named chunk set with
@@ -222,6 +229,6 @@ message SemanticProcessingResult {
   optional string embedding_config_id = 3;
   repeated SemanticChunk chunks = 4;
   optional google.protobuf.Timestamp created_date = 5;
-  map<string, string> metadata = 6;
+  map<string, string> metadata = 99;
 }
 

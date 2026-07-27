@@ -36,9 +36,12 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  * @param blobStore which {@code BlobStore} implementation backs the services
  *        ({@code DOCUMENT_PLATFORM_BLOB_STORE}): {@code "s3"} (default; the
  *        direct object-storage path), {@code "repo"} (delegate bytes to
- *        another repo-service over gRPC at {@code repoTarget}), or
+ *        another repo-service over gRPC at {@code repoTarget}),
  *        {@code "repo-inprocess"} (same, over the in-process transport —
- *        {@code repoTarget} is the in-process server name)
+ *        {@code repoTarget} is the in-process server name), {@code "redis"}
+ *        (objects live in Redis at {@code redisUri}), or
+ *        {@code "s3-redis-cache"} (S3 of record with a Redis read-through/
+ *        write-through cache in front)
  * @param repoTarget the remote repo-service address
  *        ({@code DOCUMENT_PLATFORM_REPO_TARGET}, {@code host:port} for
  *        {@code "repo"}, an in-process server name for
@@ -46,6 +49,17 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  * @param repoDrive the drive name the repo-backed store addresses on the
  *        remote service ({@code DOCUMENT_PLATFORM_REPO_DRIVE}, default
  *        {@code "default"}) — see {@code RemoteBlobStore}
+ * @param redisUri the Redis connection URI
+ *        ({@code DOCUMENT_PLATFORM_REDIS_URI}, default
+ *        {@code redis://localhost:6379}) — used by the {@code redis} and
+ *        {@code s3-redis-cache} blob-store modes
+ * @param redisTtlSeconds per-object TTL in Redis
+ *        ({@code DOCUMENT_PLATFORM_REDIS_TTL_SECONDS}, default 3600; in
+ *        {@code s3-redis-cache} mode this is the cache-entry TTL)
+ * @param redisMaxObjectBytes largest object admitted to Redis
+ *        ({@code DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES}, default 8388608;
+ *        0 = unbounded) — in {@code s3-redis-cache} mode this is the cache
+ *        ceiling: larger objects bypass the cache
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -58,7 +72,10 @@ public record RepoServiceConfig(
         int httpPort,
         String blobStore,
         String repoTarget,
-        String repoDrive) {
+        String repoDrive,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -80,6 +97,12 @@ public record RepoServiceConfig(
     public static final String ENV_REPO_TARGET = "DOCUMENT_PLATFORM_REPO_TARGET";
     /** Environment variable for the drive the repo-backed store addresses remotely. */
     public static final String ENV_REPO_DRIVE = "DOCUMENT_PLATFORM_REPO_DRIVE";
+    /** Environment variable for the Redis connection URI (redis blob-store modes). */
+    public static final String ENV_REDIS_URI = "DOCUMENT_PLATFORM_REDIS_URI";
+    /** Environment variable for the Redis per-object TTL in seconds. */
+    public static final String ENV_REDIS_TTL_SECONDS = "DOCUMENT_PLATFORM_REDIS_TTL_SECONDS";
+    /** Environment variable for the largest object admitted to Redis. */
+    public static final String ENV_REDIS_MAX_OBJECT_BYTES = "DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -91,7 +114,14 @@ public record RepoServiceConfig(
     public static final String BLOB_STORE_REPO = "repo";
     /** Blob-store selection value: a remote repo-service over the in-process transport. */
     public static final String BLOB_STORE_REPO_INPROCESS = "repo-inprocess";
+    /** Blob-store selection value: objects live in Redis. */
+    public static final String BLOB_STORE_REDIS = "redis";
+    /** Blob-store selection value: S3 of record with a Redis cache in front. */
+    public static final String BLOB_STORE_S3_REDIS_CACHE = "s3-redis-cache";
     static final String DEFAULT_REPO_DRIVE = "default";
+    static final String DEFAULT_REDIS_URI = "redis://localhost:6379";
+    static final int DEFAULT_REDIS_TTL_SECONDS = 3600;
+    static final long DEFAULT_REDIS_MAX_OBJECT_BYTES = 8388608L;
 
     public RepoServiceConfig {
         if (grpcPort < 0) {
@@ -121,17 +151,30 @@ public record RepoServiceConfig(
         }
         blobStore = blobStore.trim().toLowerCase(java.util.Locale.ROOT);
         if (!blobStore.equals(BLOB_STORE_S3) && !blobStore.equals(BLOB_STORE_REPO)
-                && !blobStore.equals(BLOB_STORE_REPO_INPROCESS)) {
-            throw new IllegalArgumentException(ENV_BLOB_STORE + " must be one of s3|repo|repo-inprocess"
+                && !blobStore.equals(BLOB_STORE_REPO_INPROCESS)
+                && !blobStore.equals(BLOB_STORE_REDIS)
+                && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
+            throw new IllegalArgumentException(ENV_BLOB_STORE
+                    + " must be one of s3|repo|repo-inprocess|redis|s3-redis-cache"
                     + " (got \"" + blobStore + "\")");
         }
         repoTarget = blankToNull(repoTarget);
-        if (!blobStore.equals(BLOB_STORE_S3) && repoTarget == null) {
+        if ((blobStore.equals(BLOB_STORE_REPO) || blobStore.equals(BLOB_STORE_REPO_INPROCESS))
+                && repoTarget == null) {
             throw new IllegalArgumentException(ENV_REPO_TARGET + " is required when " + ENV_BLOB_STORE
                     + "=" + blobStore);
         }
         if (repoDrive == null || repoDrive.isBlank()) {
             repoDrive = DEFAULT_REPO_DRIVE;
+        }
+        if (redisUri == null || redisUri.isBlank()) {
+            redisUri = DEFAULT_REDIS_URI;
+        }
+        if (redisTtlSeconds < 0) {
+            redisTtlSeconds = DEFAULT_REDIS_TTL_SECONDS;
+        }
+        if (redisMaxObjectBytes < 0) {
+            redisMaxObjectBytes = DEFAULT_REDIS_MAX_OBJECT_BYTES;
         }
     }
 
@@ -163,7 +206,11 @@ public record RepoServiceConfig(
                 parseHttpPort(System.getenv(ENV_HTTP_PORT)),
                 envOrDefault(ENV_BLOB_STORE, BLOB_STORE_S3),
                 System.getenv(ENV_REPO_TARGET),
-                envOrDefault(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE));
+                envOrDefault(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE),
+                envOrDefault(ENV_REDIS_URI, DEFAULT_REDIS_URI),
+                parseIntOrDefault(System.getenv(ENV_REDIS_TTL_SECONDS), DEFAULT_REDIS_TTL_SECONDS),
+                parseLongOrDefault(System.getenv(ENV_REDIS_MAX_OBJECT_BYTES),
+                        DEFAULT_REDIS_MAX_OBJECT_BYTES));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */
@@ -189,6 +236,17 @@ public record RepoServiceConfig(
         }
         try {
             return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static long parseLongOrDefault(String value, long fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(value.trim());
         } catch (NumberFormatException e) {
             return fallback;
         }
