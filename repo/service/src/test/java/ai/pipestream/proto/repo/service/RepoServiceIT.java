@@ -5,6 +5,8 @@ import ai.pipestream.proto.repo.v1.AccessRule;
 import ai.pipestream.proto.repo.v1.Blob;
 import ai.pipestream.proto.repo.v1.BlobBag;
 import ai.pipestream.proto.repo.v1.CreateDriveRequest;
+import ai.pipestream.proto.repo.v1.DeleteBlobRequest;
+import ai.pipestream.proto.repo.v1.DeleteBlobResponse;
 import ai.pipestream.proto.repo.v1.DeleteDocumentByReferenceCommand;
 import ai.pipestream.proto.repo.v1.DeleteDocumentOutcome;
 import ai.pipestream.proto.repo.v1.DeleteDocumentRequest;
@@ -34,6 +36,8 @@ import ai.pipestream.proto.repo.v1.OwnershipContext;
 import ai.pipestream.proto.repo.v1.ParsedMetadata;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
+import ai.pipestream.proto.repo.v1.PutBlobRequest;
+import ai.pipestream.proto.repo.v1.PutBlobResponse;
 import ai.pipestream.proto.repo.v1.SaveDocumentRequest;
 import ai.pipestream.proto.repo.v1.SaveDocumentResponse;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
@@ -102,7 +106,9 @@ class RepoServiceIT {
                 LOCALSTACK.getRegion(),
                 LOCALSTACK.getAccessKey(),
                 LOCALSTACK.getSecretKey(),
-                "it-docs");
+                "it-docs",
+                0, // HTTP upload route not exercised by this IT
+                null, null, null); // blob store: the default direct-S3 path
         services = RepoServices.build(config);
         services.startInProcess("it");
         channel = InProcessChannelBuilder.forName("it").build();
@@ -506,6 +512,88 @@ class RepoServiceIT {
         assertThat(again.getOutcome())
                 .isEqualTo(DeleteDocumentOutcome.DELETE_DOCUMENT_OUTCOME_NOTHING_TO_REMOVE);
         assertThat(again.getDocumentsRemoved()).isZero();
+    }
+
+    @Test
+    void putBlobExplicitKeyRoundTripsAndDeleteIsIdempotent() {
+        String account = "acct-blob";
+        createDrive("blobs", account);
+        byte[] data = ("explicit-key-payload-".repeat(500)).getBytes(
+                java.nio.charset.StandardCharsets.UTF_8);
+
+        PutBlobResponse put = documents.putBlob(PutBlobRequest.newBuilder()
+                .setDriveName("blobs")
+                .setObjectKey("custom/report.pdf")
+                .setData(ByteString.copyFrom(data))
+                .setMimeType("application/pdf")
+                .build());
+        assertThat(put.getStorageRef().getDriveName()).isEqualTo("blobs");
+        assertThat(put.getStorageRef().getObjectKey()).isEqualTo("custom/report.pdf");
+        assertThat(put.getSizeBytes()).isEqualTo(data.length);
+        assertThat(put.getSha256()).isEqualTo(DocumentPartCodec.sha256Hex(data));
+
+        // Round trip via GetBlob: the exact bytes back.
+        var got = documents.getBlob(GetBlobRequest.newBuilder()
+                .setStorageRef(put.getStorageRef())
+                .build());
+        assertThat(got.getData().toByteArray()).isEqualTo(data);
+        assertThat(got.getMimeType()).isEqualTo("application/pdf");
+
+        // Delete is idempotent: first delete reports true, the re-delete
+        // reports false (absence is not an error), and the object is gone.
+        DeleteBlobResponse deleted = documents.deleteBlob(DeleteBlobRequest.newBuilder()
+                .setStorageRef(put.getStorageRef())
+                .build());
+        assertThat(deleted.getDeleted()).isTrue();
+        assertThatThrownBy(() -> documents.getBlob(GetBlobRequest.newBuilder()
+                .setStorageRef(put.getStorageRef())
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+        DeleteBlobResponse again = documents.deleteBlob(DeleteBlobRequest.newBuilder()
+                .setStorageRef(put.getStorageRef())
+                .build());
+        assertThat(again.getDeleted()).isFalse();
+    }
+
+    @Test
+    void putBlobGeneratedKeyIsContentAddressedAndIdempotent() {
+        String account = "acct-blobgen";
+        createDrive("gen", account);
+        byte[] data = ("generated-key-payload-".repeat(300)).getBytes(
+                java.nio.charset.StandardCharsets.UTF_8);
+
+        PutBlobResponse first = documents.putBlob(PutBlobRequest.newBuilder()
+                .setDriveName("gen")
+                .setData(ByteString.copyFrom(data))
+                .build());
+        assertThat(first.getStorageRef().getObjectKey()).startsWith("gen/blobs/");
+
+        // Same content, blank key again: the SAME object key — identical puts
+        // land idempotently instead of orphaning a second copy.
+        PutBlobResponse second = documents.putBlob(PutBlobRequest.newBuilder()
+                .setDriveName("gen")
+                .setData(ByteString.copyFrom(data))
+                .build());
+        assertThat(second.getStorageRef().getObjectKey())
+                .isEqualTo(first.getStorageRef().getObjectKey());
+        assertThat(second.getSha256()).isEqualTo(first.getSha256());
+
+        // Different content addresses a different object.
+        PutBlobResponse other = documents.putBlob(PutBlobRequest.newBuilder()
+                .setDriveName("gen")
+                .setData(ByteString.copyFromUtf8("different"))
+                .build());
+        assertThat(other.getStorageRef().getObjectKey())
+                .isNotEqualTo(first.getStorageRef().getObjectKey());
+
+        // Unknown drive is NOT_FOUND.
+        assertThatThrownBy(() -> documents.putBlob(PutBlobRequest.newBuilder()
+                .setDriveName("no-such-drive")
+                .setData(ByteString.copyFromUtf8("x"))
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
     }
 
     @Test

@@ -28,6 +28,24 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE}, default
  *        {@code "documents"}): a drive without an explicit bucket gets
  *        {@code <base>-<accountId>-<name>}, sanitized to S3 bucket rules
+ * @param httpPort the HTTP upload listen port
+ *        ({@code DOCUMENT_PLATFORM_HTTP_PORT}, default 8080; {@code 0} or
+ *        {@code "off"} disables the HTTP server — see {@link RepoServiceMain};
+ *        tests that want an ephemeral port call
+ *        {@code RepoServices.startHttp(0)} directly)
+ * @param blobStore which {@code BlobStore} implementation backs the services
+ *        ({@code DOCUMENT_PLATFORM_BLOB_STORE}): {@code "s3"} (default; the
+ *        direct object-storage path), {@code "repo"} (delegate bytes to
+ *        another repo-service over gRPC at {@code repoTarget}), or
+ *        {@code "repo-inprocess"} (same, over the in-process transport —
+ *        {@code repoTarget} is the in-process server name)
+ * @param repoTarget the remote repo-service address
+ *        ({@code DOCUMENT_PLATFORM_REPO_TARGET}, {@code host:port} for
+ *        {@code "repo"}, an in-process server name for
+ *        {@code "repo-inprocess"}); required for both {@code repo} modes
+ * @param repoDrive the drive name the repo-backed store addresses on the
+ *        remote service ({@code DOCUMENT_PLATFORM_REPO_DRIVE}, default
+ *        {@code "default"}) — see {@code RemoteBlobStore}
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -36,7 +54,11 @@ public record RepoServiceConfig(
         String s3Region,
         String s3AccessKey,
         String s3SecretKey,
-        String defaultBucketBase) {
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String repoTarget,
+        String repoDrive) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -50,10 +72,26 @@ public record RepoServiceConfig(
     public static final String ENV_S3_SECRET_KEY = "DOCUMENT_PLATFORM_S3_SECRET_KEY";
     /** Environment variable for the provisioned-bucket name base. */
     public static final String ENV_DEFAULT_BUCKET_BASE = "DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE";
+    /** Environment variable for the HTTP upload listen port ({@code 0}/"off" disables). */
+    public static final String ENV_HTTP_PORT = "DOCUMENT_PLATFORM_HTTP_PORT";
+    /** Environment variable selecting the BlobStore implementation. */
+    public static final String ENV_BLOB_STORE = "DOCUMENT_PLATFORM_BLOB_STORE";
+    /** Environment variable for the remote repo-service target (repo blob-store modes). */
+    public static final String ENV_REPO_TARGET = "DOCUMENT_PLATFORM_REPO_TARGET";
+    /** Environment variable for the drive the repo-backed store addresses remotely. */
+    public static final String ENV_REPO_DRIVE = "DOCUMENT_PLATFORM_REPO_DRIVE";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
     static final String DEFAULT_BUCKET_BASE = "documents";
+    static final int DEFAULT_HTTP_PORT = 8080;
+    /** Blob-store selection value: direct S3 object storage (the default). */
+    public static final String BLOB_STORE_S3 = "s3";
+    /** Blob-store selection value: a remote repo-service over gRPC. */
+    public static final String BLOB_STORE_REPO = "repo";
+    /** Blob-store selection value: a remote repo-service over the in-process transport. */
+    public static final String BLOB_STORE_REPO_INPROCESS = "repo-inprocess";
+    static final String DEFAULT_REPO_DRIVE = "default";
 
     public RepoServiceConfig {
         if (grpcPort < 0) {
@@ -74,6 +112,26 @@ public record RepoServiceConfig(
         }
         if (defaultBucketBase == null || defaultBucketBase.isBlank()) {
             defaultBucketBase = DEFAULT_BUCKET_BASE;
+        }
+        if (httpPort < 0) {
+            httpPort = DEFAULT_HTTP_PORT;
+        }
+        if (blobStore == null || blobStore.isBlank()) {
+            blobStore = BLOB_STORE_S3;
+        }
+        blobStore = blobStore.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!blobStore.equals(BLOB_STORE_S3) && !blobStore.equals(BLOB_STORE_REPO)
+                && !blobStore.equals(BLOB_STORE_REPO_INPROCESS)) {
+            throw new IllegalArgumentException(ENV_BLOB_STORE + " must be one of s3|repo|repo-inprocess"
+                    + " (got \"" + blobStore + "\")");
+        }
+        repoTarget = blankToNull(repoTarget);
+        if (!blobStore.equals(BLOB_STORE_S3) && repoTarget == null) {
+            throw new IllegalArgumentException(ENV_REPO_TARGET + " is required when " + ENV_BLOB_STORE
+                    + "=" + blobStore);
+        }
+        if (repoDrive == null || repoDrive.isBlank()) {
+            repoDrive = DEFAULT_REPO_DRIVE;
         }
     }
 
@@ -101,7 +159,19 @@ public record RepoServiceConfig(
                 envOrDefault(ENV_S3_REGION, DEFAULT_S3_REGION),
                 System.getenv(ENV_S3_ACCESS_KEY),
                 System.getenv(ENV_S3_SECRET_KEY),
-                envOrDefault(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE));
+                envOrDefault(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
+                parseHttpPort(System.getenv(ENV_HTTP_PORT)),
+                envOrDefault(ENV_BLOB_STORE, BLOB_STORE_S3),
+                System.getenv(ENV_REPO_TARGET),
+                envOrDefault(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE));
+    }
+
+    /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */
+    private static int parseHttpPort(String value) {
+        if (value != null && value.trim().equalsIgnoreCase("off")) {
+            return 0;
+        }
+        return parseIntOrDefault(value, DEFAULT_HTTP_PORT);
     }
 
     private static String envOrDefault(String name, String fallback) {

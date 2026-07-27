@@ -257,6 +257,45 @@ message ListDocumentsResponse {
   int32 total_count = 3;
 }
 
+// Request to store raw blob bytes on a drive's backing store.
+message PutBlobRequest {
+  // Drive whose backing store receives the object (resolves server-side to
+  // its bucket, like GetBlob).
+  string drive_name = 1;
+  // Object key within the drive's backing store. Blank = the server
+  // generates "<drive.prefix>/blobs/<uuidv5 of the content sha256>", so
+  // identical puts land idempotently on the same object.
+  string object_key = 2;
+  // The blob bytes. Unary RPC: the payload transits the service in memory —
+  // bulk uploads belong on the streaming HTTP upload route instead.
+  bytes data = 3;
+  // MIME type stored with the object (default application/octet-stream).
+  string mime_type = 4;
+}
+
+// Response carrying the stored blob's coordinates and integrity proof.
+message PutBlobResponse {
+  // Where the object landed.
+  ai.pipestream.proto.repo.v1.FileStorageReference storage_ref = 1;
+  // Size of the stored object in bytes.
+  int64 size_bytes = 2;
+  // Lowercase hex SHA-256 of the content, computed server-side. The write
+  // carries this as the store's checksum trailer, so the store verifies the
+  // landed bytes and the returned value is what actually persisted.
+  string sha256 = 3;
+}
+
+// Request to delete a raw blob by its coordinates. Idempotent.
+message DeleteBlobRequest {
+  ai.pipestream.proto.repo.v1.FileStorageReference storage_ref = 1;
+}
+
+// Result of a DeleteBlob RPC (absence is not an error).
+message DeleteBlobResponse {
+  // False when the object did not exist (idempotent re-delete).
+  bool deleted = 1;
+}
+
 // Request to retrieve raw blob content using a FileStorageReference.
 message GetBlobRequest {
   FileStorageReference storage_ref = 1;
@@ -292,6 +331,15 @@ service DocumentService {
 
   // Retrieve raw blob content using a FileStorageReference.
   rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
+
+  // Store raw blob bytes on a drive's backing store; verified write with a
+  // server-computed SHA-256. Blank object_key = content-addressed key, so
+  // identical puts are idempotent.
+  rpc PutBlob(PutBlobRequest) returns (PutBlobResponse);
+
+  // Delete a raw blob by its coordinates. Idempotent: deleting an absent
+  // object succeeds with deleted=false.
+  rpc DeleteBlob(DeleteBlobRequest) returns (DeleteBlobResponse);
 
   // Inspect a document's part manifest without fetching any part bytes.
   rpc GetDocumentManifest(GetDocumentManifestRequest) returns (GetDocumentManifestResponse);

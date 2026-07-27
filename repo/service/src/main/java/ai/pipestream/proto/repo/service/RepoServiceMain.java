@@ -28,6 +28,11 @@ public final class RepoServiceMain {
         RepoServiceConfig config = RepoServiceConfig.fromEnvironment();
         RepoServices services = RepoServices.build(config);
         Server server = services.startNetty(config.grpcPort());
+        // HTTP upload route: DOCUMENT_PLATFORM_HTTP_PORT, default 8080; 0 or
+        // "off" disables it (gRPC-only deployments).
+        if (config.httpPort() > 0) {
+            services.startHttp(config.httpPort());
+        }
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 services.close();

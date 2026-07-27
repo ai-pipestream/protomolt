@@ -1,15 +1,21 @@
 package ai.pipestream.proto.repo.service;
 
+import ai.pipestream.proto.repo.container.blob.BlobStore;
 import ai.pipestream.proto.repo.container.blob.PartStorage;
 import ai.pipestream.proto.repo.container.blob.S3BlobStore;
 import ai.pipestream.proto.repo.container.ledger.DocumentLedger;
 import ai.pipestream.proto.repo.container.ledger.DriveLedger;
 import ai.pipestream.proto.repo.container.ledger.LedgerDatabase;
 import ai.pipestream.proto.repo.container.ledger.Tx;
+import ai.pipestream.proto.repo.service.client.RemoteBlobStore;
+import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import io.grpc.BindableService;
+import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
+import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.services.HealthStatusManager;
@@ -47,12 +53,18 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Boot order (in {@link #build(RepoServiceConfig)}): ledger database
  * (pool → Flyway migration → validated JPA mappings) → transaction wrapper +
- * ledgers → S3 client → blob store → part storage → the two gRPC service
- * impls. Construction fails fast (migrations, mapping validation) — nothing
- * starts lazily. Every server's call executor is a virtual-thread-per-task
- * executor: every handler is plain blocking code (JDBC, S3), and a blocked
- * call parks its virtual thread instead of a carrier, so no
- * offload/directExecutor tricks are needed.
+ * ledgers → S3 client → blob store (S3 direct, or the dogfood
+ * {@code RemoteBlobStore} when {@code DOCUMENT_PLATFORM_BLOB_STORE} selects a
+ * repo mode) → part storage → the two gRPC service impls. Construction fails
+ * fast (migrations, mapping validation) — nothing starts lazily. Every
+ * server's call executor is a virtual-thread-per-task executor: every handler
+ * is plain blocking code (JDBC, S3), and a blocked call parks its virtual
+ * thread instead of a carrier, so no offload/directExecutor tricks are
+ * needed.
+ *
+ * <p>Bulk uploads are served by {@link #startHttp(int)}: the streaming HTTP
+ * route whose body flows to object storage without buffering, next to the
+ * unary gRPC API.
  */
 public final class RepoServices implements AutoCloseable {
 
@@ -64,11 +76,14 @@ public final class RepoServices implements AutoCloseable {
     private final DocumentLedger documentLedger;
     private final DriveLedger driveLedger;
     private final S3Client s3Client;
-    private final S3BlobStore blobStore;
+    private final BlobStore blobStore;
+    private final ManagedChannel remoteChannel;
     private final PartStorage partStorage;
+    private final DocumentGrpcService documentService;
     private final List<BindableService> services;
 
     private final List<Server> servers = new CopyOnWriteArrayList<>();
+    private final List<UploadHttpServer> httpServers = new CopyOnWriteArrayList<>();
 
     private RepoServices(RepoServiceConfig config) {
         this.config = config;
@@ -77,10 +92,27 @@ public final class RepoServices implements AutoCloseable {
         this.documentLedger = new DocumentLedger(tx);
         this.driveLedger = new DriveLedger(tx);
         this.s3Client = buildS3Client(config);
-        this.blobStore = new S3BlobStore(s3Client);
+        // Blob-store selection (DOCUMENT_PLATFORM_BLOB_STORE): "s3" is the
+        // direct object-storage path; "repo"/"repo-inprocess" dogfood the
+        // service's own blob API — bytes delegate to another repo-service
+        // (netty or in-process target) via RemoteBlobStore. Note the target
+        // must be a DIFFERENT service set: pointing a repo mode back at this
+        // one would recurse PutBlob into itself.
+        if (RepoServiceConfig.BLOB_STORE_S3.equals(config.blobStore())) {
+            this.blobStore = new S3BlobStore(s3Client);
+            this.remoteChannel = null;
+        } else {
+            this.remoteChannel = RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
+                    ? NettyChannelBuilder.forTarget(config.repoTarget()).usePlaintext().build()
+                    : InProcessChannelBuilder.forName(config.repoTarget()).build();
+            this.blobStore = new RemoteBlobStore(
+                    DocumentServiceGrpc.newBlockingStub(remoteChannel), config.repoDrive());
+        }
         this.partStorage = new PartStorage();
+        this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
+                blobStore, partStorage);
         this.services = List.of(
-                new DocumentGrpcService(documentLedger, driveLedger, tx, blobStore, partStorage),
+                documentService,
                 new DriveGrpcService(driveLedger, s3Client,
                         config.defaultBucketBase(), config.s3Region()));
     }
@@ -155,9 +187,31 @@ public final class RepoServices implements AutoCloseable {
         return server;
     }
 
+    /**
+     * Starts the streaming HTTP upload server ({@code POST
+     * /v1/documents:upload}, see {@link UploadHttpServer}) alongside the gRPC
+     * transports. This is where bulk bytes belong: the body streams to object
+     * storage without ever being buffered in memory, unlike the unary blob
+     * RPCs.
+     *
+     * @param port the listen port (0 = ephemeral; read the bound port back
+     *        from the returned server)
+     * @return the started HTTP server (also closed by {@link #close()})
+     */
+    public UploadHttpServer startHttp(int port) {
+        UploadHttpServer http = new UploadHttpServer(documentService, driveLedger, blobStore);
+        http.start(port);
+        httpServers.add(http);
+        return http;
+    }
+
     /** Stops all started servers, then closes the S3 client and the ledger database. */
     @Override
     public void close() {
+        for (UploadHttpServer http : httpServers) {
+            http.close();
+        }
+        httpServers.clear();
         for (Server server : servers) {
             server.shutdown();
         }
@@ -172,6 +226,9 @@ public final class RepoServices implements AutoCloseable {
             }
         }
         servers.clear();
+        if (remoteChannel != null) {
+            remoteChannel.shutdownNow();
+        }
         s3Client.close();
         database.close();
         LOG.info("repo-service stopped");
@@ -207,7 +264,7 @@ public final class RepoServices implements AutoCloseable {
         return driveLedger;
     }
 
-    S3BlobStore blobStore() {
+    BlobStore blobStore() {
         return blobStore;
     }
 
