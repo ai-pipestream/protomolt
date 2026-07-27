@@ -258,7 +258,12 @@ document. The console is built with Vite outside the Gradle build and its
 `dist` output is bundled when present, so the Gradle build itself still
 carries no frontend toolchain and the server builds and explains itself
 without the assets. Still open: the console is disabled in token mode
-until the session flow in the hardening backlog lands.
+until the session flow in the hardening backlog lands. And the console is
+reference-and-workbench only — a docs portal with long-form Markdown/MDX
+authoring alongside the generated OpenAPI reference, two-way Git-synced,
+remains on the backlog (the gap versus docs platforms like Scalar, whose
+interactive API reference we already cover for free via the generated
+OpenAPI document and bundled Swagger UI at `/docs`).
 
 **6. Cross-language project bootstrap.** With 1–4 in place, "cross-language
 out of the box" is mostly packaging: a project template (or plugin) where
