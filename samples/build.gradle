@@ -12,6 +12,20 @@ dependencies {
     implementation project(':protomolt-shapes')
     implementation libs.protobuf.java.util
 
+    // Court Document -> NDJSON -> Lucene sample.
+    implementation project(':protomolt-repo-proto')
+    implementation project(':protomolt-index-spi')
+    implementation project(':protomolt-index-ndjson')
+    implementation project(':protomolt-index-lucene')
+    implementation project(':protomolt-embeddings-model2vec')
+    implementation libs.jackson.databind
+
+    // The shared test-dependencies block in the root build skips samples.
+    testImplementation platform(libs.junit.bom)
+    testImplementation libs.junit.jupiter
+    testImplementation libs.assertj.core
+    testRuntimeOnly libs.junit.platform.launcher
+
     // Streaming demo: the ACP agent driver and the server-streaming search server.
     implementation 'com.agentclientprotocol:acp-core:0.14.0'
     implementation libs.grpc.stub
@@ -83,4 +97,26 @@ tasks.register('runAcpStreamingDemo', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'ai.pipestream.proto.samples.AcpStreamingDemo'
     workingDir = rootDir
+}
+
+tasks.register('runCourtDocIndex', JavaExec) {
+    group = 'application'
+    description = 'CourtListener JSONL -> Document -> NDJSON + Lucene (text + HNSW vectors):' +
+            ' -Pfixtures=... -Pout=... -Plimit=... [-Pmodel2vec=...]'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'ai.pipestream.proto.samples.CourtDocumentIndexSample'
+    doFirst {
+        def sampleArgs = []
+        ['fixtures', 'out', 'limit'].each { name ->
+            def value = findProperty(name)
+            if (value) {
+                sampleArgs += ["--${name}".toString(), value.toString()]
+            }
+        }
+        args sampleArgs
+        def model = findProperty('model2vec')
+        if (model) {
+            systemProperty 'protomolt.embeddings.model2vec.path', model.toString()
+        }
+    }
 }
