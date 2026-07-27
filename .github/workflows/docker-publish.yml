@@ -35,13 +35,23 @@ jobs:
 
       # GraalVM CE is the build JDK for the whole job: it builds the JVM
       # artifacts like any JDK 25 and provides native-image for the CLI.
-      # (graalvm-community, not graalvm: setup-java's 'graalvm' is the Oracle
-      # distribution, whose native-image fails on netty-tcnative class init.)
-      - name: Set up GraalVM
-        uses: actions/setup-java@v4
-        with:
-          distribution: graalvm-community
-          java-version: 25
+      # setup-java's 'graalvm' is the Oracle distribution (its native-image
+      # fails on netty-tcnative class init) and it has no CE distribution,
+      # so CE is installed from graalvm-ce-builds, pinned and verified.
+      - name: Set up GraalVM CE
+        run: |
+          case "$(uname -m)" in
+            x86_64) GA=linux-x64 ;;
+            aarch64) GA=linux-aarch64 ;;
+          esac
+          BASE=https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.1.3/graalvm-community-jdk-25i1-25.0.3_${GA}_bin.tar.gz
+          curl -sL -o /tmp/graalvm.tgz "$BASE"
+          echo "$(curl -sL "$BASE.sha256")  /tmp/graalvm.tgz" | sha256sum -c
+          mkdir -p "$RUNNER_WORKSPACE/graalvm"
+          tar xzf /tmp/graalvm.tgz -C "$RUNNER_WORKSPACE/graalvm" --strip-components=1
+          echo "$RUNNER_WORKSPACE/graalvm/bin" >> "$GITHUB_PATH"
+          echo "JAVA_HOME=$RUNNER_WORKSPACE/graalvm" >> "$GITHUB_ENV"
+          native-image --version
 
       - uses: actions/setup-node@v4
         with:
@@ -115,11 +125,20 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Set up GraalVM
-        uses: actions/setup-java@v4
-        with:
-          distribution: graalvm-community
-          java-version: 25
+      - name: Set up GraalVM CE
+        run: |
+          case "$(uname -m)" in
+            x86_64) GA=linux-x64 ;;
+            aarch64) GA=linux-aarch64 ;;
+          esac
+          BASE=https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.1.3/graalvm-community-jdk-25i1-25.0.3_${GA}_bin.tar.gz
+          curl -sL -o /tmp/graalvm.tgz "$BASE"
+          echo "$(curl -sL "$BASE.sha256")  /tmp/graalvm.tgz" | sha256sum -c
+          mkdir -p "$RUNNER_WORKSPACE/graalvm"
+          tar xzf /tmp/graalvm.tgz -C "$RUNNER_WORKSPACE/graalvm" --strip-components=1
+          echo "$RUNNER_WORKSPACE/graalvm/bin" >> "$GITHUB_PATH"
+          echo "JAVA_HOME=$RUNNER_WORKSPACE/graalvm" >> "$GITHUB_ENV"
+          native-image --version
 
       - name: Build the native CLI (arm64)
         run: ./gradlew :protomolt-cli:nativeCompile --no-daemon
