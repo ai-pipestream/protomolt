@@ -1,0 +1,34 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The claim-check document store contract: Document, manifest, and the document/drive gRPC services'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.73.0"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

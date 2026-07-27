@@ -78,6 +78,9 @@ def supportedModules = [
         'protomolt-json',
         'protomolt-rest',
         'protomolt-openapi',
+        'protomolt-repo-proto',
+        'protomolt-repo-container',
+        'protomolt-repo-service',
 ]
 
 javaPlatform {

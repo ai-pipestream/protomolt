@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.repo.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.repo.v1";
+
+// ============================================================================
+// DriveService — per-account storage namespaces.
+//
+// A drive binds (bucket, prefix, region, credentialsRef) and is the only
+// thing that resolves to object-storage coordinates; nothing but
+// repo-service speaks S3. Every account gets an intake and a pipeline drive
+// at provisioning time (account-service calls CreateDrive).
+// ============================================================================
+
+// What a drive is for. Intake drives hold staged source material; pipeline
+// drives hold inter-hop claim-check bodies.
+enum DriveType {
+  DRIVE_TYPE_UNSPECIFIED = 0;
+  DRIVE_TYPE_INTAKE = 1;
+  DRIVE_TYPE_PIPELINE = 2;
+  DRIVE_TYPE_CUSTOM = 3;
+}
+
+enum DriveStatus {
+  DRIVE_STATUS_UNSPECIFIED = 0;
+  DRIVE_STATUS_PROVISIONING = 1;
+  DRIVE_STATUS_ACTIVE = 2;
+  DRIVE_STATUS_SUSPENDED = 3;
+  DRIVE_STATUS_DELETED = 4;
+}
+
+// A per-account storage namespace over an object-storage location.
+message Drive {
+  // Unique drive identifier.
+  string drive_id = 1;
+  // Drive name, unique within the account (e.g. "intake", "pipeline").
+  string name = 2;
+  // Owning account.
+  string account_id = 3;
+  DriveType drive_type = 4;
+  // Storage provider ("s3" today; the BlobStore port hides it elsewhere).
+  string provider = 5;
+  // Bucket holding the drive's objects.
+  string bucket = 6;
+  // Key prefix within the bucket.
+  string prefix = 7;
+  // Object-store region (provider-specific; may be blank for S3-compatible).
+  string region = 8;
+  // Reference to credentials resolved at IO time (never the credentials
+  // themselves). Blank = the service default credentials chain.
+  string credentials_ref = 9;
+  DriveStatus status = 10;
+  map<string, string> metadata = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+message CreateDriveRequest {
+  // Name, unique within the account.
+  string name = 1;
+  string account_id = 2;
+  DriveType drive_type = 3;
+  // Provider; blank defaults to "s3".
+  string provider = 4;
+  // Bucket; blank = the service provisions one ("<base>-<account>-<name>").
+  string bucket = 5;
+  // Key prefix within the bucket; blank defaults to the drive name.
+  string prefix = 6;
+  string region = 7;
+  string credentials_ref = 8;
+  map<string, string> metadata = 9;
+}
+
+message CreateDriveResponse {
+  Drive drive = 1;
+}
+
+message GetDriveRequest {
+  // Coordinate — exactly one must be set.
+  oneof coordinate {
+    string drive_id = 1;
+    // Account-scoped name lookup (account_id + name).
+    string name = 2;
+  }
+  // Required for the name coordinate; ignored for drive_id.
+  string account_id = 3;
+}
+
+message GetDriveResponse {
+  Drive drive = 1;
+}
+
+message ListDrivesRequest {
+  // Tenant scope. Required.
+  string account_id = 1;
+  int32 limit = 2;
+  string continuation_token = 3;
+}
+
+message ListDrivesResponse {
+  repeated Drive drives = 1;
+  string next_continuation_token = 2;
+}
+
+// Drive lifecycle API. Account provisioning creates the intake + pipeline
+// drives through this service.
+service DriveService {
+  rpc CreateDrive(CreateDriveRequest) returns (CreateDriveResponse);
+  rpc GetDrive(GetDriveRequest) returns (GetDriveResponse);
+  rpc ListDrives(ListDrivesRequest) returns (ListDrivesResponse);
+}

@@ -1,0 +1,266 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.repo.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.repo.v1";
+
+// ============================================================================
+// DOCUMENT — the generic core document container of the platform.
+//
+// Reshaped from pipestream's PipeDoc: same part-decomposable shape (the
+// claim-check codec splits on search_metadata / blob_bag / parsed_metadata
+// boundaries), generic names, and a typed security model (OIS-aligned)
+// instead of bare ACL strings.
+// ============================================================================
+
+// Access decision of one ACL rule. Explicit DENY always wins over any grant.
+enum Access {
+  ACCESS_UNSPECIFIED = 0;
+  ACCESS_READ = 1;
+  ACCESS_WRITE = 2;
+  ACCESS_DENY = 3;
+}
+
+// One typed access rule (OIS-style: identity + identity type + display label).
+message AccessRule {
+  // SID, email, group id, or "public".
+  string identity = 1;
+  // "windows-sid" | "oauth-group" | "user-principal-name" | "cmis-user" |
+  // "local-role" | "public" | <custom>.
+  string identity_type = 2;
+  // Audit/debug label.
+  string display_name = 3;
+  Access access = 4;
+}
+
+// Document-level security. Extraction rides the document as first-class
+// metadata; evaluation is deny-wins with case-insensitive identity match
+// against the caller's principal + groups.
+message DocumentSecurity {
+  // When true, rules inherited from the container/source apply in addition
+  // to the explicit permissions below.
+  bool inheritance_enabled = 1;
+  repeated AccessRule permissions = 2;
+}
+
+// Ownership tracking for security, auditing, and access control.
+message OwnershipContext {
+  // Account (tenant root) that owns this document.
+  string account_id = 1;
+  // Datasource (account + connector type binding) that produced this document.
+  string datasource_id = 2;
+  // Connector type that created this document (e.g. "s3", "file-crawler").
+  // Optional since it's derivable from datasource, but useful for filtering.
+  optional string connector_id = 3;
+  // Document-level security (typed ACLs).
+  DocumentSecurity security = 4;
+}
+
+// How a doc_id was determined (auditability and idempotency semantics).
+enum DocIdDerivationMethod {
+  DOC_ID_DERIVATION_METHOD_UNSPECIFIED = 0;
+  // The caller supplied the id; intake preserved it.
+  DOC_ID_DERIVATION_METHOD_CALLER_PROVIDED = 1;
+  // Derived (UUIDv5) from a source system's document id.
+  DOC_ID_DERIVATION_METHOD_SOURCE_DOC_ID = 2;
+  // Derived from a source URI.
+  DOC_ID_DERIVATION_METHOD_SOURCE_URI = 3;
+  // Derived from a source filesystem path.
+  DOC_ID_DERIVATION_METHOD_SOURCE_PATH = 4;
+}
+
+// Records the derivation method and input used to create a doc_id.
+message DocIdDerivation {
+  DocIdDerivationMethod method = 1;
+  // The input the id was derived from (empty for CALLER_PROVIDED).
+  string source_value = 2;
+}
+
+// The primary data structure flowing through the platform.
+//
+// A stored Document is split on clean proto boundaries into independently
+// addressable parts: CORE (everything except blob_bag, parsed_metadata and
+// search_metadata.semantic_results), BLOBS, CHUNKS (per semantic_results
+// chunk set) and PARSED. Assembly is a field-level merge of the parts in
+// manifest order and round-trips byte-for-byte.
+message Document {
+  // Unique identifier for this document across the entire system.
+  // Intake preserves a non-blank caller-provided id; otherwise a
+  // UUIDv5-compatible id is derived from the first usable canonical source
+  // identity (source_doc_id, source_uri, source_path).
+  string doc_id = 1;
+  // Standardized search engine metadata for OOTB indexing and querying.
+  SearchMetadata search_metadata = 2;
+  // Binary content container for document parsing.
+  BlobBag blob_bag = 3;
+  // Customer-provided structured data in any protobuf format.
+  google.protobuf.Any structured_data = 4;
+  // Immutable parsed metadata from document parsers (Tika, Docling, ...).
+  // Append-only: parsers add new entries but never modify or delete existing
+  // ones. Keys are parser-specific identifiers (e.g. "tika", "docling").
+  map<string, ParsedMetadata> parsed_metadata = 5;
+  // Ownership tracking for security, auditing, and access control.
+  optional OwnershipContext ownership = 6;
+  // How the doc_id was determined.
+  optional DocIdDerivation doc_id_derivation = 7;
+}
+
+// Wrapper for one parser's output.
+message ParsedMetadata {
+  // When the parse ran.
+  optional google.protobuf.Timestamp parsed_date = 1;
+  // Parser that produced this entry (e.g. "tika", "docling").
+  string parser_name = 2;
+  // Parser-specific protobuf payload.
+  google.protobuf.Any data = 3;
+  // Extensible key-value metadata.
+  map<string, string> metadata = 4;
+}
+
+// Standardized search engine metadata.
+message SearchMetadata {
+  // Document title or heading.
+  optional string title = 1;
+  // Full text content of the document.
+  optional string body = 2;
+  // Document type classification (e.g. "PDF", "HTML", "DOCX").
+  optional string document_type = 3;
+  // Original source URI where the document was obtained.
+  optional string source_uri = 4;
+  // MIME type of the source document.
+  optional string source_mime_type = 5;
+  // When the document was originally created.
+  optional google.protobuf.Timestamp creation_date = 6;
+  // When the document was last modified at source.
+  optional google.protobuf.Timestamp last_modified_date = 7;
+  // When the document was processed by the platform.
+  optional google.protobuf.Timestamp processed_date = 8;
+  // Language code of the document content (e.g. "en", "es", "fr").
+  optional string language = 9;
+  // Document author or creator.
+  optional string author = 10;
+  // Category or classification label for the document.
+  optional string category = 11;
+  // Generic key-value metadata for extensibility.
+  map<string, string> metadata = 12;
+  // Results from semantic chunking and embedding processes. One entry per
+  // processing configuration applied to the document; consecutive entries
+  // sharing a result_id form one chunk set (the CHUNKS storage part).
+  repeated SemanticProcessingResult semantic_results = 13;
+  // Additional custom fields not covered by the standard schema.
+  optional google.protobuf.Struct custom_fields = 14;
+  // Path portion of source_uri for categorization.
+  optional string source_path = 15;
+}
+
+// Collection of blobs (either arm of BlobBag).
+message BlobBag {
+  oneof blob_data {
+    // Single blob content.
+    Blob blob = 1;
+    // Multiple blob contents.
+    Blobs blobs = 2;
+  }
+}
+
+// Collection of multiple blobs.
+message Blobs {
+  repeated Blob blob = 1;
+}
+
+// Reference to a file stored on a drive's backing store.
+message FileStorageReference {
+  // Drive the object lives on (resolves server-side to its backing store).
+  string drive_name = 1;
+  // Object key within the drive's backing store.
+  string object_key = 2;
+  // Object version marker, if the backend versions objects.
+  optional string version_id = 3;
+}
+
+// Checksum algorithm types for blob integrity verification.
+enum ChecksumType {
+  CHECKSUM_TYPE_UNSPECIFIED = 0;
+  CHECKSUM_TYPE_MD5 = 1;
+  CHECKSUM_TYPE_SHA1 = 2;
+  CHECKSUM_TYPE_SHA256 = 3;
+  CHECKSUM_TYPE_SHA512 = 4;
+}
+
+// Binary blob with flexible storage options: inline bytes for small or
+// sensitive content, or a reference into the owning drive's backing store.
+message Blob {
+  // Unique identifier for this blob.
+  string blob_id = 1;
+  // Drive this blob belongs to.
+  string drive_id = 2;
+  oneof content {
+    // Inline binary data.
+    bytes data = 3;
+    // Reference to externally stored content.
+    FileStorageReference storage_ref = 4;
+  }
+  // MIME type of the blob content.
+  optional string mime_type = 5;
+  // Original filename if available.
+  optional string filename = 6;
+  // Character encoding for text-based blobs.
+  optional string encoding = 7;
+  // Size of the blob content in bytes.
+  int64 size_bytes = 8;
+  // Checksum value for integrity verification.
+  optional string checksum = 9;
+  // Type of checksum algorithm used.
+  ChecksumType checksum_type = 10;
+  // Additional blob metadata.
+  optional google.protobuf.Struct metadata = 11;
+}
+
+// One embedding vector for a chunk.
+message ChunkEmbedding {
+  string embedding_id = 1;
+  string chunk_id = 2;
+  repeated float vector = 3;
+  // Model that produced the vector.
+  string model = 4;
+  optional int32 dimensions = 5;
+}
+
+// One chunk of text within a semantic processing result.
+message SemanticChunk {
+  string chunk_id = 1;
+  int32 chunk_number = 2;
+  string text = 3;
+  optional int32 start_offset = 4;
+  optional int32 end_offset = 5;
+  repeated ChunkEmbedding embeddings = 6;
+  map<string, string> metadata = 7;
+}
+
+// Output of one semantic processing configuration: a named chunk set with
+// optional embeddings. The result_id is the CHUNKS sub-key of the storage
+// layout (consecutive entries sharing one form one chunk set).
+message SemanticProcessingResult {
+  string result_id = 1;
+  optional string chunker_config_id = 2;
+  optional string embedding_config_id = 3;
+  repeated SemanticChunk chunks = 4;
+  optional google.protobuf.Timestamp created_date = 5;
+  map<string, string> metadata = 6;
+}
+
+// Logical reference to a stored document state. Resolves to exactly one
+// repository row together with the graph segment of the storage identity.
+message DocumentReference {
+  string doc_id = 1;
+  string graph_address_id = 2;
+  string account_id = 3;
+  // Owning graph: the account's intake graph ("intake:<accountId>") for
+  // intake rows, the owning graph's id for pipeline rows. Required.
+  string graph_id = 4;
+}

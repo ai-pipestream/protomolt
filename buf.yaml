@@ -16,9 +16,18 @@ modules:
     name: buf.build/ai-pipestream/protobuf-indexing-testdata
   - path: surface/http/jsonschema/src/test/proto
     name: buf.build/ai-pipestream/jsonschema-testdata
+  - path: repo/proto/src/main/proto
+    name: buf.build/ai-pipestream/repo
 lint:
   use:
     - STANDARD
+  ignore_only:
+    # GetDocument and GetDocumentByReference deliberately share
+    # GetDocumentResponse: same payload, two coordinate systems.
+    RPC_REQUEST_RESPONSE_UNIQUE:
+      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
+    RPC_RESPONSE_STANDARD_NAME:
+      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
 breaking:
   use:
     - FILE

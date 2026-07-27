@@ -1,0 +1,19 @@
+description = 'The claim-check document store as a gRPC service set: embeddable in-JVM over the in-process transport or standalone over Netty, no framework'
+
+dependencies {
+    implementation project(':protomolt-repo-proto')
+    implementation project(':protomolt-repo-container')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    // S3 client construction lives here (UrlConnectionHttpClient is only an
+    // `implementation` dep of repo-container, so it is not exposed).
+    implementation libs.awssdk.url.connection.client
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+}
