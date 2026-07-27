@@ -574,11 +574,14 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
             return;
         }
         float[] vector = toFloatVector(value);
-        if (vector != null && hint.vectorDims() > 0 && vector.length == hint.vectorDims()) {
+        if (vector.length == 0) {
+            return; // empty vectors are skipped, not indexed and not stored
+        }
+        if (hint.vectorDims() > 0 && vector.length == hint.vectorDims()) {
             document.add(new KnnFloatVectorField(name, vector, similarity));
             return;
         }
-        vectorFallback(document, name, path, hint, value, vector == null ? -1 : vector.length);
+        vectorFallback(document, name, path, hint, value, vector.length);
     }
 
     /** Warns and stores the raw value as JSON when it cannot form a KNN vector field. */
@@ -602,19 +605,40 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         }
     }
 
-    /** Float vector from a repeated float/double value, or {@code null} when not numeric. */
-    private static float[] toFloatVector(Object value) {
-        if (!(value instanceof List<?> values) || values.isEmpty()) {
-            return null;
+    /**
+     * Float vector from a {@code float[]}, a {@code double[]}, or a {@code List} of numbers
+     * (a protobuf {@code repeated float} or {@code repeated double} arrives as the list form,
+     * without caller conversion).
+     *
+     * @throws IllegalArgumentException when a list element is not numeric, or when the value
+     *         is none of the supported shapes
+     */
+    static float[] toFloatVector(Object value) {
+        if (value instanceof float[] floats) {
+            return floats;
         }
-        float[] vector = new float[values.size()];
-        for (int i = 0; i < values.size(); i++) {
-            if (!((values.get(i) instanceof Float) || (values.get(i) instanceof Double))) {
-                return null;
+        if (value instanceof double[] doubles) {
+            float[] vector = new float[doubles.length];
+            for (int i = 0; i < doubles.length; i++) {
+                vector[i] = (float) doubles[i];
             }
-            vector[i] = ((Number) values.get(i)).floatValue();
+            return vector;
         }
-        return vector;
+        if (value instanceof List<?> values) {
+            float[] vector = new float[values.size()];
+            for (int i = 0; i < values.size(); i++) {
+                if (!(values.get(i) instanceof Number number)) {
+                    throw new IllegalArgumentException(
+                            "VECTOR field values must be numeric; element " + i + " is "
+                                    + (values.get(i) == null ? "null" : values.get(i).getClass().getName()));
+                }
+                vector[i] = number.floatValue();
+            }
+            return vector;
+        }
+        throw new IllegalArgumentException(
+                "VECTOR expects float[], double[], or a List of numbers; got "
+                        + typeName(value));
     }
 
     /**

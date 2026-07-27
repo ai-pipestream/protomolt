@@ -4,8 +4,8 @@ dependencies {
     api project(':protomolt-index-spi')
     api project(':protomolt-mapper-core')
     api libs.lucene.core
-
-    testImplementation libs.lucene.analysis.common
+    // LuceneIndexWriter opens indexes with a StandardAnalyzer.
+    api libs.lucene.analysis.common
 }
 
 // The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an

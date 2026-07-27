@@ -17,11 +17,18 @@ import com.google.protobuf.Struct;
 import com.google.protobuf.TimestampProto;
 import com.google.protobuf.Value;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.VectorSimilarityFunction;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.KnnFloatVectorQuery;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.store.FSDirectory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -600,6 +607,82 @@ class ProtoLuceneMapperTest {
         assertThat(doc.getFields("embedding")).hasSize(1);
         var field = (org.apache.lucene.document.KnnByteVectorField) doc.getFields("embedding")[0];
         assertThat(field.vectorValue()).containsExactly((byte) 5, (byte) 6, (byte) 7);
+    }
+
+    @Test
+    void toFloatVectorConvertsEverySupportedShape() {
+        assertThat(ProtoLuceneMapper.toFloatVector(new float[]{1f, 2f, 3f}))
+                .containsExactly(1f, 2f, 3f);
+        assertThat(ProtoLuceneMapper.toFloatVector(new double[]{1.5, 2.5}))
+                .containsExactly(1.5f, 2.5f);
+        assertThat(ProtoLuceneMapper.toFloatVector(List.of(0.1f, 0.2f)))
+                .containsExactly(0.1f, 0.2f);
+        assertThat(ProtoLuceneMapper.toFloatVector(List.of(0.25, 0.75)))
+                .containsExactly(0.25f, 0.75f);
+        assertThat(ProtoLuceneMapper.toFloatVector(List.of())).isEmpty();
+        assertThat(ProtoLuceneMapper.toFloatVector(new double[0])).isEmpty();
+    }
+
+    @Test
+    void toFloatVectorRejectsNonNumericElementsAndUnsupportedTypes() {
+        assertThatThrownBy(() -> ProtoLuceneMapper.toFloatVector(List.of(1f, "not-a-number")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("numeric");
+        assertThatThrownBy(() -> ProtoLuceneMapper.toFloatVector("not-a-vector"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("java.lang.String");
+        assertThatThrownBy(() -> ProtoLuceneMapper.toFloatVector(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("null");
+    }
+
+    @Test
+    void emptyVectorIsSkipped() throws Exception {
+        Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
+        DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("embedding", "embedding",
+                        new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 3))));
+
+        assertThat(mapper.map(message, plan).getFields("embedding")).isEmpty();
+    }
+
+    @Test
+    void knnVectorFieldRoundTripsThroughLuceneIndexWriter(@TempDir Path dir) throws Exception {
+        Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
+        FieldDescriptor embedding = descriptor.findFieldByName("embedding");
+        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
+                new IndexingPlan.IndexedField("embedding", "embedding",
+                        new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 2))));
+
+        try (LuceneIndexWriter writer = new LuceneIndexWriter(dir)) {
+            writer.add(vectorDoc(mapper, descriptor, embedding, plan, "near", 1f, 0f));
+            writer.add(vectorDoc(mapper, descriptor, embedding, plan, "far", 0f, 1f));
+            writer.commit();
+            assertThat(writer.numDocs()).isEqualTo(2);
+        }
+
+        try (DirectoryReader reader = DirectoryReader.open(FSDirectory.open(dir))) {
+            TopDocs hits = new IndexSearcher(reader).search(
+                    new KnnFloatVectorQuery("embedding", new float[]{0.9f, 0.1f}, 1), 1);
+            assertThat(hits.scoreDocs).hasSize(1);
+            Document hit = new IndexSearcher(reader)
+                    .storedFields().document(hits.scoreDocs[0].doc);
+            assertThat(hit.get("id")).isEqualTo("near");
+        }
+    }
+
+    private static Document vectorDoc(ProtoLuceneMapper mapper, Descriptor descriptor,
+                                      FieldDescriptor embedding, IndexingPlan plan,
+                                      String id, float... vector) throws Exception {
+        DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
+        for (float component : vector) {
+            builder.addRepeatedField(embedding, component);
+        }
+        Document doc = mapper.map(builder.build(), plan);
+        doc.add(new org.apache.lucene.document.StringField(
+                "id", id, org.apache.lucene.document.Field.Store.YES));
+        return doc;
     }
 
     @Test
