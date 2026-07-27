@@ -174,9 +174,10 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
   engine as sub-packages of `ai.pipestream.proto.repo.container`: `codec`
   (descriptor-driven split/assemble, manifest, root checksum; pure, no IO),
   `blob` (BlobStore port + S3 adapter, virtual-thread part fan-out),
-  `ledger` (ledger + JDBC/Postgres impl via Hibernate/HikariCP, Flyway).
-  Lifecycle (purge/reclaim/reconcile behind a PurgeQueue SPI + Kafka adapter
-  via protomolt serde) lands here later.
+  `ledger` (ledger + JDBC/Postgres impl via Hibernate/HikariCP, Flyway),
+  `lifecycle` (the two-phase delete: purge queue, purger, sweeper,
+  reconciler, coherence probe — the queue is the JDBC `document_purges`
+  table, not Kafka).
 - `repo/service` (`protomolt-repo-service`) — the gRPC service set,
   transport-agnostic: `RepoServices.build(config)` wires the whole stack
   (ledger → S3 → part storage → service impls) and serves it either
@@ -200,7 +201,9 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
 1. repo-service skeleton: codec (generalized) + store + ledger +
    save/get-with-mask; Testcontainers (Postgres, LocalStack) ports of the
    behavioral suites.
-2. Lifecycle: purge queue, reconciler, coherence probe.
+2. Lifecycle: purge queue, reconciler, coherence probe. **(Landed — the
+   `document_purges` queue (V3) replaces the Kafka event, the JDBC
+   `PurgeQueue` is the SPI; see repo/README.md § The purge lifecycle.)**
 3. DocumentStream upload; replay stream; drive API.
 4. account-service + IdentityResolver SPI; account-events.
 5. Parquet projections; Document AI emitter.

@@ -48,6 +48,7 @@ import ai.pipestream.proto.repo.v1.SemanticProcessingResult;
 import ai.pipestream.proto.repo.v1.WriteProvenance;
 import ai.pipestream.proto.repo.container.blob.BlobStore;
 import ai.pipestream.proto.repo.container.codec.DocumentPartCodec;
+import ai.pipestream.proto.repo.container.ledger.DocumentPurgeRecord;
 import ai.pipestream.proto.repo.container.ledger.DocumentRecord;
 import ai.pipestream.proto.repo.container.ledger.DocumentStatus;
 import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
@@ -556,6 +557,58 @@ class RepoServiceIT {
         assertThat(again.getOutcome())
                 .isEqualTo(DeleteDocumentOutcome.DELETE_DOCUMENT_OUTCOME_NOTHING_TO_REMOVE);
         assertThat(again.getDocumentsRemoved()).isZero();
+    }
+
+    @Test
+    void tombstoneDeleteEnqueuesPurgeRecordAndDrainFinalizes() {
+        String account = "acct-lifecycle";
+        Drive drive = createDrive("docs", account);
+        Document doc = fixture("doc-lifecycle", account, "ds-lc");
+        SaveDocumentResponse saved = documents.saveDocument(intakeSave(doc, "docs", account).build());
+        UUID nodeId = UUID.fromString(saved.getNodeId());
+        NodeAddress ref = address("doc-lifecycle", "ds-lc", account, "intake:" + account);
+
+        List<String> partKeys = services.documentLedger().findByNodeId(nodeId).orElseThrow()
+                .readManifest().getPartsList().stream()
+                .filter(e -> e.getState() == PartState.PART_STATE_PRESENT)
+                .map(PartManifestEntry::getObjectKey)
+                .toList();
+        assertThat(partKeys).isNotEmpty();
+
+        // Phase A: the tombstone AND the purge record land in one commit.
+        DeleteDocumentResponse response = documents.deleteDocument(DeleteDocumentRequest.newBuilder()
+                .setByReference(DeleteDocumentByReferenceCommand.newBuilder().setAddress(ref))
+                .build());
+        assertThat(response.getOutcome())
+                .isEqualTo(DeleteDocumentOutcome.DELETE_DOCUMENT_OUTCOME_REMOVED);
+        assertThat(response.getMessage()).isEqualTo("rows tombstoned to PENDING_PURGE");
+        assertThat(services.documentLedger().findByNodeId(nodeId).orElseThrow().status)
+                .isEqualTo(DocumentStatus.PENDING_PURGE);
+
+        // The purge record is claimable immediately — same transaction as the
+        // tombstone — and snapshots the part keys plus the intake raw blob.
+        DocumentPurgeRecord record = services.purgeQueue().claimBatch(100).stream()
+                .filter(r -> r.nodeId.equals(nodeId))
+                .findFirst()
+                .orElseThrow();
+        assertThat(record.driveName).isEqualTo("docs");
+        assertThat(record.readObjectKeys())
+                .contains(partKeys.toArray(new String[0]))
+                .contains(ai.pipestream.proto.repo.container.lifecycle.PurgeSnapshots
+                        .rawBlobKey(drive.getPrefix(), account, "doc-lifecycle", "ds-lc"));
+
+        // Phase B by hand (the background loop is not started in this IT):
+        // objects and row go away, and the record leaves the PENDING set.
+        int purged = services.s3Purger().drainOnce(services.blobStore(), 100);
+        assertThat(purged).isGreaterThanOrEqualTo(1);
+        assertThat(services.documentLedger().findByNodeId(nodeId)).isEmpty();
+        for (String key : partKeys) {
+            assertThatThrownBy(() -> services.blobStore().headObject(drive.getBucket(), key))
+                    .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        }
+        assertThat(services.purgeQueue().claimBatch(100).stream()
+                .filter(r -> r.nodeId.equals(nodeId)))
+                .isEmpty();
     }
 
     @Test

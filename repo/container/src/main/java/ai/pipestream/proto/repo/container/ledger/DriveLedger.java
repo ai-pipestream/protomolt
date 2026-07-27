@@ -91,4 +91,21 @@ public final class DriveLedger {
             return query.getResultList();
         });
     }
+
+    /**
+     * List every drive across all accounts, ordered by
+     * {@code (account_id, name)}, bounded — the periodic reconcile loop's
+     * drive enumeration (drive counts are operator-scale, not tenant-scale).
+     *
+     * @param limit the bound; values &lt;= 0 fall back to 1000
+     * @return the drives (detached), possibly empty
+     */
+    public List<DriveRecord> listAll(int limit) {
+        int effectiveLimit = limit > 0 ? limit : 1000;
+        return tx.readOnly(em -> em.createQuery(
+                        "SELECT d FROM DriveRecord d ORDER BY d.accountId ASC, d.name ASC",
+                        DriveRecord.class)
+                .setMaxResults(effectiveLimit)
+                .getResultList());
+    }
 }

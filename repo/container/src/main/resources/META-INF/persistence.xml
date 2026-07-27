@@ -14,6 +14,7 @@
         <provider>org.hibernate.jpa.HibernatePersistenceProvider</provider>
         <class>ai.pipestream.proto.repo.container.ledger.DocumentRecord</class>
         <class>ai.pipestream.proto.repo.container.ledger.DriveRecord</class>
+        <class>ai.pipestream.proto.repo.container.ledger.DocumentPurgeRecord</class>
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
         <properties>
             <!-- Schema is owned by Flyway (db/migration); hbm2ddl is set to
