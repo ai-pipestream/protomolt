@@ -179,6 +179,13 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
   in-process (same-JVM embedding: zero-copy, full gRPC semantics) or over
   Netty TCP (standalone, health + reflection; `RepoServiceMain` is that path
   from the environment). Constructor wiring, no framework.
+- `repo/blob-store/spi|s3|azure|…` — **when a second provider lands**, the
+  `BlobStore` port extracts from `container.blob` to
+  `repo/blob-store/spi` and each provider becomes a leaf module
+  (`repo/blob-store/s3`, `repo/blob-store/azure`, and `repo/blob-store/repo`
+  for the dogfood port-over-repo-service-stub). Pure move, no call-site
+  changes: nothing outside the adapters imports a provider SDK. Deliberately
+  NOT split yet — one provider does not justify the ceremony.
 - `apps/account-service` — CRUD + activation + IdentityResolver SPI +
   drive provisioning via repo-service stub (later).
 
