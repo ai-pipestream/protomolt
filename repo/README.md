@@ -147,6 +147,52 @@ periodic loop reconciles every drive (dry-run logging unless
 `purge_storage=true` keeps its synchronous behavior: objects first
 (best-effort), then hard-delete the rows — no queue involved.
 
+## Kafka eventing (transactional outbox)
+
+When `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` is set, the service emits
+document lifecycle events to Kafka through a **transactional outbox**. When
+it is unset, nothing changes: no outbox writes, no relay loop, no producer
+(zero overhead).
+
+Every lifecycle commit point writes one row to `document_events_outbox`
+(Flyway V4) **in the same transaction** as the ledger mutation, so an event
+can never drift from the state change it describes:
+
+| Event | Commit point |
+|-------|--------------|
+| `DocumentSaved` | Full/partial save upsert (revives included; checksum dedupe hits elide the write and fire nothing) |
+| `DocumentDeleted` | Hard delete (`purge_storage=true` row removal) |
+| `PurgeRequested` | Soft delete (tombstone + purge enqueue, Phase A) |
+| `DocumentPurged` | Purge finalization (row removal + PURGED transition, Phase B) |
+
+The row's payload is the serialized `DocumentEvent` protobuf (see
+`repo/proto/.../document_events.proto`): a wrapper with an `event_id` (the
+outbox row id) and a `oneof` of the four event messages, each carrying the
+canonical `NodeAddress`, the manifest root checksum where meaningful, and
+timestamps. A virtual-thread **relay** (`EventRelay`, started by
+`startLifecycle()`) claims PENDING rows (`FOR UPDATE SKIP LOCKED`), publishes
+each to the single **`document-events`** topic keyed by **doc_id** (so one
+document's events are partition-ordered), waits for the broker ack, and marks
+the row PUBLISHED. Publication goes through the protomolt serde
+(`sink/kafka/serde`), pinned to the `DocumentEvent` type against the packaged
+descriptor set, so every record is validated and Confluent-framed with no
+schema registry involved.
+
+Semantics and operational notes:
+
+- **At-least-once.** Publish precedes the PUBLISHED transition, so a relay
+  crash mid-flight republishes on restart. Consumers must dedupe on
+  `DocumentEvent.event_id`.
+- **Retry and DLQ.** A failed publish increments `attempts`; at 10 attempts
+  the row lands FAILED, which IS the dead-letter queue for now (operator
+  territory; the relay never re-enqueues it).
+- **PUBLISHED rows are retained**, not deleted (same choice as the purge
+  queue's PURGED rows).
+- **No backfill.** Enabling Kafka on an existing deployment starts the event
+  stream from that moment: rows saved or deleted before the first configured
+  boot produce no events. If consumers need history, replay from storage,
+  not from the topic.
+
 ## Building and testing
 
 From the repository root:
@@ -169,6 +215,14 @@ for the ledger, LocalStack for S3, the full stack booted through
   attempts→DLQ ladder (poison-key failing store), SKIP-LOCKED claiming.
 - `StorageReconcilerIT` / `CoherenceProbeIT` — the orphan diff (min-age
   guard, dry-run rail, `blobs/` convention) and the manifest-repair probe.
+- `DocumentEventOutboxIT` / `EventRelayIT` - the Kafka outbox: same-tx
+  enqueue and rollback atomicity, SKIP-LOCKED claim order, the
+  attempts→FAILED ladder, relay publish/consume round trip over Redpanda,
+  dead-broker and crash-mid-flight recovery.
+- `KafkaEventingIT` - eventing end to end through `RepoServices` (Postgres,
+  LocalStack, Redpanda): save/delete commit points write the outbox
+  atomically, the relay publishes, and a `ProtoMoltProtobufDeserializer`
+  consumer reads and revalidates the events.
 - `UploadHttpServerIT` — the streaming upload route over a real HTTP server:
   multi-MB streaming, byte-exact round trips, dedupe, the 411/400/404
   contract, checksum-mismatch rejection.
@@ -207,6 +261,8 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_RECONCILE_ENABLED` | `false` | Run the slow periodic storage-reconcile loop over every drive |
 | `DOCUMENT_PLATFORM_RECONCILE_DRY_RUN` | `true` | Periodic reconcile reports only; `false` arms orphan deletion |
 | `DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS` | `3600000` | Min-age guard for the periodic reconcile (in-flight-upload protection) |
+| `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; unset = eventing off (no outbox writes, no relay, no producer) |
+| `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the relay publishes to |
 
 ## API surface
 

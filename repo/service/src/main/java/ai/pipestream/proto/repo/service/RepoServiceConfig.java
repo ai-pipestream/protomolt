@@ -75,6 +75,12 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_RECONCILE_DRY_RUN}, default true)
  * @param reconcileMinAgeMs min-age guard for the periodic reconcile
  *        ({@code DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS}, default 3600000)
+ * @param kafkaBootstrapServers Kafka bootstrap servers
+ *        ({@code DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS}); null/blank =
+ *        eventing off: no outbox writes, no relay, no producer
+ * @param kafkaTopic the document-events topic
+ *        ({@code DOCUMENT_PLATFORM_KAFKA_TOPIC}, default
+ *        {@code "document-events"})
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -96,7 +102,9 @@ public record RepoServiceConfig(
         long sweepIntervalMs,
         boolean reconcileEnabled,
         boolean reconcileDryRun,
-        long reconcileMinAgeMs) {
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -136,6 +144,10 @@ public record RepoServiceConfig(
     public static final String ENV_RECONCILE_DRY_RUN = "DOCUMENT_PLATFORM_RECONCILE_DRY_RUN";
     /** Environment variable for the periodic reconcile's min-age guard in milliseconds. */
     public static final String ENV_RECONCILE_MIN_AGE_MS = "DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS";
+    /** Environment variable for the Kafka bootstrap servers (unset = eventing off). */
+    public static final String ENV_KAFKA_BOOTSTRAP_SERVERS = "DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS";
+    /** Environment variable for the document-events topic. */
+    public static final String ENV_KAFKA_TOPIC = "DOCUMENT_PLATFORM_KAFKA_TOPIC";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -161,10 +173,12 @@ public record RepoServiceConfig(
     static final boolean DEFAULT_RECONCILE_ENABLED = false;
     static final boolean DEFAULT_RECONCILE_DRY_RUN = true;
     static final long DEFAULT_RECONCILE_MIN_AGE_MS = 3600000L;
+    /** Default document-events topic. */
+    public static final String DEFAULT_KAFKA_TOPIC = "document-events";
 
     /**
      * Compatibility constructor: the 14 pre-lifecycle components, with the
-     * lifecycle settings at their defaults.
+     * lifecycle and eventing settings at their defaults.
      */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
@@ -175,6 +189,22 @@ public record RepoServiceConfig(
                 redisMaxObjectBytes, DEFAULT_LIFECYCLE_ENABLED, DEFAULT_PURGE_INTERVAL_MS,
                 DEFAULT_SWEEP_INTERVAL_MS, DEFAULT_RECONCILE_ENABLED, DEFAULT_RECONCILE_DRY_RUN,
                 DEFAULT_RECONCILE_MIN_AGE_MS);
+    }
+
+    /**
+     * Compatibility constructor: the 20 pre-eventing components, with Kafka
+     * eventing off (no bootstrap servers).
+     */
+    public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
+            String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
+            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
+            long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
+            boolean reconcileDryRun, long reconcileMinAgeMs) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
+                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
+                reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, null, DEFAULT_KAFKA_TOPIC);
     }
 
     public RepoServiceConfig {
@@ -239,6 +269,10 @@ public record RepoServiceConfig(
         if (reconcileMinAgeMs < 0) {
             reconcileMinAgeMs = DEFAULT_RECONCILE_MIN_AGE_MS;
         }
+        kafkaBootstrapServers = blankToNull(kafkaBootstrapServers);
+        if (kafkaTopic == null || kafkaTopic.isBlank()) {
+            kafkaTopic = DEFAULT_KAFKA_TOPIC;
+        }
     }
 
     /**
@@ -249,6 +283,16 @@ public record RepoServiceConfig(
      */
     public boolean hasStaticCredentials() {
         return s3AccessKey != null;
+    }
+
+    /**
+     * Whether Kafka eventing is on (bootstrap servers configured). When off:
+     * no outbox writes, no relay loop, no producer.
+     *
+     * @return true when eventing is configured
+     */
+    public boolean kafkaEnabled() {
+        return kafkaBootstrapServers != null;
     }
 
     /**
@@ -280,7 +324,9 @@ public record RepoServiceConfig(
                 parseBoolOrDefault(System.getenv(ENV_RECONCILE_ENABLED), DEFAULT_RECONCILE_ENABLED),
                 parseBoolOrDefault(System.getenv(ENV_RECONCILE_DRY_RUN), DEFAULT_RECONCILE_DRY_RUN),
                 parseLongOrDefault(System.getenv(ENV_RECONCILE_MIN_AGE_MS),
-                        DEFAULT_RECONCILE_MIN_AGE_MS));
+                        DEFAULT_RECONCILE_MIN_AGE_MS),
+                System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
+                envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */

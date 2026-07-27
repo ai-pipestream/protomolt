@@ -49,6 +49,8 @@ import ai.pipestream.proto.repo.container.ledger.ListDocumentsFilter;
 import ai.pipestream.proto.repo.container.ledger.ListDocumentsResult;
 import ai.pipestream.proto.repo.container.ledger.Tx;
 import ai.pipestream.proto.repo.container.ledger.DocumentPurgeRecord;
+import ai.pipestream.proto.repo.container.lifecycle.DocumentEventFactory;
+import ai.pipestream.proto.repo.container.lifecycle.JdbcEventOutbox;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeQueue;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeSnapshots;
 import com.google.protobuf.ByteString;
@@ -145,6 +147,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     private final PartStorage partStorage;
     private final PartLayout layout;
     private final PurgeQueue purgeQueue;
+    private final JdbcEventOutbox events;
 
     /**
      * @param documents the document-row ledger
@@ -160,6 +163,28 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
      */
     public DocumentGrpcService(DocumentLedger documents, DriveLedger drives, Tx tx,
             BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue) {
+        this(documents, drives, tx, blobStore, partStorage, purgeQueue, null);
+    }
+
+    /**
+     * @param documents the document-row ledger
+     * @param drives the drive-row ledger (drive name → bucket/prefix)
+     * @param tx the shared transaction wrapper, used directly for the two
+     *        ad-hoc reads the ledgers deliberately do not expose (logical-row
+     *        enumeration, account-less drive lookup) and for the tombstone +
+     *        purge-enqueue transaction
+     * @param blobStore the object-storage port every part IO goes through
+     * @param partStorage the part fan-out IO layer
+     * @param purgeQueue the purge queue the tombstone path enqueues onto
+     *        (Phase A of the two-phase delete)
+     * @param events the document-event outbox the commit points write
+     *        (DocumentSaved / DocumentDeleted / PurgeRequested) into, IN THE
+     *        SAME TRANSACTION as the ledger mutation; null when Kafka is not
+     *        configured - no outbox writes then, zero overhead
+     */
+    public DocumentGrpcService(DocumentLedger documents, DriveLedger drives, Tx tx,
+            BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
+            JdbcEventOutbox events) {
         this.documents = documents;
         this.drives = drives;
         this.tx = tx;
@@ -167,6 +192,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         this.partStorage = partStorage;
         this.layout = PartLayouts.document();
         this.purgeQueue = purgeQueue;
+        this.events = events;
     }
 
     // ------------------------------------------------------------------ save
@@ -595,8 +621,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 purgePartObjects(row);
             }
             // Re-delete through the ledger so the returned rows are the rows
-            // actually removed (a concurrent delete settles to empty).
-            if (byRef != null) {
+            // actually removed (a concurrent delete settles to empty). When
+            // eventing is on, the removal and the DocumentDeleted events
+            // commit in ONE transaction instead (transactional outbox).
+            if (events != null) {
+                removed = hardDeleteAndEmit(byRef, logical);
+            } else if (byRef != null) {
                 removed = documents.deleteByReference(byRef)
                         .map(List::of)
                         .orElse(List.of());
@@ -676,8 +706,51 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                     record.writeObjectKeys(PurgeSnapshots.objectKeysOf(managed, drivePrefix));
                     record.requestedAt = requestedAt;
                     purgeQueue.enqueue(em, record);
+                    if (events != null) {
+                        // PurgeRequested commits with the tombstone and the
+                        // purge record: one transaction, no drift.
+                        events.enqueue(em, DocumentEventFactory.purgeRequested(record,
+                                managed.checksum, requestedAt));
+                    }
                     return managed;
                 }));
+    }
+
+    /**
+     * Hard-delete with eventing: re-find the target rows and remove them IN
+     * ONE TRANSACTION with their DocumentDeleted events, so the event stream
+     * cannot drift from the removal (transactional outbox). Mirrors the
+     * ledger's deleteByReference/deleteLogical shapes - the events table is
+     * the service's concern, not the ledger's.
+     */
+    private List<DocumentRecord> hardDeleteAndEmit(NodeAddress byRef,
+            DeleteLogicalDocumentCommand logical) {
+        Instant when = Instant.now();
+        return tx.inTransaction(em -> {
+            List<DocumentRecord> rows = new ArrayList<>(byRef != null
+                    ? em.createQuery("SELECT d FROM DocumentRecord d WHERE d.docId = :docId"
+                                    + " AND d.graphAddressId = :graphAddressId"
+                                    + " AND d.accountId = :accountId AND d.graphId = :graphId",
+                                    DocumentRecord.class)
+                            .setParameter("docId", byRef.getDocId())
+                            .setParameter("graphAddressId", byRef.getGraphAddressId())
+                            .setParameter("accountId", byRef.getAccountId())
+                            .setParameter("graphId", byRef.getGraphId())
+                            .getResultList()
+                    : em.createQuery("SELECT d FROM DocumentRecord d WHERE d.docId = :docId"
+                                    + " AND d.accountId = :accountId"
+                                    + " AND d.datasourceId = :datasourceId",
+                                    DocumentRecord.class)
+                            .setParameter("docId", logical.getDocId())
+                            .setParameter("accountId", logical.getAccountId())
+                            .setParameter("datasourceId", logical.getDatasourceId())
+                            .getResultList());
+            for (DocumentRecord managed : rows) {
+                em.remove(managed);
+                events.enqueue(em, DocumentEventFactory.deleted(managed, when));
+            }
+            return rows;
+        });
     }
 
     /** Best-effort deletion of one row's manifest-PRESENT part objects. */
@@ -1031,7 +1104,19 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         // Body rewrite: the staleness guard moves. Deliberately explicit —
         // nothing else bumps updated_at (see DocumentRecord's class Javadoc).
         row.updatedAt = now;
-        return documents.save(row);
+        if (events == null) {
+            return documents.save(row);
+        }
+        // The DocumentSaved event commits with the row upsert: the event
+        // stream cannot drift from the ledger (transactional outbox).
+        // Cast disambiguates the Tx.inTransaction Function overload.
+        return tx.inTransaction(
+                (java.util.function.Function<jakarta.persistence.EntityManager, DocumentRecord>)
+                        em -> {
+                    DocumentRecord merged = em.merge(row);
+                    events.enqueue(em, DocumentEventFactory.saved(merged, now));
+                    return merged;
+                });
     }
 
     private static SaveDocumentResponse saveResponse(DocumentRecord row, String rootChecksum) {

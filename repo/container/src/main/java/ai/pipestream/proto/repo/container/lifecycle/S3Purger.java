@@ -12,6 +12,7 @@ import jakarta.persistence.LockModeType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -47,6 +48,11 @@ import java.util.Optional;
  * <p>
  * Idempotent throughout: NoSuchKey = success, terminal queue transitions are
  * conditional on PENDING, and a re-drain of a settled record is a no-op.
+ * <p>
+ * <b>Eventing.</b> When an event outbox is wired (Kafka configured), a
+ * {@code DocumentPurged} event is persisted IN THE SAME TRANSACTION as the
+ * row removal and the PURGED transition, so the event stream cannot drift
+ * from the purge outcome. A VOIDED purge fires nothing: the body lives on.
  */
 public final class S3Purger {
 
@@ -56,6 +62,7 @@ public final class S3Purger {
     private final DocumentLedger documents;
     private final DriveLedger drives;
     private final PurgeQueue queue;
+    private final JdbcEventOutbox events;
 
     /**
      * @param tx the shared transaction wrapper (the final guard re-check and
@@ -65,10 +72,25 @@ public final class S3Purger {
      * @param queue the purge queue this purger drains
      */
     public S3Purger(Tx tx, DocumentLedger documents, DriveLedger drives, PurgeQueue queue) {
+        this(tx, documents, drives, queue, null);
+    }
+
+    /**
+     * @param tx the shared transaction wrapper (the final guard re-check and
+     *        row removal run in one transaction through it)
+     * @param documents the document-row ledger
+     * @param drives the drive ledger (drive name → bucket)
+     * @param queue the purge queue this purger drains
+     * @param events the document-event outbox, or null when Kafka is not
+     *        configured (no outbox writes then - zero overhead)
+     */
+    public S3Purger(Tx tx, DocumentLedger documents, DriveLedger drives, PurgeQueue queue,
+            JdbcEventOutbox events) {
         this.tx = tx;
         this.documents = documents;
         this.drives = drives;
         this.queue = queue;
+        this.events = events;
     }
 
     /** One claimed record's fate after the guard re-read. */
@@ -126,7 +148,25 @@ public final class S3Purger {
                 // The row removal already happened (competing drain or a
                 // synchronous purge): the snapshot objects are orphans now.
                 deleteObjects(store, drive.bucket, keys, record);
-                return queue.markPurged(record.purgeId);
+                if (events == null) {
+                    return queue.markPurged(record.purgeId);
+                }
+                // Same conditional PURGED transition as the queue's, plus the
+                // DocumentPurged event in one transaction (checksum unknown:
+                // the row was already gone).
+                return tx.inTransaction(em -> {
+                    int transitioned = em.createQuery(
+                                    "UPDATE DocumentPurgeRecord p SET p.status = :purged"
+                                            + " WHERE p.purgeId = :id AND p.status = :pending")
+                            .setParameter("purged", DocumentPurgeRecord.STATUS_PURGED)
+                            .setParameter("id", record.purgeId)
+                            .setParameter("pending", DocumentPurgeRecord.STATUS_PENDING)
+                            .executeUpdate();
+                    if (transitioned == 1) {
+                        events.enqueue(em, DocumentEventFactory.purged(record, null, Instant.now()));
+                    }
+                    return transitioned == 1;
+                });
             }
             case PURGE -> {
                 deleteObjects(store, drive.bucket, keys, record);
@@ -158,6 +198,13 @@ public final class S3Purger {
                             .setParameter("id", record.purgeId)
                             .setParameter("pending", DocumentPurgeRecord.STATUS_PENDING)
                             .executeUpdate();
+                    if (transitioned == 1 && events != null) {
+                        // DocumentPurged commits with the row removal and the
+                        // PURGED transition: the event stream cannot drift
+                        // from the purge outcome.
+                        events.enqueue(em, DocumentEventFactory.purged(record,
+                                row != null ? row.checksum : null, Instant.now()));
+                    }
                     return transitioned == 1;
                 });
             }
