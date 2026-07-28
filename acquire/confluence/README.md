@@ -73,6 +73,71 @@ Every content area of Confluence has its messages, in
   author/owner ids KEYWORD, timestamps DATE.
 - **`metadata = 99`** on every top-level message, per house convention.
 
+## Validation
+
+Every message carries `validate.v1` rules (`protomolt-protobuf-validation`),
+so a `ConfluenceEntity` can be checked before it ever reaches Kafka:
+
+```java
+ValidationResult result = ValidationResult.validate(entity);   // or ProtoValidator.create().validate(...)
+result.violations();  // [Violation[path=id, ruleId=required, message=...], ...]
+```
+
+The rules come in four families:
+
+- **Identity is required.** An entity you cannot address is un-crawlable, so
+  every content id is `required: true`: `Page.id` + `space_id`,
+  `BlogPost.id` + `space_id`, `Comment.id`, `Attachment.id`,
+  `Space.id` + `key`, `User.account_id`, `Task.id`, `Label.name`,
+  `Like.account_id`, the five content types and `ContentTreeEntry`,
+  `ClassificationLevel.id`, `DataPolicy.id`, both property ids,
+  `AdminKeyResponse.account_id`, and the envelope identities
+  (`ConfluenceEntity.entity_id` + `ingested_at`,
+  `ConfluenceSnapshot.snapshot_id`, `ConfluenceChange.change_id`).
+
+  ```protobuf
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
+  ];
+  ```
+
+- **Numeric floors, spec-backed where the spec speaks.** The OpenAPI spec
+  declares `Redaction.from`/`to` minimum 0 and `RedactionPointer.pointer`
+  required; those are annotated verbatim. Wire reality supplies the rest:
+  `Attachment.file_size >= 0`, version `number >= 0` (plain int32 renders
+  absence as 0, so 0 must pass), `prev_version`/`next_version >= 1` (explicit
+  presence, so the 1-based floor is checkable).
+
+- **Cross-field facts the spec cannot express**, as message-level CEL:
+
+  | Rule id | Invariant |
+  |---|---|
+  | `body_type.format_declared` | a populated body value must declare its `BodyFormat` |
+  | `property.custom_key` | `custom_key` is set **iff** `key == PROPERTY_KEY_CUSTOM` |
+  | `change.upsert_has_entity` | an UPSERT `ConfluenceChange` must carry the entity it upserts; a DELETE need not |
+  | `redaction.range` | a redaction range must not end before it starts |
+
+  ```protobuf
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "change.upsert_has_entity"
+      message: "an UPSERT change must carry the entity it upserts"
+      expression: "this.operation != 1 || has(this.entity)"
+    }
+  };
+  ```
+
+- **Present-only formats**, as field-level CEL. The framework's format rules
+  (`string.email`, `string.uuid`) treat empty as a violation, which is right
+  for mandatory fields and wrong for these two: `User.email` (Confluence
+  omits it for privacy — `user.email_format` validates only a populated
+  value) and `Redaction.redaction_id` (absent on request shapes —
+  `redaction.id_uuid` accepts empty, rejects a populated non-UUID).
+
+`ConfluenceValidationTest` exercises every family in both directions — the
+violating shape and the passing shape — against the real `ProtoValidator`.
+
 ## Wrapper and envelopes
 
 - `ConfluenceEntity` (`confluence_entity.proto`) is the keystone wrapper: a
