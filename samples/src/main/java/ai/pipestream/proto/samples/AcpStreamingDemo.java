@@ -1,12 +1,7 @@
 package ai.pipestream.proto.samples;
 
-import com.agentclientprotocol.sdk.client.AcpClient;
-import com.agentclientprotocol.sdk.client.AcpSyncClient;
-import com.agentclientprotocol.sdk.client.transport.AgentParameters;
-import com.agentclientprotocol.sdk.client.transport.StdioAcpClientTransport;
-import com.agentclientprotocol.sdk.spec.AcpSchema;
-
-import java.util.List;
+import ai.pipestream.proto.acp.AcpClient;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
  * Drives the protomolt ACP agent against the demo streaming search and prints each
@@ -39,19 +34,18 @@ public final class AcpStreamingDemo {
 
     public static void main(String[] args) throws Exception {
         long t0 = System.currentTimeMillis();
-        var transport = new StdioAcpClientTransport(AgentParameters.builder(AGENT).build());
-        try (AcpSyncClient client = AcpClient.sync(transport)
-                .sessionUpdateConsumer(notification -> {
-                    if (notification.update() instanceof AcpSchema.AgentMessageChunk message
-                            && message.content() instanceof AcpSchema.TextContent text) {
+        try (AcpClient client = AcpClient.launch(AGENT)
+                .onSessionUpdate(params -> {
+                    JsonNode update = params.path("update");
+                    if ("agent_message_chunk".equals(update.path("sessionUpdate").asText())) {
+                        String text = update.path("content").path("text").asText();
                         long elapsed = (System.currentTimeMillis() - t0) / 100;
                         System.out.printf("[+%5.1fs] %s%n", elapsed / 10.0,
-                                text.text().replace("\n", " "));
+                                text.replace("\n", " "));
                     }
-                })
-                .build()) {
+                })) {
             client.initialize();
-            var session = client.newSession(new AcpSchema.NewSessionRequest("/", List.of()));
+            String sessionId = client.newSession("/");
             String line = "grpc-invoke {\"target\":\"localhost:9777\","
                     + "\"method\":\"demo.search.v1.DemoSearch/Search\","
                     + "\"schema\":{\"sources\":{\"demo.proto\":"
@@ -60,8 +54,7 @@ public final class AcpStreamingDemo {
                     + "\"delayMs\":400}}";
             System.out.println("prompt: " + "grpc-invoke demo.search.v1.DemoSearch/Search"
                     + " (5 hits, 400ms apart)");
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent(line))));
+            client.prompt(sessionId, line);
         }
     }
 

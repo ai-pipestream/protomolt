@@ -5,94 +5,95 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
-import com.agentclientprotocol.sdk.agent.AcpSyncAgent;
-import com.agentclientprotocol.sdk.client.AcpClient;
-import com.agentclientprotocol.sdk.client.AcpSyncClient;
-import com.agentclientprotocol.sdk.spec.AcpSchema;
-import com.agentclientprotocol.sdk.test.InMemoryTransportPair;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Drives the catalog agent through the ACP protocol in memory: initialize, open a session,
- * prompt with console lines, and collect the streamed message chunks — the same exchange an
- * IDE would run over stdio.
+ * Drives the catalog agent through the ACP protocol over in-memory pipes: initialize, open a
+ * session, prompt with console lines, and collect the streamed session/update chunks, the same
+ * exchange an IDE runs over stdio. The client and agent are the first-party virtual-thread
+ * implementation in this module; no SDK, no reactive runtime.
  */
 class ProtoMoltAcpAgentTest {
 
-    /**
-     * Appended by the SDK's session-update thread, read and reset by the test thread, so it is
-     * synchronized rather than a {@link StringBuilder}. This closes a real data race; it is not
-     * the cause of the hang described on {@link #catalogVerbsRunThroughTheProtocol()}, which
-     * still reproduced after the change.
-     */
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    // Appended by the client's notification listener and read by the test thread; the listener
+    // runs on the client's reader virtual thread, so this is synchronized rather than a
+    // StringBuilder.
     private final StringBuffer chunks = new StringBuffer();
 
-    /**
-     * Above the SDK's 30s default, since these tests assert protocol behaviour rather than
-     * latency and the machine may be contended. Raising it does not prevent the hang described
-     * on {@link #catalogVerbsRunThroughTheProtocol()} — that call blocks for whatever bound is
-     * set — but it keeps an honestly-slow run from being reported as a failure.
-     */
+    // These tests assert protocol behaviour, not latency; the bound only has to catch a real
+    // hang, so it sits far above any honest run even on a contended machine.
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(3);
 
-    private AcpSyncClient clientOver(InMemoryTransportPair pair) {
-        return AcpClient.sync(pair.clientTransport())
-                .requestTimeout(REQUEST_TIMEOUT)
-                .sessionUpdateConsumer(notification -> {
-                    if (notification.update() instanceof AcpSchema.AgentMessageChunk message
-                            && message.content() instanceof AcpSchema.TextContent text) {
-                        chunks.append(text.text());
+    private record Harness(AcpClient client, AcpAgent agent) implements AutoCloseable {
+        @Override
+        public void close() {
+            client.close();
+            agent.close();
+        }
+    }
+
+    private Harness harness(ActionCatalog catalog) {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpAgent agent = ProtoMoltAcpAgent.buildAgent(ends[1].in(), ends[1].out(), catalog);
+        agent.start();
+        AcpClient client = AcpClient.over(ends[0].in(), ends[0].out())
+                .withRequestTimeout(REQUEST_TIMEOUT)
+                .onSessionUpdate(params -> {
+                    JsonNode update = params.path("update");
+                    if ("agent_message_chunk".equals(update.path("sessionUpdate").asText())
+                            && "text".equals(update.path("content").path("type").asText())) {
+                        chunks.append(update.path("content").path("text").asText());
                     }
-                })
-                .build();
+                });
+        return new Harness(client, agent);
     }
 
     /**
-     * Tagged {@code acp-protocol} and excluded from the default build.
+     * Tagged {@code acp-protocol} and excluded from the default build: the compile prompt
+     * shells out to protoc, which is slower than anything the default test task runs. Several
+     * prompts share one session deliberately: a session that dies after one prompt is exactly
+     * the failure this lane exists to catch.
      *
-     * <p>On a saturated machine {@link AcpSyncClient#prompt} has been seen never returning: the
-     * call blocks until its request timeout instead of failing an assertion. What provokes it is
-     * issuing more than one prompt on a session — the single-prompt test in this class has never
-     * been observed hanging, while both multi-prompt tests have, on different prompts and
-     * different verbs. So it is not the {@code compile} verb and not this agent; it is the SDK's
-     * reactive client under contention, and it reproduces unchanged on the code as it stood
-     * before this suite was reworked.
-     *
-     * <p>Run with {@code ./gradlew :protomolt-acp:acpProtocolTest}.
+     * <p>Run with {@code ./gradlew :protomolt-acp:acpProtocolTest}.</p>
      */
     @Tag("acp-protocol")
     @Test
-    void catalogVerbsRunThroughTheProtocol() throws Exception {
-        InMemoryTransportPair pair = InMemoryTransportPair.create();
-        AcpSyncAgent agent = ProtoMoltAcpAgent.buildAgent(
-                pair.agentTransport(), ProtoMoltCatalog.full(ActionContext.create()));
-        agent.start();
-        try (AcpSyncClient client = clientOver(pair)) {
-            client.initialize();
-            var session = client.newSession(new AcpSchema.NewSessionRequest("/workspace", List.of()));
+    void catalogVerbsRunThroughTheProtocol() {
+        try (Harness harness = harness(ProtoMoltCatalog.full(ActionContext.create()))) {
+            AcpClient client = harness.client();
+            JsonNode init = client.initialize();
+            assertThat(init.path("protocolVersion").asInt()).isEqualTo(1);
+            String sessionId = client.newSession("/workspace");
+            assertThat(sessionId).isNotBlank();
 
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent("list"))));
+            JsonNode response = client.prompt(sessionId, "list");
+            assertThat(response.path("stopReason").asText()).isEqualTo("end_turn");
             assertThat(chunks.toString()).contains("compile").contains("eval-cel");
 
             chunks.setLength(0);
             String compileLine = "compile {\"sources\":{\"p/m.proto\":"
                     + "\"syntax = \\\"proto3\\\"; package p; message M { string id = 1; }\"}}";
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent(compileLine))));
+            response = client.prompt(sessionId, compileLine);
+            assertThat(response.path("stopReason").asText()).isEqualTo("end_turn");
             assertThat(chunks.toString()).contains("\"ok\" : true");
 
             chunks.setLength(0);
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent("nope"))));
+            response = client.prompt(sessionId, "nope");
+            assertThat(response.path("stopReason").asText()).isEqualTo("end_turn");
             assertThat(chunks.toString()).contains("Unknown verb 'nope'");
         }
     }
@@ -103,25 +104,20 @@ class ProtoMoltAcpAgentTest {
      * internal node classes; input that is not JSON at all reached the same cast. Both are
      * reported in the caller's terms now, and neither ends the session.
      *
-     * <p>Both cases share one agent and session deliberately: each agent costs a transport pair,
+     * <p>Both cases share one agent and session deliberately: each agent costs a pipe pair,
      * and neither case needs its own. Proving the session survives requires a further prompt
-     * after the bad one, which is what puts this in the {@code acp-protocol} lane — see
-     * {@link #catalogVerbsRunThroughTheProtocol()}.
+     * after the bad one, which is what puts this in the {@code acp-protocol} lane.</p>
      */
     @Tag("acp-protocol")
     @Test
-    void malformedVerbInputIsReportedInTheCallersTermsAndTheSessionSurvives() throws Exception {
-        InMemoryTransportPair pair = InMemoryTransportPair.create();
-        AcpSyncAgent agent = ProtoMoltAcpAgent.buildAgent(
-                pair.agentTransport(), ProtoMoltCatalog.full(ActionContext.create()));
-        agent.start();
-        try (AcpSyncClient client = clientOver(pair)) {
+    void malformedVerbInputIsReportedInTheCallersTermsAndTheSessionSurvives() {
+        try (Harness harness = harness(ProtoMoltCatalog.full(ActionContext.create()))) {
+            AcpClient client = harness.client();
             client.initialize();
-            var session = client.newSession(new AcpSchema.NewSessionRequest("/workspace", List.of()));
+            String sessionId = client.newSession("/workspace");
 
             // Valid JSON, wrong shape: named by shape, not by Jackson's node classes.
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent("compile [1,2,3]"))));
+            client.prompt(sessionId, "compile [1,2,3]");
             assertThat(chunks.toString())
                     .contains("input must be a JSON object")
                     .contains("array")
@@ -130,21 +126,62 @@ class ProtoMoltAcpAgentTest {
 
             // Not JSON at all.
             chunks.setLength(0);
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent("compile {not json"))));
+            client.prompt(sessionId, "compile {not json");
             assertThat(chunks.toString()).contains("input is not JSON");
 
             // The session keeps going after both.
             chunks.setLength(0);
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent("list"))));
+            client.prompt(sessionId, "list");
             assertThat(chunks.toString()).contains("compile");
         }
     }
 
+    /**
+     * Replays the golden transcript under {@code src/test/resources/acp}: the exact bytes the
+     * exchange with the third-party SDK produced (cleaned of its duplicated discriminator
+     * keys), cross-checked against the ACP spec. Every line the agent writes must equal the
+     * golden line, so the first-party transport stays message-faithful to what real IDEs
+     * (Zed, JetBrains) parse: same method names, same field names, same shapes.
+     */
+    @Tag("acp-protocol")
     @Test
-    void streamingVerbChunksEachEmission() throws Exception {
-        InMemoryTransportPair pair = InMemoryTransportPair.create();
+    void theWireMatchesTheGoldenTranscript() throws Exception {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpAgent agent = ProtoMoltAcpAgent.buildAgent(
+                ends[1].in(), ends[1].out(), ProtoMoltCatalog.full(ActionContext.create()));
+        agent.start();
+        try (JsonPipe wire = JsonPipe.over(ends[0].in(), ends[0].out())) {
+            List<String> golden;
+            try (InputStream resource = getClass().getResourceAsStream("/acp/wire-transcript.ndjson")) {
+                assertThat(resource).as("golden transcript on the test classpath").isNotNull();
+                golden = new String(resource.readAllBytes(), StandardCharsets.UTF_8).lines().toList();
+            }
+            String sessionId = null;
+            for (String line : golden) {
+                if (line.isBlank() || line.startsWith("#")) {
+                    continue;
+                }
+                if (line.startsWith(">> ")) {
+                    String message = line.substring(3);
+                    wire.send(sessionId == null ? message : message.replace("$SESSION", sessionId));
+                } else if (line.startsWith("<< ")) {
+                    String actual = wire.take();
+                    if (sessionId == null && actual.contains("sessionId")) {
+                        sessionId = MAPPER.readTree(actual).path("result").path("sessionId").asText();
+                        assertThat(sessionId).isNotBlank();
+                    }
+                    JsonNode expected = MAPPER.readTree(
+                            line.substring(3).replace("$SESSION", sessionId == null ? "" : sessionId));
+                    assertThat(MAPPER.readTree(actual)).isEqualTo(expected);
+                }
+            }
+        } finally {
+            agent.close();
+        }
+    }
+
+    @Test
+    void streamingVerbChunksEachEmission() {
         ActionCatalog catalog = ProtoMoltCatalog.full(ActionContext.create());
         catalog.register(new StreamingAction() {
             @Override
@@ -179,13 +216,11 @@ class ProtoMoltAcpAgentTest {
                 }
             }
         });
-        AcpSyncAgent agent = ProtoMoltAcpAgent.buildAgent(pair.agentTransport(), catalog);
-        agent.start();
-        try (AcpSyncClient client = clientOver(pair)) {
+        try (Harness harness = harness(catalog)) {
+            AcpClient client = harness.client();
             client.initialize();
-            var session = client.newSession(new AcpSchema.NewSessionRequest("/workspace", List.of()));
-            client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent("tick-stream"))));
+            String sessionId = client.newSession("/workspace");
+            client.prompt(sessionId, "tick-stream");
             assertThat(chunks.toString())
                     .contains("\"tick\" : 1")
                     .contains("\"tick\" : 2")

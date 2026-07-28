@@ -4,11 +4,7 @@ import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
-import com.agentclientprotocol.sdk.client.AcpClient;
-import com.agentclientprotocol.sdk.client.AcpSyncClient;
-import com.agentclientprotocol.sdk.client.transport.AgentParameters;
-import com.agentclientprotocol.sdk.client.transport.StdioAcpClientTransport;
-import com.agentclientprotocol.sdk.spec.AcpSchema;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -26,7 +22,6 @@ import org.junit.jupiter.api.Timeout;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,13 +33,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code grpc-invoke} at a DemoSearch-shaped dynamic server (a local stand-in for the
  * samples module's demo service) and asserts each hit arrives as its own chunk.
  */
-// Forking a JVM and running protoc under a fully parallel build is slow; this bound only has to
-// catch a genuine hang, so it sits above the client's own request timeout rather than under it.
+// Forking a JVM and running protoc under a fully parallel build is slow; this bound only has
+// to catch a genuine hang, so it sits above the client's own request timeout.
 @Timeout(value = 4, unit = TimeUnit.MINUTES)
-// Excluded from the default build for the same reason as
-// ProtoMoltAcpAgentTest#catalogVerbsRunThroughTheProtocol: these drive the protoc-backed verbs
-// through the SDK client, here across a real subprocess, and the client has been seen blocking
-// indefinitely on a contended machine. Run with ./gradlew :protomolt-acp:acpProtocolTest.
+// Excluded from the default build because it forks a JVM per test and shells out to protoc,
+// which is slower than anything the default test task runs. Run with
+// ./gradlew :protomolt-acp:acpProtocolTest.
 @Tag("acp-protocol")
 class ProtoMoltAcpAgentProcessTest {
 
@@ -76,7 +70,7 @@ class ProtoMoltAcpAgentProcessTest {
 
     private static Server searchServer;
 
-    // Written by the SDK's session-update thread, read by the test thread, so synchronized
+    // Written by the client's notification listener, read by the test thread, so synchronized
     // rather than StringBuilder.
     private final StringBuffer messages = new StringBuffer();
     private final StringBuffer thoughts = new StringBuffer();
@@ -115,44 +109,42 @@ class ProtoMoltAcpAgentProcessTest {
         }
     }
 
-    private AcpSyncClient launchAgent() {
+    private AcpClient launchAgent() throws Exception {
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        AgentParameters command = AgentParameters.builder(java)
-                .args("-cp", System.getProperty("java.class.path"),
+        return AcpClient.launch(java, "-cp", System.getProperty("java.class.path"),
                         ProtoMoltAcpAgent.class.getName())
-                .build();
-        return AcpClient.sync(new StdioAcpClientTransport(command))
-                // A real JVM plus a protoc-backed compile verb; see ProtoMoltAcpAgentTest for
-                // why the SDK's 30s default is too tight under a loaded parallel build.
-                .requestTimeout(Duration.ofMinutes(3))
-                .sessionUpdateConsumer(notification -> {
-                    if (notification.update() instanceof AcpSchema.AgentMessageChunk message
-                            && message.content() instanceof AcpSchema.TextContent text) {
-                        messages.append(text.text());
+                // A real JVM plus a protoc-backed compile verb can be slow under a loaded
+                // parallel build; the bound only has to catch a genuine hang.
+                .withRequestTimeout(Duration.ofMinutes(3))
+                .onSessionUpdate(params -> {
+                    JsonNode update = params.path("update");
+                    JsonNode content = update.path("content");
+                    if (!"text".equals(content.path("type").asText())) {
+                        return;
                     }
-                    if (notification.update() instanceof AcpSchema.AgentThoughtChunk thought
-                            && thought.content() instanceof AcpSchema.TextContent text) {
-                        thoughts.append(text.text());
+                    switch (update.path("sessionUpdate").asText()) {
+                        case "agent_message_chunk" -> messages.append(content.path("text").asText());
+                        case "agent_thought_chunk" -> thoughts.append(content.path("text").asText());
+                        default -> {
+                        }
                     }
-                })
-                .build();
+                });
     }
 
     @Test
     void compileVerbRoundTripsThroughTheRealProcess() throws Exception {
-        try (AcpSyncClient client = launchAgent()) {
-            AcpSchema.InitializeResponse init = client.initialize();
-            assertThat(init.protocolVersion()).isEqualTo(1);
+        try (AcpClient client = launchAgent()) {
+            JsonNode init = client.initialize();
+            assertThat(init.path("protocolVersion").asInt()).isEqualTo(1);
 
-            var session = client.newSession(new AcpSchema.NewSessionRequest("/workspace", List.of()));
-            assertThat(session.sessionId()).isNotBlank();
+            String sessionId = client.newSession("/workspace");
+            assertThat(sessionId).isNotBlank();
 
             String line = "compile {\"sources\":{\"p/m.proto\":"
                     + "\"syntax = \\\"proto3\\\"; package p; message M { string id = 1; }\"}}";
-            AcpSchema.PromptResponse response = client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(), List.of(new AcpSchema.TextContent(line))));
+            JsonNode response = client.prompt(sessionId, line);
 
-            assertThat(response.stopReason()).isEqualTo(AcpSchema.StopReason.END_TURN);
+            assertThat(response.path("stopReason").asText()).isEqualTo("end_turn");
             assertThat(thoughts.toString()).contains("running compile");
             assertThat(messages.toString()).contains("\"ok\" : true");
         }
@@ -160,9 +152,9 @@ class ProtoMoltAcpAgentProcessTest {
 
     @Test
     void streamingSearchChunksEachHitThroughTheRealProcess() throws Exception {
-        try (AcpSyncClient client = launchAgent()) {
+        try (AcpClient client = launchAgent()) {
             client.initialize();
-            var session = client.newSession(new AcpSchema.NewSessionRequest("/workspace", List.of()));
+            String sessionId = client.newSession("/workspace");
 
             ObjectNode invoke = MAPPER.createObjectNode();
             invoke.put("target", "localhost:" + searchServer.getPort());
@@ -170,11 +162,10 @@ class ProtoMoltAcpAgentProcessTest {
             invoke.putObject("schema").putObject("sources")
                     .put("demo/search/v1/demo_search.proto", PROTO);
             invoke.putObject("request").put("query", "nearest neighbor search").put("hits", 3);
-            AcpSchema.PromptResponse response = client.prompt(new AcpSchema.PromptRequest(
-                    session.sessionId(),
-                    List.of(new AcpSchema.TextContent("grpc-invoke " + MAPPER.writeValueAsString(invoke)))));
+            JsonNode response = client.prompt(sessionId,
+                    "grpc-invoke " + MAPPER.writeValueAsString(invoke));
 
-            assertThat(response.stopReason()).isEqualTo(AcpSchema.StopReason.END_TURN);
+            assertThat(response.path("stopReason").asText()).isEqualTo("end_turn");
             assertThat(messages.toString())
                     .contains("\"docId\" : \"doc-1\"")
                     .contains("\"docId\" : \"doc-2\"")

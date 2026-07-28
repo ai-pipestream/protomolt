@@ -110,35 +110,24 @@ containers.
 
 ## ACP protocol round trips
 
-Four tests in `protomolt-acp` drive the agent through a full ACP exchange —
-two over the SDK's in-memory transport, two across a real child process over
-stdio. They carry the `acp-protocol` JUnit tag and are excluded from the
-default `test` task:
+The `acp-protocol`-tagged tests in `protomolt-acp` drive the agent through a
+full ACP exchange: two over in-memory pipes, two across a real child process
+over stdio. They are excluded from the default `test` task and run as their
+own lane:
 
 ```bash
 ./gradlew :protomolt-acp:acpProtocolTest
 ```
 
-The exclusion is not about Docker or any external dependency. When the
-machine is saturated — a full `./gradlew build --rerun-tasks` across every
-module — `AcpSyncClient.prompt` has been observed never returning: the call
-blocks until its request timeout rather than failing an assertion, so the
-build reports a failure caused by machine load rather than by a defect.
-
-What provokes it is issuing **more than one prompt on a session**. The
-single-prompt test in the in-memory suite has never been observed hanging;
-both multi-prompt tests have, on different prompts and different verbs. So it
-is not the `compile` verb, and it is not the agent — it is the SDK's reactive
-client under contention. It reproduces unchanged on the code as it stood
-before this suite was reworked. Raising the client's request timeout, and
-fixing a genuine data race on the tests' own notification buffer, each left
-it reproducing.
-
-They are quarantined rather than deleted because the coverage is real: they
-are the only tests that exercise the agent as an IDE actually drives it. CI
-runs them in the `build` job on a quiet runner, serially
-(`maxParallelForks = 1`), after the main build. Run them the same way
-locally — on an otherwise idle machine — and they pass in about a second.
+The exclusion is about cost, not flakiness: the process suite forks an agent
+JVM per test and both suites shell out to protoc, which is slower than
+anything the default test task runs. The agent speaks newline-delimited
+JSON-RPC over a first-party, virtual-thread transport in the module itself;
+there is no SDK and no reactive runtime involved, so the tests have no
+timing machinery to trip over. CI runs the lane once, serially
+(`maxParallelForks = 1`), after the main build. They are kept as a separate
+lane rather than deleted because the coverage is real: they are the only
+tests that exercise the agent as an IDE actually drives it.
 
 ## Conformance against buf's own runner
 

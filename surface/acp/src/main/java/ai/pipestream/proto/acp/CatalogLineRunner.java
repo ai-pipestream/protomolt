@@ -2,7 +2,6 @@ package ai.pipestream.proto.acp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
-import com.agentclientprotocol.sdk.agent.SyncPromptContext;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,7 +23,7 @@ final class CatalogLineRunner {
         this.catalog = catalog;
     }
 
-    void run(String line, SyncPromptContext context) {
+    void run(String line, PromptContext context) {
         line = line.trim();
         if (line.isEmpty()) {
             return;

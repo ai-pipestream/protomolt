@@ -6,8 +6,11 @@
  * {@code <verb> <json>} runs one entry of an
  * {@link ai.pipestream.proto.actions.ActionCatalog} and the JSON result streams back as
  * message chunks. The agent declares no file, terminal, or permission capabilities. Its
- * {@code buildAgent} factory takes the transport and catalog as arguments, so tests drive the
- * agent in memory while {@code main} only wires the process streams.</p>
+ * {@code buildAgent} factory takes the input and output streams and the catalog as arguments,
+ * so tests drive the agent over in-memory pipes while {@code main} only wires the process
+ * streams. The protocol transport is first-party ({@link AcpConnection}): newline-delimited
+ * JSON-RPC 2.0 on virtual threads, no reactive runtime. {@link AcpClient} is the small
+ * blocking client the tests, smoke drivers, and samples use to drive an agent.</p>
  *
  * <p>{@code ai.pipestream.proto.mcp} serves the same catalog to agents over the Model Context
  * Protocol, and {@code ai.pipestream.proto.cli} over a terminal; all three share the line

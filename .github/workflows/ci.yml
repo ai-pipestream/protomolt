@@ -37,20 +37,12 @@ jobs:
       - name: Build and test
         run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
-      # Excluded from `build` because the ACP SDK's client has been seen blocking
-      # indefinitely when the machine is saturated by the parallel build. Run here on a
-      # quiet machine, serially, so the coverage is kept rather than deleted. The client
-      # still wedges even when quiet (a timeout in its response flux, different tests each
-      # time), and a single retry has been observed to wedge too, so this allows three
-      # attempts. A persistent failure still fails the job.
+      # Excluded from `build` because these tests fork an agent JVM and shell out to
+      # protoc, which is slower than anything the default test task runs. The lane keeps
+      # the coverage (the agent driven exactly as an IDE drives it) without slowing the
+      # main build; a single run is enough.
       - name: ACP protocol round trips
-        run: |
-          for attempt in 1 2 3; do
-            ./gradlew :protomolt-acp:acpProtocolTest --rerun-tasks --console=plain \
-              -PtestJdk=${{ matrix.test-jdk }} && exit 0
-            echo "acpProtocolTest attempt ${attempt} failed"
-          done
-          exit 1
+        run: ./gradlew :protomolt-acp:acpProtocolTest --rerun-tasks --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
       - name: Buf lint
         run: buf lint
