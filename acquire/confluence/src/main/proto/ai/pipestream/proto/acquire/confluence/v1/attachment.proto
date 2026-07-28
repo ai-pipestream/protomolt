@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// ATTACHMENT
+// ============================================================================
+
+// Links of an attachment (`_links` on the entity).
+message AttachmentLinks {
+  // Web UI link of the content.
+  string webui = 1;
+  // Download link of the content.
+  string download = 2;
+}
+
+// An attachment. Canonical shape: the spec's AttachmentSingle; the Bulk
+// variant is identical minus the expandable lists.
+message Attachment {
+  // ID of the attachment.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  ContentStatus status = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the attachment (carries the filename for uploaded files).
+  string title = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      analyzer: "english"
+      sub_fields: [{ type: INDEX_FIELD_TYPE_KEYWORD, name: "raw" }]
+    }
+  ];
+  // Date and time when the attachment was created.
+  google.protobuf.Timestamp created_at = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // ID of the containing page. Only returned if the attachment has a
+  // container that is a page.
+  string page_id = 5;
+  // ID of the containing blog post. Only returned if the attachment has a
+  // container that is a blog post.
+  string blog_post_id = 6;
+  // ID of the containing custom content. Only returned if the attachment has
+  // a container that is custom content.
+  string custom_content_id = 7;
+  // Media Type for the attachment.
+  string media_type = 8 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Media Type description for the attachment.
+  string media_type_description = 9;
+  // Comment for the attachment.
+  string comment = 10;
+  // File ID of the attachment. This is the ID referenced in
+  // `atlas_doc_format` bodies and is distinct from the attachment ID.
+  string file_id = 11;
+  // File size of the attachment.
+  int64 file_size = 12;
+  // WebUI link of the attachment.
+  string webui_link = 13;
+  // Download link of the attachment.
+  string download_link = 14;
+  Version version = 15;
+  // The attachment binary. Optional: populated when the crawler fetches the
+  // download, empty for metadata-only records. The crawler may later route
+  // these bytes through the repo blob store instead of inlining them.
+  optional bytes content = 21;
+  repeated Label labels = 16;
+  repeated ContentProperty properties = 17;
+  repeated Operation operations = 18;
+  repeated Version versions = 19;
+  // The spec's `_links` property.
+  AttachmentLinks links = 20;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

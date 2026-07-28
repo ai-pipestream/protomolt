@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// PROPERTIES - Content Properties, Space Properties, App Properties.
+//
+// Property values are arbitrary JSON per key in the spec
+// (additionalProperties: true), so they are modeled as
+// google.protobuf.Struct: the field genuinely IS schema-less JSON, and
+// Struct is its faithful typed model. This is the only place in the schema
+// where Struct appears.
+// ============================================================================
+
+// A content property (key-value metadata attached to content).
+message ContentProperty {
+  // ID of the property.
+  string id = 1;
+  // Key of the property.
+  string key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Value of the property (arbitrary JSON in the API).
+  google.protobuf.Struct value = 3;
+  // Version of the property.
+  Version version = 4;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The version block of a space property (an inline object in the spec).
+message SpacePropertyVersion {
+  // RFC3339 date-time at which the property's current version was created.
+  google.protobuf.Timestamp created_at = 1;
+  // Atlassian account ID of the user that created the current version.
+  string created_by = 2;
+  // Message associated with the current version.
+  string message = 3;
+  // The space property's current version number.
+  int32 number = 4;
+}
+
+// A space property (key-value metadata attached to a space).
+message SpaceProperty {
+  // ID of the space property.
+  string id = 1;
+  // Key of the space property.
+  string key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Value of the space property (arbitrary JSON in the API).
+  google.protobuf.Struct value = 3;
+  // RFC3339 date-time at which the property was created.
+  google.protobuf.Timestamp created_at = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // Atlassian account ID of the user that created the space property.
+  string created_by = 5;
+  // The property's current version.
+  SpacePropertyVersion version = 6;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A Forge app property (App Properties group; an inline schema in the spec).
+message AppProperty {
+  // The key of the property.
+  string key = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The value of the property (arbitrary JSON in the API).
+  google.protobuf.Struct value = 2;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

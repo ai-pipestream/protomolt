@@ -18,6 +18,8 @@ modules:
     name: buf.build/ai-pipestream/jsonschema-testdata
   - path: repo/proto/src/main/proto
     name: buf.build/ai-pipestream/repo
+  - path: acquire/confluence/src/main/proto
+    name: buf.build/ai-pipestream/acquire-confluence
 lint:
   use:
     - STANDARD

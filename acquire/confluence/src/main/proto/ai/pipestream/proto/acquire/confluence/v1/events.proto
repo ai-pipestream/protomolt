@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/confluence_entity.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// CRAWL / LIVE-UPDATE ENVELOPES - what the crawler emits and what live
+// updates feed.
+// ============================================================================
+
+// Where a change record came from.
+enum ChangeSource {
+  CHANGE_SOURCE_UNSPECIFIED = 0;
+  // Full or resumable crawl of the REST API.
+  CHANGE_SOURCE_CRAWL = 1;
+  // Incremental sync driven by a CQL lastmodified query.
+  CHANGE_SOURCE_CQL_INCREMENTAL = 2;
+  // Near-real-time update from a Confluence webhook.
+  CHANGE_SOURCE_WEBHOOK = 3;
+}
+
+// The kind of change applied to the wrapped entity.
+enum ChangeOperation {
+  CHANGE_OPERATION_UNSPECIFIED = 0;
+  // The entity was created or updated; the entity payload is present.
+  CHANGE_OPERATION_UPSERT = 1;
+  // The entity was deleted (or trashed/purged upstream); only the identity
+  // fields of the entity are meaningful.
+  CHANGE_OPERATION_DELETE = 2;
+}
+
+// A full-sync marker: one per crawl of a space (or workspace), recording what
+// the sweep covered so a later run can resume or reconcile.
+message ConfluenceSnapshot {
+  // Unique id of this snapshot run.
+  string snapshot_id = 1;
+  // Key of the space the sweep covered (empty for a workspace-wide sweep).
+  string space_key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Number of entities emitted per entity kind (e.g. "page_bulk": 4213).
+  map<string, int64> entity_counts = 3;
+  // Opaque pagination cursor the sweep ended on, for resumable crawls.
+  string cursor = 4;
+  // When the sweep started.
+  google.protobuf.Timestamp started_at = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // When the sweep completed (unset while the sweep is running).
+  optional google.protobuf.Timestamp completed_at = 6 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// One upsert or delete against the Confluence mirror, from any change source.
+message ConfluenceChange {
+  // Unique id of this change record.
+  string change_id = 1;
+  ChangeOperation operation = 2;
+  // The entity payload (full for UPSERT; identity-only for DELETE).
+  ConfluenceEntity entity = 3;
+  // The position this change was observed at: the CQL cursor for
+  // CQL_INCREMENTAL, the webhook event id for WEBHOOK, the snapshot id for
+  // CRAWL.
+  string cursor = 4;
+  ChangeSource source = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // When the change was observed.
+  google.protobuf.Timestamp occurred_at = 6 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

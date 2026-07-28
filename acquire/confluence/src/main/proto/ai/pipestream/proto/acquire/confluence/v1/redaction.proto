@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// REDACTIONS (read side: redactions that were applied to content)
+// ============================================================================
+
+// One redaction that was applied (the spec's RedactionPointerResponse; the
+// request-side Redaction/RedactionPointer pair is the same shape minus
+// redaction_id and is not modeled).
+message Redaction {
+  // JSON pointer indicating where the redaction was applied.
+  string pointer = 1;
+  // Starting character index where redaction was applied.
+  int32 from = 2;
+  // Ending character index where redaction was applied.
+  int32 to = 3;
+  // Reason for the redaction.
+  string reason = 4;
+  // Unique identifier for this redaction (a UUID). Can be used to restore
+  // the redacted content later.
+  string redaction_id = 5;
+}
+
+// The redactions applied to one section of the content.
+message RedactionSectionResponse {
+  // List of redactions that were applied to this section.
+  repeated Redaction redactions = 1;
+}
+
+// Details of all redactions that were applied to the content. Each redaction
+// includes a unique ID for restoration, except that code block redactions
+// cannot be restored.
+message RedactionResponse {
+  RedactionSectionResponse body = 1;
+  RedactionSectionResponse title = 2;
+}

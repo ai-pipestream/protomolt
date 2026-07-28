@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/admin_key.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/attachment.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/blogpost.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/classification.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/comment.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/content.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/page.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/permission.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/redaction.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/space.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/task.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/user.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// CONFLUENCE ENTITY - the keystone wrapper.
+//
+// One Confluence REST API v2 entity as the crawler read it, wrapped for
+// transport and storage. This is the Kafka / parquet / round-trip unit: the
+// crawler publishes ConfluenceEntity, the repo sink maps the content arms to
+// Documents, the parquet sink writes them as-is, and the document-events
+// feed projects them into Lucene via the indexing hints on the inner fields.
+//
+// entity_id is the Confluence id of the wrapped entity (string; the v2 API
+// declares ids as strings holding numbers). One arm per canonical entity
+// kind; the spec's Bulk/Single transport variants collapse into the single
+// canonical shape per kind.
+// ============================================================================
+message ConfluenceEntity {
+  // The Confluence id of the wrapped entity.
+  string entity_id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // When the crawler ingested this record.
+  google.protobuf.Timestamp ingested_at = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  oneof entity {
+    Page page = 10;
+    BlogPost blog_post = 11;
+    Comment comment = 12;
+    Attachment attachment = 13;
+    Space space = 14;
+    Label label = 15;
+    Task task = 16;
+    User user = 17;
+    Whiteboard whiteboard = 18;
+    Database database = 19;
+    Folder folder = 20;
+    CustomContent custom_content = 21;
+    SmartLink smart_link = 22;
+    ClassificationLevel classification_level = 23;
+    ContentProperty content_property = 24;
+    SpaceProperty space_property = 25;
+    AppProperty app_property = 26;
+    DataPolicy data_policy = 27;
+    Like like = 28;
+    Ancestor ancestor = 29;
+    Version version = 30;
+    AdminKeyResponse admin_key = 31;
+    Operation operation = 32;
+    RedactionResponse redaction = 33;
+    SpaceRole space_role = 34;
+    SpacePermissionAssignment space_permission_assignment = 35;
+    ContentTreeEntry tree_entry = 36;
+  }
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

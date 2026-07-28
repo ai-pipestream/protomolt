@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// COMMENT - footer and inline comments on pages, blog posts, attachments and
+// custom content.
+// ============================================================================
+
+// Inline comment resolution status.
+enum InlineCommentResolutionStatus {
+  INLINE_COMMENT_RESOLUTION_STATUS_UNSPECIFIED = 0;
+  INLINE_COMMENT_RESOLUTION_STATUS_OPEN = 1;
+  INLINE_COMMENT_RESOLUTION_STATUS_REOPENED = 2;
+  INLINE_COMMENT_RESOLUTION_STATUS_RESOLVED = 3;
+  INLINE_COMMENT_RESOLUTION_STATUS_DANGLING = 4;
+}
+
+// Properties describing the highlighted text an inline comment refers to.
+message InlineCommentProperties {
+  // Property value used to reference the highlighted element in DOM.
+  string inline_marker_ref = 1;
+  // Text that is highlighted.
+  string inline_original_selection = 2;
+}
+
+// A comment. Canonical shape: the union of the spec's FooterCommentModel and
+// InlineCommentModel; the inline-only fields (resolution state, highlight
+// properties) are simply unset on footer comments. The spec's eight nested
+// list variants (PageCommentModel, BlogPostCommentModel,
+// AttachmentCommentModel, CustomContentCommentModel, ChildrenCommentModel,
+// PageInlineCommentModel, BlogPostInlineCommentModel,
+// InlineCommentChildrenModel) are subsets of this shape.
+message Comment {
+  // ID of the comment.
+  string id = 1;
+  ContentStatus status = 2;
+  // Title of the comment.
+  string title = 3;
+  // ID of the blog post containing the comment, if on a blog post.
+  string blog_post_id = 4;
+  // ID of the page containing the comment, if on a page.
+  string page_id = 5;
+  // ID of the attachment containing the comment, if on an attachment.
+  string attachment_id = 6;
+  // ID of the custom content containing the comment, if on custom content.
+  string custom_content_id = 7;
+  // ID of the parent comment, if the comment is a reply.
+  string parent_comment_id = 8;
+  Version version = 9;
+  Body body = 10;
+  // Atlassian account ID of the last person who modified the resolve state of
+  // the comment. Null until the comment is resolved or reopened. Inline
+  // comments only.
+  optional string resolution_last_modifier_id = 11;
+  // Timestamp of the last modification to the comment's resolution status.
+  // Null until the comment is resolved or reopened. Inline comments only.
+  optional google.protobuf.Timestamp resolution_last_modified_at = 12;
+  // Resolution state. Inline comments only.
+  InlineCommentResolutionStatus resolution_status = 13;
+  // The highlighted text the comment refers to. Inline comments only.
+  InlineCommentProperties inline_properties = 14;
+  repeated ContentProperty properties = 15;
+  repeated Operation operations = 16;
+  repeated Like likes = 17;
+  repeated Version versions = 18;
+  // The spec's `_links` property.
+  Links links = 19;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

@@ -48,6 +48,9 @@ project(':protomolt-gather-maven').projectDir = file('acquire/gather/maven')
 include 'protomolt-msgraph'
 project(':protomolt-msgraph').projectDir = file('acquire/msgraph')
 
+include 'protomolt-acquire-confluence'
+project(':protomolt-acquire-confluence').projectDir = file('acquire/confluence')
+
 include 'protomolt-connector'
 project(':protomolt-connector').projectDir = file('acquire/connector')
 

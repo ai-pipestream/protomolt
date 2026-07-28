@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// BLOG POST
+// ============================================================================
+
+// The status of the blog post. Unlike ContentStatus, blog posts have no
+// "archived" status.
+enum BlogPostContentStatus {
+  BLOG_POST_CONTENT_STATUS_UNSPECIFIED = 0;
+  BLOG_POST_CONTENT_STATUS_CURRENT = 1;
+  BLOG_POST_CONTENT_STATUS_DRAFT = 2;
+  BLOG_POST_CONTENT_STATUS_HISTORICAL = 3;
+  BLOG_POST_CONTENT_STATUS_TRASHED = 4;
+  BLOG_POST_CONTENT_STATUS_DELETED = 5;
+  BLOG_POST_CONTENT_STATUS_ANY = 6;
+}
+
+// A blog post. Canonical shape: the spec's BlogPostSingle; the Bulk variant
+// is identical minus the expandable lists.
+message BlogPost {
+  // ID of the blog post.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  BlogPostContentStatus status = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the blog post.
+  string title = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      analyzer: "english"
+      sub_fields: [{ type: INDEX_FIELD_TYPE_KEYWORD, name: "raw" }]
+    }
+  ];
+  // ID of the space the blog post is in.
+  string space_id = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who created this blog post originally.
+  string author_id = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Date and time when the blog post was created.
+  google.protobuf.Timestamp created_at = 6 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  Version version = 7;
+  Body body = 8;
+  repeated Label labels = 9;
+  repeated ContentProperty properties = 10;
+  repeated Operation operations = 11;
+  repeated Like likes = 12;
+  repeated Version versions = 13;
+  // Whether the blog post has been favorited by the current user.
+  bool is_favorited_by_current_user = 14;
+  // The spec's `_links` property.
+  AbstractPageLinks links = 15;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

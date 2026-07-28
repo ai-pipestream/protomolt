@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// PAGE
+// ============================================================================
+
+// A page. Canonical shape: the spec's PageSingle, extended with the nullable
+// `subtype` the spec only declares on PageBulk. The Bulk variant is identical
+// minus the expandable lists, which are plain repeated fields here (a list is
+// `repeated`; the spec's MultiEntityResult pagination wrappers are transport,
+// not entity shape).
+message Page {
+  // ID of the page.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  ContentStatus status = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the page.
+  string title = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      analyzer: "english"
+      sub_fields: [{ type: INDEX_FIELD_TYPE_KEYWORD, name: "raw" }]
+    }
+  ];
+  // ID of the space the page is in.
+  string space_id = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // ID of the parent page, or null if there is no parent page.
+  string parent_id = 5;
+  ParentContentType parent_type = 6;
+  // Position of the page within the given parent page tree.
+  optional int32 position = 7;
+  // The account ID of the user who created this page originally.
+  string author_id = 8 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who owns this page.
+  optional string owner_id = 9;
+  // The account ID of the user who owned this page previously, or null if
+  // there is no previous owner.
+  optional string last_owner_id = 10;
+  // The subtype of the page.
+  optional string subtype = 11;
+  // Date and time when the page was created.
+  google.protobuf.Timestamp created_at = 12 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  Version version = 13;
+  Body body = 14;
+  repeated Label labels = 15;
+  repeated ContentProperty properties = 16;
+  repeated Operation operations = 17;
+  repeated Like likes = 18;
+  repeated Version versions = 19;
+  // Whether the page has been favorited by the current user.
+  bool is_favorited_by_current_user = 20;
+  // The spec's `_links` property.
+  AbstractPageLinks links = 21;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
