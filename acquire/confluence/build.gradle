@@ -2,11 +2,13 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'Confluence Cloud REST API v2 schema: entity protos for every API group, the ConfluenceEntity wrapper, and the crawl/live-update envelopes'
+description = 'Confluence Cloud REST API v2: entity protos for every API group, the ConfluenceEntity wrapper and crawl/live-update envelopes, plus the crawler core (REST client, JSON-to-proto mapper, ChangeSink SPI)'
 
 dependencies {
     api project(':protomolt-index-spi')
     api libs.protobuf.java
+    // ConfluenceClient and ConfluenceMapper read the REST v2 JSON payloads.
+    api libs.jackson.databind
 
     // Extract the indexing-hints .proto for protoc imports.
     protobuf project(':protomolt-index-spi')

@@ -6,8 +6,12 @@ serialization of the REST API: every message is a content concept, and only
 information-bearing fields survive. The entity shapes are grounded in the
 official Confluence Cloud REST API v2 spec (field-level fidelity: ids as
 strings, ISO-8601 date-times as Timestamps, spec-declared enums), but REST
-response decoration is deliberately not modeled. The module contains no
-client code; the crawler and sinks land in later modules.
+response decoration is deliberately not modeled. On top of the schema the
+module carries the crawler core: `ConfluenceClient` (REST v2 transport),
+`ConfluenceMapper` (REST JSON to domain protos), `ConfluenceCrawler`
+(virtual-thread orchestration), the `ChangeSink` SPI it emits into, and the
+env-driven `ConfluenceConnectorConfig`. Kafka, repo-service, and Lucene
+wiring land behind the sink in later modules.
 
 ## Coverage
 
