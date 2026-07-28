@@ -90,7 +90,16 @@ class ActionCatalogTest {
             assertThat(inputSchema.isObject()).isTrue();
             assertThat(inputSchema.get("$schema").asText())
                     .isEqualTo("https://json-schema.org/draft/2020-12/schema");
-            assertThat(inputSchema.get("type").asText()).isEqualTo("object");
+            if (inputSchema.has("anyOf")) {
+                // Strict function-calling validators reject a root type beside
+                // anyOf; the object type moves into the variants.
+                assertThat(inputSchema.has("type")).isFalse();
+                for (JsonNode variant : inputSchema.get("anyOf")) {
+                    assertThat(variant.get("type").asText()).isEqualTo("object");
+                }
+            } else {
+                assertThat(inputSchema.get("type").asText()).isEqualTo("object");
+            }
             assertThat(inputSchema.has("properties")).isTrue();
         }
         assertThat(manifest.findValuesAsText("name")).containsAll(BUILT_INS);

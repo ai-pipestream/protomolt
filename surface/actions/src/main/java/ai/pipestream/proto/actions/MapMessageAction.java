@@ -79,9 +79,12 @@ final class MapMessageAction implements ProtoAction {
         celRule.putArray("required").add("target");
         celRule.put("additionalProperties", false);
         ActionJson.required(schema, "schema", "message");
+        // Strict validators reject a root "type" beside anyOf (see ActionJson
+        // .schemaSourceSchema): declare the object type inside each variant.
+        schema.remove("type");
         ArrayNode variants = schema.putArray("anyOf");
-        variants.addObject().putArray("required").add("rules");
-        variants.addObject().putArray("required").add("celRules");
+        variants.addObject().put("type", "object").putArray("required").add("rules");
+        variants.addObject().put("type", "object").putArray("required").add("celRules");
         schema.put("additionalProperties", false);
         return schema;
     }
