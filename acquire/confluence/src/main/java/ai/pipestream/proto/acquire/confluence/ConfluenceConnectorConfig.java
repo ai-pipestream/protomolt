@@ -2,6 +2,7 @@ package ai.pipestream.proto.acquire.confluence;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -14,9 +15,12 @@ import java.util.Objects;
  *        suffix ({@code CONFLUENCE_BASE_URL}, e.g.
  *        {@code https://pipestreamai.atlassian.net/wiki}); required
  * @param email the Atlassian account email for basic auth
- *        ({@code CONFLUENCE_EMAIL}); required
+ *        ({@code CONFLUENCE_EMAIL}, or the {@code CONFLUENCE_USER} alias;
+ *        the canonical name wins when both are set); required
  * @param apiToken the Atlassian API token for basic auth
- *        ({@code CONFLUENCE_API_TOKEN}); required, redacted everywhere
+ *        ({@code CONFLUENCE_API_TOKEN}, or the {@code CONFLUENCE_TOKEN} alias;
+ *        the canonical name wins when both are set); required, redacted
+ *        everywhere
  * @param spaces space keys to crawl ({@code CONFLUENCE_SPACES},
  *        comma-separated); empty = every space the credentials can see
  * @param pageSize the page size for list endpoints
@@ -37,8 +41,12 @@ public record ConfluenceConnectorConfig(
     public static final String ENV_BASE_URL = "CONFLUENCE_BASE_URL";
     /** Environment variable for the basic-auth account email. */
     public static final String ENV_EMAIL = "CONFLUENCE_EMAIL";
+    /** Alias for {@link #ENV_EMAIL}; used only when the canonical name is unset. */
+    public static final String ENV_EMAIL_ALIAS = "CONFLUENCE_USER";
     /** Environment variable for the basic-auth API token. */
     public static final String ENV_API_TOKEN = "CONFLUENCE_API_TOKEN";
+    /** Alias for {@link #ENV_API_TOKEN}; used only when the canonical name is unset. */
+    public static final String ENV_API_TOKEN_ALIAS = "CONFLUENCE_TOKEN";
     /** Environment variable for the space-key allowlist (comma-separated). */
     public static final String ENV_SPACES = "CONFLUENCE_SPACES";
     /** Environment variable for the list-endpoint page size. */
@@ -101,13 +109,27 @@ public record ConfluenceConnectorConfig(
      * @return the resolved config
      */
     public static ConfluenceConnectorConfig fromEnvironment() {
+        return fromEnvironment(System.getenv());
+    }
+
+    /**
+     * Build the config from an explicit environment map; production calls
+     * {@link #fromEnvironment()}, tests call this. {@code CONFLUENCE_USER}
+     * and {@code CONFLUENCE_TOKEN} act as aliases for the canonical
+     * credential variables; the canonical names take precedence when both
+     * forms are set.
+     *
+     * @param env the environment to read
+     * @return the resolved config
+     */
+    static ConfluenceConnectorConfig fromEnvironment(Map<String, String> env) {
         return builder()
-                .baseUrl(System.getenv(ENV_BASE_URL))
-                .email(System.getenv(ENV_EMAIL))
-                .apiToken(System.getenv(ENV_API_TOKEN))
-                .spaces(parseSpaces(System.getenv(ENV_SPACES)))
-                .pageSize(parseIntOrDefault(System.getenv(ENV_PAGE_SIZE), DEFAULT_PAGE_SIZE))
-                .bodyFormat(System.getenv(ENV_BODY_FORMAT))
+                .baseUrl(env.get(ENV_BASE_URL))
+                .email(firstNonBlank(env.get(ENV_EMAIL), env.get(ENV_EMAIL_ALIAS)))
+                .apiToken(firstNonBlank(env.get(ENV_API_TOKEN), env.get(ENV_API_TOKEN_ALIAS)))
+                .spaces(parseSpaces(env.get(ENV_SPACES)))
+                .pageSize(parseIntOrDefault(env.get(ENV_PAGE_SIZE), DEFAULT_PAGE_SIZE))
+                .bodyFormat(env.get(ENV_BODY_FORMAT))
                 .build();
     }
 
@@ -123,6 +145,10 @@ public record ConfluenceConnectorConfig(
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .toList();
+    }
+
+    private static String firstNonBlank(String canonical, String alias) {
+        return canonical == null || canonical.isBlank() ? alias : canonical;
     }
 
     private static int parseIntOrDefault(String value, int fallback) {

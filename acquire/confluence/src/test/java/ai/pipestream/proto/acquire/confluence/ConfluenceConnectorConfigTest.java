@@ -3,6 +3,7 @@ package ai.pipestream.proto.acquire.confluence;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -76,5 +77,37 @@ class ConfluenceConnectorConfigTest {
         assertThat(rendered).doesNotContain("secret-token");
         assertThat(rendered).contains("***");
         assertThat(rendered).contains("bot@pipestream.ai");
+    }
+
+    @Test
+    void environmentAliasesSupplyCredentials() {
+        ConfluenceConnectorConfig config = ConfluenceConnectorConfig.fromEnvironment(Map.of(
+                "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki",
+                "CONFLUENCE_USER", "me@pipestream.ai",
+                "CONFLUENCE_TOKEN", "alias-token"));
+
+        assertThat(config.email()).isEqualTo("me@pipestream.ai");
+        assertThat(config.apiToken()).isEqualTo("alias-token");
+    }
+
+    @Test
+    void canonicalCredentialNamesBeatAliases() {
+        ConfluenceConnectorConfig config = ConfluenceConnectorConfig.fromEnvironment(Map.of(
+                "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki",
+                "CONFLUENCE_EMAIL", "bot@pipestream.ai",
+                "CONFLUENCE_USER", "me@pipestream.ai",
+                "CONFLUENCE_API_TOKEN", "canonical-token",
+                "CONFLUENCE_TOKEN", "alias-token"));
+
+        assertThat(config.email()).isEqualTo("bot@pipestream.ai");
+        assertThat(config.apiToken()).isEqualTo("canonical-token");
+    }
+
+    @Test
+    void environmentWithoutCredentialsFails() {
+        assertThatThrownBy(() -> ConfluenceConnectorConfig.fromEnvironment(Map.of(
+                "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("CONFLUENCE_EMAIL");
     }
 }

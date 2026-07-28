@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/attachment.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/blogpost.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/events.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/page.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/space.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// CONFLUENCE SERVICE - the gRPC facade over the Confluence crawler.
+//
+// A thin read proxy: every rpc delegates to the crawler core (REST v2 client,
+// mapper, crawl orchestration) and answers in the parity domain model, so a
+// gRPC client (or an agent reflecting over the descriptor set) can read the
+// workspace and stream changes without knowing the REST API exists. REST
+// pagination is transport and stays hidden: list rpcs stream, and Sync emits
+// the crawler's change envelopes plus a resume cursor for the next pass.
+//
+// Streaming responses carry one entity per message in a per-rpc wrapper
+// (ListPagesResponse, SyncResponse, ...) rather than the bare domain message:
+// buf STANDARD's RPC_RESPONSE_STANDARD_NAME / RPC_REQUEST_RESPONSE_UNIQUE
+// require it, and the wrapper leaves room for stream-level fields later
+// without a wire break.
+// ============================================================================
+
+// The Confluence read proxy. Server reflection and the gRPC health service
+// are always registered alongside it, so the surface is discoverable with
+// grpcurl-style tooling or any descriptor-driven client.
+service ConfluenceService {
+  // Every space the credentials can see, or only the requested keys.
+  rpc ListSpaces(ListSpacesRequest) returns (ListSpacesResponse);
+
+  // One page by id, with its body in the requested format.
+  rpc GetPage(GetPageRequest) returns (GetPageResponse);
+
+  // One blog post by id, with its body in the requested format.
+  rpc GetBlogPost(GetBlogPostRequest) returns (GetBlogPostResponse);
+
+  // All pages of a space (or of the workspace) as a stream; the stream hides
+  // the REST cursor pagination.
+  rpc ListPages(ListPagesRequest) returns (stream ListPagesResponse);
+
+  // All blog posts of a space (or of the workspace) as a stream; the stream
+  // hides the REST cursor pagination.
+  rpc ListBlogPosts(ListBlogPostsRequest) returns (stream ListBlogPostsResponse);
+
+  // One attachment's metadata, plus its bytes when requested (size-capped).
+  rpc GetAttachment(GetAttachmentRequest) returns (GetAttachmentResponse);
+
+  // One bounded sync pass as a stream of ConfluenceChanges, closing with the
+  // resume cursor for the next pass. Deliberately bounded (the resume-token
+  // idiom): a continuously-tailing Watch rpc is a possible additive later,
+  // not part of this surface.
+  rpc Sync(SyncRequest) returns (stream SyncResponse);
+}
+
+// Request to list spaces.
+message ListSpacesRequest {
+  // Space keys to include; empty = every space the credentials can see.
+  repeated string keys = 1;
+  // Maximum number of spaces to return; 0 = no cap (walks all REST pages).
+  int32 limit = 2;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The spaces the request matched.
+message ListSpacesResponse {
+  repeated Space spaces = 1;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Request to read one page.
+message GetPageRequest {
+  // ID of the page.
+  string id = 1;
+  // The body representation to fetch. UNSPECIFIED = BODY_FORMAT_STORAGE_XHTML
+  // (unlike the list rpcs, where UNSPECIFIED means metadata-only).
+  BodyFormat body_format = 2;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The requested page.
+message GetPageResponse {
+  Page page = 1;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Request to read one blog post.
+message GetBlogPostRequest {
+  // ID of the blog post.
+  string id = 1;
+  // The body representation to fetch. UNSPECIFIED = BODY_FORMAT_STORAGE_XHTML
+  // (unlike the list rpcs, where UNSPECIFIED means metadata-only).
+  BodyFormat body_format = 2;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The requested blog post.
+message GetBlogPostResponse {
+  BlogPost blog_post = 1;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Request to stream the pages of a space.
+message ListPagesRequest {
+  // ID of the space to list; empty = every space the credentials can see.
+  string space_id = 1;
+  // The body representation to fetch per page. UNSPECIFIED = metadata-only
+  // listing: no body-format is requested from the API and bodies stay unset,
+  // which keeps the stream cheap.
+  BodyFormat body_format = 2;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// One streamed page.
+message ListPagesResponse {
+  Page page = 1;
+}
+
+// Request to stream the blog posts of a space.
+message ListBlogPostsRequest {
+  // ID of the space to list; empty = every space the credentials can see.
+  string space_id = 1;
+  // The body representation to fetch per blog post. UNSPECIFIED =
+  // metadata-only listing: no body-format is requested and bodies stay unset.
+  BodyFormat body_format = 2;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// One streamed blog post.
+message ListBlogPostsResponse {
+  BlogPost blog_post = 1;
+}
+
+// Request to read one attachment.
+message GetAttachmentRequest {
+  // ID of the attachment.
+  string id = 1;
+  // When true, the binary is downloaded through the client's download path
+  // and inlined as Attachment.content. Refused with FAILED_PRECONDITION when
+  // the attachment exceeds the server's size cap (CONFLUENCE_ATTACHMENT_MAX_BYTES,
+  // default 25 MiB): bulk bytes do not belong on a unary rpc.
+  bool include_content = 2;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The requested attachment (metadata always; bytes when include_content).
+message GetAttachmentResponse {
+  Attachment attachment = 1;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Request to run one bounded sync pass.
+message SyncRequest {
+  // Space keys to sync; empty = the server's configured allowlist, or every
+  // space the credentials can see when none is configured.
+  repeated string space_keys = 1;
+  // The resume cursor a previous Sync ended with (an RFC3339 timestamp).
+  // Empty = full crawl; set = incremental pass emitting only content modified
+  // after the cursor.
+  string since_cursor = 2;
+  // When false, page, blog post, and comment bodies are stripped from the
+  // streamed changes (metadata-only sync; the crawl still runs the same
+  // sweep).
+  bool include_bodies = 3;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// One streamed sync event. The stream is exactly one bounded pass: zero or
+// more change events, one snapshot per completed space sweep on a full crawl,
+// then one terminal resume_cursor. Clients persist the resume cursor and hand
+// it back as SyncRequest.since_cursor for the next incremental pass.
+message SyncResponse {
+  oneof event {
+    // One entity upsert from the pass.
+    ConfluenceChange change = 1;
+    // Full-crawl marker for one completed space sweep, carrying its per-space
+    // cursor and entity counts.
+    ConfluenceSnapshot snapshot = 2;
+    // Terminal message of every Sync stream: the cursor to pass back as
+    // since_cursor next time (the newest modification observed; empty when
+    // the pass observed nothing).
+    string resume_cursor = 3;
+  }
+}

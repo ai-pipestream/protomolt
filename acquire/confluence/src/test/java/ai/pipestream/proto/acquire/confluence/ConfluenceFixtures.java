@@ -75,6 +75,25 @@ final class ConfluenceFixtures {
         return listJson(nextCursor, "/wiki/api/v2/pages", pageJsons);
     }
 
+    /** A page list entry as the API returns it when no body-format is requested (no body block). */
+    static String pageJsonMetadataOnly(String id, String spaceId, String title, String modifiedAt) {
+        return """
+                {
+                  "id": "%s",
+                  "status": "current",
+                  "title": "%s",
+                  "spaceId": "%s",
+                  "parentId": null,
+                  "parentType": "page",
+                  "authorId": "acc-1",
+                  "createdAt": "2024-02-01T10:00:00.000Z",
+                  "version": {"createdAt": "%s", "message": "", "number": 1,
+                              "minorEdit": false, "authorId": "acc-2"},
+                  "_links": {"webui": "/spaces/ENG/pages/%s/%s"}
+                }
+                """.formatted(id, title, spaceId, modifiedAt, id, title.replace(' ', '+'));
+    }
+
     static String blogPostJson(String id, String spaceId, String title, String modifiedAt) {
         return """
                 {

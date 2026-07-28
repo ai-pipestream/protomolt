@@ -11,7 +11,11 @@ module carries the crawler core: `ConfluenceClient` (REST v2 transport),
 `ConfluenceMapper` (REST JSON to domain protos), `ConfluenceCrawler`
 (virtual-thread orchestration), the `ChangeSink` SPI it emits into, and the
 env-driven `ConfluenceConnectorConfig`. Kafka, repo-service, and Lucene
-wiring land behind the sink in later modules.
+wiring land behind the sink in later modules. On top of the crawler core the
+module ships the gRPC facade: `ConfluenceService` (`confluence_service.proto`)
+implemented by `ConfluenceGrpcService`, plus the standalone
+`ConfluenceProxyServer` launcher that serves it over Netty with reflection
+and health on.
 
 ## Coverage
 
@@ -135,12 +139,12 @@ The rules come in four families:
 - **Present-only formats**, as field-level CEL. The framework's format rules
   (`string.email`, `string.uuid`) treat empty as a violation, which is right
   for mandatory fields and wrong for these two: `User.email` (Confluence
-  omits it for privacy — `user.email_format` validates only a populated
-  value) and `Redaction.redaction_id` (absent on request shapes —
+  omits it for privacy; `user.email_format` validates only a populated
+  value) and `Redaction.redaction_id` (absent on request shapes;
   `redaction.id_uuid` accepts empty, rejects a populated non-UUID).
 
-`ConfluenceValidationTest` exercises every family in both directions — the
-violating shape and the passing shape — against the real `ProtoValidator`.
+`ConfluenceValidationTest` exercises every family in both directions, the
+violating shape and the passing shape, against the real `ProtoValidator`.
 
 ## Wrapper and envelopes
 
@@ -162,3 +166,78 @@ blog posts become Documents; bodies, labels, and authorship land in
 SearchMetadata) and parquet export -> document-events -> Lucene indexing via
 the hints above. `ConfluenceChange` feeds the incremental lane so the mirror
 and the index stay live between crawls.
+
+## The gRPC facade
+
+`confluence_service.proto` defines `ConfluenceService`, a thin read proxy
+over the crawler core: every rpc delegates to `ConfluenceClient`,
+`ConfluenceMapper`, and `ConfluenceCrawler`, and answers in the domain model
+above, so a gRPC client can read the workspace and stream changes without
+knowing the REST API exists. `ConfluenceGrpcService` is the implementation;
+every handler is plain blocking code on a virtual-thread executor.
+
+| rpc | shape | notes |
+|---|---|---|
+| `ListSpaces` | unary | all spaces, or filtered by `keys`; `limit` caps the result |
+| `GetPage` / `GetBlogPost` | unary | by id, body in the requested `BodyFormat` (default storage XHTML) |
+| `ListPages` / `ListBlogPosts` | server stream | one entity per message, REST pagination hidden; UNSPECIFIED body format = metadata-only listing |
+| `GetAttachment` | unary | metadata always; `include_content` inlines bytes, refused with FAILED_PRECONDITION above the size cap |
+| `Sync` | server stream | one bounded pass: changes, a snapshot per space on a full crawl, then a terminal `resume_cursor` |
+
+`Sync` is deliberately bounded (the resume-token idiom): an empty
+`since_cursor` runs a full crawl, a set one runs the incremental
+newest-first walk, and the stream closes with the cursor to hand back on the
+next call. A continuously-tailing `Watch` rpc is a possible additive later.
+
+### Running the proxy
+
+`ConfluenceProxyServer` is the standalone launcher, configured entirely from
+the environment:
+
+- `CONFLUENCE_BASE_URL` (with `/wiki`), `CONFLUENCE_EMAIL` or its
+  `CONFLUENCE_USER` alias, `CONFLUENCE_API_TOKEN` or its `CONFLUENCE_TOKEN`
+  alias: the basic-auth credentials. Canonical names win when both forms are
+  set; the token never reaches a log line.
+- `CONFLUENCE_SPACES`, `CONFLUENCE_PAGE_SIZE`, `CONFLUENCE_BODY_FORMAT`: the
+  crawl defaults, as on `ConfluenceConnectorConfig`.
+- `CONFLUENCE_GRPC_PORT`: listen port, default 9095.
+- `CONFLUENCE_ATTACHMENT_MAX_BYTES`: inline attachment cap for
+  `GetAttachment(include_content)`, default 25 MiB.
+
+```bash
+CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki \
+CONFLUENCE_USER=me@example.com CONFLUENCE_TOKEN=... \
+  java -cp protomolt-acquire-confluence.jar \
+  ai.pipestream.proto.acquire.confluence.ConfluenceProxyServer
+```
+
+The server registers the gRPC health service and server reflection, and shuts
+down gracefully on SIGTERM.
+
+### Agent workflow
+
+Reflection is always on, which is what makes the proxy agent-friendly: any
+descriptor-driven client can discover and call the surface without generated
+code. Inside protomolt, an LLM reaches it through the MCP reflect verb (list
+the services and messages from the running server) and the grpc-invoke verb
+(call an rpc with a JSON payload against the reflected schema). Outside
+protomolt, `grpcurl` works the same way
+(`grpcurl -plaintext localhost:9095 list`), and a Python agent can pull the
+file descriptor set over reflection (or from a `protoc
+--descriptor_set_out` build of these protos) and generate stubs from it, so
+no hand-written client ever sees the REST API. Responses carry the same
+validation rules as the crawler output, so an agent can also validate what it
+receives with the platform validator.
+
+### Testing
+
+`ConfluenceGrpcServiceTest` runs the facade end to end against
+`FakeConfluenceServer` over an in-process gRPC channel, including the
+reflection round-trip. `ConfluenceLiveSmokeIT` does one cheap read
+(`ListSpaces` with limit 1) against the real workspace; it is excluded from
+the default test task and skips unless credentials are in the environment.
+Run it explicitly with:
+
+```bash
+./gradlew :protomolt-acquire-confluence:liveSmokeTest
+```
