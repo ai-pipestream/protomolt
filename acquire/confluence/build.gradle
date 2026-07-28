@@ -30,11 +30,20 @@ dependencies {
     // ConfluenceLuceneProjector: the Lucene mapper and index writer.
     implementation project(':protomolt-index-lucene')
 
+    // ParquetChangeSink: batches changes into Parquet part files on S3.
+    implementation project(':protomolt-emit-parquet-s3')
+
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
 
     // In-process transport for the facade tests.
     testImplementation libs.grpc.inprocess
+
+    // ParquetChangeSink's test reads the flushed part files back with the example
+    // Group reader, which materializes a Hadoop Configuration at run time.
+    testImplementation libs.parquet.hadoop
+    testCompileOnly libs.hadoop.client.api
+    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
 
     // The Kafka sink's integration test runs against a Redpanda container.
     testImplementation libs.testcontainers.redpanda

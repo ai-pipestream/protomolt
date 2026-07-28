@@ -12,6 +12,7 @@ message data goes only where a caller deliberately sends it.
 | `protomolt-emit` | `Bundle`, `BundleSink`, `DirectorySink`, `GitSink`, in-memory zip |
 | `protomolt-emit-okf` | Open Knowledge Format renderer + the `emit-okf` verb |
 | `protomolt-emit-parquet` | Descriptor-driven Parquet files from protobuf messages |
+| `protomolt-emit-parquet-s3` | Parquet files uploaded to any S3-compatible store (RustFS, AWS S3) |
 
 ## The bundle and its sinks
 
@@ -132,7 +133,29 @@ Hadoop jar removed, so any regression fails naming the offending class. The
 module is deliberately a leaf — depend on it only where Parquet output is
 wanted.
 
+### Landing files on S3
+
+`protomolt-emit-parquet-s3` is the destination half: `S3ParquetSink` renders with
+`ParquetEmitter` and uploads the bytes with one `putObject` per file, to any
+S3-compatible store. `S3Clients` builds the client in the same idiom as
+`protomolt-iceberg-s3`'s `S3Catalogs` - path-style with an endpoint override for
+self-hosted stores (RustFS, SeaweedFS, Ceph), region-only for AWS S3:
+
+```java
+try (S3ParquetSink sink = new S3ParquetSink(
+        S3Clients.pathStyle("http://localhost:9000", "us-east-1", accessKey, secretKey),
+        "readings-lake")) {
+    sink.put("readings/part-00000.parquet", descriptor, messages);
+}
+```
+
+The bucket is fixed at construction and keys are validated as relative, so a caller
+can name files but never steer the sink to another store. The Confluence connector's
+`ParquetChangeSink` builds on it: crawl output buffers per entity kind and flushes to
+`<prefix>/<entityType>/<runId>-part-<NNNNN>.parquet` once
+`CONFLUENCE_PARQUET_S3_BUCKET` is set.
+
 There is intentionally no `emit-parquet` verb: Parquet output is message
 data, and this surface keeps message data out of server-side destination
-arguments. Use the library API (or a future operator-configured sink) where
+arguments. Use the library API (or `S3ParquetSink` above) where
 the caller is the operator.

@@ -37,9 +37,14 @@ import java.util.concurrent.TimeUnit;
  *   {@code CONFLUENCE_REPO_DRIVE}, {@code CONFLUENCE_REPO_ACCOUNT_ID},
  *   {@code CONFLUENCE_REPO_DATASOURCE_ID}): every change a sync emits also
  *   saves through {@link RepoChangeSink}</li>
+ *   <li>{@code CONFLUENCE_PARQUET_S3_BUCKET} (plus the optional
+ *   {@code CONFLUENCE_PARQUET_S3_*} variables documented on
+ *   {@link ParquetChangeSink}): every change a sync emits also batches into
+ *   Parquet part files on an S3-compatible store through
+ *   {@link ParquetChangeSink}</li>
  * </ul>
  *
- * <p>Both sinks may be active at once; sync output fans out to the caller and
+ * <p>All three sinks may be active at once; sync output fans out to the caller and
  * every configured sink through a {@link CompositeChangeSink}.</p>
  */
 public final class ConfluenceProxyServer {
@@ -76,10 +81,18 @@ public final class ConfluenceProxyServer {
             sinks.add(repo);
             closables.add(repo);
         }
+        boolean parquetEnabled = false;
+        java.util.Optional<ParquetChangeSink> parquet = ParquetChangeSink.fromEnvironment();
+        if (parquet.isPresent()) {
+            sinks.add(parquet.get());
+            closables.add(parquet.get());
+            parquetEnabled = true;
+        }
         ChangeSink downstream = sinks.isEmpty() ? null
                 : sinks.size() == 1 ? sinks.get(0) : new CompositeChangeSink(sinks);
-        LOG.log(System.Logger.Level.INFO, "confluence-proxy sinks active: kafka={0} repo={1}",
-                config.kafkaEnabled(), config.repoEnabled());
+        LOG.log(System.Logger.Level.INFO,
+                "confluence-proxy sinks active: kafka={0} repo={1} parquet={2}",
+                config.kafkaEnabled(), config.repoEnabled(), parquetEnabled);
         ConfluenceGrpcService service = new ConfluenceGrpcService(config,
                 new ConfluenceClient(config),
                 parseLong(System.getenv(ENV_ATTACHMENT_MAX_BYTES),
