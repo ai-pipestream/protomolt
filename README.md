@@ -23,6 +23,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `core/formats/` | `formats` | Zero-dependency RFC validators (email, hostname, IP, URI) backing the validation string formats |
 | `core/codegen/` | `codegen` | Live code generation: every libprotoc generator (8 languages) and the grpc-java plugin as WebAssembly, no native toolchain |
 | `core/compat/` | `compat` | Breaking-change detection: typed schema diffs and backward/forward/full compatibility policies |
+| `core/acp/` | `acp-core` | Agent Client Protocol core: newline-delimited JSON-RPC 2.0 on virtual threads, a blocking client, and an agent runtime, with no reactive runtime |
 | `acquire/gather/` | `gather`, `gather-git`, `gather-maven` | Acquire `.proto` sources from directories, jars, Git repositories, and Maven coordinates; adapt any gatherer to a descriptor loader |
 | `acquire/msgraph/` | `msgraph` | Microsoft Graph: OneDrive/SharePoint files and list-item metadata, and Copilot connector ingestion over the external connections API |
 | `acquire/connector/` | `connector` | Push-style streaming inputs behind one bounded, pausable SPI: gRPC server streams and Kafka topics feed a synchronous pipeline through the `SourcePump` bridge |
@@ -50,7 +51,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `surface/grpc/` | `grpc-invoke`, `grpc-service`, `grpc-validation`, `grpc-validation-micrometer` | Dynamic gRPC invocation and server reflection from descriptors; the action catalog itself as a typed gRPC service, served descriptor-natively; validating interceptors that enforce declared rules at the call boundary, with a Micrometer binding for their metrics SPI |
 | `surface/http/` | `json`, `rest`, `openapi`, `jsonschema` | Protobuf/JSON transcoding, framework-agnostic REST gateway, OpenAPI 3 and JSON Schema generation |
 | `surface/mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
-| `surface/acp/` | `acp` | The action catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio |
+| `surface/acp/` | `acp` | The action catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio, on the `acp-core` transport |
 | `surface/actions/` | `actions` | Self-describing verb catalog (compile, validate, diff, check-compat, render, evaluate) for consoles and LLM tooling |
 | `host/servers/` | `server-common`, `server-jdk`, `server-vertx`, `server-netty`, `server-spring`, `server-micronaut`, `server-quarkus` | HTTP hosts for the REST gateway, over shared config and helpers |
 | `host/integrations/` | `spring`, `quarkus`, `quarkus-deployment` | Dependency-injection wiring (beans and producers, not HTTP hosts); the Quarkus extension's build-time half |

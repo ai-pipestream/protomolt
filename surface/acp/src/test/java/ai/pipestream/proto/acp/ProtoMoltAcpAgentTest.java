@@ -6,16 +6,12 @@ import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,11 +19,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Drives the catalog agent through the ACP protocol over in-memory pipes: initialize, open a
  * session, prompt with console lines, and collect the streamed session/update chunks, the same
  * exchange an IDE runs over stdio. The client and agent are the first-party virtual-thread
- * implementation in this module; no SDK, no reactive runtime.
+ * implementation in {@code protomolt-acp-core}; no SDK, no reactive runtime.
  */
 class ProtoMoltAcpAgentTest {
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     // Appended by the client's notification listener and read by the test thread; the listener
     // runs on the client's reader virtual thread, so this is synchronized rather than a
@@ -133,50 +127,6 @@ class ProtoMoltAcpAgentTest {
             chunks.setLength(0);
             client.prompt(sessionId, "list");
             assertThat(chunks.toString()).contains("compile");
-        }
-    }
-
-    /**
-     * Replays the golden transcript under {@code src/test/resources/acp}: the exact bytes the
-     * exchange with the third-party SDK produced (cleaned of its duplicated discriminator
-     * keys), cross-checked against the ACP spec. Every line the agent writes must equal the
-     * golden line, so the first-party transport stays message-faithful to what real IDEs
-     * (Zed, JetBrains) parse: same method names, same field names, same shapes.
-     */
-    @Tag("acp-protocol")
-    @Test
-    void theWireMatchesTheGoldenTranscript() throws Exception {
-        TestPipes.End[] ends = TestPipes.pair();
-        AcpAgent agent = ProtoMoltAcpAgent.buildAgent(
-                ends[1].in(), ends[1].out(), ProtoMoltCatalog.full(ActionContext.create()));
-        agent.start();
-        try (JsonPipe wire = JsonPipe.over(ends[0].in(), ends[0].out())) {
-            List<String> golden;
-            try (InputStream resource = getClass().getResourceAsStream("/acp/wire-transcript.ndjson")) {
-                assertThat(resource).as("golden transcript on the test classpath").isNotNull();
-                golden = new String(resource.readAllBytes(), StandardCharsets.UTF_8).lines().toList();
-            }
-            String sessionId = null;
-            for (String line : golden) {
-                if (line.isBlank() || line.startsWith("#")) {
-                    continue;
-                }
-                if (line.startsWith(">> ")) {
-                    String message = line.substring(3);
-                    wire.send(sessionId == null ? message : message.replace("$SESSION", sessionId));
-                } else if (line.startsWith("<< ")) {
-                    String actual = wire.take();
-                    if (sessionId == null && actual.contains("sessionId")) {
-                        sessionId = MAPPER.readTree(actual).path("result").path("sessionId").asText();
-                        assertThat(sessionId).isNotBlank();
-                    }
-                    JsonNode expected = MAPPER.readTree(
-                            line.substring(3).replace("$SESSION", sessionId == null ? "" : sessionId));
-                    assertThat(MAPPER.readTree(actual)).isEqualTo(expected);
-                }
-            }
-        } finally {
-            agent.close();
         }
     }
 

@@ -1,6 +1,5 @@
 package ai.pipestream.proto.acp;
 
-import ai.pipestream.proto.actions.ActionCatalog;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -12,28 +11,36 @@ import java.util.UUID;
 /**
  * The ACP agent runtime: answers {@code initialize}, {@code session/new}, and
  * {@code session/prompt} over an {@link AcpConnection} and streams prompt output back as
- * {@code session/update} notifications. The agent declares no file, terminal, or permission
- * capabilities; it is read-only. One bad prompt answers with a JSON-RPC error or an error
- * chunk and the session keeps going.
+ * {@code session/update} notifications. What a prompt turn does is the {@link PromptHandler}
+ * the agent is built with; the runtime owns only the protocol. The agent declares no file,
+ * terminal, or permission capabilities; it is read-only. One bad prompt answers with a
+ * JSON-RPC error or an error chunk and the session keeps going.
  *
- * <p>Built by {@link ProtoMoltAcpAgent#buildAgent}; {@link #start()} serves in the background
- * while {@link #run()} blocks until the peer closes the stream, which is how {@code main}
- * serves stdio.</p>
+ * <p>{@link #start()} serves in the background while {@link #run()} blocks until the peer
+ * closes the stream, which is how an agent process's {@code main} serves stdio.</p>
  */
 public final class AcpAgent implements AutoCloseable {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final AcpConnection connection;
-    private final CatalogLineRunner runner;
+    private final PromptHandler handler;
 
-    private AcpAgent(AcpConnection connection, CatalogLineRunner runner) {
+    private AcpAgent(AcpConnection connection, PromptHandler handler) {
         this.connection = connection;
-        this.runner = runner;
+        this.handler = handler;
     }
 
-    static AcpAgent over(InputStream in, OutputStream out, ActionCatalog catalog) {
-        AcpAgent agent = new AcpAgent(AcpConnection.over(in, out), new CatalogLineRunner(catalog));
+    /**
+     * Builds an agent over any pair of streams.
+     *
+     * @param in the stream client messages are read from (stdin in production)
+     * @param out the stream responses and notifications are written to (stdout in production)
+     * @param handler what one prompt turn does
+     * @return the agent, ready to {@link #start()} or {@link #run()}
+     */
+    public static AcpAgent over(InputStream in, OutputStream out, PromptHandler handler) {
+        AcpAgent agent = new AcpAgent(AcpConnection.over(in, out), handler);
         agent.connection.onRequest(agent::handle);
         return agent;
     }
@@ -108,7 +115,7 @@ public final class AcpAgent implements AutoCloseable {
                 sendUpdate(sessionId, "agent_thought_chunk", thought);
             }
         };
-        runner.run(text, context);
+        handler.run(text, context);
         ObjectNode result = MAPPER.createObjectNode();
         result.put("stopReason", "end_turn");
         return result;

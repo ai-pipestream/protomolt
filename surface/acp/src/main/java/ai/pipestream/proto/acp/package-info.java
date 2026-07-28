@@ -8,9 +8,11 @@
  * message chunks. The agent declares no file, terminal, or permission capabilities. Its
  * {@code buildAgent} factory takes the input and output streams and the catalog as arguments,
  * so tests drive the agent over in-memory pipes while {@code main} only wires the process
- * streams. The protocol transport is first-party ({@link AcpConnection}): newline-delimited
- * JSON-RPC 2.0 on virtual threads, no reactive runtime. {@link AcpClient} is the small
- * blocking client the tests, smoke drivers, and samples use to drive an agent.</p>
+ * streams. The protocol transport ({@link ai.pipestream.proto.acp.AcpAgent},
+ * {@link ai.pipestream.proto.acp.AcpClient}, and the package-private connection engine) is the
+ * {@code protomolt-acp-core} library: newline-delimited JSON-RPC 2.0 on virtual threads, no
+ * reactive runtime. {@link CatalogLineRunner} is the piece this module adds: it maps one prompt
+ * line to one catalog verb run.</p>
  *
  * <p>{@code ai.pipestream.proto.mcp} serves the same catalog to agents over the Model Context
  * Protocol, and {@code ai.pipestream.proto.cli} over a terminal; all three share the line

@@ -17,8 +17,8 @@ import java.io.OutputStream;
  * {@link #buildAgent} takes the streams and catalog as arguments so tests drive the agent over
  * in-memory pipes.
  *
- * <p>The transport is first-party ({@link AcpConnection}): virtual threads, Jackson, no
- * reactive runtime.</p>
+ * <p>The transport is the first-party {@code protomolt-acp-core} library: virtual threads,
+ * Jackson, no reactive runtime.</p>
  */
 public final class ProtoMoltAcpAgent {
 
@@ -35,7 +35,8 @@ public final class ProtoMoltAcpAgent {
      * @return the agent, ready to {@code start()} or {@code run()}
      */
     public static AcpAgent buildAgent(InputStream in, OutputStream out, ActionCatalog catalog) {
-        return AcpAgent.over(in, out, catalog);
+        CatalogLineRunner runner = new CatalogLineRunner(catalog);
+        return AcpAgent.over(in, out, runner::run);
     }
 
     private ProtoMoltAcpAgent() {

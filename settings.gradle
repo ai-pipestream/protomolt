@@ -34,6 +34,9 @@ project(':protomolt-codegen').projectDir = file('core/codegen')
 include 'protomolt-compat'
 project(':protomolt-compat').projectDir = file('core/compat')
 
+include 'protomolt-acp-core'
+project(':protomolt-acp-core').projectDir = file('core/acp')
+
 // acquire/ — how protos and documents get in.
 
 include 'protomolt-gather'
