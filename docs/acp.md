@@ -2,9 +2,10 @@
 
 The `protomolt-acp` module exposes the action catalog as an Agent Client
 Protocol agent, so an ACP-capable IDE can run ProtoMolt verbs without leaving
-the editor. It uses the official
-[ACP Java SDK](https://github.com/agentclientprotocol/java-sdk) (sync API)
-over stdio; the same catalog serves gRPC/REST, MCP, the CLI, and now ACP.
+the editor. The protocol transport is first-party: newline-delimited JSON-RPC
+2.0 over stdio (one message per line, no Content-Length headers) on virtual
+threads, with Jackson for the JSON. The same catalog serves gRPC/REST, MCP,
+the CLI, and now ACP.
 
 Each session is a console: a prompt of the form `<verb> <json>` runs the verb
 and the JSON result streams back as message chunks. `list` or `help` names the

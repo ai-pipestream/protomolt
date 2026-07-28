@@ -27,7 +27,7 @@ dependencies {
     testRuntimeOnly libs.junit.platform.launcher
 
     // Streaming demo: the ACP agent driver and the server-streaming search server.
-    implementation 'com.agentclientprotocol:acp-core:0.14.0'
+    implementation project(':protomolt-acp')
     implementation libs.grpc.stub
     implementation libs.grpc.protobuf
     implementation libs.grpc.netty.shaded

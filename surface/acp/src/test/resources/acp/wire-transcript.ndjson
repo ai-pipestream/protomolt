@@ -1,0 +1,17 @@
+# Golden ACP wire transcript: initialize, session/new, a compile prompt, an unknown-verb prompt.
+# Captured from the exchange the third-party SDK (0.14.0) produced, cross-checked against the
+# ACP spec (agentclientprotocol.com), then cleaned: the SDK serialized the content-block
+# discriminator twice ("type":"text","type":"text"), a Jackson quirk this implementation emits
+# once. Direction: ">> " client to agent, "<< " agent to client. "$SESSION" is replaced with
+# the real session id at replay time.
+>> {"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false}}}
+<< {"jsonrpc":"2.0","id":"1","result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false,"mcpCapabilities":{"http":false,"sse":false},"promptCapabilities":{"audio":false,"embeddedContext":false,"image":false}},"authMethods":[]}}
+>> {"jsonrpc":"2.0","id":"2","method":"session/new","params":{"cwd":"/workspace","mcpServers":[]}}
+<< {"jsonrpc":"2.0","id":"2","result":{"sessionId":"$SESSION"}}
+>> {"jsonrpc":"2.0","id":"3","method":"session/prompt","params":{"sessionId":"$SESSION","prompt":[{"type":"text","text":"compile {\"sources\":{\"p/m.proto\":\"syntax = \\\"proto3\\\"; package p; message M { string id = 1; }\"}}"}]}}
+<< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$SESSION","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"running compile"}}}}
+<< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$SESSION","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"{\n  \"ok\" : true,\n  \"files\" : [ \"p/m.proto\" ],\n  \"descriptorSetBase64\" : \"CicKCXAvbS5wcm90bxIBcCIPCgFNEgoKAmlkGAEgASgJYgZwcm90bzM=\"\n}"}}}}
+<< {"jsonrpc":"2.0","id":"3","result":{"stopReason":"end_turn"}}
+>> {"jsonrpc":"2.0","id":"4","method":"session/prompt","params":{"sessionId":"$SESSION","prompt":[{"type":"text","text":"nope"}]}}
+<< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$SESSION","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Unknown verb 'nope'. Try 'list' to see them."}}}}
+<< {"jsonrpc":"2.0","id":"4","result":{"stopReason":"end_turn"}}

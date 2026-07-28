@@ -7,13 +7,13 @@ description = 'The ProtoMolt action catalog as an Agent Client Protocol agent: r
 dependencies {
     api project(':protomolt-actions')
     api project(':protomolt-grpc-service')
-    api libs.acp.core
-    implementation libs.jackson.databind
+    // The first-party transport speaks newline-delimited JSON-RPC; JsonNode is on AcpClient's
+    // public API, so Jackson is exported.
+    api libs.jackson.databind
     implementation libs.slf4j.api
 
     runtimeOnly libs.slf4j.simple
 
-    testImplementation 'com.agentclientprotocol:acp-test:0.14.0'
     // Process round-trip fixtures: compile protos and stand up a dynamic gRPC server at test time.
     testImplementation project(':protomolt-proto-sources')
     testImplementation project(':protomolt-grpc-invoke')
@@ -30,7 +30,7 @@ application {
 
 // Drives an ACP agent over stdio and prints a transcript, as a live proof the agent answers the
 // protocol. With no arguments it drives the container (docker run -i --rm protomolt-acp:local);
-// pass -Pagent="<command>" to drive something else. Uses the test classpath for the SDK client.
+// pass -Pagent="<command>" to drive something else.
 tasks.register('acpSmoke', JavaExec) {
     group = 'verification'
     description = 'Drives the ACP agent over stdio and prints a transcript (default: the container)'
@@ -54,11 +54,9 @@ tasks.register('acpGrpcLive', JavaExec) {
         project.findProperty('method') ?: '')
 }
 
-// The acp-protocol tests drive the protoc-backed verbs through the ACP SDK's client. On a
-// contended machine that client has been observed blocking indefinitely inside prompt(), which
-// fails the build on machine load rather than on a defect in this module — the same hang
-// reproduces on the code as it stood before this suite was reworked. They are kept and run
-// deliberately rather than deleted; see docs/building.md.
+// The acp-protocol tests run the protoc-backed verbs through the full protocol exchange, and
+// the process suite forks a JVM per test; that is slower than anything the default test task
+// runs, so they are their own lane rather than part of `build`. See docs/building.md.
 tasks.named('test') {
     useJUnitPlatform {
         excludeTags 'acp-protocol'
@@ -73,7 +71,7 @@ tasks.register('acpProtocolTest', Test) {
     useJUnitPlatform {
         includeTags 'acp-protocol'
     }
-    // These fork JVMs and shell out to protoc; running them in parallel with each other is the
-    // contention that provokes the hang.
+    // These fork JVMs and shell out to protoc; running them in parallel with each other only
+    // makes the lane slower to finish, not faster.
     maxParallelForks = 1
 }
