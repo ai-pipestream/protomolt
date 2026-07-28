@@ -20,6 +20,13 @@
  * <p>Configuration is the env-driven
  * {@link ai.pipestream.proto.acquire.confluence.ConfluenceConnectorConfig}
  * ({@code CONFLUENCE_BASE_URL} / _EMAIL / _API_TOKEN / _SPACES / _PAGE_SIZE /
- * _BODY_FORMAT); secrets never reach a log line.</p>
+ * _BODY_FORMAT; {@code CONFLUENCE_USER} and {@code CONFLUENCE_TOKEN} alias the
+ * two credential variables); secrets never reach a log line.</p>
+ *
+ * <p>The gRPC facade sits on top:
+ * {@link ai.pipestream.proto.acquire.confluence.ConfluenceGrpcService} implements the
+ * {@code ConfluenceService} rpcs as thin delegations to the crawler core, and
+ * {@link ai.pipestream.proto.acquire.confluence.ConfluenceProxyServer} serves them over
+ * Netty with reflection and health on, handlers on virtual threads.</p>
  */
 package ai.pipestream.proto.acquire.confluence;

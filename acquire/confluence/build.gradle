@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'Confluence Cloud REST API v2: entity protos for every API group, the ConfluenceEntity wrapper and crawl/live-update envelopes, plus the crawler core (REST client, JSON-to-proto mapper, ChangeSink SPI)'
+description = 'Confluence Cloud REST API v2: entity protos for every API group, the ConfluenceEntity wrapper and crawl/live-update envelopes, the crawler core (REST client, JSON-to-proto mapper, ChangeSink SPI), and the ConfluenceService gRPC facade with a reflection-on Netty proxy launcher'
 
 dependencies {
     api project(':protomolt-index-spi')
@@ -10,6 +10,20 @@ dependencies {
     api libs.protobuf.java
     // ConfluenceClient and ConfluenceMapper read the REST v2 JSON payloads.
     api libs.jackson.databind
+    // The gRPC facade: generated stubs live in this module.
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+
+    // The standalone proxy launcher (Netty transport, reflection, health).
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+
+    // In-process transport for the facade tests.
+    testImplementation libs.grpc.inprocess
 
     // Extract the indexing-hints and validation .proto for protoc imports.
     protobuf project(':protomolt-index-spi')
@@ -19,5 +33,34 @@ dependencies {
 protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.73.0"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}
+
+// The live smoke test hits the real workspace, so it never runs in the default
+// test task (and is assumption-gated on credentials as a second guard).
+tasks.named('test') {
+    exclude 'ai/pipestream/proto/acquire/confluence/ConfluenceLiveSmokeIT.class'
+}
+
+tasks.register('liveSmokeTest', Test) {
+    description = 'One cheap read against the real Confluence workspace; needs CONFLUENCE_EMAIL + CONFLUENCE_API_TOKEN (or the CONFLUENCE_USER / CONFLUENCE_TOKEN aliases), skips otherwise'
+    group = 'verification'
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter {
+        includeTestsMatching 'ai.pipestream.proto.acquire.confluence.ConfluenceLiveSmokeIT'
     }
 }
