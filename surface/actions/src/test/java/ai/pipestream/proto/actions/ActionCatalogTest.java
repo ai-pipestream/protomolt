@@ -90,16 +90,14 @@ class ActionCatalogTest {
             assertThat(inputSchema.isObject()).isTrue();
             assertThat(inputSchema.get("$schema").asText())
                     .isEqualTo("https://json-schema.org/draft/2020-12/schema");
-            if (inputSchema.has("anyOf")) {
-                // Strict function-calling validators reject a root type beside
-                // anyOf; the object type moves into the variants.
-                assertThat(inputSchema.has("type")).isFalse();
-                for (JsonNode variant : inputSchema.get("anyOf")) {
-                    assertThat(variant.get("type").asText()).isEqualTo("object");
-                }
-            } else {
-                assertThat(inputSchema.get("type").asText()).isEqualTo("object");
-            }
+            // MCP clients require the root inputSchema.type to be "object";
+            // combinators carrying item-level types live below the root.
+            assertThat(inputSchema.get("type").asText()).isEqualTo("object");
+            // Root combinators are banned: they cannot satisfy both the MCP
+            // client (root type required) and strict API validators (no type
+            // beside oneOf/anyOf) at once.
+            assertThat(inputSchema.has("oneOf")).isFalse();
+            assertThat(inputSchema.has("anyOf")).isFalse();
             assertThat(inputSchema.has("properties")).isTrue();
         }
         assertThat(manifest.findValuesAsText("name")).containsAll(BUILT_INS);
