@@ -33,7 +33,8 @@ final class MapMessageAction implements ProtoAction {
         return "Transforms a JSON message with field-mapping rules — text rules like "
                 + "'target.path = source.path' (or '-field' to clear) and/or CEL rules "
                 + "{filter?, selector?, target, fallback?} where expressions see the current "
-                + "message as 'input' — and returns the mapped message as JSON.";
+                + "message as 'input' — and returns the mapped message as JSON. "
+                + "At least one of 'rules' or 'celRules' must be provided.";
     }
 
     @Override
@@ -79,12 +80,11 @@ final class MapMessageAction implements ProtoAction {
         celRule.putArray("required").add("target");
         celRule.put("additionalProperties", false);
         ActionJson.required(schema, "schema", "message");
-        // Strict validators reject a root "type" beside anyOf (see ActionJson
-        // .schemaSourceSchema): declare the object type inside each variant.
-        schema.remove("type");
-        ArrayNode variants = schema.putArray("anyOf");
-        variants.addObject().put("type", "object").putArray("required").add("rules");
-        variants.addObject().put("type", "object").putArray("required").add("celRules");
+        // No root anyOf for "at least one of rules/celRules": MCP clients
+        // require the root inputSchema.type to be "object" while strict API
+        // validators reject a root type beside anyOf, and the two constraints
+        // cannot both hold with anyOf at the root. The requirement is stated
+        // in the description and enforced in execute().
         schema.put("additionalProperties", false);
         return schema;
     }
