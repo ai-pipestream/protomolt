@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
  * lands in a queue, so a test can assert the exact bytes on the wire against the golden
  * transcript. Times out rather than hanging if the peer goes silent.
  */
-final class JsonPipe implements AutoCloseable {
+public final class JsonPipe implements AutoCloseable {
 
     private static final long TAKE_TIMEOUT_SECONDS = 180;
 
@@ -28,7 +28,7 @@ final class JsonPipe implements AutoCloseable {
         this.out = out;
     }
 
-    static JsonPipe over(InputStream in, OutputStream out) {
+    public static JsonPipe over(InputStream in, OutputStream out) {
         JsonPipe pipe = new JsonPipe(in, out);
         Thread.ofVirtual().name("json-pipe-reader").start(() -> {
             try {
@@ -46,7 +46,7 @@ final class JsonPipe implements AutoCloseable {
     }
 
     /** Writes one JSON message plus its newline delimiter. */
-    void send(String jsonLine) throws IOException {
+    public void send(String jsonLine) throws IOException {
         synchronized (out) {
             out.write(jsonLine.getBytes(StandardCharsets.UTF_8));
             out.write('\n');
@@ -55,7 +55,7 @@ final class JsonPipe implements AutoCloseable {
     }
 
     /** The next line the peer wrote; fails the test rather than hanging if none arrives. */
-    String take() throws InterruptedException {
+    public String take() throws InterruptedException {
         String line = lines.poll(TAKE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         if (line == null) {
             throw new AssertionError("the agent wrote nothing within " + TAKE_TIMEOUT_SECONDS + "s");

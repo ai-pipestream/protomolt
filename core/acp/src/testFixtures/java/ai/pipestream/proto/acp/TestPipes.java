@@ -5,18 +5,19 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * An in-memory full-duplex byte pipe for driving the agent over streams in tests.
+ * An in-memory full-duplex byte pipe for driving an agent over streams in tests.
  * {@link java.io.PipedInputStream} reports "Write end dead" when the thread that last wrote is
  * no longer alive, which virtual-thread writers are after every message, so the tests use this
  * instead: a growable buffer with wait/notify, with no notion of writer threads.
  */
-final class TestPipes {
+public final class TestPipes {
 
     /** One end of the pair: {@code in} carries what the other end wrote, and vice versa. */
-    record End(InputStream in, OutputStream out) {
+    public record End(InputStream in, OutputStream out) {
     }
 
-    static End[] pair() {
+    /** A connected pair of ends; what one end writes, the other reads. */
+    public static End[] pair() {
         Pipe aToB = new Pipe();
         Pipe bToA = new Pipe();
         return new End[]{new End(aToB.input(), bToA.output()), new End(bToA.input(), aToB.output())};

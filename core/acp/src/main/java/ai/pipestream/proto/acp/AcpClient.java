@@ -14,8 +14,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /**
- * A minimal blocking ACP client, used by the module's own tests, the smoke drivers, and the
- * samples demo to drive an agent the way an IDE does. Calls block on the response future with
+ * A minimal blocking ACP client for driving an agent the way an IDE does, over in-memory
+ * pipes or a launched child process. Calls block on the response future with
  * a timeout; session updates are delivered to the listener registered with
  * {@link #onSessionUpdate}. Everything runs on virtual threads, so blocking here parks rather
  * than pins.

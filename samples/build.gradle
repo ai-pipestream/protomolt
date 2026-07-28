@@ -26,8 +26,8 @@ dependencies {
     testImplementation libs.assertj.core
     testRuntimeOnly libs.junit.platform.launcher
 
-    // Streaming demo: the ACP agent driver and the server-streaming search server.
-    implementation project(':protomolt-acp')
+    // Streaming demo: the ACP client drives the agent against the server-streaming search server.
+    implementation project(':protomolt-acp-core')
     implementation libs.grpc.stub
     implementation libs.grpc.protobuf
     implementation libs.grpc.netty.shaded

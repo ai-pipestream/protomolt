@@ -1,0 +1,17 @@
+plugins {
+    // TestPipes and JsonPipe are shared with the surface agent's tests as fixtures.
+    id 'java-test-fixtures'
+}
+
+description = 'Agent Client Protocol core: newline-delimited JSON-RPC 2.0 on virtual threads, a blocking client, and an agent runtime'
+
+dependencies {
+    // JsonNode is on the public API of AcpClient and the agent's prompt exchange, so Jackson
+    // is exported. Nothing else: the library stays GraalVM-friendly and zero-reflection.
+    api libs.jackson.databind
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation libs.junit.jupiter
+    testImplementation libs.assertj.core
+    testRuntimeOnly libs.junit.platform.launcher
+}

@@ -7,9 +7,11 @@ description = 'The ProtoMolt action catalog as an Agent Client Protocol agent: r
 dependencies {
     api project(':protomolt-actions')
     api project(':protomolt-grpc-service')
-    // The first-party transport speaks newline-delimited JSON-RPC; JsonNode is on AcpClient's
-    // public API, so Jackson is exported.
-    api libs.jackson.databind
+    // ProtoMoltAcpAgent.buildAgent returns the core library's AcpAgent, so the ACP core is
+    // exported; the transport (AcpConnection, AcpClient, the agent runtime) lives there.
+    api project(':protomolt-acp-core')
+    // CatalogLineRunner parses verb input and pretty-prints verb results.
+    implementation libs.jackson.databind
     implementation libs.slf4j.api
 
     runtimeOnly libs.slf4j.simple
@@ -17,6 +19,7 @@ dependencies {
     // Process round-trip fixtures: compile protos and stand up a dynamic gRPC server at test time.
     testImplementation project(':protomolt-proto-sources')
     testImplementation project(':protomolt-grpc-invoke')
+    testImplementation testFixtures(project(':protomolt-acp-core'))
     testImplementation libs.grpc.stub
     testImplementation platform(libs.junit.bom)
     testImplementation libs.junit.jupiter

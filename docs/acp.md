@@ -2,10 +2,13 @@
 
 The `protomolt-acp` module exposes the action catalog as an Agent Client
 Protocol agent, so an ACP-capable IDE can run ProtoMolt verbs without leaving
-the editor. The protocol transport is first-party: newline-delimited JSON-RPC
-2.0 over stdio (one message per line, no Content-Length headers) on virtual
-threads, with Jackson for the JSON. The same catalog serves gRPC/REST, MCP,
-the CLI, and now ACP.
+the editor. The protocol transport is the first-party `protomolt-acp-core`
+library (`core/acp`): newline-delimited JSON-RPC 2.0 over stdio (one message
+per line, no Content-Length headers) on virtual threads, with Jackson for the
+JSON and no reactive runtime. `protomolt-acp` (`surface/acp`) adds only the
+catalog mapping (`ProtoMoltAcpAgent` plus its line runner); build your own
+agent or client on `protomolt-acp-core` alone if you do not need the catalog.
+The same catalog serves gRPC/REST, MCP, the CLI, and now ACP.
 
 Each session is a console: a prompt of the form `<verb> <json>` runs the verb
 and the JSON result streams back as message chunks. `list` or `help` names the
