@@ -102,4 +102,32 @@ class RepoServiceConfigTest {
         assertThat(blank.kafkaEnabled()).isFalse();
         assertThat(blank.kafkaTopic()).isEqualTo("other-topic");
     }
+
+    @Test
+    void schemaRegistryUrlIsNullUnlessSet() {
+        RepoServiceConfig unset = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "broker:9092", null, null);
+        assertThat(unset.schemaRegistryUrl()).isNull();
+
+        RepoServiceConfig set = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "broker:9092", null, "http://registry:8081");
+        assertThat(set.schemaRegistryUrl()).isEqualTo("http://registry:8081");
+
+        RepoServiceConfig blank = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "broker:9092", null, "  ");
+        assertThat(blank.schemaRegistryUrl()).isNull();
+
+        // The 22-component compatibility constructor stays registry-free.
+        RepoServiceConfig compat = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "broker:9092", null);
+        assertThat(compat.schemaRegistryUrl()).isNull();
+    }
 }

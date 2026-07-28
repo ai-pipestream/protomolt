@@ -6,6 +6,10 @@ junit = "6.1.1"
 assertj = "3.27.7"
 slf4j = "2.0.18"
 kafka = "3.9.1"
+# Confluent 8.0 is the first line compiled against protobuf-java 4.x (7.9.x's ProtobufSchema
+# bytecode references GeneratedMessageV3, removed in protobuf 4). Test-scoped interop only;
+# kafka-clients stays pinned to 3.9.1 above.
+confluent = "8.0.6"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.0"
@@ -66,6 +70,10 @@ slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 slf4j-nop = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
 kafka-connect-api = { module = "org.apache.kafka:connect-api", version.ref = "kafka" }
 kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
+# The reference implementation our wire format and registry protocol are pinned against;
+# resolves from https://packages.confluent.io/maven/ and is test-scoped everywhere it appears.
+confluent-kafka-protobuf-serializer = { module = "io.confluent:kafka-protobuf-serializer", version.ref = "confluent" }
+confluent-kafka-schema-registry-client = { module = "io.confluent:kafka-schema-registry-client", version.ref = "confluent" }
 testcontainers-redpanda = { module = "org.testcontainers:testcontainers-redpanda", version.ref = "testcontainers" }
 testcontainers-solr = { module = "org.testcontainers:testcontainers-solr", version.ref = "testcontainers" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }

@@ -81,6 +81,13 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  * @param kafkaTopic the document-events topic
  *        ({@code DOCUMENT_PLATFORM_KAFKA_TOPIC}, default
  *        {@code "document-events"})
+ * @param schemaRegistryUrl a Confluent-compatible schema registry for the
+ *        relay's serde ({@code DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL});
+ *        null/blank = registry-free: frames stamp schema id 0, which only
+ *        protomolt consumers resolve. Setting it makes the relay stamp the
+ *        registry-assigned id, so relayed records are resolvable by standard
+ *        Confluent tooling (requires the DocumentEvent subject registered
+ *        under {@code <topic>-value})
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -104,7 +111,8 @@ public record RepoServiceConfig(
         boolean reconcileDryRun,
         long reconcileMinAgeMs,
         String kafkaBootstrapServers,
-        String kafkaTopic) {
+        String kafkaTopic,
+        String schemaRegistryUrl) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -148,6 +156,11 @@ public record RepoServiceConfig(
     public static final String ENV_KAFKA_BOOTSTRAP_SERVERS = "DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS";
     /** Environment variable for the document-events topic. */
     public static final String ENV_KAFKA_TOPIC = "DOCUMENT_PLATFORM_KAFKA_TOPIC";
+    /**
+     * Environment variable for the relay serde's Confluent-compatible schema registry
+     * (unset = registry-free, frames stamp schema id 0).
+     */
+    public static final String ENV_SCHEMA_REGISTRY_URL = "DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -205,6 +218,25 @@ public record RepoServiceConfig(
                 httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
                 reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, null, DEFAULT_KAFKA_TOPIC);
+    }
+
+    /**
+     * Compatibility constructor: the 22 pre-schema-registry components, with
+     * the relay registry-free (no schema registry URL; frames stamp schema
+     * id 0).
+     */
+    public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
+            String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
+            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
+            long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
+            boolean reconcileDryRun, long reconcileMinAgeMs,
+            String kafkaBootstrapServers, String kafkaTopic) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
+                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
+                reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
+                kafkaTopic, null);
     }
 
     public RepoServiceConfig {
@@ -273,6 +305,7 @@ public record RepoServiceConfig(
         if (kafkaTopic == null || kafkaTopic.isBlank()) {
             kafkaTopic = DEFAULT_KAFKA_TOPIC;
         }
+        schemaRegistryUrl = blankToNull(schemaRegistryUrl);
     }
 
     /**
@@ -326,7 +359,8 @@ public record RepoServiceConfig(
                 parseLongOrDefault(System.getenv(ENV_RECONCILE_MIN_AGE_MS),
                         DEFAULT_RECONCILE_MIN_AGE_MS),
                 System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
-                envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC));
+                envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
+                System.getenv(ENV_SCHEMA_REGISTRY_URL));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */

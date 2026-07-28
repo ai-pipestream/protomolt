@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -89,11 +90,34 @@ public final class EventRelay {
      * @return the configured producer
      */
     public static KafkaProducer<String, Message> newProducer(String bootstrapServers) {
-        ProtoMoltProtobufSerializer valueSerializer = new ProtoMoltProtobufSerializer();
-        valueSerializer.configure(Map.of(
+        return newProducer(bootstrapServers, null);
+    }
+
+    /**
+     * The relay's producer, optionally backed by a Confluent-compatible schema
+     * registry. Registry-free ({@code schemaRegistryUrl} null or blank), the
+     * serde stamps schema id 0 into every frame: protomolt consumers read the
+     * payload against the packaged contract, but standard Confluent tooling
+     * resolves frames by id and cannot read id 0. With a registry URL, the
+     * serde looks the subject's id up and stamps it, so relayed records are
+     * resolvable by any standard consumer (the DocumentEvent subject must be
+     * registered under {@code <topic>-value}; the serde never registers).
+     *
+     * @param bootstrapServers the Kafka bootstrap servers
+     * @param schemaRegistryUrl base URL of a Confluent-compatible schema
+     *        registry, or null/blank for registry-free framing
+     * @return the configured producer
+     */
+    public static KafkaProducer<String, Message> newProducer(String bootstrapServers,
+            String schemaRegistryUrl) {
+        Map<String, Object> serdeConfig = new HashMap<>(Map.of(
                 ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64, DocumentEventFactory.descriptorSetBase64(),
-                ProtoMoltSerdeConfig.MESSAGE_TYPE, DocumentEvent.getDescriptor().getFullName()),
-                false);
+                ProtoMoltSerdeConfig.MESSAGE_TYPE, DocumentEvent.getDescriptor().getFullName()));
+        if (schemaRegistryUrl != null && !schemaRegistryUrl.isBlank()) {
+            serdeConfig.put(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, schemaRegistryUrl);
+        }
+        ProtoMoltProtobufSerializer valueSerializer = new ProtoMoltProtobufSerializer();
+        valueSerializer.configure(serdeConfig, false);
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ProducerConfig.ACKS_CONFIG, "all");

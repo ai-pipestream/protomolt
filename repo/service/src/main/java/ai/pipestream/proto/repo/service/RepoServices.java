@@ -154,7 +154,8 @@ public final class RepoServices implements AutoCloseable {
         this.eventOutbox = config.kafkaEnabled() ? new JdbcEventOutbox(tx) : null;
         this.eventRelay = eventOutbox != null ? new EventRelay(eventOutbox) : null;
         this.eventProducer = eventOutbox != null
-                ? EventRelay.newProducer(config.kafkaBootstrapServers()) : null;
+                ? EventRelay.newProducer(config.kafkaBootstrapServers(),
+                        config.schemaRegistryUrl()) : null;
         this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
                 blobStore, partStorage, purgeQueue, eventOutbox);
         this.services = List.of(
