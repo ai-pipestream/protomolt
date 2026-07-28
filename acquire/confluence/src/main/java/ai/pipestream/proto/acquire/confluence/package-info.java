@@ -13,15 +13,21 @@
  * virtual threads: spaces, then per space pages and blog posts with their comments,
  * attachments, labels, and properties, emitting
  * {@code ConfluenceChange}/{@code ConfluenceSnapshot} into a
- * {@link ai.pipestream.proto.acquire.confluence.ChangeSink}. The sink SPI is where the Kafka
- * and repo-service wiring lands in a later change; this module ships a logging sink and an
- * in-memory collector for tests.</p>
+ * {@link ai.pipestream.proto.acquire.confluence.ChangeSink}. The shipped sinks:
+ * {@link ai.pipestream.proto.acquire.confluence.KafkaChangeSink} publishes to Kafka through the
+ * protomolt serde, {@link ai.pipestream.proto.acquire.confluence.RepoChangeSink} saves pages,
+ * blog posts and attachments into the repo service as Documents, and
+ * {@link ai.pipestream.proto.acquire.confluence.CompositeChangeSink} fans out when several are
+ * active; the Lucene projection of the Kafka feed is
+ * {@link ai.pipestream.proto.acquire.confluence.ConfluenceLuceneProjector}. A logging sink and
+ * an in-memory collector remain for tests.</p>
  *
  * <p>Configuration is the env-driven
  * {@link ai.pipestream.proto.acquire.confluence.ConfluenceConnectorConfig}
  * ({@code CONFLUENCE_BASE_URL} / _EMAIL / _API_TOKEN / _SPACES / _PAGE_SIZE /
  * _BODY_FORMAT; {@code CONFLUENCE_USER} and {@code CONFLUENCE_TOKEN} alias the
- * two credential variables); secrets never reach a log line.</p>
+ * two credential variables; {@code CONFLUENCE_KAFKA_BOOTSTRAP_SERVERS} activates the Kafka
+ * sink, {@code CONFLUENCE_REPO_TARGET} the repo sink); secrets never reach a log line.</p>
  *
  * <p>The gRPC facade sits on top:
  * {@link ai.pipestream.proto.acquire.confluence.ConfluenceGrpcService} implements the

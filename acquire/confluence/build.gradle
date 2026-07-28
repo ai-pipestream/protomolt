@@ -19,11 +19,26 @@ dependencies {
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
 
+    // KafkaChangeSink: the protomolt serde frames and validates on write; the
+    // serde module leaves kafka-clients to the application.
+    implementation project(':protomolt-serde')
+    implementation libs.kafka.clients
+
+    // RepoChangeSink: the DocumentService client surface and Document model.
+    implementation project(':protomolt-repo-proto')
+
+    // ConfluenceLuceneProjector: the Lucene mapper and index writer.
+    implementation project(':protomolt-index-lucene')
+
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
 
     // In-process transport for the facade tests.
     testImplementation libs.grpc.inprocess
+
+    // The Kafka sink's integration test runs against a Redpanda container.
+    testImplementation libs.testcontainers.redpanda
+    testImplementation libs.testcontainers.junit.jupiter
 
     // Extract the indexing-hints and validation .proto for protoc imports.
     protobuf project(':protomolt-index-spi')
@@ -52,6 +67,15 @@ protobuf {
 // test task (and is assumption-gated on credentials as a second guard).
 tasks.named('test') {
     exclude 'ai/pipestream/proto/acquire/confluence/ConfluenceLiveSmokeIT.class'
+}
+
+// The projector and its test load Lucene (Java 25 bytecode), so this module's
+// test JVM stays on the toolchain JDK like the lucene module's; -PtestJdk is
+// ignored here.
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
 tasks.register('liveSmokeTest', Test) {
