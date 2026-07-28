@@ -45,7 +45,10 @@ final class ActionJson {
     /** The shared one-of schema-source fragment (type | sources+root | descriptorSetBase64). */
     static ObjectNode schemaSourceSchema() {
         ObjectNode schema = SCHEMA_MAPPER.createObjectNode();
-        schema.put("type", "object");
+        // No "type" at this level: strict function-calling validators (Moonshot's
+        // among them) reject a parent "type" alongside oneOf and require each
+        // oneOf item to declare its own. Valid 2020-12 either way; this shape
+        // passes both worlds.
         schema.put("description",
                 "Schema source; provide exactly one of 'type', 'sources', 'descriptorSetBase64'.");
         ObjectNode properties = schema.putObject("properties");
@@ -70,9 +73,9 @@ final class ActionJson {
                 .put("description",
                         "Base64-encoded serialized google.protobuf.FileDescriptorSet, e.g. from the compile action.");
         ArrayNode oneOf = schema.putArray("oneOf");
-        oneOf.addObject().putArray("required").add("type");
-        oneOf.addObject().putArray("required").add("sources");
-        oneOf.addObject().putArray("required").add("descriptorSetBase64");
+        oneOf.addObject().put("type", "object").putArray("required").add("type");
+        oneOf.addObject().put("type", "object").putArray("required").add("sources");
+        oneOf.addObject().put("type", "object").putArray("required").add("descriptorSetBase64");
         return schema;
     }
 
