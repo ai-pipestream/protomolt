@@ -7,6 +7,7 @@ import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -46,7 +47,7 @@ message Ancestor {
 // content.
 message ContentTreeEntry {
   // ID of the child/descendant content.
-  string id = 1;
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   OnlyArchivedAndCurrentContentStatus status = 2;
   // Title of the content.
   string title = 3;
@@ -84,7 +85,8 @@ message ContentIdToContentTypeResponse {
 message CustomContent {
   // ID of the custom content.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // The type of custom content.
   string type = 2 [
@@ -142,7 +144,8 @@ message CustomContent {
 message Database {
   // ID of the database.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // The content type of the object.
   string type = 2;
@@ -185,7 +188,8 @@ message Database {
 message Folder {
   // ID of the folder.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // The content type of the object.
   string type = 2;
@@ -228,7 +232,8 @@ message Folder {
 message SmartLink {
   // ID of the Smart Link in the content tree.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // The content type of the object.
   string type = 2;
@@ -274,7 +279,8 @@ message SmartLink {
 message Whiteboard {
   // ID of the whiteboard.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // The content type of the object.
   string type = 2;

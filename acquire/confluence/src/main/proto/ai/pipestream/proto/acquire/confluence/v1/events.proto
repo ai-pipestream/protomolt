@@ -4,6 +4,7 @@ package ai.pipestream.proto.acquire.confluence.v1;
 
 import "ai/pipestream/proto/acquire/confluence/v1/confluence_entity.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -39,7 +40,7 @@ enum ChangeOperation {
 // the sweep covered so a later run can resume or reconcile.
 message ConfluenceSnapshot {
   // Unique id of this snapshot run.
-  string snapshot_id = 1;
+  string snapshot_id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   // Key of the space the sweep covered (empty for a workspace-wide sweep).
   string space_key = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
@@ -62,8 +63,16 @@ message ConfluenceSnapshot {
 
 // One upsert or delete against the Confluence mirror, from any change source.
 message ConfluenceChange {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "change.upsert_has_entity"
+      message: "an UPSERT change must carry the entity it upserts"
+      expression: "this.operation != 1 || has(this.entity)"
+    }
+  };
+
   // Unique id of this change record.
-  string change_id = 1;
+  string change_id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   ChangeOperation operation = 2;
   // The entity payload (full for UPSERT; identity-only for DELETE).
   ConfluenceEntity entity = 3;

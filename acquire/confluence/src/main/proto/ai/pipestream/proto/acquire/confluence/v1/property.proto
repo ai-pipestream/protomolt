@@ -4,6 +4,7 @@ package ai.pipestream.proto.acquire.confluence.v1;
 
 import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -52,8 +53,16 @@ message PropertyValue {
 
 // A content property (typed key-value metadata attached to content).
 message ContentProperty {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "property.custom_key"
+      message: "custom_key is required when key is PROPERTY_KEY_CUSTOM and forbidden otherwise"
+      expression: "(this.key == 99) == (this.custom_key != '')"
+    }
+  };
+
   // ID of the property.
-  string id = 1;
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   // The property key.
   PropertyKey key = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
@@ -79,13 +88,21 @@ message SpacePropertyVersion {
   // Message associated with the current version.
   string message = 3;
   // The space property's current version number.
-  int32 number = 4;
+  int32 number = 4 [(ai.pipestream.proto.validate.v1.field) = { int32: { gte: 0 } }];
 }
 
 // A space property (typed key-value metadata attached to a space).
 message SpaceProperty {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "property.custom_key"
+      message: "custom_key is required when key is PROPERTY_KEY_CUSTOM and forbidden otherwise"
+      expression: "(this.key == 99) == (this.custom_key != '')"
+    }
+  };
+
   // ID of the space property.
-  string id = 1;
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   // The property key.
   PropertyKey key = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }

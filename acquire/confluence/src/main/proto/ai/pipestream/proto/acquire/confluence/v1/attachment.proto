@@ -7,6 +7,7 @@ import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -20,7 +21,8 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 message Attachment {
   // ID of the attachment.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   ContentStatus status = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
@@ -55,7 +57,7 @@ message Attachment {
   // `atlas_doc_format` bodies and is distinct from the attachment ID.
   string file_id = 11;
   // File size of the attachment.
-  int64 file_size = 12;
+  int64 file_size = 12 [(ai.pipestream.proto.validate.v1.field) = { int64: { gte: 0 } }];
   // Human-facing URL of the attachment, for search results and UIs.
   string web_url = 13;
   // URL the binary downloads from. A content pointer, not navigation.

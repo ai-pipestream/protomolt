@@ -7,6 +7,7 @@ import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -22,7 +23,8 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 message Page {
   // ID of the page.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   ContentStatus status = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
@@ -37,7 +39,8 @@ message Page {
   ];
   // ID of the space the page is in.
   string space_id = 4 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // ID of the parent page, or null if there is no parent page.
   string parent_id = 5;

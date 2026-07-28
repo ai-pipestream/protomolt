@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.acquire.confluence.v1;
 
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.acquire.confluence.v1";
@@ -40,7 +41,8 @@ message Icon {
 message User {
   // Account ID of the user.
   string account_id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   AccountType account_type = 2;
   AccountStatus account_status = 3;
@@ -52,7 +54,13 @@ message User {
   string public_name = 5;
   // The email address of the user. Depending on the user's privacy setting,
   // this may return an empty string.
-  string email = 6;
+  string email = 6 [(ai.pipestream.proto.validate.v1.field) = {
+    cel: {
+      id: "user.email_format"
+      message: "email must be empty or a valid address"
+      expression: "this == '' || this.matches('^[^ @]+@[^ @]+[.][^ @]+$')"
+    }
+  }];
   // Time zone of the user. Depending on the user's privacy setting, this may
   // return null (empty when unset).
   string time_zone = 7;

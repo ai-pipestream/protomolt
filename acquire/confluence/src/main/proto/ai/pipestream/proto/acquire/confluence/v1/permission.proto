@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.acquire.confluence.v1;
 
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -189,7 +190,7 @@ message ListSpacePermissionCombinationsResponse {
 // The status of an async bulk transition task.
 message BulkTransitionTaskStatusResponse {
   // The ID of the task.
-  string task_id = 1;
+  string task_id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   BulkTransitionTaskStatus status = 2;
   // Human-readable error message describing why the task failed. Only present
   // when status is FAILED.

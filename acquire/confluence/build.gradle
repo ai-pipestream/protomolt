@@ -6,10 +6,12 @@ description = 'Confluence Cloud REST API v2 schema: entity protos for every API 
 
 dependencies {
     api project(':protomolt-index-spi')
+    api project(':protomolt-protobuf-validation')
     api libs.protobuf.java
 
-    // Extract the indexing-hints .proto for protoc imports.
+    // Extract the indexing-hints and validation .proto for protoc imports.
     protobuf project(':protomolt-index-spi')
+    protobuf project(':protomolt-protobuf-validation')
 }
 
 protobuf {

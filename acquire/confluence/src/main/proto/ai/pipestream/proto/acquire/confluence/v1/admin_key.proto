@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.acquire.confluence.v1;
 
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -14,7 +15,7 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // Response of creating an admin key (Admin Key group).
 message AdminKeyResponse {
   // User identifier.
-  string account_id = 1;
+  string account_id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   // Timestamp in UTC when the admin key will expire
   // ("YYYY-MM-DDTHH:mm:ss.sssZ").
   google.protobuf.Timestamp expiration_time = 2;

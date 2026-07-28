@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.acquire.confluence.v1;
 
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -57,6 +58,14 @@ enum BodyFormat {
 // serialized content in a declared format (XHTML or serialized ProseMirror
 // JSON), not schema-less data, so Struct would be the wrong model.
 message BodyType {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "body_type.format_declared"
+      message: "a populated body value must declare its format"
+      expression: "this.value == '' || this.format != 0"
+    }
+  };
+
   // The format the value is serialized in.
   BodyFormat format = 1;
   // The content, serialized in `format`.
@@ -89,7 +98,7 @@ message Version {
   // Message associated with the version.
   string message = 2;
   // The version number.
-  int32 number = 3;
+  int32 number = 3 [(ai.pipestream.proto.validate.v1.field) = { int32: { gte: 0 } }];
   // Whether this version is a minor version. Email notifications and activity
   // stream updates are not created for minor versions.
   bool minor_edit = 4;
@@ -105,7 +114,7 @@ message Version {
 // A version with change-set detail.
 message DetailedVersion {
   // The version number.
-  int32 number = 1;
+  int32 number = 1 [(ai.pipestream.proto.validate.v1.field) = { int32: { gte: 0 } }];
   // The account ID of the user who created this version.
   string author_id = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
@@ -123,9 +132,9 @@ message DetailedVersion {
   // The account IDs of users that collaborated on this version.
   repeated string collaborators = 7;
   // The version number prior to this one.
-  optional int32 prev_version = 8;
+  optional int32 prev_version = 8 [(ai.pipestream.proto.validate.v1.field) = { int32: { gte: 1 } }];
   // The version number after this one.
-  optional int32 next_version = 9;
+  optional int32 next_version = 9 [(ai.pipestream.proto.validate.v1.field) = { int32: { gte: 1 } }];
 }
 
 // The snapshot of an entity at one version.
@@ -133,7 +142,7 @@ message VersionedEntity {
   // Title of the entity.
   string title = 1;
   // ID of the entity.
-  string id = 2;
+  string id = 2 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   // Body of the entity at this version.
   Body body = 3;
 }

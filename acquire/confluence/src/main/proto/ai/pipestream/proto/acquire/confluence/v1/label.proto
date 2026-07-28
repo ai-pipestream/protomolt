@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.acquire.confluence.v1;
 
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.acquire.confluence.v1";
@@ -20,7 +21,8 @@ message Label {
     (ai.pipestream.proto.index.hints.v1.index) = {
       type: INDEX_FIELD_TYPE_KEYWORD
       sortable: true
-    }
+    },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // Prefix of the label (e.g. "global", "my", "team").
   string prefix = 3 [
@@ -34,6 +36,7 @@ message Label {
 message Like {
   // Account ID of the user who liked the content.
   string account_id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
 }
