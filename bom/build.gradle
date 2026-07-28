@@ -16,6 +16,7 @@ def supportedModules = [
         'protomolt-emit-okf',
         'protomolt-emit-parquet',
         'protomolt-msgraph',
+        'protomolt-acquire-confluence',
         'protomolt-iceberg',
         'protomolt-iceberg-s3',
         'protomolt-compat',

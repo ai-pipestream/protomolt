@@ -1,0 +1,314 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// HIERARCHICAL CONTENT - Custom Content, Children, Descendants, Ancestors,
+// Content, Database, Folder, Smart Link, Whiteboard.
+// ============================================================================
+
+// The status of hierarchical content (children/descendants trees): only
+// current and archived appear there.
+enum OnlyArchivedAndCurrentContentStatus {
+  ONLY_ARCHIVED_AND_CURRENT_CONTENT_STATUS_UNSPECIFIED = 0;
+  ONLY_ARCHIVED_AND_CURRENT_CONTENT_STATUS_CURRENT = 1;
+  ONLY_ARCHIVED_AND_CURRENT_CONTENT_STATUS_ARCHIVED = 2;
+}
+
+// The type of ancestor.
+enum AncestorType {
+  ANCESTOR_TYPE_UNSPECIFIED = 0;
+  ANCESTOR_TYPE_PAGE = 1;
+  ANCESTOR_TYPE_WHITEBOARD = 2;
+  ANCESTOR_TYPE_DATABASE = 3;
+  ANCESTOR_TYPE_EMBED = 4;
+  ANCESTOR_TYPE_FOLDER = 5;
+}
+
+// One ancestor of a piece of content.
+message Ancestor {
+  // ID of the ancestor.
+  string id = 1;
+  AncestorType type = 2;
+}
+
+// One entry of a content tree: a child or descendant of another piece of
+// content.
+message ContentTreeEntry {
+  // ID of the child/descendant content.
+  string id = 1;
+  OnlyArchivedAndCurrentContentStatus status = 2;
+  // Title of the content.
+  string title = 3;
+  // Hierarchical content type (database/embed/folder/page/whiteboard, or the
+  // custom content type for custom content).
+  string type = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // ID of the space the content is in.
+  string space_id = 5;
+  // ID of the parent content. Descendants responses only.
+  string parent_id = 6;
+  // Depth of the entry in the content tree relative to the requested root.
+  // Descendants responses only.
+  optional int32 depth = 7;
+  // Position of the content relative to its siblings (same parent) within
+  // the content tree.
+  optional int32 child_position = 8;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Mapping of requested content ids to their content types (Content group).
+message ContentIdToContentTypeResponse {
+  // All requested content ids as keys and their associated content types as
+  // values. Duplicate content ids collapse to one key.
+  map<string, string> results = 1;
+}
+
+// ============================================================================
+// CUSTOM CONTENT
+// ============================================================================
+
+// Custom content: app-defined content living in the content tree.
+message CustomContent {
+  // ID of the custom content.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The type of custom content.
+  string type = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  ContentStatus status = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the custom content.
+  string title = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      analyzer: "english"
+    }
+  ];
+  // ID of the space the custom content is in. Always returned, regardless of
+  // whether the custom content has a container that is a space.
+  string space_id = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // ID of the containing page. Only returned if the custom content has a
+  // container that is a page.
+  string page_id = 6;
+  // ID of the containing blog post. Only returned if the custom content has a
+  // container that is a blog post.
+  string blog_post_id = 7;
+  // ID of the containing custom content. Only returned if the custom content
+  // has a container that is custom content.
+  string custom_content_id = 8;
+  // The account ID of the user who created this custom content originally.
+  string author_id = 9 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Date and time when the custom content was created.
+  google.protobuf.Timestamp created_at = 10 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  Version version = 11;
+  Body body = 12;
+  repeated Label labels = 13;
+  repeated ContentProperty properties = 14;
+  repeated Operation operations = 15;
+  repeated Version versions = 16;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 17;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// ============================================================================
+// DATABASE / FOLDER / SMART LINK / WHITEBOARD
+// ============================================================================
+
+// A database: structured tabular content in the content tree.
+message Database {
+  // ID of the database.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The content type of the object.
+  string type = 2;
+  ContentStatus status = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the database.
+  string title = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
+  ];
+  // ID of the parent content, or null if there is no parent content.
+  string parent_id = 5;
+  ParentContentType parent_type = 6;
+  // Position of the database within the given parent page tree.
+  optional int32 position = 7;
+  // The account ID of the user who created this database originally.
+  string author_id = 8 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who owns this database.
+  string owner_id = 9 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Date and time when the database was created.
+  google.protobuf.Timestamp created_at = 10 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // ID of the space the database is in.
+  string space_id = 11 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  Version version = 12;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 13;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A folder for organizing content in the content tree.
+message Folder {
+  // ID of the folder.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The content type of the object.
+  string type = 2;
+  ContentStatus status = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the folder.
+  string title = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
+  ];
+  // ID of the parent content, or null if there is no parent content.
+  string parent_id = 5;
+  ParentContentType parent_type = 6;
+  // Position of the folder within the given parent page tree.
+  optional int32 position = 7;
+  // The account ID of the user who created this folder.
+  string author_id = 8 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who owns this folder.
+  string owner_id = 9 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Date and time when the folder was created.
+  google.protobuf.Timestamp created_at = 10 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // ID of the space the folder is in.
+  string space_id = 11 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  Version version = 12;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 13;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A Smart Link: an embedded URL appearing in the content tree.
+message SmartLink {
+  // ID of the Smart Link in the content tree.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The content type of the object.
+  string type = 2;
+  ContentStatus status = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the Smart Link in the content tree.
+  string title = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
+  ];
+  // ID of the parent content, or null if there is no parent content.
+  string parent_id = 5;
+  ParentContentType parent_type = 6;
+  // Position of the Smart Link within the given parent page tree.
+  optional int32 position = 7;
+  // The account ID of the user who created this Smart Link originally.
+  string author_id = 8 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who owns this Smart Link.
+  string owner_id = 9 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Date and time when the Smart Link was created.
+  google.protobuf.Timestamp created_at = 10 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // The embedded URL of the Smart Link. Not included when the Smart Link has
+  // no embedded URL.
+  string embed_url = 11;
+  // ID of the space the Smart Link is in.
+  string space_id = 12 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  Version version = 13;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 14;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A whiteboard: freeform visual content in the content tree.
+message Whiteboard {
+  // ID of the whiteboard.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The content type of the object.
+  string type = 2;
+  ContentStatus status = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Title of the whiteboard.
+  string title = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
+  ];
+  // ID of the parent content, or null if there is no parent content.
+  string parent_id = 5;
+  ParentContentType parent_type = 6;
+  // Position of the whiteboard within the given parent page tree.
+  optional int32 position = 7;
+  // The account ID of the user who created this whiteboard originally.
+  string author_id = 8 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who owns this whiteboard.
+  string owner_id = 9 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Date and time when the whiteboard was created.
+  google.protobuf.Timestamp created_at = 10 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // ID of the space the whiteboard is in.
+  string space_id = 11 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  Version version = 12;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 13;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

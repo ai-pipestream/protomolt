@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// CLASSIFICATION LEVEL
+// ============================================================================
+
+// The status of a classification level.
+enum ClassificationLevelStatus {
+  CLASSIFICATION_LEVEL_STATUS_UNSPECIFIED = 0;
+  CLASSIFICATION_LEVEL_STATUS_DRAFT = 1;
+  CLASSIFICATION_LEVEL_STATUS_PUBLISHED = 2;
+  CLASSIFICATION_LEVEL_STATUS_ARCHIVED = 3;
+}
+
+// The color of a classification level.
+enum ClassificationLevelColor {
+  CLASSIFICATION_LEVEL_COLOR_UNSPECIFIED = 0;
+  CLASSIFICATION_LEVEL_COLOR_RED = 1;
+  CLASSIFICATION_LEVEL_COLOR_RED_BOLD = 2;
+  CLASSIFICATION_LEVEL_COLOR_ORANGE = 3;
+  CLASSIFICATION_LEVEL_COLOR_YELLOW = 4;
+  CLASSIFICATION_LEVEL_COLOR_GREEN = 5;
+  CLASSIFICATION_LEVEL_COLOR_BLUE = 6;
+  CLASSIFICATION_LEVEL_COLOR_NAVY = 7;
+  CLASSIFICATION_LEVEL_COLOR_TEAL = 8;
+  CLASSIFICATION_LEVEL_COLOR_PURPLE = 9;
+  CLASSIFICATION_LEVEL_COLOR_GREY = 10;
+  CLASSIFICATION_LEVEL_COLOR_LIME = 11;
+}
+
+// A unit of data classification defined by an organization. A classification
+// level may be associated with specific storage and handling requirements or
+// expectations.
+message ClassificationLevel {
+  // The ID of the classification level.
+  string id = 1;
+  // The status of the classification level.
+  ClassificationLevelStatus status = 2;
+  // The order of the classification level object (a JSON number in the spec).
+  double order = 3;
+  // The name of the classification level object.
+  string name = 4;
+  // The description of the classification level object.
+  string description = 5;
+  // The guideline of the classification level object.
+  string guideline = 6;
+  // The color of the classification level object.
+  ClassificationLevelColor color = 7;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

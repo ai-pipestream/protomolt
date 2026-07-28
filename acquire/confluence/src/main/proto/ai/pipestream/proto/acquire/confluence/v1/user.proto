@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// USER
+// ============================================================================
+
+// The account type of the user.
+enum AccountType {
+  ACCOUNT_TYPE_UNSPECIFIED = 0;
+  ACCOUNT_TYPE_ATLASSIAN = 1;
+  ACCOUNT_TYPE_APP = 2;
+  ACCOUNT_TYPE_CUSTOMER = 3;
+  ACCOUNT_TYPE_UNKNOWN = 4;
+}
+
+// The account status of the user.
+enum AccountStatus {
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  ACCOUNT_STATUS_ACTIVE = 1;
+  ACCOUNT_STATUS_INACTIVE = 2;
+  ACCOUNT_STATUS_CLOSED = 3;
+  ACCOUNT_STATUS_UNKNOWN = 4;
+}
+
+// An icon. If used as a profilePicture, this may be returned as null,
+// depending on the user's privacy setting.
+message Icon {
+  string path = 1;
+  bool is_default = 2;
+}
+
+// A Confluence user (the v2 user shape).
+message User {
+  // Account ID of the user.
+  string account_id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  AccountType account_type = 2;
+  AccountStatus account_status = 3;
+  // Display name of the user.
+  string display_name = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
+  ];
+  // Public name of the user.
+  string public_name = 5;
+  // The email address of the user. Depending on the user's privacy setting,
+  // this may return an empty string.
+  string email = 6;
+  // Time zone of the user. Depending on the user's privacy setting, this may
+  // return null (empty when unset).
+  string time_zone = 7;
+  // Space ID of the user's personal space. Null if the user has no personal
+  // space.
+  optional string personal_space_id = 8;
+  // Whether the user is an external collaborator.
+  bool is_external_collaborator = 9;
+  // Profile picture of the user (may be null per privacy settings).
+  Icon profile_picture = 10;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/permission.proto";
+import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// SPACE and DATA POLICIES
+// ============================================================================
+
+// The type of space.
+enum SpaceType {
+  SPACE_TYPE_UNSPECIFIED = 0;
+  SPACE_TYPE_GLOBAL = 1;
+  SPACE_TYPE_COLLABORATION = 2;
+  SPACE_TYPE_KNOWLEDGE_BASE = 3;
+  SPACE_TYPE_PERSONAL = 4;
+  SPACE_TYPE_SYSTEM = 5;
+  SPACE_TYPE_ONBOARDING = 6;
+  SPACE_TYPE_XFLOW_SAMPLE_SPACE = 7;
+}
+
+// The status of the space.
+enum SpaceStatus {
+  SPACE_STATUS_UNSPECIFIED = 0;
+  SPACE_STATUS_CURRENT = 1;
+  SPACE_STATUS_ARCHIVED = 2;
+}
+
+// The icon of the space.
+message SpaceIcon {
+  // The path (relative to base URL) at which the space's icon can be
+  // retrieved, like `/wiki/download/...` or `/wiki/aa-avatar/...`.
+  string path = 1;
+  // URL the space icon binary downloads from (relative to the tenant base
+  // URL). A content pointer; use this instead of `path` to fetch the icon.
+  string api_download_url = 2;
+}
+
+// The description of a space: one field per representation, present when
+// requested. Distinct from Body because spaces use the plain/view
+// representations.
+message SpaceDescription {
+  BodyType plain = 1;
+  BodyType view = 2;
+}
+
+// A space: the top-level container of Confluence content.
+message Space {
+  // ID of the space.
+  string id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Key of the space.
+  string key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      sortable: true
+    }
+  ];
+  // Name of the space.
+  string name = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
+  ];
+  SpaceType type = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  SpaceStatus status = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who created this space originally.
+  string author_id = 6 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The account ID of the user who owns this space.
+  string space_owner_id = 7 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Currently active alias for a Confluence space.
+  string current_active_alias = 8;
+  // Date and time when the space was created.
+  google.protobuf.Timestamp created_at = 9 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // ID of the space's homepage.
+  string homepage_id = 10;
+  SpaceDescription description = 11;
+  SpaceIcon icon = 12;
+  repeated Label labels = 13;
+  repeated ContentProperty properties = 14;
+  repeated Operation operations = 15;
+  repeated SpacePermissionAssignment permissions = 16;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 17;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Data-policy details at the workspace level.
+message DataPolicyMetadata {
+  // Whether the workspace contains any content blocked for (inaccessible to)
+  // the requesting client application.
+  bool any_content_blocked = 1;
+}
+
+// The data-policy view of a space: whether content in the space is blocked
+// for the requesting client application.
+message DataPolicy {
+  // ID of the space.
+  string id = 1;
+  // Key of the space.
+  string key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Name of the space.
+  string name = 3;
+  SpaceDescription description = 4;
+  // Whether the space contains any content blocked for (inaccessible to) the
+  // requesting client application.
+  bool any_content_blocked = 5;
+  SpaceIcon icon = 6;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 7;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

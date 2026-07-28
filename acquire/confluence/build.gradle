@@ -1,0 +1,19 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Confluence Cloud REST API v2 schema: entity protos for every API group, the ConfluenceEntity wrapper, and the crawl/live-update envelopes'
+
+dependencies {
+    api project(':protomolt-index-spi')
+    api libs.protobuf.java
+
+    // Extract the indexing-hints .proto for protoc imports.
+    protobuf project(':protomolt-index-spi')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

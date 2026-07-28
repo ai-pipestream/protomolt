@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// PROPERTIES - Content Properties, Space Properties, App Properties.
+//
+// A property is a typed key-value pair, not a bag of JSON. The key is a
+// PropertyKey (the REST-edge mapper translates the API's string keys; that
+// translation is documented here, not the schema's concern) and the value is
+// a PropertyValue oneof whose arm matches the value's actual type.
+// google.protobuf.Struct appears exactly once in this schema, as the
+// json_value arm, for values that genuinely are structured JSON.
+// ============================================================================
+
+// A well-known Confluence property key. CUSTOM is the escape hatch: when the
+// key is CUSTOM, the property's custom_key carries the API's raw key string.
+enum PropertyKey {
+  PROPERTY_KEY_UNSPECIFIED = 0;
+  // The editor a page was last edited with ("editor").
+  PROPERTY_KEY_EDITOR = 1;
+  // The published content appearance ("content-appearance-published").
+  PROPERTY_KEY_CONTENT_APPEARANCE_PUBLISHED = 2;
+  // The draft content appearance ("content-appearance-draft").
+  PROPERTY_KEY_CONTENT_APPEARANCE_DRAFT = 3;
+  // Any other key; see the property's custom_key.
+  PROPERTY_KEY_CUSTOM = 99;
+}
+
+// A typed property value. The arm matches the value's actual type; json_value
+// is only for values that genuinely are structured JSON (custom keys with
+// object values).
+message PropertyValue {
+  oneof value {
+    string string_value = 1;
+    int64 integer_value = 2;
+    bool bool_value = 3;
+    double double_value = 4;
+    // Structured JSON value (custom keys with object values). The only
+    // google.protobuf.Struct in the schema.
+    google.protobuf.Struct json_value = 5;
+  }
+}
+
+// A content property (typed key-value metadata attached to content).
+message ContentProperty {
+  // ID of the property.
+  string id = 1;
+  // The property key.
+  PropertyKey key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The API's raw key string. Set only when key is CUSTOM.
+  string custom_key = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The property value.
+  PropertyValue value = 4;
+  // Version of the property.
+  Version version = 5;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The version block of a space property.
+message SpacePropertyVersion {
+  // When the property's current version was created.
+  google.protobuf.Timestamp created_at = 1;
+  // Account ID of the user that created the current version.
+  string created_by = 2;
+  // Message associated with the current version.
+  string message = 3;
+  // The space property's current version number.
+  int32 number = 4;
+}
+
+// A space property (typed key-value metadata attached to a space).
+message SpaceProperty {
+  // ID of the space property.
+  string id = 1;
+  // The property key.
+  PropertyKey key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The API's raw key string. Set only when key is CUSTOM.
+  string custom_key = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The property value.
+  PropertyValue value = 4;
+  // When the property was created.
+  google.protobuf.Timestamp created_at = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
+  ];
+  // Account ID of the user that created the space property.
+  string created_by = 6;
+  // The property's current version.
+  SpacePropertyVersion version = 7;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A Forge app property: typed key-value state stored by a Forge app.
+message AppProperty {
+  // The property key.
+  PropertyKey key = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The API's raw key string. Set only when key is CUSTOM.
+  string custom_key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The property value.
+  PropertyValue value = 3;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

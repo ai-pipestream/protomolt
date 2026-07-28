@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// ADMIN KEY
+// ============================================================================
+
+// Response of creating an admin key (Admin Key group).
+message AdminKeyResponse {
+  // User identifier.
+  string account_id = 1;
+  // Timestamp in UTC when the admin key will expire
+  // ("YYYY-MM-DDTHH:mm:ss.sssZ").
+  google.protobuf.Timestamp expiration_time = 2;
+}
