@@ -8,6 +8,7 @@ import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/permission.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -58,14 +59,16 @@ message SpaceDescription {
 message Space {
   // ID of the space.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // Key of the space.
   string key = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = {
       type: INDEX_FIELD_TYPE_KEYWORD
       sortable: true
-    }
+    },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // Name of the space.
   string name = 3 [
@@ -116,7 +119,7 @@ message DataPolicyMetadata {
 // for the requesting client application.
 message DataPolicy {
   // ID of the space.
-  string id = 1;
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   // Key of the space.
   string key = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }

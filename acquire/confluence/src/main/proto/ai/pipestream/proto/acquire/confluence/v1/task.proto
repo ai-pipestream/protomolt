@@ -4,6 +4,7 @@ package ai.pipestream.proto.acquire.confluence.v1;
 
 import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -24,7 +25,8 @@ enum TaskStatus {
 message Task {
   // ID of the task.
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
   // Local ID of the task. This ID is local to the corresponding page or blog
   // post.

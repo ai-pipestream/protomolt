@@ -6,6 +6,7 @@ import "ai/pipestream/proto/acquire/confluence/v1/common.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/label.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/operation.proto";
 import "ai/pipestream/proto/acquire/confluence/v1/property.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
@@ -38,7 +39,7 @@ message InlineCommentProperties {
 // fields (resolution state, highlighted text) are unset on footer comments.
 message Comment {
   // ID of the comment.
-  string id = 1;
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   ContentStatus status = 2;
   // Title of the comment.
   string title = 3;

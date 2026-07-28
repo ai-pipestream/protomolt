@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ai.pipestream.proto.acquire.confluence.v1;
 
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
 option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
@@ -38,7 +40,7 @@ enum ClassificationLevelColor {
 // expectations.
 message ClassificationLevel {
   // The ID of the classification level.
-  string id = 1;
+  string id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
   // The status of the classification level.
   ClassificationLevelStatus status = 2;
   // The order of the classification level object (a JSON number in the spec).
