@@ -4,6 +4,18 @@ plugins {
 
 description = 'Kafka protobuf serde: the Confluent wire format, with the schema\'s own declared rules enforced on write'
 
+repositories {
+    // Test-scoped interop verification only: the Confluent serde artifacts are not on Maven Central.
+    maven { url = 'https://packages.confluent.io/maven/' }
+}
+
+// Confluent's serde artifacts pull their forked kafka-clients (8.0.6-ccs); the interop tests
+// must run against the kafka-clients this project ships.
+configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClasspath'] }
+        .configureEach {
+            resolutionStrategy.force 'org.apache.kafka:kafka-clients:3.9.1'
+        }
+
 dependencies {
     api libs.protobuf.java
     // The canonical Confluent wire-format reader/writer; api because ConfluentWireFormat is
@@ -24,6 +36,13 @@ dependencies {
     testImplementation libs.slf4j.simple
     testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
+
+    // Interop verification: the reference Confluent serde and client against our wire format
+    // and our registry server. Test-scoped; nothing Confluent enters the main source set.
+    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-repo-proto')
+    testImplementation libs.confluent.kafka.protobuf.serializer
+    testImplementation libs.confluent.kafka.schema.registry.client
 }
 
 // Test fixtures only: generated classes to prove the deserializer returns them.

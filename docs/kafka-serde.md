@@ -270,6 +270,35 @@ producer decides, which is why registries are routinely deployed with
 auto-registration off. A subject the registry does not know falls back to
 the configured id.
 
+## Interop with Confluent tooling
+
+`SerdeConfluentInteropIntegrationTest` (in the serde module's tests) proves
+the wire and protocol claims against the reference implementation
+(`io.confluent:kafka-protobuf-serializer`, Confluent 8.0.x, the first line
+compiled against protobuf-java 4.x; test-scoped only) on a real broker
+against protomolt's own registry server:
+
+- protomolt writes, Confluent reads: the frames are byte-identical, same id,
+  same message index, same payload.
+- Confluent writes, protomolt reads: auto-registration against our server,
+  frames resolved back by id.
+- Confluent at both ends through our registry server, with the registration
+  layout asserted: the value subject under the topic-name strategy, one
+  reference per non-well-known import, no subjects for `google/protobuf/*`
+  (both sides resolve well-known types from their bundled copies).
+- protomolt at both ends with the registry configured, the production
+  topology.
+
+One caveat, pinned by `KafkaEventingConfluentInteropIT` in the repo service:
+a pinned producer with no registry stamps `use.schema.id` (default 0), and id
+0 names no schema in any registry. Confluent's deserializer always resolves
+the frame's id first, so records from a registry-free producer are readable
+by protomolt consumers but not by standard tooling. The remedy is
+configuration: `schema.registry.url` on the producer's serde (or
+`use.schema.id` set to the registered id). The repo service ships it as
+`DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL`, and the IT boots the service with
+that key set to prove the shipped wiring end to end.
+
 ## Current limitations
 
 - **A registry-resolved schema carries only its own rules.** The validator

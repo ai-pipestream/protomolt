@@ -175,8 +175,12 @@ each to the single **`document-events`** topic keyed by **doc_id** (so one
 document's events are partition-ordered), waits for the broker ack, and marks
 the row PUBLISHED. Publication goes through the protomolt serde
 (`sink/kafka/serde`), pinned to the `DocumentEvent` type against the packaged
-descriptor set, so every record is validated and Confluent-framed with no
-schema registry involved.
+descriptor set, so every record is validated and Confluent-framed. By default
+no schema registry is involved and frames stamp schema id 0, which only
+protomolt consumers resolve; set `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` to
+point the relay's serde at a Confluent-compatible registry (the
+`DocumentEvent` subject registered under `<topic>-value`) and frames carry
+the registry-assigned id, so standard Confluent tooling can read the topic.
 
 Semantics and operational notes:
 
@@ -263,6 +267,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS` | `3600000` | Min-age guard for the periodic reconcile (in-flight-upload protection) |
 | `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; unset = eventing off (no outbox writes, no relay, no producer) |
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the relay publishes to |
+| `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | _(none)_ | Confluent-compatible schema registry for the relay's serde; unset = registry-free (frames stamp schema id 0, which only protomolt consumers resolve) |
 
 ## API surface
 

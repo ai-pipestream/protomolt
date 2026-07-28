@@ -1,5 +1,17 @@
 description = 'The claim-check document store as a gRPC service set: embeddable in-JVM over the in-process transport or standalone over Netty, no framework'
 
+repositories {
+    // Test-scoped interop verification only: the Confluent serde artifacts are not on Maven Central.
+    maven { url = 'https://packages.confluent.io/maven/' }
+}
+
+// Confluent's serde artifacts pull their forked kafka-clients (8.0.6-ccs); the interop tests
+// must run against the kafka-clients this project ships.
+configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClasspath'] }
+        .configureEach {
+            resolutionStrategy.force 'org.apache.kafka:kafka-clients:3.9.1'
+        }
+
 dependencies {
     implementation project(':protomolt-repo-proto')
     implementation project(':protomolt-repo-container')
@@ -24,4 +36,10 @@ dependencies {
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
+
+    // Interop verification: a standard Confluent consumer against the events the relay
+    // publishes and against our registry server. Test-scoped.
+    testImplementation project(':protomolt-registry-server')
+    testImplementation libs.confluent.kafka.protobuf.serializer
+    testImplementation libs.confluent.kafka.schema.registry.client
 }
