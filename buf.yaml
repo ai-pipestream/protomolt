@@ -33,8 +33,8 @@ lint:
 breaking:
   use:
     - FILE
-  ignore:
-    # repo/ is pre-release (landed 2026-07-27): the wire contract is still
-    # settling (e.g. the NodeAddress consolidation). Drop this ignore once
-    # the repo API is declared stable.
-    - repo/proto/src/main/proto
+    # No ignores. repo/ and acquire-confluence are pre-release, but the
+    # ignore mechanism breaks the workspace image comparison for any PR
+    # that adds a module, and repo/'s NodeAddress wire break (the reason
+    # the waiver existed) is long merged. A future deliberate wire break
+    # gets flagged here and decided in its own PR.
