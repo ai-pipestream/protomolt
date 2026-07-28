@@ -4,6 +4,7 @@ import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 
@@ -26,6 +27,14 @@ public final class LuceneIndexWriter implements Closeable {
 
     public void add(Document document) throws IOException {
         writer.addDocument(Objects.requireNonNull(document, "document"));
+    }
+
+    /**
+     * Deletes every document matching {@code term}. Like adds, deletions are
+     * buffered and become visible to reopened readers on {@link #commit()}.
+     */
+    public void delete(Term term) throws IOException {
+        writer.deleteDocuments(Objects.requireNonNull(term, "term"));
     }
 
     public void commit() throws IOException {

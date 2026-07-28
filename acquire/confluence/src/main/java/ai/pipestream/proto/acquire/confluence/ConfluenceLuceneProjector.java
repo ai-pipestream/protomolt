@@ -20,6 +20,10 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.document.StringField;
+import org.apache.lucene.index.Term;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -51,9 +55,10 @@ import java.util.Properties;
  * is harmless (Lucene dedupes nothing, but the change feed is an upsert
  * stream: re-indexed copies simply shadow older ones in search results).</p>
  *
- * <p>Known gap: {@link LuceneIndexWriter} exposes no deletion, so DELETE
- * changes are logged and skipped. Tombstoned content leaves the index only
- * when deletion lands on the writer.</p>
+ * <p>UPSERT documents are tagged with an indexed-only keyword field
+ * {@value #ENTITY_ID_FIELD} carrying the entity id, and DELETE changes remove
+ * every document tagged with the change's entity id, shadowed copies
+ * included. Deletions become visible on the batch commit like adds do.</p>
  */
 public final class ConfluenceLuceneProjector {
 
@@ -63,6 +68,11 @@ public final class ConfluenceLuceneProjector {
     public static final String ENV_GROUP_ID = "CONFLUENCE_LUCENE_GROUP_ID";
     /** Default consumer group id. */
     public static final String DEFAULT_GROUP_ID = "confluence-lucene-projector";
+    /**
+     * Indexed-only keyword field tagging each projected document with its
+     * entity id; DELETE changes tombstone by a term on this field.
+     */
+    static final String ENTITY_ID_FIELD = "entity_id";
 
     private static final System.Logger LOG =
             System.getLogger(ConfluenceLuceneProjector.class.getName());
@@ -167,17 +177,22 @@ public final class ConfluenceLuceneProjector {
     }
 
     /**
-     * Projects one change. UPSERTs map and add; DELETEs are logged and
-     * skipped because {@link LuceneIndexWriter} exposes no deletion.
+     * Projects one change. UPSERTs map and add, tagging the document with an
+     * indexed-only {@value #ENTITY_ID_FIELD} keyword field; DELETEs remove
+     * every document tagged with the change's entity id.
      */
     static void project(ConfluenceChange change, ProtoLuceneMapper mapper, IndexingPlan plan,
             LuceneIndexWriter writer) throws IOException, MappingException {
+        String entityId = change.getEntity().getEntityId();
         if (change.getOperation() == ChangeOperation.CHANGE_OPERATION_DELETE) {
             LOG.log(System.Logger.Level.INFO,
-                    "confluence-lucene-projector: delete of {0} skipped; the index writer "
-                            + "has no delete support", change.getChangeId());
+                    "confluence-lucene-projector: deleting entity {0} (change {1})",
+                    entityId, change.getChangeId());
+            writer.delete(new Term(ENTITY_ID_FIELD, entityId));
             return;
         }
-        writer.add(mapper.map(change, plan));
+        Document document = mapper.map(change, plan);
+        document.add(new StringField(ENTITY_ID_FIELD, entityId, Field.Store.NO));
+        writer.add(document);
     }
 }

@@ -28,8 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The Lucene projection end to end minus Kafka: changes applied through
  * {@link ConfluenceLuceneProjector#project} land in a real on-disk index and
  * are searchable (exact term on the change id, full text over the entity
- * payload), and DELETE changes are skipped while the writer has no delete
- * support. Follows the {@code LuceneEngineEndToEndTest} idioms.
+ * payload), and a DELETE change tombstones the previously upserted documents
+ * of its entity. Follows the {@code LuceneEngineEndToEndTest} idioms.
  */
 class ConfluenceLuceneProjectorTest {
 
@@ -54,7 +54,7 @@ class ConfluenceLuceneProjectorTest {
     }
 
     @Test
-    void upsertsBecomeSearchableDocumentsAndDeletesAreSkipped() throws Exception {
+    void upsertsBecomeSearchableDocumentsAndDeletesTombstoneThem() throws Exception {
         ProtoLuceneMapper mapper = new ProtoLuceneMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()));
         IndexingPlan plan = ConfluenceLuceneProjector.indexingPlan();
@@ -69,21 +69,27 @@ class ConfluenceLuceneProjectorTest {
                             .setOperation(ChangeOperation.CHANGE_OPERATION_DELETE)
                             .build(),
                     mapper, plan, writer);
-            assertThat(writer.numDocs()).as("the delete adds nothing").isEqualTo(2);
+            // buffered deletes are not reflected in numDocs(); they apply on commit
             writer.commit();
         }
 
         try (Directory directory = FSDirectory.open(indexDir);
                 DirectoryReader reader = DirectoryReader.open(directory)) {
+            assertThat(reader.numDocs()).as("the delete tombstones page 111").isEqualTo(1);
             IndexSearcher searcher = new IndexSearcher(reader);
             // change_id infers KEYWORD (name ends in _id): exact term match.
             assertThat(searcher.search(new TermQuery(new Term("change_id", "c1")), 10)
+                    .totalHits.value()).as("page 111 is gone").isZero();
+            assertThat(searcher.search(new TermQuery(new Term("change_id", "c2")), 10)
                     .totalHits.value()).isEqualTo(1);
+            // The delete matched on the entity_id tag, not on change_id c3.
+            assertThat(searcher.search(new TermQuery(new Term("change_id", "c3")), 10)
+                    .totalHits.value()).isZero();
             // The entity is one OBJECT field of compact JSON: full text reaches the title.
             assertThat(searcher.search(new TermQuery(new Term("entity", "lucene")), 10)
-                    .totalHits.value()).isEqualTo(1);
+                    .totalHits.value()).isZero();
             assertThat(searcher.search(new TermQuery(new Term("entity", "page")), 10)
-                    .totalHits.value()).isEqualTo(2);
+                    .totalHits.value()).isEqualTo(1);
         }
     }
 }
