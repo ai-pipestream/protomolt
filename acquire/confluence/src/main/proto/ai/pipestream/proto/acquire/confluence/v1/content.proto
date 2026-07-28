@@ -42,9 +42,8 @@ message Ancestor {
   AncestorType type = 2;
 }
 
-// One entry of a content tree response. Canonical union of the spec's
-// ChildPage, ChildCustomContent, ChildrenResponse and DescendantsResponse,
-// which are the same shape with different optional fields populated.
+// One entry of a content tree: a child or descendant of another piece of
+// content.
 message ContentTreeEntry {
   // ID of the child/descendant content.
   string id = 1;
@@ -81,8 +80,7 @@ message ContentIdToContentTypeResponse {
 // CUSTOM CONTENT
 // ============================================================================
 
-// Custom content. Canonical shape: the spec's CustomContentSingle; the Bulk
-// variant is identical minus the expandable lists.
+// Custom content: app-defined content living in the content tree.
 message CustomContent {
   // ID of the custom content.
   string id = 1 [
@@ -130,8 +128,8 @@ message CustomContent {
   repeated ContentProperty properties = 14;
   repeated Operation operations = 15;
   repeated Version versions = 16;
-  // The spec's `_links` property.
-  Links links = 17;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 17;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }
@@ -140,7 +138,7 @@ message CustomContent {
 // DATABASE / FOLDER / SMART LINK / WHITEBOARD
 // ============================================================================
 
-// A database (Database group; the spec's DatabaseSingle).
+// A database: structured tabular content in the content tree.
 message Database {
   // ID of the database.
   string id = 1 [
@@ -177,13 +175,13 @@ message Database {
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
   Version version = 12;
-  // The spec's `_links` property.
-  Links links = 13;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 13;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }
 
-// A folder (Folder group; the spec's FolderSingle).
+// A folder for organizing content in the content tree.
 message Folder {
   // ID of the folder.
   string id = 1 [
@@ -220,14 +218,13 @@ message Folder {
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
   Version version = 12;
-  // The spec's `_links` property.
-  Links links = 13;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 13;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }
 
-// A Smart Link in the content tree (Smart Link group; the spec's
-// SmartLinkSingle).
+// A Smart Link: an embedded URL appearing in the content tree.
 message SmartLink {
   // ID of the Smart Link in the content tree.
   string id = 1 [
@@ -267,22 +264,13 @@ message SmartLink {
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
   Version version = 13;
-  // The spec's `_links` property.
-  Links links = 14;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 14;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }
 
-// Links of a whiteboard (`_links` on the entity). Distinct from Links and
-// AbstractPageLinks: webui plus editui, no tinyui.
-message WhiteboardLinks {
-  // Web UI link of the content.
-  string webui = 1;
-  // Edit UI link of the content.
-  string editui = 2;
-}
-
-// A whiteboard (Whiteboard group; the spec's WhiteboardSingle).
+// A whiteboard: freeform visual content in the content tree.
 message Whiteboard {
   // ID of the whiteboard.
   string id = 1 [
@@ -319,8 +307,8 @@ message Whiteboard {
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
   Version version = 12;
-  // The spec's `_links` property.
-  WhiteboardLinks links = 13;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 13;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }

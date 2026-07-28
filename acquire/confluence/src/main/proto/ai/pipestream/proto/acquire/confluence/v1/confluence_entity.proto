@@ -27,16 +27,14 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // ============================================================================
 // CONFLUENCE ENTITY - the keystone wrapper.
 //
-// One Confluence REST API v2 entity as the crawler read it, wrapped for
-// transport and storage. This is the Kafka / parquet / round-trip unit: the
-// crawler publishes ConfluenceEntity, the repo sink maps the content arms to
+// One Confluence entity as the crawler read it, wrapped for transport and
+// storage. This is the Kafka / parquet / round-trip unit: the crawler
+// publishes ConfluenceEntity, the repo sink maps the content arms to
 // Documents, the parquet sink writes them as-is, and the document-events
 // feed projects them into Lucene via the indexing hints on the inner fields.
 //
-// entity_id is the Confluence id of the wrapped entity (string; the v2 API
-// declares ids as strings holding numbers). One arm per canonical entity
-// kind; the spec's Bulk/Single transport variants collapse into the single
-// canonical shape per kind.
+// entity_id is the Confluence id of the wrapped entity (string; Confluence
+// declares ids as strings holding numbers). One arm per entity kind.
 // ============================================================================
 message ConfluenceEntity {
   // The Confluence id of the wrapped entity.

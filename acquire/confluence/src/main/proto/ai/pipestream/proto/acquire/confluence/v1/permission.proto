@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ai.pipestream.proto.acquire.confluence.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
@@ -31,8 +33,7 @@ enum RoleType {
   ROLE_TYPE_CUSTOM = 2;
 }
 
-// The principal kind of a space permission assignment (a spec inline enum;
-// note the lowercase values, distinct from PrincipalType).
+// The principal kind of a space permission assignment.
 enum SpacePermissionPrincipalType {
   SPACE_PERMISSION_PRINCIPAL_TYPE_UNSPECIFIED = 0;
   SPACE_PERMISSION_PRINCIPAL_TYPE_USER = 1;
@@ -48,7 +49,7 @@ message SpacePermissionPrincipal {
   string id = 2;
 }
 
-// The operation key of a space permission (a spec inline enum).
+// The operation key of a space permission.
 enum SpacePermissionOperationKey {
   SPACE_PERMISSION_OPERATION_KEY_UNSPECIFIED = 0;
   SPACE_PERMISSION_OPERATION_KEY_USE = 1;
@@ -68,7 +69,7 @@ enum SpacePermissionOperationKey {
   SPACE_PERMISSION_OPERATION_KEY_ARCHIVE = 15;
 }
 
-// The target type of a space permission operation (a spec inline enum).
+// The content kind a space permission operation targets.
 enum SpacePermissionOperationTargetType {
   SPACE_PERMISSION_OPERATION_TARGET_TYPE_UNSPECIFIED = 0;
   SPACE_PERMISSION_OPERATION_TARGET_TYPE_PAGE = 1;
@@ -144,7 +145,7 @@ message SpaceRoleAssignment {
 // and the status of submitted bulk tasks)
 // ============================================================================
 
-// The status of an async bulk transition task (a spec inline enum).
+// The status of an async bulk permission-transition task.
 enum BulkTransitionTaskStatus {
   BULK_TRANSITION_TASK_STATUS_UNSPECIFIED = 0;
   BULK_TRANSITION_TASK_STATUS_IN_PROGRESS = 1;
@@ -180,12 +181,9 @@ message ListSpacePermissionCombinationsResponse {
   // One page of unassigned permission combinations, sorted by principal_count
   // descending.
   repeated BulkTransitionCombinationEntry results = 1;
-  // ISO-8601 timestamp of the last audit run that populated the combinations
-  // table. Absent if the audit task has never run on this tenant. (The spec
-  // declares this as a plain string, not date-time.)
-  optional string generated_at = 2;
-  // Opaque cursor for the next page. Absent when no further results exist.
-  optional string cursor = 3;
+  // When the last audit run populated the combinations table. Absent if the
+  // audit task has never run on this tenant.
+  optional google.protobuf.Timestamp generated_at = 2;
 }
 
 // The status of an async bulk transition task.

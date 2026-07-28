@@ -28,8 +28,7 @@ enum BlogPostContentStatus {
   BLOG_POST_CONTENT_STATUS_ANY = 6;
 }
 
-// A blog post. Canonical shape: the spec's BlogPostSingle; the Bulk variant
-// is identical minus the expandable lists.
+// A blog post: time-ordered content within a space.
 message BlogPost {
   // ID of the blog post.
   string id = 1 [
@@ -67,8 +66,8 @@ message BlogPost {
   repeated Version versions = 13;
   // Whether the blog post has been favorited by the current user.
   bool is_favorited_by_current_user = 14;
-  // The spec's `_links` property.
-  AbstractPageLinks links = 15;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 15;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }

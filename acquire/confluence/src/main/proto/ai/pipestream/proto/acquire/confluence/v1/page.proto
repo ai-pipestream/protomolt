@@ -16,11 +16,9 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // PAGE
 // ============================================================================
 
-// A page. Canonical shape: the spec's PageSingle, extended with the nullable
-// `subtype` the spec only declares on PageBulk. The Bulk variant is identical
-// minus the expandable lists, which are plain repeated fields here (a list is
-// `repeated`; the spec's MultiEntityResult pagination wrappers are transport,
-// not entity shape).
+// A page: the primary unit of Confluence content. Labels, properties,
+// operations, likes and versions are plain repeated fields (a list is
+// `repeated`; pagination is transport and is not modeled).
 message Page {
   // ID of the page.
   string id = 1 [
@@ -70,8 +68,8 @@ message Page {
   repeated Version versions = 19;
   // Whether the page has been favorited by the current user.
   bool is_favorited_by_current_user = 20;
-  // The spec's `_links` property.
-  AbstractPageLinks links = 21;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 21;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }

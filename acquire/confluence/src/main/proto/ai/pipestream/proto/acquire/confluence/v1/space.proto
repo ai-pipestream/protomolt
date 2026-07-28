@@ -41,9 +41,9 @@ message SpaceIcon {
   // The path (relative to base URL) at which the space's icon can be
   // retrieved, like `/wiki/download/...` or `/wiki/aa-avatar/...`.
   string path = 1;
-  // The path (relative to base URL) to retrieve a link to download the space
-  // icon. 3LO apps should use this link instead of `path`.
-  string api_download_link = 2;
+  // URL the space icon binary downloads from (relative to the tenant base
+  // URL). A content pointer; use this instead of `path` to fetch the icon.
+  string api_download_url = 2;
 }
 
 // The description of a space: one field per representation, present when
@@ -54,8 +54,7 @@ message SpaceDescription {
   BodyType view = 2;
 }
 
-// A space. Canonical shape: the spec's SpaceSingle, extended with the
-// `current_active_alias` the spec only declares on SpaceBulk.
+// A space: the top-level container of Confluence content.
 message Space {
   // ID of the space.
   string id = 1 [
@@ -100,21 +99,21 @@ message Space {
   repeated ContentProperty properties = 14;
   repeated Operation operations = 15;
   repeated SpacePermissionAssignment permissions = 16;
-  // The spec's `_links` property.
-  Links links = 17;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 17;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }
 
-// Details about data policies at the workspace level (Data Policies group).
+// Data-policy details at the workspace level.
 message DataPolicyMetadata {
   // Whether the workspace contains any content blocked for (inaccessible to)
   // the requesting client application.
   bool any_content_blocked = 1;
 }
 
-// The data-policy view of a space (Data Policies group; the spec's
-// DataPolicySpace with its inline dataPolicy block folded in).
+// The data-policy view of a space: whether content in the space is blocked
+// for the requesting client application.
 message DataPolicy {
   // ID of the space.
   string id = 1;
@@ -129,8 +128,8 @@ message DataPolicy {
   // requesting client application.
   bool any_content_blocked = 5;
   SpaceIcon icon = 6;
-  // The spec's `_links` property.
-  Links links = 7;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 7;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }

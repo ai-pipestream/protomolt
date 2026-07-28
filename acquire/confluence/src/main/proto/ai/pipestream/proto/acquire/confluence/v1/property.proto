@@ -13,34 +13,68 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // ============================================================================
 // PROPERTIES - Content Properties, Space Properties, App Properties.
 //
-// Property values are arbitrary JSON per key in the spec
-// (additionalProperties: true), so they are modeled as
-// google.protobuf.Struct: the field genuinely IS schema-less JSON, and
-// Struct is its faithful typed model. This is the only place in the schema
-// where Struct appears.
+// A property is a typed key-value pair, not a bag of JSON. The key is a
+// PropertyKey (the REST-edge mapper translates the API's string keys; that
+// translation is documented here, not the schema's concern) and the value is
+// a PropertyValue oneof whose arm matches the value's actual type.
+// google.protobuf.Struct appears exactly once in this schema, as the
+// json_value arm, for values that genuinely are structured JSON.
 // ============================================================================
 
-// A content property (key-value metadata attached to content).
+// A well-known Confluence property key. CUSTOM is the escape hatch: when the
+// key is CUSTOM, the property's custom_key carries the API's raw key string.
+enum PropertyKey {
+  PROPERTY_KEY_UNSPECIFIED = 0;
+  // The editor a page was last edited with ("editor").
+  PROPERTY_KEY_EDITOR = 1;
+  // The published content appearance ("content-appearance-published").
+  PROPERTY_KEY_CONTENT_APPEARANCE_PUBLISHED = 2;
+  // The draft content appearance ("content-appearance-draft").
+  PROPERTY_KEY_CONTENT_APPEARANCE_DRAFT = 3;
+  // Any other key; see the property's custom_key.
+  PROPERTY_KEY_CUSTOM = 99;
+}
+
+// A typed property value. The arm matches the value's actual type; json_value
+// is only for values that genuinely are structured JSON (custom keys with
+// object values).
+message PropertyValue {
+  oneof value {
+    string string_value = 1;
+    int64 integer_value = 2;
+    bool bool_value = 3;
+    double double_value = 4;
+    // Structured JSON value (custom keys with object values). The only
+    // google.protobuf.Struct in the schema.
+    google.protobuf.Struct json_value = 5;
+  }
+}
+
+// A content property (typed key-value metadata attached to content).
 message ContentProperty {
   // ID of the property.
   string id = 1;
-  // Key of the property.
-  string key = 2 [
+  // The property key.
+  PropertyKey key = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
-  // Value of the property (arbitrary JSON in the API).
-  google.protobuf.Struct value = 3;
+  // The API's raw key string. Set only when key is CUSTOM.
+  string custom_key = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The property value.
+  PropertyValue value = 4;
   // Version of the property.
-  Version version = 4;
+  Version version = 5;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }
 
-// The version block of a space property (an inline object in the spec).
+// The version block of a space property.
 message SpacePropertyVersion {
-  // RFC3339 date-time at which the property's current version was created.
+  // When the property's current version was created.
   google.protobuf.Timestamp created_at = 1;
-  // Atlassian account ID of the user that created the current version.
+  // Account ID of the user that created the current version.
   string created_by = 2;
   // Message associated with the current version.
   string message = 3;
@@ -48,36 +82,44 @@ message SpacePropertyVersion {
   int32 number = 4;
 }
 
-// A space property (key-value metadata attached to a space).
+// A space property (typed key-value metadata attached to a space).
 message SpaceProperty {
   // ID of the space property.
   string id = 1;
-  // Key of the space property.
-  string key = 2 [
+  // The property key.
+  PropertyKey key = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
-  // Value of the space property (arbitrary JSON in the API).
-  google.protobuf.Struct value = 3;
-  // RFC3339 date-time at which the property was created.
-  google.protobuf.Timestamp created_at = 4 [
+  // The API's raw key string. Set only when key is CUSTOM.
+  string custom_key = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The property value.
+  PropertyValue value = 4;
+  // When the property was created.
+  google.protobuf.Timestamp created_at = 5 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
   ];
-  // Atlassian account ID of the user that created the space property.
-  string created_by = 5;
+  // Account ID of the user that created the space property.
+  string created_by = 6;
   // The property's current version.
-  SpacePropertyVersion version = 6;
+  SpacePropertyVersion version = 7;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }
 
-// A Forge app property (App Properties group; an inline schema in the spec).
+// A Forge app property: typed key-value state stored by a Forge app.
 message AppProperty {
-  // The key of the property.
-  string key = 1 [
+  // The property key.
+  PropertyKey key = 1 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
-  // The value of the property (arbitrary JSON in the API).
-  google.protobuf.Struct value = 2;
+  // The API's raw key string. Set only when key is CUSTOM.
+  string custom_key = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The property value.
+  PropertyValue value = 3;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }

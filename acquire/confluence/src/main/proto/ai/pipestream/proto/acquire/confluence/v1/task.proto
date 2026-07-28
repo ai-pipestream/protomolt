@@ -13,7 +13,7 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // TASK (inline tasks on pages and blog posts)
 // ============================================================================
 
-// The status of a task (a spec inline enum).
+// The status of a task.
 enum TaskStatus {
   TASK_STATUS_UNSPECIFIED = 0;
   TASK_STATUS_COMPLETE = 1;

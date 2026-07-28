@@ -17,7 +17,7 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // Where a change record came from.
 enum ChangeSource {
   CHANGE_SOURCE_UNSPECIFIED = 0;
-  // Full or resumable crawl of the REST API.
+  // Full or resumable crawl of the Confluence content.
   CHANGE_SOURCE_CRAWL = 1;
   // Incremental sync driven by a CQL lastmodified query.
   CHANGE_SOURCE_CQL_INCREMENTAL = 2;

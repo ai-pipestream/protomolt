@@ -33,13 +33,9 @@ message InlineCommentProperties {
   string inline_original_selection = 2;
 }
 
-// A comment. Canonical shape: the union of the spec's FooterCommentModel and
-// InlineCommentModel; the inline-only fields (resolution state, highlight
-// properties) are simply unset on footer comments. The spec's eight nested
-// list variants (PageCommentModel, BlogPostCommentModel,
-// AttachmentCommentModel, CustomContentCommentModel, ChildrenCommentModel,
-// PageInlineCommentModel, BlogPostInlineCommentModel,
-// InlineCommentChildrenModel) are subsets of this shape.
+// A comment on a page, blog post, attachment or custom content, top-level
+// or a reply. Footer and inline comments share this shape; the inline-only
+// fields (resolution state, highlighted text) are unset on footer comments.
 message Comment {
   // ID of the comment.
   string id = 1;
@@ -73,8 +69,8 @@ message Comment {
   repeated Operation operations = 16;
   repeated Like likes = 17;
   repeated Version versions = 18;
-  // The spec's `_links` property.
-  Links links = 19;
+  // Human-facing URL of the content, for search results and UIs.
+  string web_url = 19;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
 }

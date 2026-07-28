@@ -9,64 +9,69 @@ option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
 // ============================================================================
-// CONFLUENCE CLOUD REST API v2 - shared sub-structures.
+// CONFLUENCE DOMAIN MODEL - shared sub-structures.
 //
-// Modeled from the official OpenAPI 3.0.3 spec (The Confluence Cloud REST API
-// v2) with a parity philosophy: one canonical message per entity kind, every
-// information-bearing field preserved with its spec-declared type, and the
-// spec's mechanical transport duplication (Bulk vs Single read variants,
-// per-entity identical Links and body containers) deliberately collapsed.
-// Proto field names are the snake_case of the spec's camelCase, so protobuf
-// JSON (which emits camelCase by default) round-trips with the REST
-// payloads. Atlassian's `_links` properties map to a field named `links`.
+// This package is a domain model of Confluence content, not a serialization
+// of REST response shapes. Every message is a content concept; hypermedia
+// affordances (_links blocks beyond the human-facing URL, pagination
+// transport) are deliberately absent because URLs are derivable from the
+// tenant base URL plus the entity id at the crawl edge. Entity shapes are
+// grounded in the official Confluence Cloud REST API v2 spec: field-level
+// fidelity (ids as strings, ISO-8601 date-times as Timestamps) is preserved,
+// while the spec's mechanical duplication (Bulk vs Single read variants,
+// per-entity identical link and body containers) is collapsed into one
+// canonical message per entity kind.
 // ============================================================================
 
 // ============================================================================
 // BODY
 // ============================================================================
 
-// One body in one representation (the spec's `BodyType`). The value stays a
-// string by design: `storage` is XHTML and `atlas_doc_format` is serialized
-// ProseMirror JSON, i.e. serialized content in a declared format, not
-// schema-less data, so Struct would be the wrong model.
+// The declared format of a body value. Storage is XHTML, atlas_doc_format is
+// serialized ProseMirror JSON, the view formats are rendered XHTML variants.
+enum BodyFormat {
+  BODY_FORMAT_UNSPECIFIED = 0;
+  // Confluence storage format (XHTML).
+  BODY_FORMAT_STORAGE_XHTML = 1;
+  // Serialized ProseMirror document (JSON).
+  BODY_FORMAT_ATLAS_DOC_FORMAT = 2;
+  // Rendered view (XHTML).
+  BODY_FORMAT_RENDERED_XHTML = 3;
+  // Rendered export view (XHTML).
+  BODY_FORMAT_EXPORT_XHTML = 4;
+  // Rendered export view without site chrome (XHTML).
+  BODY_FORMAT_ANONYMOUS_EXPORT_XHTML = 5;
+  // Rendered view with styling (XHTML).
+  BODY_FORMAT_STYLED_XHTML = 6;
+  // Editor representation.
+  BODY_FORMAT_EDITOR = 7;
+  // Wiki markup.
+  BODY_FORMAT_WIKI = 8;
+  // Unprocessed editor content (custom content only).
+  BODY_FORMAT_RAW = 9;
+  // Plain text.
+  BODY_FORMAT_PLAIN_TEXT = 10;
+}
+
+// One body in one declared format. The value stays a string by design: it is
+// serialized content in a declared format (XHTML or serialized ProseMirror
+// JSON), not schema-less data, so Struct would be the wrong model.
 message BodyType {
-  // Type of content representation used for the value field (e.g. "storage",
-  // "atlas_doc_format", "view"). Free-form string in the spec.
-  string representation = 1;
-  // Body of the content, in the format found in the representation field.
+  // The format the value is serialized in.
+  BodyFormat format = 1;
+  // The content, serialized in `format`.
   string value = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
   ];
 }
 
-// The formats a body can be represented as across the API (the union of the
-// spec's PrimaryBodyRepresentation, PrimaryBodyRepresentationSingle,
-// CustomContentBodyRepresentation(Single) and SpaceDescriptionBody-
-// Representation subset enums).
-enum BodyRepresentation {
-  BODY_REPRESENTATION_UNSPECIFIED = 0;
-  BODY_REPRESENTATION_STORAGE = 1;
-  BODY_REPRESENTATION_ATLAS_DOC_FORMAT = 2;
-  BODY_REPRESENTATION_VIEW = 3;
-  BODY_REPRESENTATION_EXPORT_VIEW = 4;
-  BODY_REPRESENTATION_ANONYMOUS_EXPORT_VIEW = 5;
-  BODY_REPRESENTATION_STYLED_VIEW = 6;
-  BODY_REPRESENTATION_EDITOR = 7;
-  BODY_REPRESENTATION_WIKI = 8;
-  BODY_REPRESENTATION_RAW = 9;
-  BODY_REPRESENTATION_PLAIN = 10;
-}
-
-// The body of a piece of content: one field per representation, present when
-// the corresponding representation was requested. Canonical union of the
-// spec's BodySingle, BodyBulk, CustomContentBodySingle, CustomContentBodyBulk
-// and TaskBodySingle containers, which differ only in which representation
-// fields they allow.
+// The body of a piece of content: one slot per format, populated when that
+// format was fetched.
 message Body {
   BodyType storage = 1;
   BodyType atlas_doc_format = 2;
   BodyType view = 3;
-  // Raw editor content; only custom content returns this representation.
+  // Unprocessed editor content; only custom content has this format.
   BodyType raw = 4;
 }
 
@@ -74,16 +79,14 @@ message Body {
 // VERSION
 // ============================================================================
 
-// The version of a piece of content. On version-history endpoints the spec
-// wraps this same shape per entity kind (PageVersion, BlogPostVersion,
-// AttachmentVersion, CustomContentVersion, CommentVersion) adding only a
-// snapshot of the entity; that snapshot is the optional `entity` field here.
+// A version of a piece of content. Version-history entries additionally carry
+// a snapshot of the entity at that version (`entity`).
 message Version {
-  // Date and time when the version was created ("YYYY-MM-DDTHH:mm:ss.sssZ").
+  // When the version was created.
   google.protobuf.Timestamp created_at = 1 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
   ];
-  // Message associated with the current version.
+  // Message associated with the version.
   string message = 2;
   // The version number.
   int32 number = 3;
@@ -99,33 +102,33 @@ message Version {
   VersionedEntity entity = 6;
 }
 
-// A version with change-set detail (returned by the version-detail endpoints).
+// A version with change-set detail.
 message DetailedVersion {
-  // The current version number.
+  // The version number.
   int32 number = 1;
   // The account ID of the user who created this version.
   string author_id = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
-  // Message associated with the current version.
+  // Message associated with the version.
   string message = 3;
-  // Date and time when the version was created.
+  // When the version was created.
   google.protobuf.Timestamp created_at = 4 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
   ];
   // Whether this version is a minor version.
   bool minor_edit = 5;
-  // Whether the content type is modified in this version (e.g. page to blog).
+  // Whether the content type changed in this version (e.g. page to blog).
   bool content_type_modified = 6;
   // The account IDs of users that collaborated on this version.
   repeated string collaborators = 7;
-  // The version number of the version prior to this current content update.
+  // The version number prior to this one.
   optional int32 prev_version = 8;
-  // The version number of the version after this current content update.
+  // The version number after this one.
   optional int32 next_version = 9;
 }
 
-// The versioned snapshot of an entity embedded in version-history responses.
+// The snapshot of an entity at one version.
 message VersionedEntity {
   // Title of the entity.
   string title = 1;
@@ -136,31 +139,10 @@ message VersionedEntity {
 }
 
 // ============================================================================
-// LINKS
-// ============================================================================
-
-// The single-field links shape shared by comments, custom content, spaces,
-// databases, folders and Smart Links (`_links` on those entities).
-message Links {
-  // Web UI link of the content.
-  string webui = 1;
-}
-
-// Links of pages and blog posts (`_links` on those entities).
-message AbstractPageLinks {
-  // Web UI link of the content.
-  string webui = 1;
-  // Edit UI link of the content.
-  string editui = 2;
-  // Tiny UI link of the content.
-  string tinyui = 3;
-}
-
-// ============================================================================
 // SHARED ENUMS
 // ============================================================================
 
-// The status of the content.
+// The lifecycle status of a piece of content.
 enum ContentStatus {
   CONTENT_STATUS_UNSPECIFIED = 0;
   CONTENT_STATUS_CURRENT = 1;
@@ -172,7 +154,7 @@ enum ContentStatus {
   CONTENT_STATUS_ANY = 7;
 }
 
-// Content type of a parent, or unset if there is no parent.
+// The content kind of a parent, or unset if there is no parent.
 enum ParentContentType {
   PARENT_CONTENT_TYPE_UNSPECIFIED = 0;
   PARENT_CONTENT_TYPE_PAGE = 1;
