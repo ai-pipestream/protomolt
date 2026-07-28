@@ -28,6 +28,28 @@ import java.util.Objects;
  * @param bodyFormat the body representation to fetch for pages and blog posts
  *        ({@code CONFLUENCE_BODY_FORMAT}, default {@code "storage"}; the v2
  *        list endpoints accept {@code storage} or {@code atlas_doc_format})
+ * @param kafkaBootstrapServers Kafka bootstrap servers for the
+ *        {@link KafkaChangeSink} ({@code CONFLUENCE_KAFKA_BOOTSTRAP_SERVERS});
+ *        unset = the Kafka sink is disabled
+ * @param schemaRegistryUrl optional Confluent-compatible schema registry the
+ *        Kafka sink's serde resolves subject ids from
+ *        ({@code CONFLUENCE_SCHEMA_REGISTRY_URL}); unset = registry-free
+ *        framing (schema id 0)
+ * @param kafkaTopic the topic changes publish to
+ *        ({@code CONFLUENCE_KAFKA_TOPIC}, default {@code "confluence-events"})
+ * @param kafkaSnapshotsTopic the topic snapshot markers publish to
+ *        ({@code CONFLUENCE_KAFKA_SNAPSHOTS_TOPIC}, default
+ *        {@code "confluence-snapshots"})
+ * @param repoTarget host:port of the repo gRPC service for the
+ *        {@link RepoChangeSink} ({@code CONFLUENCE_REPO_TARGET});
+ *        unset = the repo sink is disabled
+ * @param repoDrive the repo drive documents save to
+ *        ({@code CONFLUENCE_REPO_DRIVE}, default {@code "default"})
+ * @param repoAccountId the owning account on saved documents
+ *        ({@code CONFLUENCE_REPO_ACCOUNT_ID}, default {@code "confluence"})
+ * @param repoDatasourceId the datasource id on saved documents
+ *        ({@code CONFLUENCE_REPO_DATASOURCE_ID}, default
+ *        {@code "confluence"})
  */
 public record ConfluenceConnectorConfig(
         String baseUrl,
@@ -35,7 +57,15 @@ public record ConfluenceConnectorConfig(
         String apiToken,
         List<String> spaces,
         int pageSize,
-        String bodyFormat) {
+        String bodyFormat,
+        String kafkaBootstrapServers,
+        String schemaRegistryUrl,
+        String kafkaTopic,
+        String kafkaSnapshotsTopic,
+        String repoTarget,
+        String repoDrive,
+        String repoAccountId,
+        String repoDatasourceId) {
 
     /** Environment variable for the Confluence Cloud base URL (with /wiki). */
     public static final String ENV_BASE_URL = "CONFLUENCE_BASE_URL";
@@ -53,6 +83,22 @@ public record ConfluenceConnectorConfig(
     public static final String ENV_PAGE_SIZE = "CONFLUENCE_PAGE_SIZE";
     /** Environment variable for the body representation to fetch. */
     public static final String ENV_BODY_FORMAT = "CONFLUENCE_BODY_FORMAT";
+    /** Environment variable for the Kafka bootstrap servers (enables the Kafka sink). */
+    public static final String ENV_KAFKA_BOOTSTRAP_SERVERS = "CONFLUENCE_KAFKA_BOOTSTRAP_SERVERS";
+    /** Environment variable for the schema registry the Kafka sink's serde uses. */
+    public static final String ENV_SCHEMA_REGISTRY_URL = "CONFLUENCE_SCHEMA_REGISTRY_URL";
+    /** Environment variable for the topic changes publish to. */
+    public static final String ENV_KAFKA_TOPIC = "CONFLUENCE_KAFKA_TOPIC";
+    /** Environment variable for the topic snapshot markers publish to. */
+    public static final String ENV_KAFKA_SNAPSHOTS_TOPIC = "CONFLUENCE_KAFKA_SNAPSHOTS_TOPIC";
+    /** Environment variable for the repo service host:port (enables the repo sink). */
+    public static final String ENV_REPO_TARGET = "CONFLUENCE_REPO_TARGET";
+    /** Environment variable for the repo drive documents save to. */
+    public static final String ENV_REPO_DRIVE = "CONFLUENCE_REPO_DRIVE";
+    /** Environment variable for the owning account on saved documents. */
+    public static final String ENV_REPO_ACCOUNT_ID = "CONFLUENCE_REPO_ACCOUNT_ID";
+    /** Environment variable for the datasource id on saved documents. */
+    public static final String ENV_REPO_DATASOURCE_ID = "CONFLUENCE_REPO_DATASOURCE_ID";
 
     /** Default page size for list endpoints. */
     public static final int DEFAULT_PAGE_SIZE = 100;
@@ -60,6 +106,16 @@ public record ConfluenceConnectorConfig(
     public static final int MAX_PAGE_SIZE = 250;
     /** Default body representation: Confluence storage format (XHTML). */
     public static final String DEFAULT_BODY_FORMAT = "storage";
+    /** Default topic for change records. */
+    public static final String DEFAULT_KAFKA_TOPIC = "confluence-events";
+    /** Default topic for snapshot markers. */
+    public static final String DEFAULT_KAFKA_SNAPSHOTS_TOPIC = "confluence-snapshots";
+    /** Default repo drive for saved documents. */
+    public static final String DEFAULT_REPO_DRIVE = "default";
+    /** Default owning account on saved documents. */
+    public static final String DEFAULT_REPO_ACCOUNT_ID = "confluence";
+    /** Default datasource id on saved documents. */
+    public static final String DEFAULT_REPO_DATASOURCE_ID = "confluence";
 
     public ConfluenceConnectorConfig {
         if (baseUrl == null || baseUrl.isBlank()) {
@@ -91,6 +147,39 @@ public record ConfluenceConnectorConfig(
             throw new IllegalArgumentException(ENV_BODY_FORMAT
                     + " must be storage or atlas_doc_format (got \"" + bodyFormat + "\")");
         }
+        if (kafkaTopic == null || kafkaTopic.isBlank()) {
+            kafkaTopic = DEFAULT_KAFKA_TOPIC;
+        }
+        if (kafkaSnapshotsTopic == null || kafkaSnapshotsTopic.isBlank()) {
+            kafkaSnapshotsTopic = DEFAULT_KAFKA_SNAPSHOTS_TOPIC;
+        }
+        if (repoDrive == null || repoDrive.isBlank()) {
+            repoDrive = DEFAULT_REPO_DRIVE;
+        }
+        if (repoAccountId == null || repoAccountId.isBlank()) {
+            repoAccountId = DEFAULT_REPO_ACCOUNT_ID;
+        }
+        if (repoDatasourceId == null || repoDatasourceId.isBlank()) {
+            repoDatasourceId = DEFAULT_REPO_DATASOURCE_ID;
+        }
+    }
+
+    /**
+     * Whether the Kafka sink activates: it needs bootstrap servers.
+     *
+     * @return true when {@code CONFLUENCE_KAFKA_BOOTSTRAP_SERVERS} was set
+     */
+    public boolean kafkaEnabled() {
+        return kafkaBootstrapServers != null && !kafkaBootstrapServers.isBlank();
+    }
+
+    /**
+     * Whether the repo sink activates: it needs the repo service target.
+     *
+     * @return true when {@code CONFLUENCE_REPO_TARGET} was set
+     */
+    public boolean repoEnabled() {
+        return repoTarget != null && !repoTarget.isBlank();
     }
 
     /**
@@ -130,6 +219,14 @@ public record ConfluenceConnectorConfig(
                 .spaces(parseSpaces(env.get(ENV_SPACES)))
                 .pageSize(parseIntOrDefault(env.get(ENV_PAGE_SIZE), DEFAULT_PAGE_SIZE))
                 .bodyFormat(env.get(ENV_BODY_FORMAT))
+                .kafkaBootstrapServers(env.get(ENV_KAFKA_BOOTSTRAP_SERVERS))
+                .schemaRegistryUrl(env.get(ENV_SCHEMA_REGISTRY_URL))
+                .kafkaTopic(env.get(ENV_KAFKA_TOPIC))
+                .kafkaSnapshotsTopic(env.get(ENV_KAFKA_SNAPSHOTS_TOPIC))
+                .repoTarget(env.get(ENV_REPO_TARGET))
+                .repoDrive(env.get(ENV_REPO_DRIVE))
+                .repoAccountId(env.get(ENV_REPO_ACCOUNT_ID))
+                .repoDatasourceId(env.get(ENV_REPO_DATASOURCE_ID))
                 .build();
     }
 
@@ -170,7 +267,15 @@ public record ConfluenceConnectorConfig(
                 + ", apiToken=***"
                 + ", spaces=" + spaces
                 + ", pageSize=" + pageSize
-                + ", bodyFormat=" + bodyFormat + "}";
+                + ", bodyFormat=" + bodyFormat
+                + ", kafkaBootstrapServers=" + kafkaBootstrapServers
+                + ", schemaRegistryUrl=" + schemaRegistryUrl
+                + ", kafkaTopic=" + kafkaTopic
+                + ", kafkaSnapshotsTopic=" + kafkaSnapshotsTopic
+                + ", repoTarget=" + repoTarget
+                + ", repoDrive=" + repoDrive
+                + ", repoAccountId=" + repoAccountId
+                + ", repoDatasourceId=" + repoDatasourceId + "}";
     }
 
     /** Test-friendly builder; every field the record validates is optional here. */
@@ -181,6 +286,14 @@ public record ConfluenceConnectorConfig(
         private List<String> spaces = List.of();
         private int pageSize = DEFAULT_PAGE_SIZE;
         private String bodyFormat = DEFAULT_BODY_FORMAT;
+        private String kafkaBootstrapServers;
+        private String schemaRegistryUrl;
+        private String kafkaTopic = DEFAULT_KAFKA_TOPIC;
+        private String kafkaSnapshotsTopic = DEFAULT_KAFKA_SNAPSHOTS_TOPIC;
+        private String repoTarget;
+        private String repoDrive = DEFAULT_REPO_DRIVE;
+        private String repoAccountId = DEFAULT_REPO_ACCOUNT_ID;
+        private String repoDatasourceId = DEFAULT_REPO_DATASOURCE_ID;
 
         private Builder() {
         }
@@ -220,9 +333,50 @@ public record ConfluenceConnectorConfig(
             return this;
         }
 
+        public Builder kafkaBootstrapServers(String kafkaBootstrapServers) {
+            this.kafkaBootstrapServers = kafkaBootstrapServers;
+            return this;
+        }
+
+        public Builder schemaRegistryUrl(String schemaRegistryUrl) {
+            this.schemaRegistryUrl = schemaRegistryUrl;
+            return this;
+        }
+
+        public Builder kafkaTopic(String kafkaTopic) {
+            this.kafkaTopic = kafkaTopic;
+            return this;
+        }
+
+        public Builder kafkaSnapshotsTopic(String kafkaSnapshotsTopic) {
+            this.kafkaSnapshotsTopic = kafkaSnapshotsTopic;
+            return this;
+        }
+
+        public Builder repoTarget(String repoTarget) {
+            this.repoTarget = repoTarget;
+            return this;
+        }
+
+        public Builder repoDrive(String repoDrive) {
+            this.repoDrive = repoDrive;
+            return this;
+        }
+
+        public Builder repoAccountId(String repoAccountId) {
+            this.repoAccountId = repoAccountId;
+            return this;
+        }
+
+        public Builder repoDatasourceId(String repoDatasourceId) {
+            this.repoDatasourceId = repoDatasourceId;
+            return this;
+        }
+
         public ConfluenceConnectorConfig build() {
             return new ConfluenceConnectorConfig(baseUrl, email, apiToken, spaces, pageSize,
-                    bodyFormat);
+                    bodyFormat, kafkaBootstrapServers, schemaRegistryUrl, kafkaTopic,
+                    kafkaSnapshotsTopic, repoTarget, repoDrive, repoAccountId, repoDatasourceId);
         }
     }
 }

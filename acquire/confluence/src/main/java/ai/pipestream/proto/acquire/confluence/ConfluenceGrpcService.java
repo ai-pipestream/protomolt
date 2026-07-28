@@ -56,9 +56,26 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
     private final ConfluenceClient client;
     private final ConfluenceMapper mapper;
     private final long attachmentMaxBytes;
+    private final ChangeSink downstream;
 
     public ConfluenceGrpcService(ConfluenceConnectorConfig config, ConfluenceClient client,
             long attachmentMaxBytes) {
+        this(config, client, attachmentMaxBytes, null);
+    }
+
+    /**
+     * The facade with a downstream sink wired: every change a {@code sync}
+     * call emits also lands on {@code downstream} (the configured Kafka /
+     * repo sinks), after the streaming observer. Null means stream-only, the
+     * pre-sink behavior.
+     *
+     * @param config the crawler config
+     * @param client the REST client
+     * @param attachmentMaxBytes the inline attachment size cap
+     * @param downstream the sink fan-out for every emitted change, or null
+     */
+    public ConfluenceGrpcService(ConfluenceConnectorConfig config, ConfluenceClient client,
+            long attachmentMaxBytes, ChangeSink downstream) {
         this.config = Objects.requireNonNull(config, "config");
         this.client = Objects.requireNonNull(client, "client");
         this.mapper = new ConfluenceMapper(config.baseUrl());
@@ -66,6 +83,7 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
             throw new IllegalArgumentException("attachmentMaxBytes must be positive");
         }
         this.attachmentMaxBytes = attachmentMaxBytes;
+        this.downstream = downstream;
     }
 
     @Override
@@ -166,12 +184,15 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
                     ? config
                     : new ConfluenceConnectorConfig(config.baseUrl(), config.email(),
                             config.apiToken(), request.getSpaceKeysList(), config.pageSize(),
-                            config.bodyFormat());
+                            config.bodyFormat(), config.kafkaBootstrapServers(),
+                            config.schemaRegistryUrl(), config.kafkaTopic(),
+                            config.kafkaSnapshotsTopic(), config.repoTarget(), config.repoDrive(),
+                            config.repoAccountId(), config.repoDatasourceId());
             // The crawler emits from virtual threads concurrently; StreamObserver
             // is not thread-safe, so every onNext is serialized on this lock.
             Object lock = new Object();
             AtomicReference<String> newestSnapshotCursor = new AtomicReference<>("");
-            ChangeSink sink = new ChangeSink() {
+            ChangeSink observerSink = new ChangeSink() {
                 @Override
                 public void emit(ConfluenceChange change) {
                     ConfluenceChange out = request.getIncludeBodies() ? change : stripBodies(change);
@@ -189,6 +210,8 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
                     }
                 }
             };
+            ChangeSink sink = downstream == null ? observerSink
+                    : new CompositeChangeSink(List.of(observerSink, downstream));
             ConfluenceCrawler crawler = new ConfluenceCrawler(effective, client, sink);
             String resumeCursor;
             if (request.getSinceCursor().isBlank()) {

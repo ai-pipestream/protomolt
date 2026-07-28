@@ -8,6 +8,8 @@ import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.services.HealthStatusManager;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -27,7 +29,18 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@code CONFLUENCE_GRPC_PORT}: listen port, default 9095</li>
  *   <li>{@code CONFLUENCE_ATTACHMENT_MAX_BYTES}: inline attachment cap,
  *   default 25 MiB</li>
+ *   <li>{@code CONFLUENCE_KAFKA_BOOTSTRAP_SERVERS} (plus the optional
+ *   {@code CONFLUENCE_SCHEMA_REGISTRY_URL}, {@code CONFLUENCE_KAFKA_TOPIC},
+ *   {@code CONFLUENCE_KAFKA_SNAPSHOTS_TOPIC}): every change a sync emits also
+ *   publishes through {@link KafkaChangeSink}</li>
+ *   <li>{@code CONFLUENCE_REPO_TARGET} (plus the optional
+ *   {@code CONFLUENCE_REPO_DRIVE}, {@code CONFLUENCE_REPO_ACCOUNT_ID},
+ *   {@code CONFLUENCE_REPO_DATASOURCE_ID}): every change a sync emits also
+ *   saves through {@link RepoChangeSink}</li>
  * </ul>
+ *
+ * <p>Both sinks may be active at once; sync output fans out to the caller and
+ * every configured sink through a {@link CompositeChangeSink}.</p>
  */
 public final class ConfluenceProxyServer {
 
@@ -51,10 +64,27 @@ public final class ConfluenceProxyServer {
      */
     public static void main(String[] args) throws Exception {
         ConfluenceConnectorConfig config = ConfluenceConnectorConfig.fromEnvironment();
+        List<AutoCloseable> closables = new ArrayList<>();
+        List<ChangeSink> sinks = new ArrayList<>();
+        if (config.kafkaEnabled()) {
+            KafkaChangeSink kafka = KafkaChangeSink.create(config);
+            sinks.add(kafka);
+            closables.add(kafka);
+        }
+        if (config.repoEnabled()) {
+            RepoChangeSink repo = RepoChangeSink.create(config);
+            sinks.add(repo);
+            closables.add(repo);
+        }
+        ChangeSink downstream = sinks.isEmpty() ? null
+                : sinks.size() == 1 ? sinks.get(0) : new CompositeChangeSink(sinks);
+        LOG.log(System.Logger.Level.INFO, "confluence-proxy sinks active: kafka={0} repo={1}",
+                config.kafkaEnabled(), config.repoEnabled());
         ConfluenceGrpcService service = new ConfluenceGrpcService(config,
                 new ConfluenceClient(config),
                 parseLong(System.getenv(ENV_ATTACHMENT_MAX_BYTES),
-                        ConfluenceGrpcService.DEFAULT_ATTACHMENT_MAX_BYTES));
+                        ConfluenceGrpcService.DEFAULT_ATTACHMENT_MAX_BYTES),
+                downstream);
         Server server = startNetty(service, parseInt(System.getenv(ENV_GRPC_PORT),
                 DEFAULT_GRPC_PORT));
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -63,9 +93,14 @@ public final class ConfluenceProxyServer {
                 if (!server.awaitTermination(10, TimeUnit.SECONDS)) {
                     server.shutdownNow();
                 }
+                for (AutoCloseable closable : closables) {
+                    closable.close();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 server.shutdownNow();
+            } catch (Exception e) {
+                LOG.log(System.Logger.Level.WARNING, "sink close failed: {0}", e.toString());
             }
         }, "confluence-proxy-shutdown"));
         LOG.log(System.Logger.Level.INFO,

@@ -110,4 +110,35 @@ class ConfluenceConnectorConfigTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("CONFLUENCE_EMAIL");
     }
+
+    @Test
+    void sinkConfigDefaultsToDisabled() {
+        ConfluenceConnectorConfig config = valid().build();
+
+        assertThat(config.kafkaEnabled()).isFalse();
+        assertThat(config.repoEnabled()).isFalse();
+        assertThat(config.kafkaTopic()).isEqualTo("confluence-events");
+        assertThat(config.kafkaSnapshotsTopic()).isEqualTo("confluence-snapshots");
+        assertThat(config.repoDrive()).isEqualTo("default");
+        assertThat(config.repoAccountId()).isEqualTo("confluence");
+        assertThat(config.repoDatasourceId()).isEqualTo("confluence");
+    }
+
+    @Test
+    void sinkConfigFromEnvironment() {
+        ConfluenceConnectorConfig config = ConfluenceConnectorConfig.fromEnvironment(Map.of(
+                "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki",
+                "CONFLUENCE_EMAIL", "bot@pipestream.ai",
+                "CONFLUENCE_API_TOKEN", "token",
+                "CONFLUENCE_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092",
+                "CONFLUENCE_KAFKA_TOPIC", "events-x",
+                "CONFLUENCE_REPO_TARGET", "repo:9090"));
+
+        assertThat(config.kafkaEnabled()).isTrue();
+        assertThat(config.kafkaBootstrapServers()).isEqualTo("localhost:9092");
+        assertThat(config.kafkaTopic()).isEqualTo("events-x");
+        assertThat(config.schemaRegistryUrl()).isNull();
+        assertThat(config.repoEnabled()).isTrue();
+        assertThat(config.repoTarget()).isEqualTo("repo:9090");
+    }
 }
