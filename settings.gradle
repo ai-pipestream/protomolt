@@ -172,6 +172,9 @@ project(':protomolt-emit-okf').projectDir = file('sink/emit/okf')
 include 'protomolt-emit-parquet'
 project(':protomolt-emit-parquet').projectDir = file('sink/emit/parquet')
 
+include 'protomolt-emit-parquet-s3'
+project(':protomolt-emit-parquet-s3').projectDir = file('sink/emit/parquet-s3')
+
 include 'protomolt-iceberg'
 project(':protomolt-iceberg').projectDir = file('sink/iceberg')
 

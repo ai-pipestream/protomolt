@@ -1,0 +1,22 @@
+description = 'Parquet-to-S3 sink: descriptor-driven Parquet files (protomolt-emit-parquet) uploaded to any S3-compatible store (RustFS, SeaweedFS, Ceph, AWS S3) through the AWS SDK - path-style endpoint override for self-hosted stores, no Hadoop, no MinIO'
+
+dependencies {
+    api project(':protomolt-emit-parquet')
+    implementation platform(libs.awssdk.bom)
+    // S3Client is the public surface: callers hand one in and S3Clients builds one.
+    api libs.awssdk.s3
+    // The lightest HTTP client (JDK HttpURLConnection - no Netty, no Apache HttpClient).
+    implementation libs.awssdk.url.connection.client
+
+    testImplementation project(':protomolt-proto-sources')
+    // The example Group reader used to verify round-trips; protomolt-emit-parquet keeps
+    // parquet-hadoop as an implementation detail, so tests declare it themselves.
+    testImplementation libs.parquet.hadoop
+    // The live suite boots its own LocalStack S3 store.
+    testImplementation libs.testcontainers.junit.jupiter
+    testImplementation libs.testcontainers.localstack
+    // The example Group reader used to verify round-trips materializes a Hadoop
+    // Configuration; the writer and the sink never do.
+    testCompileOnly libs.hadoop.client.api
+    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
+}
