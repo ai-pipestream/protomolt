@@ -1,0 +1,31 @@
+description = 'The account service: account CRUD + activation, drive provisioning via repo-service RPC, and the account-events outbox — embeddable in-JVM or standalone over Netty, no framework'
+
+dependencies {
+    api project(':protomolt-account-proto')
+
+    // Drive provisioning rides the repo wire contract only — the
+    // DriveServiceGrpc blocking stub, never repo container/service internals.
+    implementation project(':protomolt-repo-proto')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    // Persistence stack (framework-free): plain JDBC over HikariCP + Flyway.
+    implementation libs.hikari
+    implementation libs.flyway.core
+    implementation libs.flyway.database.postgresql
+    implementation libs.postgresql
+    // The accounts.metadata JSONB column's serialization (Jackson is the
+    // repo-wide JSON library; see libs.versions.toml).
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+    // Kafka eventing: the outbox relay publishes through the protomolt serde
+    // (Confluent wire format over the packaged account_events.proto contract).
+    implementation project(':protomolt-serde')
+    implementation libs.kafka.clients
+
+    runtimeOnly libs.slf4j.simple
+
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}

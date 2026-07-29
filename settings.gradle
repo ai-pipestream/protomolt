@@ -242,6 +242,15 @@ project(':protomolt-repo-container').projectDir = file('repo/container')
 include 'protomolt-repo-service'
 project(':protomolt-repo-service').projectDir = file('repo/service')
 
+// account/ — the tenant root: account CRUD + activation, drive provisioning
+// via repo-service RPC, account-events.
+
+include 'protomolt-account-proto'
+project(':protomolt-account-proto').projectDir = file('account/proto')
+
+include 'protomolt-account-service'
+project(':protomolt-account-service').projectDir = file('account/service')
+
 // host/ — embedding the toolkit into servers and frameworks.
 
 include 'protomolt-server-common'
