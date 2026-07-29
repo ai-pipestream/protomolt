@@ -112,7 +112,10 @@ class JdbcAccountStoreIT {
     void statusTransitionUpdatesRowAndTimestamp() {
         AccountRecord created = database.inTransaction(
                 c -> store.create(c, newAccount("acct-status", "s")));
-        Instant deactivatedAt = Instant.now();
+        // Pre-truncate to micros: timestamptz ROUNDS sub-micro digits rather
+        // than truncating them, so a nano-precision clock (JDK 25+) would
+        // otherwise store a value one micro off the truncated expectation.
+        Instant deactivatedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         AccountRecord deactivated = database.inTransaction(c -> {
             assertThat(store.findByIdForUpdate(c, "acct-status")).isPresent();
             return store.updateStatus(c, "acct-status",
