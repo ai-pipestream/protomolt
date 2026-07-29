@@ -88,6 +88,14 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  *        registry-assigned id, so relayed records are resolvable by standard
  *        Confluent tooling (requires the DocumentEvent subject registered
  *        under {@code <topic>-value})
+ * @param seedAccountId the standalone default account
+ *        ({@code DOCUMENT_PLATFORM_SEED_ACCOUNT_ID}); null/blank = no seeding
+ *        (the default — fully backward compatible). When set,
+ *        {@link RepoServices#seedAccountDrives()} idempotently ensures this
+ *        account's two provisioning-time drives ({@code intake} and
+ *        {@code pipeline}) exist at boot. Treat the value as a permanent
+ *        namespace once used: the account id is baked into identity hashes
+ *        and S3 prefixes, so never change it against an existing store
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -112,7 +120,8 @@ public record RepoServiceConfig(
         long reconcileMinAgeMs,
         String kafkaBootstrapServers,
         String kafkaTopic,
-        String schemaRegistryUrl) {
+        String schemaRegistryUrl,
+        String seedAccountId) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -161,6 +170,12 @@ public record RepoServiceConfig(
      * (unset = registry-free, frames stamp schema id 0).
      */
     public static final String ENV_SCHEMA_REGISTRY_URL = "DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL";
+    /**
+     * Environment variable for the standalone default account (unset = no
+     * seeding). When set, {@link RepoServices#seedAccountDrives()} ensures the
+     * account's {@code intake} and {@code pipeline} drives exist at boot.
+     */
+    public static final String ENV_SEED_ACCOUNT_ID = "DOCUMENT_PLATFORM_SEED_ACCOUNT_ID";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -239,6 +254,24 @@ public record RepoServiceConfig(
                 kafkaTopic, null);
     }
 
+    /**
+     * Compatibility constructor: the 24 pre-seed-account components, with no
+     * seeded default account (no boot-time drive seeding).
+     */
+    public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
+            String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
+            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
+            long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
+            boolean reconcileDryRun, long reconcileMinAgeMs,
+            String kafkaBootstrapServers, String kafkaTopic, String schemaRegistryUrl) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
+                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
+                reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
+                kafkaTopic, schemaRegistryUrl, null);
+    }
+
     public RepoServiceConfig {
         if (grpcPort < 0) {
             grpcPort = DEFAULT_GRPC_PORT;
@@ -306,6 +339,7 @@ public record RepoServiceConfig(
             kafkaTopic = DEFAULT_KAFKA_TOPIC;
         }
         schemaRegistryUrl = blankToNull(schemaRegistryUrl);
+        seedAccountId = blankToNull(seedAccountId);
     }
 
     /**
@@ -360,7 +394,8 @@ public record RepoServiceConfig(
                         DEFAULT_RECONCILE_MIN_AGE_MS),
                 System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
                 envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
-                System.getenv(ENV_SCHEMA_REGISTRY_URL));
+                System.getenv(ENV_SCHEMA_REGISTRY_URL),
+                System.getenv(ENV_SEED_ACCOUNT_ID));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */

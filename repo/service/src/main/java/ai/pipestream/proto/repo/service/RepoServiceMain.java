@@ -27,6 +27,10 @@ public final class RepoServiceMain {
     public static void main(String[] args) throws Exception {
         RepoServiceConfig config = RepoServiceConfig.fromEnvironment();
         RepoServices services = RepoServices.build(config);
+        // Seeded default account (DOCUMENT_PLATFORM_SEED_ACCOUNT_ID): ensure
+        // the account's intake/pipeline drives exist before serving. No-op
+        // when unset; embedded hosts opt in by calling it themselves.
+        services.seedAccountDrives();
         Server server = services.startNetty(config.grpcPort());
         // HTTP upload route: DOCUMENT_PLATFORM_HTTP_PORT, default 8080; 0 or
         // "off" disables it (gRPC-only deployments).

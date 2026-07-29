@@ -19,18 +19,12 @@ import com.google.protobuf.Timestamp;
 import com.google.protobuf.Value;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.stub.StreamObserver;
-import jakarta.persistence.PersistenceException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 import static ai.pipestream.proto.repo.service.GrpcErrors.invalidArgument;
@@ -45,24 +39,15 @@ import static ai.pipestream.proto.repo.service.GrpcErrors.notFound;
  * <p>{@code CreateDrive} is idempotent by construction: the drive id is a
  * deterministic UUIDv5 over {@code "drive|<accountId>|<name>"}, so a re-create
  * of the same (account, name) finds the existing row and returns it instead of
- * failing on the unique constraint.
- *
- * <p>Bucket creation is the ONE admin-plane call this service makes on the
- * raw {@link S3Client} — the {@code BlobStore} port is deliberately
- * object-operations-only, so bucket lifecycle lives here, at the provisioning
- * call site. Everything else (every document byte) goes through the port.
+ * failing on the unique constraint. The provisioning logic itself lives in
+ * {@link DriveProvisioner}, shared with boot-time drive seeding
+ * ({@link RepoServices#seedAccountDrives()}); this class adds the wire
+ * concerns — request validation, gRPC error mapping, proto conversion.
  */
 public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBase {
 
-    private static final Logger LOG = LoggerFactory.getLogger(DriveGrpcService.class);
-
-    static final String DEFAULT_PROVIDER = "s3";
-    static final String STATUS_ACTIVE = "ACTIVE";
-
     private final DriveLedger drives;
-    private final S3Client s3;
-    private final String defaultBucketBase;
-    private final String defaultRegion;
+    private final DriveProvisioner provisioner;
 
     /**
      * @param drives the drive-row ledger
@@ -74,9 +59,7 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
      */
     public DriveGrpcService(DriveLedger drives, S3Client s3, String defaultBucketBase, String defaultRegion) {
         this.drives = drives;
-        this.s3 = s3;
-        this.defaultBucketBase = defaultBucketBase;
-        this.defaultRegion = defaultRegion;
+        this.provisioner = new DriveProvisioner(drives, s3, defaultBucketBase, defaultRegion);
     }
 
     @Override
@@ -88,52 +71,11 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
             if (request.getAccountId().isBlank()) {
                 throw invalidArgument("account_id is required");
             }
-            UUID driveId = UUID.nameUUIDFromBytes(
-                    ("drive|" + request.getAccountId() + "|" + request.getName())
-                            .getBytes(StandardCharsets.UTF_8));
-            // Deterministic id ⇒ re-create is idempotent: return the row that
-            // is already there rather than erroring on the unique constraint.
-            Optional<DriveRecord> existing = drives.findById(driveId);
-            if (existing.isPresent()) {
-                return CreateDriveResponse.newBuilder().setDrive(toProto(existing.get())).build();
-            }
-
-            String bucket = !request.getBucket().isBlank() ? request.getBucket()
-                    : sanitizeBucketName(defaultBucketBase + "-" + request.getAccountId()
-                            + "-" + request.getName());
-            String prefix = !request.getPrefix().isBlank() ? stripSlashes(request.getPrefix())
-                    : request.getName();
-            ensureBucket(bucket);
-
-            DriveRecord record = new DriveRecord();
-            record.driveId = driveId;
-            record.accountId = request.getAccountId();
-            record.name = request.getName();
-            record.driveType = driveType(request.getDriveType());
-            record.provider = request.getProvider().isBlank() ? DEFAULT_PROVIDER : request.getProvider();
-            record.bucket = bucket;
-            record.prefix = prefix;
-            record.region = request.getRegion().isBlank() ? defaultRegion : request.getRegion();
-            record.credentialsRef = request.getCredentialsRef().isBlank()
-                    ? null : request.getCredentialsRef();
-            record.status = STATUS_ACTIVE;
-            record.metadata = metadataJson(request.getMetadataMap());
-            if (request.hasProviderConfig()) {
-                record.writeProviderConfig(request.getProviderConfig());
-            }
-            try {
-                drives.insert(record);
-            } catch (PersistenceException race) {
-                // Lost a concurrent create race on (account_id, name): the
-                // winner's row IS the idempotent answer.
-                Optional<DriveRecord> winner = drives.findById(driveId);
-                if (winner.isPresent()) {
-                    return CreateDriveResponse.newBuilder().setDrive(toProto(winner.get())).build();
-                }
-                throw race;
-            }
-            LOG.info("Created drive {}/{} (id={}, bucket={}, prefix='{}')",
-                    record.accountId, record.name, driveId, bucket, prefix);
+            DriveRecord record = provisioner.ensureDrive(request.getAccountId(), request.getName(),
+                    request.getDriveType(), request.getBucket(), request.getPrefix(),
+                    request.getProvider(), request.getRegion(), request.getCredentialsRef(),
+                    metadataJson(request.getMetadataMap()),
+                    request.hasProviderConfig() ? request.getProviderConfig() : null);
             return CreateDriveResponse.newBuilder().setDrive(toProto(record)).build();
         });
     }
@@ -185,32 +127,6 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
         });
     }
 
-    /**
-     * Create the drive's bucket when absent, then verify reachability. The one
-     * admin-plane call site allowed on the raw client (see class Javadoc).
-     */
-    private void ensureBucket(String bucket) {
-        try {
-            s3.headBucket(b -> b.bucket(bucket));
-            return;
-        } catch (S3Exception e) {
-            if (e.statusCode() != 404) {
-                throw e;
-            }
-        }
-        s3.createBucket(b -> b.bucket(bucket));
-        s3.headBucket(b -> b.bucket(bucket));
-    }
-
-    /** Maps the wire enum to the row's check-constrained string; UNSPECIFIED → CUSTOM. */
-    private static String driveType(DriveType type) {
-        return switch (type) {
-            case DRIVE_TYPE_INTAKE -> "INTAKE";
-            case DRIVE_TYPE_PIPELINE -> "PIPELINE";
-            default -> "CUSTOM";
-        };
-    }
-
     private static Drive toProto(DriveRecord record) {
         Drive.Builder drive = Drive.newBuilder()
                 .setDriveId(record.driveId.toString())
@@ -238,36 +154,6 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
             drive.setProviderConfig(providerConfig);
         }
         return drive.build();
-    }
-
-    /**
-     * S3 bucket-name rules: lowercase letters/digits/dots/dashes, 3–63 chars.
-     * Anything else collapses to a dash; edges are trimmed.
-     */
-    static String sanitizeBucketName(String raw) {
-        String s = raw.toLowerCase(java.util.Locale.ROOT)
-                .replaceAll("[^a-z0-9.-]", "-")
-                .replaceAll("[-.]{2,}", "-")
-                .replaceAll("^[-.]+", "")
-                .replaceAll("[-.]+$", "");
-        if (s.length() > 63) {
-            s = s.substring(0, 63).replaceAll("[-.]+$", "");
-        }
-        if (s.length() < 3) {
-            s = (s + "-bucket").replaceAll("^[-.]+", "");
-        }
-        return s;
-    }
-
-    private static String stripSlashes(String prefix) {
-        String s = prefix;
-        while (s.startsWith("/")) {
-            s = s.substring(1);
-        }
-        while (s.endsWith("/")) {
-            s = s.substring(0, s.length() - 1);
-        }
-        return s;
     }
 
     /** Metadata map → JSON for the row's jsonb column (null when empty). */
