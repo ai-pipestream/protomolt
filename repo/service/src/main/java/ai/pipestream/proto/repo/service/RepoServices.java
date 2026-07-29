@@ -21,6 +21,7 @@ import ai.pipestream.proto.repo.container.lifecycle.S3Purger;
 import ai.pipestream.proto.repo.container.lifecycle.StorageReconciler;
 import ai.pipestream.proto.repo.service.client.RemoteBlobStore;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
+import ai.pipestream.proto.repo.v1.DriveType;
 import io.grpc.BindableService;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
@@ -75,6 +76,14 @@ import java.util.concurrent.TimeUnit;
  * thread instead of a carrier, so no offload/directExecutor tricks are
  * needed.
  *
+ * <p>Seeded default account ({@code DOCUMENT_PLATFORM_SEED_ACCOUNT_ID}):
+ * standalone deployments without an account-service name ONE seed account in
+ * the environment, and {@link #seedAccountDrives()} idempotently ensures its
+ * two provisioning-time drives ({@code intake} and {@code pipeline}) exist.
+ * Seeding is deliberately NOT part of {@code build()}: {@link RepoServiceMain}
+ * opts in after building, and embedded hosts ({@link #startInProcess(String)})
+ * call the method themselves when they want it. Unset/blank = no seeding.
+ *
  * <p>Bulk uploads are served by {@link #startHttp(int)}: the streaming HTTP
  * route whose body flows to object storage without buffering, next to the
  * unary gRPC API.
@@ -94,6 +103,7 @@ public final class RepoServices implements AutoCloseable {
     private final ManagedChannel remoteChannel;
     private final PartStorage partStorage;
     private final DocumentGrpcService documentService;
+    private final DriveProvisioner driveProvisioner;
     private final List<BindableService> services;
     private final S3Purger s3Purger;
     private final PurgeSweeper purgeSweeper;
@@ -158,6 +168,8 @@ public final class RepoServices implements AutoCloseable {
                         config.schemaRegistryUrl()) : null;
         this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
                 blobStore, partStorage, purgeQueue, eventOutbox);
+        this.driveProvisioner = new DriveProvisioner(driveLedger, s3Client,
+                config.defaultBucketBase(), config.s3Region());
         this.services = List.of(
                 documentService,
                 new DriveGrpcService(driveLedger, s3Client,
@@ -257,6 +269,31 @@ public final class RepoServices implements AutoCloseable {
         http.start(port);
         httpServers.add(http);
         return http;
+    }
+
+    /**
+     * Seeded default account ({@code DOCUMENT_PLATFORM_SEED_ACCOUNT_ID}):
+     * idempotently ensures the seed account's two provisioning-time drives
+     * exist — {@code intake} ({@code INTAKE}) and {@code pipeline}
+     * ({@code PIPELINE}) — through the same {@link DriveProvisioner} the gRPC
+     * {@code CreateDrive} path uses, logging each drive as created vs. found.
+     * {@code account_id} stays required on every request; this only
+     * pre-creates the drives a standalone deployment would otherwise have to
+     * provision by hand. No-op when the variable is unset. Opt-in:
+     * {@link RepoServiceMain} calls this after {@link #build(RepoServiceConfig)}
+     * and before serving; embedded hosts call it themselves when they want it.
+     */
+    public void seedAccountDrives() {
+        String accountId = config.seedAccountId();
+        if (accountId == null) {
+            return;
+        }
+        DriveRecord intake = driveProvisioner.ensureDrive(accountId, "intake",
+                DriveType.DRIVE_TYPE_INTAKE);
+        DriveRecord pipeline = driveProvisioner.ensureDrive(accountId, "pipeline",
+                DriveType.DRIVE_TYPE_PIPELINE);
+        LOG.info("Seed account '{}' drives ready: intake (id={}), pipeline (id={})",
+                accountId, intake.driveId, pipeline.driveId);
     }
 
     /**

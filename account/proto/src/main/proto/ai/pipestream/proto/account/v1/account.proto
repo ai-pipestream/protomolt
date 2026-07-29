@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.account.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.account.v1";
+
+// ============================================================================
+// Account — the tenant root of the document platform.
+//
+// An account is the ownership root every other platform concept hangs off:
+// drives, documents, and ledger rows are all account-scoped, and account_id
+// is the tenancy key carried by every repo-service request. Accounts mesh
+// M:N with clusters, but cluster is a routing domain and never part of an
+// account's identity.
+// ============================================================================
+
+// Lifecycle state of an account. CreateAccount lands ACTIVE; the wire API
+// moves an account between ACTIVE and DEACTIVATED. SUSPENDED is the
+// administrative hold: the store supports it, no RPC sets it yet — it
+// arrives with the policy surface that needs it.
+enum AccountStatus {
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  // Normal operation: drives provisioned, reads and writes allowed.
+  ACCOUNT_STATUS_ACTIVE = 1;
+  // Administrative hold (reserved; not settable over the wire yet).
+  ACCOUNT_STATUS_SUSPENDED = 2;
+  // Soft-off: the account and its data are retained, but the account is
+  // out of every active path until re-activated.
+  ACCOUNT_STATUS_DEACTIVATED = 3;
+}
+
+// A tenant of the document platform.
+message Account {
+  // The tenancy key, unique across the platform. Required and explicit
+  // everywhere — callers name their accounts; the service never mints one.
+  string account_id = 1;
+  // Human-facing label (audit/debug; not an identity input).
+  string display_name = 2;
+  AccountStatus status = 3;
+  // When the account row was created.
+  google.protobuf.Timestamp created_at = 4;
+  // When the account row last changed (status transition or update).
+  google.protobuf.Timestamp updated_at = 5;
+  // Extensible key-value metadata (extension-metadata map — see convention).
+  map<string, string> metadata = 99;
+}

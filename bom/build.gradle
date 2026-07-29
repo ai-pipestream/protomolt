@@ -84,6 +84,8 @@ def supportedModules = [
         'protomolt-repo-proto',
         'protomolt-repo-container',
         'protomolt-repo-service',
+        'protomolt-account-proto',
+        'protomolt-account-service',
 ]
 
 javaPlatform {

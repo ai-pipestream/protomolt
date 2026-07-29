@@ -208,7 +208,15 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
    **(Landed: transactional outbox (`document_events_outbox`, V4) drained
    by a virtual-thread relay to the `document-events` topic through the
    protomolt serde; see repo/README.md § Kafka eventing.)**
-4. account-service + IdentityResolver SPI; account-events.
+4. account-service + IdentityResolver SPI; account-events. **(Landed — the
+   `account/` group (`account/proto`, `account/service`): account CRUD +
+   activation as a PEER process of repo-service, drive provisioning via the
+   `DriveService` stub at creation (re-ensured at activation; CreateDrive is
+   idempotent), the `AccountStore`/`IdentityResolver` SPIs with a plain-JDBC
+   Postgres default, and account-events through a transactional outbox
+   (`account_events_outbox`, V2) drained by a virtual-thread relay to the
+   `account-events` topic through the protomolt serde; see
+   account/README.md.)**
 5. Parquet projections; Document AI emitter.
 6. Engine/search/frontend (separate tracks).
 
@@ -217,8 +225,11 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
 - ~~New repo name/home for the platform~~ **Resolved**: the platform lives
   in protomolt as first-class modules under the `repo/` group
   (`repo/proto`, `repo/container`, `repo/service`).
-- Whether account-service folds into repo-service as a module or stays a
-  peer process (leaning peer: different deploy/scale story).
+- ~~Whether account-service folds into repo-service as a module or stays a
+  peer process (leaning peer: different deploy/scale story).~~ **Resolved**:
+  peer process — the `account/` group has its own database, deploy and scale
+  story; the only coupling to repo-service is the `DriveService` stub
+  (protomolt-repo-proto) for drive provisioning.
 - gRPC server stack for framework-free services: grpc-java Netty
   (battle-tested, native-image metadata exists) vs JDK HTTP server for
   any REST/health surface (protomolt `host/servers/jdk`).

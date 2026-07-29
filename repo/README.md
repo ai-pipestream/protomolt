@@ -232,6 +232,9 @@ for the ledger, LocalStack for S3, the full stack booted through
   contract, checksum-mismatch rejection.
 - `RemoteBlobStoreIT` — the dogfood blob store over the in-process gRPC
   transport.
+- `SeedAccountDrivesIT` — the seeded default account: `intake`/`pipeline`
+  drives appear with the provisioning defaults, seeding is idempotent across
+  repeat runs, and an unset variable is a no-op.
 - `RedisBlobStoreIT` — the Redis blob store against `redis:7-alpine`:
   verified writes, the two-entries-per-object mapping, 1000-key pipelined
   deletes, SCAN listing, TTL expiry.
@@ -268,6 +271,27 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; unset = eventing off (no outbox writes, no relay, no producer) |
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the relay publishes to |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | _(none)_ | Confluent-compatible schema registry for the relay's serde; unset = registry-free (frames stamp schema id 0, which only protomolt consumers resolve) |
+| `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | _(none)_ | Standalone default account: at boot the service idempotently ensures this account's `intake` and `pipeline` drives exist; unset = no seeding. Permanent namespace once used — never change it against an existing store (see below) |
+
+### Standalone default account
+
+Deployments without an account-service can name ONE seed account via
+`DOCUMENT_PLATFORM_SEED_ACCOUNT_ID`. At boot — after the ledger is migrated,
+before the servers start — `RepoServices.seedAccountDrives()` idempotently
+ensures that account's two provisioning-time drives exist: `intake`
+(`DriveType.INTAKE`) and `pipeline` (`DriveType.PIPELINE`), each logging
+created-vs-found. Reboots and repeat runs are safe: drive ids are
+deterministic, so the second pass simply finds the rows.
+
+`account_id` stays explicit and required on every request — the variable only
+pre-creates the drives, it never defaults request fields. Embedded hosts
+(`startInProcess`) opt in by calling `seedAccountDrives()` themselves;
+`RepoServiceMain` calls it automatically.
+
+**Warning:** treat the seed account id as a permanent namespace once it has
+been used. The account id is baked into identity hashes and S3 prefixes —
+changing it against an existing store strands every object and row written
+under the old id. Pick it once and keep it.
 
 ## API surface
 

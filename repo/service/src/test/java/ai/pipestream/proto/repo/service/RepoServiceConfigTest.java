@@ -130,4 +130,28 @@ class RepoServiceConfigTest {
                 "broker:9092", null);
         assertThat(compat.schemaRegistryUrl()).isNull();
     }
+
+    @Test
+    void seedAccountIdIsNullUnlessSet() {
+        // Every compatibility constructor leaves seeding off.
+        assertThat(config(-1, null, null, null).seedAccountId()).isNull();
+        RepoServiceConfig compat = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                null, null, null);
+        assertThat(compat.seedAccountId()).isNull();
+
+        // Blank (and whitespace) normalizes to null: no seeding.
+        RepoServiceConfig blank = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                null, null, null, "  ");
+        assertThat(blank.seedAccountId()).isNull();
+
+        RepoServiceConfig set = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                null, null, null, " standalone ");
+        assertThat(set.seedAccountId()).isEqualTo("standalone");
+    }
 }
