@@ -14,26 +14,38 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
 // The account type of the user.
 enum AccountType {
+  // Zero value; the account type is unknown or was not returned.
   ACCOUNT_TYPE_UNSPECIFIED = 0;
+  // A regular Atlassian account user.
   ACCOUNT_TYPE_ATLASSIAN = 1;
+  // An app (bot) account.
   ACCOUNT_TYPE_APP = 2;
+  // A portal-only customer account.
   ACCOUNT_TYPE_CUSTOMER = 3;
+  // Fallback for account types not recognized by this schema.
   ACCOUNT_TYPE_UNKNOWN = 4;
 }
 
 // The account status of the user.
 enum AccountStatus {
+  // Zero value; the account status is unknown or was not returned.
   ACCOUNT_STATUS_UNSPECIFIED = 0;
+  // The account is active.
   ACCOUNT_STATUS_ACTIVE = 1;
+  // The account is deactivated but retained.
   ACCOUNT_STATUS_INACTIVE = 2;
+  // The account is closed.
   ACCOUNT_STATUS_CLOSED = 3;
+  // Fallback for account statuses not recognized by this schema.
   ACCOUNT_STATUS_UNKNOWN = 4;
 }
 
 // An icon. If used as a profilePicture, this may be returned as null,
 // depending on the user's privacy setting.
 message Icon {
+  // Path to the icon, relative to the tenant base URL.
   string path = 1;
+  // Whether the icon is the default icon.
   bool is_default = 2;
 }
 
@@ -44,7 +56,9 @@ message User {
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
     (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
+  // The account type of the user.
   AccountType account_type = 2;
+  // The account status of the user.
   AccountStatus account_status = 3;
   // Display name of the user.
   string display_name = 4 [

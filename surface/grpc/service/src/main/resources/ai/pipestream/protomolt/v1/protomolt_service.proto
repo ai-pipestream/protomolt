@@ -39,6 +39,12 @@ service ProtoMoltService {
   // is the schema document itself.
   rpc RenderJsonSchema(RenderJsonSchemaRequest) returns (google.protobuf.Struct);
 
+  // Renders the prompt packet for a message type: the complete LLM
+  // form-filling briefing (instruction prose from the schema's metadata,
+  // validation, quality and llm.v1 annotations, plus the JSON Schema decoder
+  // constraint, plus an optional resolved persona).
+  rpc RenderPrompt(RenderPromptRequest) returns (google.protobuf.Struct);
+
   // Renders the search-index artifact for a message type from its indexing
   // hints. The response shape is engine-specific (OpenSearch mappings, Solr
   // schema pieces, or Lucene field specs).
@@ -128,20 +134,29 @@ message SchemaSource {
   string descriptor_set_base64 = 4;
 }
 
+// The input of compile: the inline .proto sources to compile.
 message CompileRequest {
   // The .proto files to compile, keyed by import path.
   map<string, string> sources = 1;
 }
 
+// The result of compile: diagnostics on failure, the descriptor set on
+// success.
 message CompileResponse {
+  // True when compilation succeeded; failures return diagnostics, not an
+  // error.
   bool ok = 1;
   // Compiler diagnostics when ok=false.
   repeated string errors = 2;
   // Compiled file names when ok=true.
   repeated string files = 3;
+  // The serialized google.protobuf.FileDescriptorSet of the compiled
+  // sources, base64-encoded.
   string descriptor_set_base64 = 4;
 }
 
+// The input of list-types: which schema to introspect and an optional name
+// filter.
 message ListTypesRequest {
   // Optional; without it the shared descriptor registry is listed.
   SchemaSource schema = 1;
@@ -149,18 +164,25 @@ message ListTypesRequest {
   string filter = 2;
 }
 
+// One field of a message type.
 message TypeField {
+  // The field name.
   string name = 1;
+  // The field number (tag).
   int32 number = 2;
   // Wire type, lowercase (e.g. 'string', 'int64', 'message').
   string type = 3;
   // Full name of the message or enum type, when applicable.
   string type_name = 4;
+  // 'optional', 'required', or 'repeated'.
   string label = 5;
 }
 
+// One named type (message, enum, or service) in a schema.
 message TypeEntry {
+  // The fully qualified type name.
   string full_name = 1;
+  // The import path of the .proto file that declares the type.
   string file = 2;
   // 'message', 'enum', or 'service'.
   string kind = 3;
@@ -168,11 +190,16 @@ message TypeEntry {
   repeated TypeField fields = 4;
 }
 
+// The types found by list-types.
 message ListTypesResponse {
+  // The types matching the request.
   repeated TypeEntry types = 1;
 }
 
+// The input of validate-message: the schema, the type, and the message to
+// check.
 message ValidateMessageRequest {
+  // The schema declaring the type and its validation rules.
   SchemaSource schema = 1;
   // Fully qualified type to validate against; required unless the schema
   // identifies a single message.
@@ -181,93 +208,160 @@ message ValidateMessageRequest {
   google.protobuf.Struct message = 3;
 }
 
+// One broken validation rule.
 message Violation {
+  // The path of the field that broke the rule.
   string field = 1;
+  // The path of the broken rule within the schema.
   string rule = 2;
+  // The stable identifier of the broken rule.
   string rule_id = 3;
+  // Human-readable description of the violation.
   string message = 4;
 }
 
+// The verdict of validate-message.
 message ValidateMessageResponse {
+  // True when no rule was broken.
   bool valid = 1;
+  // One entry per broken rule; empty when 'valid' is true.
   repeated Violation violations = 2;
 }
 
+// The input of diff-schemas: the two schema versions to compare.
 message DiffSchemasRequest {
+  // The old schema version.
   SchemaSource old = 1;
+  // The new schema version.
   SchemaSource new = 2;
 }
 
+// One typed change between two schema versions.
 message SchemaChange {
+  // Stable identifier of the change kind.
   string rule_id = 1;
+  // The protobuf path of the changed element.
   string path = 2;
+  // Snippet of the element in the old schema.
   string before = 3;
+  // Snippet of the element in the new schema.
   string after = 4;
+  // Human-readable description of the change.
   string message = 5;
+  // The compatibility impacts the change carries; empty marks a purely
+  // informational change.
   repeated string impacts = 6;
 }
 
+// Every change between the two schema versions.
 message DiffSchemasResponse {
+  // The changes found between 'old' and 'new'.
   repeated SchemaChange changes = 1;
 }
 
+// The input of check-compat: both versions plus the mode and the optional
+// rule families.
 message CheckCompatRequest {
+  // The old schema version.
   SchemaSource old = 1;
+  // The new schema version.
   SchemaSource new = 2;
   // NONE, BACKWARD, FORWARD, FULL, or a _TRANSITIVE variant; defaults to
   // BACKWARD.
   string mode = 3;
+  // Also treat canonical proto3 JSON payload breaks (field/enum name
+  // changes, removals) as violations; default false.
   bool include_json_rules = 4;
+  // Also treat generated-code and gRPC surface breaks as violations;
+  // default false.
   bool include_source_rules = 5;
 }
 
+// The verdict of check-compat.
 message CheckCompatResponse {
+  // True when no violation was found under 'mode'.
   bool compatible = 1;
+  // The compatibility mode that was enforced.
   string mode = 2;
+  // The changes that break 'mode'.
   repeated SchemaChange violations = 3;
+  // The full change list, informational entries included.
   repeated SchemaChange changes = 4;
 }
 
+// The input of render-json-schema.
 message RenderJsonSchemaRequest {
+  // The schema declaring the message type.
   SchemaSource schema = 1;
+  // Fully qualified message type to render.
   string type = 2;
 }
 
-message RenderIndexMappingsRequest {
+// The input of render-prompt.
+message RenderPromptRequest {
+  // The schema declaring the message type.
   SchemaSource schema = 1;
+  // Fully qualified message type to render the prompt packet for.
+  string type = 2;
+  // The resolved persona to render for, as canonical proto3 JSON of
+  // ai.pipestream.proto.prompt.v1.Persona. Absent renders persona-free.
+  google.protobuf.Struct persona = 3;
+  // Opaque registry reference echoed into the packet so the receiver can
+  // rebuild the descriptor set; empty when the caller has no registry context.
+  string descriptor_set_ref = 4;
+}
+
+// The input of render-index-mappings.
+message RenderIndexMappingsRequest {
+  // The schema declaring the message type and its indexing hints.
+  SchemaSource schema = 1;
+  // Fully qualified message type to render mappings for.
   string type = 2;
   // 'opensearch', 'solr', or 'lucene'.
   string engine = 3;
 }
 
+// The input of eval-cel.
 message EvalCelRequest {
+  // The schema declaring the message type.
   SchemaSource schema = 1;
+  // Fully qualified type of the bound message.
   string type = 2;
   // The message bound as the CEL variable 'input', as proto3 JSON.
   google.protobuf.Struct message = 3;
+  // The CEL expression to evaluate.
   string expression = 4;
 }
 
+// The result of eval-cel.
 message EvalCelResponse {
+  // The value the expression evaluated to, as a protobuf Value.
   google.protobuf.Value result = 1;
   // A short type label: 'string', 'int', 'bool', 'list', 'map',
   // 'message:<full.Name>', ...
   string result_type = 2;
 }
 
+// A mapping rule written in CEL: an optional gate, a value expression, and
+// the target it writes to.
 message CelRule {
   // Optional boolean CEL gate; the rule is skipped when false.
   string filter = 1;
   // Optional CEL value expression written to 'target'.
   string selector = 2;
+  // The output field path the selector value is written to.
   string target = 3;
   // Text rules applied when no selector is given.
   repeated string fallback = 4;
 }
 
+// The input of map-message.
 message MapMessageRequest {
+  // The schema declaring the message type.
   SchemaSource schema = 1;
+  // Fully qualified type of the message being transformed.
   string type = 2;
+  // The message to transform, as canonical proto3 JSON.
   google.protobuf.Struct message = 3;
   // Text rules applied in order: 'target = source.path',
   // 'target += source.path', '-field.to.clear'.
@@ -276,22 +370,29 @@ message MapMessageRequest {
   repeated CelRule cel_rules = 5;
 }
 
+// The result of map-message.
 message MapMessageResponse {
   // The transformed message as proto3 JSON.
   google.protobuf.Struct message = 1;
 }
 
+// The input of extract-metadata.
 message ExtractMetadataRequest {
+  // The schema declaring the message type and its metadata options.
   SchemaSource schema = 1;
+  // Fully qualified message type to extract metadata from.
   string type = 2;
 }
 
+// The metadata bag of one message type.
 message ExtractMetadataResponse {
+  // The fully qualified type the metadata was extracted from.
   string type = 1;
   // Flat bag keyed 'message.*' and 'field.<name>.*'.
   google.protobuf.Struct metadata = 2;
 }
 
+// The input of reflect: where the server is and how to reach it.
 message ReflectRequest {
   // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
   string target = 1;
@@ -301,17 +402,24 @@ message ReflectRequest {
   bool tls = 3;
 }
 
+// The schema fetched over server reflection.
 message ReflectResponse {
+  // True when the server answered reflection; servers without reflection
+  // return false.
   bool ok = 1;
+  // Fully qualified names of the services the server exposes.
   repeated string services = 2;
   // Usable directly as SchemaSource.descriptor_set_base64.
   string descriptor_set_base64 = 3;
+  // Number of files in the returned descriptor set.
   int32 file_count = 4;
   // Why reflection failed, when ok=false.
   string error = 5;
 }
 
+// The input of grpc-invoke.
 message GrpcInvokeRequest {
+  // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
   string target = 1;
   // Fully qualified 'package.Service/Method'.
   string method = 2;
@@ -329,10 +437,13 @@ message GrpcInvokeRequest {
   bool tls = 8;
 }
 
+// The outcome of grpc-invoke.
 message GrpcInvokeResponse {
+  // The invoked method, echoed back as 'package.Service/Method'.
   string method = 1;
   // UNARY or SERVER_STREAMING.
   string method_type = 2;
+  // True when the call completed with gRPC status OK.
   bool ok = 3;
   // The gRPC status name, 'OK' on success.
   string status = 4;
@@ -342,7 +453,9 @@ message GrpcInvokeResponse {
   string description = 6;
 }
 
+// The input of generate-stubs.
 message GenerateStubsRequest {
+  // The schema to generate code from.
   SchemaSource schema = 1;
   // 'java', 'kotlin', 'grpc-java', 'python', 'cpp', 'csharp', 'ruby', 'php',
   // 'objc'; defaults to ['java'].
@@ -353,21 +466,32 @@ message GenerateStubsRequest {
   string parameter = 4;
 }
 
+// One generated source file.
 message GeneratedFile {
+  // The file's path within the generator output.
   string name = 1;
+  // The generator that produced the file.
   string generator = 2;
+  // The generated source text.
   string content = 3;
 }
 
+// The generated files, or the failure.
 message GenerateStubsResponse {
+  // True when every requested generator succeeded.
   bool ok = 1;
+  // The generated files.
   repeated GeneratedFile files = 2;
+  // The number of generated files.
   int32 file_count = 3;
   // The generator that failed, when ok=false.
   string generator = 4;
+  // Why generation failed, when ok=false.
   string error = 5;
 }
 
+// The input of gather-git: where the repository is and which .proto files
+// to take.
 message GatherGitRequest {
   // Git repository URL (https or ssh).
   string repo = 1;
@@ -380,10 +504,13 @@ message GatherGitRequest {
   string subdir = 4;
 }
 
+// The gathered and compiled schema.
 message GatherGitResponse {
+  // True when the sources were gathered and compiled.
   bool ok = 1;
   // Why the gather or compile failed, when ok=false.
   string error = 2;
+  // Import paths of the gathered .proto files.
   repeated string files = 3;
   // Source texts keyed by import path — registerable as registry subjects.
   map<string, string> sources = 4;
@@ -391,15 +518,21 @@ message GatherGitResponse {
   string descriptor_set_base64 = 5;
 }
 
+// The input of emit-okf.
 message EmitOkfRequest {
+  // The schema to render as an OKF bundle.
   SchemaSource schema = 1;
   // Heading of the bundle's root index.md; default 'Schema knowledge bundle'.
   string title = 2;
 }
 
+// The rendered OKF bundle.
 message EmitOkfResponse {
+  // True when the bundle was rendered.
   bool ok = 1;
+  // Why the render failed, when ok=false.
   string error = 2;
+  // Number of files in the bundle.
   int32 file_count = 3;
   // Every bundle file: markdown text keyed by bundle-relative path.
   map<string, string> files = 4;
@@ -411,7 +544,9 @@ message EmitOkfResponse {
 // name becomes the scope name rules reference and the synthesized field or
 // case name.
 message ShapeSource {
+  // The scope name; becomes the synthesized field or case name.
   string name = 1;
+  // The schema declaring the source type.
   SchemaSource schema = 2;
   // Fully qualified message type; required unless the schema identifies one.
   string type = 3;
@@ -421,22 +556,27 @@ message ShapeSource {
 
 // A projected field: its type is inferred from the scoped source path.
 message ProjectedField {
+  // The field's name in the projected output.
   string name = 1;
   // e.g. 'order.ship_to.city'.
   string from = 2;
 }
 
+// The input of synthesize-shape.
 message SynthesizeShapeRequest {
   // 'envelope', 'projection', or 'union'.
   string mode = 1;
   // Fully qualified name of the synthesized message.
   string name = 2;
+  // The named source types, in shape order.
   repeated ShapeSource sources = 3;
   // Projection only.
   repeated ProjectedField fields = 4;
 }
 
+// The synthesized shape, ready to register.
 message SynthesizeShapeResponse {
+  // Fully qualified name of the synthesized message.
   string type = 1;
   // Import path of the synthesized file.
   string file = 2;
@@ -450,7 +590,9 @@ message SynthesizeShapeResponse {
 
 // The authored output type of a join.
 message JoinTarget {
+  // The schema declaring the target type.
   SchemaSource schema = 1;
+  // Fully qualified target message type.
   string type = 2;
 }
 
@@ -458,14 +600,19 @@ message JoinTarget {
 message JoinShape {
   // 'envelope', 'projection', or 'union'.
   string mode = 1;
+  // Fully qualified name of the synthesized output message.
   string name = 2;
+  // Projection only: the projected fields.
   repeated ProjectedField fields = 3;
 }
 
+// The input of join-messages.
 message JoinMessagesRequest {
+  // The named source messages, in shape order.
   repeated ShapeSource sources = 1;
   // Exactly one of 'target' or 'shape'.
   JoinTarget target = 2;
+  // A shape synthesized on the fly as the join output.
   JoinShape shape = 3;
   // Scoped text rules: 'target.path = source.path', '+=', '-clear'.
   repeated string rules = 4;
@@ -474,12 +621,16 @@ message JoinMessagesRequest {
   repeated CelRule cel_rules = 5;
 }
 
+// The joined message and, for synthesized shapes, its definition.
 message JoinMessagesResponse {
+  // Fully qualified type of the joined message.
   string type = 1;
   // The joined message as proto3 JSON.
   google.protobuf.Struct message = 2;
   // Present when the shape was synthesized.
   string descriptor_set_base64 = 3;
+  // Registrable proto source of the synthesized shape; present when the
+  // shape was synthesized.
   string proto_source = 4;
 }
 
@@ -494,6 +645,7 @@ message MergeResolution {
   map<string, string> names = 3;
 }
 
+// The input of merge-schemas.
 message MergeSchemasRequest {
   // Fully qualified name of the merged message.
   string name = 1;
@@ -508,30 +660,42 @@ message MergeSchemasRequest {
 
 // One source's contribution to a clashing field name.
 message ClashOrigin {
+  // The name of the source contributing this field.
   string source = 1;
   // Proto keyword or full type name, 'repeated '-prefixed when repeated.
   string type = 2;
 }
 
+// One clashing field name, its origins, and the suggested resolution.
 message MergeClash {
+  // The clashing field name.
   string field = 1;
   // 'coalesced' (info: same type, merged into one field - the natural join
   // keys), 'type-clash', or 'cardinality-clash'.
   string kind = 2;
+  // Each source's contribution to the clash.
   repeated ClashOrigin origins = 3;
+  // The resolution merge-schemas suggests; the caller may override it in
+  // MergeSchemasRequest.resolutions.
   MergeResolution suggested = 4;
 }
 
+// The clash report and, once resolved, the merged type with its mapping
+// rules.
 message MergeSchemasResponse {
   // False while hard clashes await resolutions (or report_only was set);
   // the emission fields below are present only when true.
   bool resolved = 1;
+  // The clash report: one entry per clashing field name.
   repeated MergeClash clashes = 2;
+  // Fully qualified name of the merged message.
   string type = 3;
   // Import path of the merged file.
   string file = 4;
   // Registrable proto source; imports carry the sources' true paths.
   string proto_source = 5;
+  // Self-contained, dependency-ordered descriptor set of the merged schema,
+  // serialized and base64-encoded.
   string descriptor_set_base64 = 6;
   // The defined join: one ruleset reading every source at once.
   repeated string join_rules = 7;
@@ -540,37 +704,53 @@ message MergeSchemasResponse {
   map<string, MergeRuleList> union_rules = 8;
 }
 
+// A list of mapping rules; the value type of
+// MergeSchemasResponse.union_rules.
 message MergeRuleList {
+  // The rules mapping one source alone onto the merged shape.
   repeated string rules = 1;
 }
 
+// The input of check-rules.
 message CheckRulesRequest {
   // One source (in-place mode: unscoped paths, the name is the CEL variable)
   // or many (scoped mode). A 'message' on every source enables the dry run.
   repeated ShapeSource sources = 1;
   // The output type rules write to; required with multiple sources.
   JoinTarget target = 2;
+  // Text mapping rules to check.
   repeated string rules = 3;
+  // CEL rules to check.
   repeated CelRule cel_rules = 4;
   // Boolean CEL predicates.
   repeated string filters = 5;
 }
 
+// One problem found in a rule or filter.
 message RuleFinding {
   // 'rule', 'celRule', or 'filter'.
   string kind = 1;
+  // Position of the offending entry in its own list ('rules', 'cel_rules',
+  // or 'filters').
   int32 index = 2;
+  // The offending rule text (for CEL rules, the target label).
   string rule = 3;
+  // Why the entry failed the check.
   string error = 4;
 }
 
+// The findings of check-rules, plus dry-run results when enabled.
 message CheckRulesResponse {
+  // True when every rule and filter passed the static checks.
   bool ok = 1;
+  // One entry per problem; empty when 'ok' is true.
   repeated RuleFinding findings = 2;
   // Dry-run results, present when every source carried a sample message
   // and the static pass was clean.
   string type = 3;
+  // The mapped output message of the dry run, as proto3 JSON.
   google.protobuf.Struct message = 4;
+  // The dry-run verdict of each filter, in 'filters' order.
   repeated bool filter_results = 5;
   // A dynamic failure the static pass could not see (e.g. a Struct path).
   string dry_run_error = 6;
@@ -579,6 +759,7 @@ message CheckRulesResponse {
 // One step of a chain: a unary call whose request is mapped from the chain
 // scope ('input' plus every prior step's response, by step name).
 message ChainStep {
+  // The step name; later steps see this step's response under it.
   string name = 1;
   // gRPC target, e.g. 'host:9090'.
   string target = 2;
@@ -590,6 +771,7 @@ message ChainStep {
   string when = 5;
   // Scoped rules building the request message.
   repeated string rules = 6;
+  // CEL rules applied after 'rules'.
   repeated CelRule cel_rules = 7;
   // Validate the response against its declared rules before proceeding.
   bool validate = 8;
@@ -599,24 +781,35 @@ message ChainStep {
 
 // The chain's output mapping; without it the last step's response returns.
 message ChainOutput {
+  // Fully qualified output message type.
   string type = 1;
+  // Scoped text rules building the output message.
   repeated string rules = 2;
+  // CEL rules applied after 'rules'.
   repeated CelRule cel_rules = 3;
 }
 
+// A chain: an input type and serial steps whose requests are mapped from
+// the chain scope.
 message ChainDefinition {
+  // The chain name.
   string name = 1;
   // Declares every step's service and message types (e.g. from reflect,
   // gather-git, or a registry descriptor set).
   SchemaSource schema = 2;
+  // Fully qualified type of the chain input.
   string input_type = 3;
   // Overall deadline; default 30000.
   int32 deadline_ms = 4;
+  // The steps, executed in order.
   repeated ChainStep steps = 5;
+  // Optional output mapping; without it the last step's response returns.
   ChainOutput output = 6;
 }
 
+// The input of run-chain: an inline chain or the name of a stored one.
 message RunChainRequest {
+  // The inline chain definition to execute.
   ChainDefinition chain = 1;
   // The chain input, as proto3 JSON of input_type.
   google.protobuf.Struct input = 2;
@@ -625,39 +818,57 @@ message RunChainRequest {
   string chain_name = 3;
 }
 
+// The outcome of one chain step.
 message ChainStepResult {
+  // The step name.
   string name = 1;
+  // True when the step's 'when' gate evaluated false and the step did not
+  // run.
   bool skipped = 2;
 }
 
+// The outcome of run-chain.
 message RunChainResponse {
+  // True when the chain ran to completion and produced an output.
   bool ok = 1;
+  // Fully qualified type of the output message.
   string output_type = 2;
+  // The chain output, as proto3 JSON of 'output_type'.
   google.protobuf.Struct output = 3;
+  // Per-step outcomes, in execution order.
   repeated ChainStepResult steps = 4;
   // When ok=false: which step failed and why (gRPC status, gate error, or
   // validation violations).
   string failed_step = 5;
+  // Why the chain failed, when ok=false.
   string error = 6;
 }
 
+// The input of check-chain.
 message CheckChainRequest {
+  // The chain definition to verify.
   ChainDefinition chain = 1;
 }
 
+// One problem found while verifying a chain.
 message ChainFinding {
   // The step name, or '' for chain-level findings.
   string step = 1;
   // 'method', 'when', 'rule', 'celRule', 'output', or 'chain'.
   string kind = 2;
+  // Why the element failed verification.
   string error = 3;
 }
 
+// The verdict of check-chain.
 message CheckChainResponse {
+  // True when the chain verified clean.
   bool ok = 1;
+  // One entry per problem; empty when 'ok' is true.
   repeated ChainFinding findings = 2;
 }
 
+// The input of infer-schema.
 message InferSchemaRequest {
   // Fully qualified name for the inferred message.
   string name = 1;
@@ -666,17 +877,26 @@ message InferSchemaRequest {
   repeated google.protobuf.Struct samples = 2;
 }
 
+// The inferred message type, ready to register.
 message InferSchemaResponse {
+  // Fully qualified name of the inferred message.
   string type = 1;
+  // Import path of the inferred file.
   string file = 2;
   // Registrable proto source (json_name preserves sanitized keys).
   string proto_source = 3;
+  // The descriptor set of the inferred schema, serialized and
+  // base64-encoded.
   string descriptor_set_base64 = 4;
 }
 
+// The input of mask-message.
 message MaskMessageRequest {
+  // The schema declaring the field sensitivity classes.
   SchemaSource schema = 1;
+  // Fully qualified type of the message to mask.
   string type = 2;
+  // The message to mask, as canonical proto3 JSON.
   google.protobuf.Struct message = 3;
   // Sensitivity classes to mask, e.g. 'pii'.
   repeated string classes = 4;
@@ -684,7 +904,10 @@ message MaskMessageRequest {
   string strategy = 5;
 }
 
+// The masked message.
 message MaskMessageResponse {
+  // The masked message, as proto3 JSON.
   google.protobuf.Struct message = 1;
+  // Paths of the fields that were masked.
   repeated string masked_fields = 2;
 }

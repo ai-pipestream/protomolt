@@ -22,6 +22,7 @@ option java_package = "ai.pipestream.proto.repo.v1";
 
 // The four addressable sections of a stored Document.
 enum DocumentPart {
+  // Unset; never a stored part selector.
   DOCUMENT_PART_UNSPECIFIED = 0;
   // Identity + search_metadata (minus semantic_results) + structured_data
   // + ownership + doc_id_derivation. Read by nearly every step.
@@ -38,6 +39,7 @@ enum DocumentPart {
 
 // Lifecycle state of one part object.
 enum PartState {
+  // Unset; never a stored lifecycle state.
   PART_STATE_UNSPECIFIED = 0;
   // Object exists and is readable.
   PART_STATE_PRESENT = 1;

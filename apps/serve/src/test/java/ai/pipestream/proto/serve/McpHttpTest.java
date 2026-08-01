@@ -69,7 +69,7 @@ class McpHttpTest {
                 """);
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode tools = MAPPER.readTree(response.body()).path("result").path("tools");
-        assertThat(tools.size()).isEqualTo(23);
+        assertThat(tools.size()).isEqualTo(24);
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke", "generate-stubs", "join-messages", "synthesize-shape", "merge-schemas", "check-rules", "run-chain", "check-chain", "infer-schema", "mask-message");
     }
 

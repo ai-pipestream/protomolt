@@ -17,6 +17,7 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
 // Where a change record came from.
 enum ChangeSource {
+  // Zero value; the change source is unknown or was not recorded.
   CHANGE_SOURCE_UNSPECIFIED = 0;
   // Full or resumable crawl of the Confluence content.
   CHANGE_SOURCE_CRAWL = 1;
@@ -28,6 +29,7 @@ enum ChangeSource {
 
 // The kind of change applied to the wrapped entity.
 enum ChangeOperation {
+  // Zero value; the operation is unknown or was not recorded.
   CHANGE_OPERATION_UNSPECIFIED = 0;
   // The entity was created or updated; the entity payload is present.
   CHANGE_OPERATION_UPSERT = 1;
@@ -73,6 +75,7 @@ message ConfluenceChange {
 
   // Unique id of this change record.
   string change_id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
+  // The kind of change (UPSERT carries the entity; DELETE is identity-only).
   ChangeOperation operation = 2;
   // The entity payload (full for UPSERT; identity-only for DELETE).
   ConfluenceEntity entity = 3;
@@ -80,6 +83,7 @@ message ConfluenceChange {
   // CQL_INCREMENTAL, the webhook event id for WEBHOOK, the snapshot id for
   // CRAWL.
   string cursor = 4;
+  // Where this change record came from.
   ChangeSource source = 5 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];

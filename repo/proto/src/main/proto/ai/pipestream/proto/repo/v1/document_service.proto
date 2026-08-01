@@ -36,7 +36,9 @@ message SaveDocumentRequest {
   // - graph_location_id: a PIPELINE save at the named graph node. The save
   //   MUST also carry the owning graph_id.
   oneof graph_address {
+    // INTAKE save: the address is document.ownership.datasource_id.
     bool use_datasource_id = 4;
+    // PIPELINE save: the address is this named graph node.
     string graph_location_id = 5;
   }
 
@@ -134,6 +136,7 @@ message GetDocumentRequest {
 // Request to retrieve a Document by its NodeAddress — the preferred method
 // when documents are referenced via logical identifiers.
 message GetDocumentByReferenceRequest {
+  // Canonical storage address of the document to retrieve.
   NodeAddress address = 1;
   // Partial read; same semantics as GetDocumentRequest.parts.
   repeated DocumentPart parts = 2;
@@ -171,6 +174,7 @@ message GetDocumentManifestRequest {
 
 // Response carrying only the manifest.
 message GetDocumentManifestResponse {
+  // The document's part manifest.
   DocumentManifest manifest = 1;
   // Drive identifier where this document is stored.
   string drive = 2;
@@ -179,25 +183,32 @@ message GetDocumentManifestResponse {
 // Logical delete for one document identity: all rows for
 // (account, datasource, doc_id).
 message DeleteLogicalDocumentCommand {
+  // The document id whose rows are deleted.
   string doc_id = 1;
+  // Owning account (tenant root).
   string account_id = 2;
+  // The datasource that ingested the document.
   string datasource_id = 3;
 }
 
 // Delete a single hop's staged row (doc_id + graph_address_id + account_id +
 // graph_id). Used to reclaim inter-step claim-check bodies.
 message DeleteDocumentByReferenceCommand {
+  // Canonical storage address of the single staged row to delete.
   NodeAddress address = 1;
 }
 
 // Per repository node affected by a delete.
 message RemovedDocumentNode {
+  // Repository node ID of the removed row.
   string node_id = 1;
+  // Optional human-readable detail about this removal.
   optional string detail = 2;
 }
 
 // Result of a completed DeleteDocument RPC (use gRPC status for errors).
 enum DeleteDocumentOutcome {
+  // Unset; never returned by a completed delete.
   DELETE_DOCUMENT_OUTCOME_UNSPECIFIED = 0;
   // At least one document row removed.
   DELETE_DOCUMENT_OUTCOME_REMOVED = 1;
@@ -205,9 +216,13 @@ enum DeleteDocumentOutcome {
   DELETE_DOCUMENT_OUTCOME_NOTHING_TO_REMOVE = 2;
 }
 
+// Request to delete documents. Exactly one command selects the delete scope.
 message DeleteDocumentRequest {
+  // The delete command — exactly one arm must be set.
   oneof command {
+    // Delete all rows for one logical document identity.
     DeleteLogicalDocumentCommand logical_document = 1;
+    // Delete a single hop's staged row by its address.
     DeleteDocumentByReferenceCommand by_reference = 2;
   }
   // When true, the underlying storage objects are deleted immediately;
@@ -217,10 +232,15 @@ message DeleteDocumentRequest {
   bool omit_removed_nodes = 11;
 }
 
+// Result of a DeleteDocument RPC.
 message DeleteDocumentResponse {
+  // What the delete did (errors use gRPC status, not this enum).
   DeleteDocumentOutcome outcome = 1;
+  // Number of document rows removed.
   int32 documents_removed = 2;
+  // Per-node detail of the removals (empty when omit_removed_nodes was set).
   repeated RemovedDocumentNode removed_nodes = 3;
+  // Human-readable summary of the delete.
   string message = 4;
 }
 
@@ -242,15 +262,25 @@ message ListDocumentsRequest {
 
 // Lightweight metadata about a saved Document without loading the content.
 message DocumentMetadata {
+  // Unique repository node ID of the stored row.
   string node_id = 1;
+  // The document id (Document.doc_id).
   string doc_id = 2;
+  // Drive identifier where this document is stored.
   string drive = 3;
+  // Connector ID that ingested this document.
   string connector_id = 4;
+  // Size of the stored document in bytes.
   int64 size_bytes = 5;
+  // When the document was saved (milliseconds since epoch).
   int64 created_at_epoch_ms = 6;
+  // Extensible key-value metadata (extension-metadata map — see convention).
   map<string, string> metadata = 99;
+  // Document title (from search_metadata.title).
   string title = 8;
+  // Document type classification (e.g. "PDF", "HTML", "DOCX").
   string document_type = 9;
+  // Crawl run identifier this document belongs to.
   string crawl_id = 10;
   // The row's canonical storage address (echo convenience).
   NodeAddress address = 11;
@@ -258,8 +288,11 @@ message DocumentMetadata {
 
 // Response containing a paginated list of Document metadata entries.
 message ListDocumentsResponse {
+  // The page of document metadata entries.
   repeated DocumentMetadata documents = 1;
+  // Token to fetch the next page; empty when the listing is exhausted.
   string next_continuation_token = 2;
+  // Total number of documents matching the filters.
   int32 total_count = 3;
 }
 
@@ -293,6 +326,7 @@ message PutBlobResponse {
 
 // Request to delete a raw blob by its coordinates. Idempotent.
 message DeleteBlobRequest {
+  // Coordinates of the object to delete.
   ai.pipestream.proto.repo.v1.FileStorageReference storage_ref = 1;
 }
 
@@ -304,14 +338,19 @@ message DeleteBlobResponse {
 
 // Request to retrieve raw blob content using a FileStorageReference.
 message GetBlobRequest {
+  // Coordinates of the object to retrieve.
   FileStorageReference storage_ref = 1;
 }
 
 // Response containing the blob binary content.
 message GetBlobResponse {
+  // The blob bytes.
   bytes data = 1;
+  // Size of the blob in bytes.
   int64 size_bytes = 2;
+  // MIME type stored with the object, when known.
   optional string mime_type = 3;
+  // When the blob was retrieved (milliseconds since epoch).
   int64 retrieved_at_epoch_ms = 4;
 }
 

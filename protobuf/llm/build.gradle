@@ -1,0 +1,15 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'LLM-facing schema annotations — Field/Message options directing how a model fills a form'
+
+dependencies {
+    api libs.protobuf.java
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

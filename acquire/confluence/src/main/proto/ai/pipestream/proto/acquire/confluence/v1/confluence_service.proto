@@ -72,6 +72,7 @@ message ListSpacesRequest {
 
 // The spaces the request matched.
 message ListSpacesResponse {
+  // The matched spaces.
   repeated Space spaces = 1;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
@@ -90,6 +91,7 @@ message GetPageRequest {
 
 // The requested page.
 message GetPageResponse {
+  // The requested page, with its body in the requested format.
   Page page = 1;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
@@ -108,6 +110,7 @@ message GetBlogPostRequest {
 
 // The requested blog post.
 message GetBlogPostResponse {
+  // The requested blog post, with its body in the requested format.
   BlogPost blog_post = 1;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
@@ -127,6 +130,7 @@ message ListPagesRequest {
 
 // One streamed page.
 message ListPagesResponse {
+  // The streamed page.
   Page page = 1;
 }
 
@@ -143,6 +147,7 @@ message ListBlogPostsRequest {
 
 // One streamed blog post.
 message ListBlogPostsResponse {
+  // The streamed blog post.
   BlogPost blog_post = 1;
 }
 
@@ -161,6 +166,7 @@ message GetAttachmentRequest {
 
 // The requested attachment (metadata always; bytes when include_content).
 message GetAttachmentResponse {
+  // The attachment: metadata always, bytes when include_content was set.
   Attachment attachment = 1;
   // Extensible key-value metadata (extension-metadata map - see convention).
   map<string, string> metadata = 99;
@@ -188,6 +194,8 @@ message SyncRequest {
 // then one terminal resume_cursor. Clients persist the resume cursor and hand
 // it back as SyncRequest.since_cursor for the next incremental pass.
 message SyncResponse {
+  // The streamed event: exactly one of a change, a snapshot, or the terminal
+  // resume cursor.
   oneof event {
     // One entity upsert from the pass.
     ConfluenceChange change = 1;

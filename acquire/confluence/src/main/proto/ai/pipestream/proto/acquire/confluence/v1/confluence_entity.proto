@@ -48,33 +48,62 @@ message ConfluenceEntity {
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE },
     (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
+  // The wrapped entity. Exactly one arm is set; the set arm identifies the
+  // entity kind.
   oneof entity {
+    // Set when the wrapped entity is a page.
     Page page = 10;
+    // Set when the wrapped entity is a blog post.
     BlogPost blog_post = 11;
+    // Set when the wrapped entity is a comment.
     Comment comment = 12;
+    // Set when the wrapped entity is an attachment.
     Attachment attachment = 13;
+    // Set when the wrapped entity is a space.
     Space space = 14;
+    // Set when the wrapped entity is a label.
     Label label = 15;
+    // Set when the wrapped entity is a task.
     Task task = 16;
+    // Set when the wrapped entity is a user.
     User user = 17;
+    // Set when the wrapped entity is a whiteboard.
     Whiteboard whiteboard = 18;
+    // Set when the wrapped entity is a database.
     Database database = 19;
+    // Set when the wrapped entity is a folder.
     Folder folder = 20;
+    // Set when the wrapped entity is a piece of custom content.
     CustomContent custom_content = 21;
+    // Set when the wrapped entity is a Smart Link.
     SmartLink smart_link = 22;
+    // Set when the wrapped entity is a classification level.
     ClassificationLevel classification_level = 23;
+    // Set when the wrapped entity is a content property.
     ContentProperty content_property = 24;
+    // Set when the wrapped entity is a space property.
     SpaceProperty space_property = 25;
+    // Set when the wrapped entity is an app property.
     AppProperty app_property = 26;
+    // Set when the wrapped entity is the data-policy view of a space.
     DataPolicy data_policy = 27;
+    // Set when the wrapped entity is a like.
     Like like = 28;
+    // Set when the wrapped entity is an ancestor.
     Ancestor ancestor = 29;
+    // Set when the wrapped entity is a version.
     Version version = 30;
+    // Set when the wrapped entity is an admin key response.
     AdminKeyResponse admin_key = 31;
+    // Set when the wrapped entity is an operation.
     Operation operation = 32;
+    // Set when the wrapped entity is a redaction response.
     RedactionResponse redaction = 33;
+    // Set when the wrapped entity is a space role.
     SpaceRole space_role = 34;
+    // Set when the wrapped entity is a space permission assignment.
     SpacePermissionAssignment space_permission_assignment = 35;
+    // Set when the wrapped entity is a content tree entry.
     ContentTreeEntry tree_entry = 36;
   }
   // Extensible key-value metadata (extension-metadata map - see convention).

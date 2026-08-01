@@ -96,10 +96,15 @@ message DocumentPurged {
 message DocumentEvent {
   // The outbox row id; stable across relay retries, so redeliveries dedupe.
   string event_id = 1;
+  // The event payload — exactly one arm is set per record.
   oneof event {
+    // A document body was (re)written and its row is AVAILABLE.
     DocumentSaved saved = 2;
+    // A document row was hard-deleted (purge_storage=true).
     DocumentDeleted deleted = 3;
+    // Phase A of the two-phase delete: the row tombstoned to PENDING_PURGE.
     PurgeRequested purge_requested = 4;
+    // Phase B of the two-phase delete landed: objects purged, row removed.
     DocumentPurged purged = 5;
   }
   // Extensible key-value metadata (extension-metadata map - see convention).

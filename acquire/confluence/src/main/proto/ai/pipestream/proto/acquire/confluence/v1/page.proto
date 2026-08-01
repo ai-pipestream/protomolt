@@ -26,6 +26,7 @@ message Page {
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
     (ai.pipestream.proto.validate.v1.field) = { required: true }
   ];
+  // The status of the page.
   ContentStatus status = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
@@ -44,6 +45,7 @@ message Page {
   ];
   // ID of the parent page, or null if there is no parent page.
   string parent_id = 5;
+  // The type of the parent page, or null if there is no parent page.
   ParentContentType parent_type = 6;
   // Position of the page within the given parent page tree.
   optional int32 position = 7;
@@ -62,12 +64,19 @@ message Page {
   google.protobuf.Timestamp created_at = 12 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
   ];
+  // The current version of the page.
   Version version = 13;
+  // The body of the page, in the format(s) requested by the fetch.
   Body body = 14;
+  // The labels attached to the page.
   repeated Label labels = 15;
+  // The content properties attached to the page.
   repeated ContentProperty properties = 16;
+  // The operations the calling user is permitted to perform on the page.
   repeated Operation operations = 17;
+  // The likes recorded on the page.
   repeated Like likes = 18;
+  // The version history of the page.
   repeated Version versions = 19;
   // Whether the page has been favorited by the current user.
   bool is_favorited_by_current_user = 20;

@@ -25,5 +25,6 @@ message Operation {
 
 // The list of operations permitted on an entity.
 message PermittedOperationsResponse {
+  // The operations permitted on the entity.
   repeated Operation operations = 1;
 }

@@ -7,4 +7,10 @@ dependencies {
     implementation libs.wire.schema
     // In-memory scratch filesystem: runtime compilation never touches disk.
     implementation libs.jimfs
+
+    // Generated extension classes the option-repair tests read compiled options through.
+    testImplementation project(':protomolt-protobuf-validation')
+    testImplementation project(':protomolt-protobuf-metadata')
+    testImplementation project(':protomolt-protobuf-llm')
+    testImplementation project(':protomolt-protobuf-quality')
 }

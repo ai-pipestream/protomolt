@@ -41,6 +41,7 @@ message OwnershipContext {
 
 // How a doc_id was determined (auditability and idempotency semantics).
 enum DocIdDerivationMethod {
+  // Unset; derivation not recorded.
   DOC_ID_DERIVATION_METHOD_UNSPECIFIED = 0;
   // The caller supplied the id; intake preserved it.
   DOC_ID_DERIVATION_METHOD_CALLER_PROVIDED = 1;
@@ -54,6 +55,7 @@ enum DocIdDerivationMethod {
 
 // Records the derivation method and input used to create a doc_id.
 message DocIdDerivation {
+  // How the doc_id was determined.
   DocIdDerivationMethod method = 1;
   // The input the id was derived from (empty for CALLER_PROVIDED).
   string source_value = 2;
@@ -138,6 +140,7 @@ message SearchMetadata {
 
 // Collection of blobs (either arm of BlobBag).
 message BlobBag {
+  // The blob payload(s) — exactly one arm is set.
   oneof blob_data {
     // Single blob content.
     Blob blob = 1;
@@ -148,6 +151,7 @@ message BlobBag {
 
 // Collection of multiple blobs.
 message Blobs {
+  // The blobs in this collection.
   repeated Blob blob = 1;
 }
 
@@ -163,10 +167,15 @@ message FileStorageReference {
 
 // Checksum algorithm types for blob integrity verification.
 enum ChecksumType {
+  // Unset; no checksum algorithm recorded.
   CHECKSUM_TYPE_UNSPECIFIED = 0;
+  // MD5 message digest.
   CHECKSUM_TYPE_MD5 = 1;
+  // SHA-1 digest.
   CHECKSUM_TYPE_SHA1 = 2;
+  // SHA-256 digest (the platform's storage-integrity standard).
   CHECKSUM_TYPE_SHA256 = 3;
+  // SHA-512 digest.
   CHECKSUM_TYPE_SHA512 = 4;
 }
 
@@ -177,6 +186,7 @@ message Blob {
   string blob_id = 1;
   // Drive this blob belongs to.
   string drive_id = 2;
+  // Where the content lives — exactly one arm is set.
   oneof content {
     // Inline binary data.
     bytes data = 3;
@@ -201,22 +211,33 @@ message Blob {
 
 // One embedding vector for a chunk.
 message ChunkEmbedding {
+  // Unique identifier for this embedding.
   string embedding_id = 1;
+  // The chunk this vector embeds (SemanticChunk.chunk_id).
   string chunk_id = 2;
+  // The embedding vector components.
   repeated float vector = 3;
   // Model that produced the vector.
   string model = 4;
+  // Dimensionality of the vector (echo of vector's length, for indexing).
   optional int32 dimensions = 5;
 }
 
 // One chunk of text within a semantic processing result.
 message SemanticChunk {
+  // Unique identifier for this chunk (e.g. "<result_id>-<n>").
   string chunk_id = 1;
+  // Zero-based position of this chunk within its chunk set.
   int32 chunk_number = 2;
+  // The chunk's text.
   string text = 3;
+  // Character offset where the chunk starts in the source text.
   optional int32 start_offset = 4;
+  // Character offset where the chunk ends in the source text.
   optional int32 end_offset = 5;
+  // Embedding vectors computed for this chunk (one per embedding config).
   repeated ChunkEmbedding embeddings = 6;
+  // Extensible key-value metadata (extension-metadata map — see convention).
   map<string, string> metadata = 99;
 }
 
@@ -224,11 +245,17 @@ message SemanticChunk {
 // optional embeddings. The result_id is the CHUNKS sub-key of the storage
 // layout (consecutive entries sharing one form one chunk set).
 message SemanticProcessingResult {
+  // Identity of this chunk set; the CHUNKS sub_key of the storage layout.
   string result_id = 1;
+  // Chunker configuration that split the text.
   optional string chunker_config_id = 2;
+  // Embedding configuration that produced the vectors, if any.
   optional string embedding_config_id = 3;
+  // The chunks of this set, in chunk_number order.
   repeated SemanticChunk chunks = 4;
+  // When this processing ran.
   optional google.protobuf.Timestamp created_date = 5;
+  // Extensible key-value metadata (extension-metadata map — see convention).
   map<string, string> metadata = 99;
 }
 

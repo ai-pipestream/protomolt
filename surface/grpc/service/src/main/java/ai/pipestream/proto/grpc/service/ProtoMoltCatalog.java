@@ -15,16 +15,16 @@ import ai.pipestream.proto.grpc.invoke.ReflectAction;
 import java.nio.file.Path;
 
 /**
- * The full twenty-three-verb catalog: the sixteen built-in actions from
+ * The full twenty-four-verb catalog: the seventeen built-in actions from
  * {@link ActionCatalog#defaults(ActionContext)} plus the gRPC verbs ({@code reflect},
  * {@code grpc-invoke}), {@code generate-stubs}, {@code gather-git}, the chain verbs
  * ({@code run-chain}, {@code check-chain}) and {@code emit-okf} — exactly the RPCs of
  * {@code ProtoMoltService}.
  *
- * <p>The MCP server exposes a subset: {@code protomolt-mcp} registers twenty, leaving out the
+ * <p>The MCP server exposes a subset: {@code protomolt-mcp} registers twenty-one, leaving out the
  * three that need server-side wiring ({@code run-chain}, {@code check-chain},
  * {@code emit-okf}), while the {@code /mcp} mount inside {@code protomolt-serve} carries all
- * twenty-three.
+ * twenty-four.
  */
 public final class ProtoMoltCatalog {
 

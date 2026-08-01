@@ -1,0 +1,25 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Prompt packets — render a protobuf descriptor into a complete LLM form-filling briefing'
+
+dependencies {
+    // prompt.proto carries validate.v1 options and the renderer validates requests with
+    // ProtoValidator; consumers of the generated code need the validation classes.
+    api project(':protomolt-protobuf-validation')
+    api libs.protobuf.java
+
+    implementation project(':protomolt-protobuf-llm')
+    implementation project(':protomolt-protobuf-metadata')
+    implementation project(':protomolt-protobuf-quality')
+    implementation project(':protomolt-jsonschema')
+    implementation libs.protobuf.java.util
+    implementation libs.jackson.databind
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

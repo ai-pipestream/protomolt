@@ -15,9 +15,13 @@ option java_package = "ai.pipestream.proto.repo.v1";
 
 // Access decision of one ACL rule. Explicit DENY always wins over any grant.
 enum Access {
+  // Unset; never a stored decision.
   ACCESS_UNSPECIFIED = 0;
+  // Grants read access to the document.
   ACCESS_READ = 1;
+  // Grants write access to the document.
   ACCESS_WRITE = 2;
+  // Explicit denial; overrides any READ/WRITE grant for the identity.
   ACCESS_DENY = 3;
 }
 
@@ -30,6 +34,7 @@ message AccessRule {
   string identity_type = 2;
   // Audit/debug label.
   string display_name = 3;
+  // The decision this rule makes for its identity.
   Access access = 4;
 }
 
@@ -40,5 +45,6 @@ message DocumentSecurity {
   // When true, rules inherited from the container/source apply in addition
   // to the explicit permissions below.
   bool inheritance_enabled = 1;
+  // The explicit ACL rules on this document; evaluated deny-wins.
   repeated AccessRule permissions = 2;
 }
