@@ -98,7 +98,8 @@ final class TestFixtures {
 
     /**
      * {@code actions.test.HintedDoc}: title (TEXT, english analyzer, keyword subfield 'raw'),
-     * id (KEYWORD, sortable), count (int32, no hint — inference applies).
+     * id (KEYWORD, sortable), count (int32, no hint — inference applies), embedding (VECTOR,
+     * 4 dims, L2).
      */
     static FileDescriptor hintedFile() {
         FieldOptions titleOptions = FieldOptions.newBuilder()
@@ -119,6 +120,14 @@ final class TestFixtures {
                         .setSortable(true)
                         .build())
                 .build();
+        FieldOptions embeddingOptions = FieldOptions.newBuilder()
+                .setExtension(IndexingHintsProto.index, FieldIndexHint.newBuilder()
+                        .setType(IndexFieldType.INDEX_FIELD_TYPE_VECTOR)
+                        .setVectorDims(4)
+                        .setVectorSimilarity(
+                                ai.pipestream.proto.index.hints.VectorSimilarity.VECTOR_SIMILARITY_L2)
+                        .build())
+                .build();
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("actions/hinted.proto")
                 .setPackage("actions.test")
@@ -127,7 +136,37 @@ final class TestFixtures {
                         .setName("HintedDoc")
                         .addField(field("title", 1, FieldDescriptorProto.Type.TYPE_STRING, titleOptions))
                         .addField(field("id", 2, FieldDescriptorProto.Type.TYPE_STRING, idOptions))
-                        .addField(field("count", 3, FieldDescriptorProto.Type.TYPE_INT32, null)))
+                        .addField(field("count", 3, FieldDescriptorProto.Type.TYPE_INT32, null))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("embedding").setNumber(4)
+                                .setType(FieldDescriptorProto.Type.TYPE_FLOAT)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)
+                                .setOptions(embeddingOptions)))
+                .build();
+        return build(file);
+    }
+
+    /**
+     * {@code actions.test.DimensionlessVectorDoc}: embedding hinted VECTOR with no
+     * vector_dims — the shape the Qdrant schema renderer rejects by field name.
+     */
+    static FileDescriptor dimensionlessVectorFile() {
+        FieldOptions embeddingOptions = FieldOptions.newBuilder()
+                .setExtension(IndexingHintsProto.index, FieldIndexHint.newBuilder()
+                        .setType(IndexFieldType.INDEX_FIELD_TYPE_VECTOR)
+                        .build())
+                .build();
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("actions/dimensionless_vector.proto")
+                .setPackage("actions.test")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("DimensionlessVectorDoc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("embedding").setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_FLOAT)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)
+                                .setOptions(embeddingOptions)))
                 .build();
         return build(file);
     }

@@ -35,7 +35,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `transform/projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
 | `transform/pipeline/` | `pipeline` | The pipeline schema: chained gRPC calls, projections, and CEL steps as one protobuf message |
 | `transform/chain/` | `chain` | The chain manager: configured, type-checked compositions of gRPC calls (verify statically, run serially with gates and deadlines, store named chains in the registry) — plus keyed/zip joins over two live gRPC streams |
-| `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr` | Indexing plans and hints; NDJSON output; engine plugins |
+| `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Indexing plans and hints; NDJSON output; engine plugins |
 | `search/embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
 | `search/embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
 | `search/embeddings/providers/` | `embeddings-tei` | Remote provider for Hugging Face Text Embeddings Inference over gRPC |
@@ -258,6 +258,10 @@ in the future.
 - [Pipeline design](docs/design/pipeline.md) — a pipeline as a protobuf
   message chaining steps: any gRPC service, alongside projections, CEL
   filters and selects, unnest, and collect
+- [Intake and parsing design](docs/design/intake-and-parsing.md) — the
+  platform front door (API-key-scoped ingest lanes in front of repo-service)
+  and the parsing coordinator (CEL routing rules, scatter-gather fan-out,
+  the SearchMetadata fold)
 - [Roadmap](docs/roadmap.md) — toward a schema registry over Git and Maven
 
 ## Requirements

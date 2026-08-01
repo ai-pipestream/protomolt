@@ -32,6 +32,10 @@ modules:
     name: buf.build/ai-pipestream/repo
   - path: account/proto/src/main/proto
     name: buf.build/ai-pipestream/account
+  - path: intake/proto/src/main/proto
+    name: buf.build/ai-pipestream/intake
+  - path: parse/proto/src/main/proto
+    name: buf.build/ai-pipestream/parse
   - path: acquire/confluence/src/main/proto
     name: buf.build/ai-pipestream/acquire-confluence
 lint:
@@ -54,25 +58,8 @@ lint:
 breaking:
   use:
     - FILE
-    # The standing rule is no ignores: repo/ and acquire-confluence are
-    # pre-release, but the ignore mechanism breaks the workspace image
-    # comparison for any PR that adds a module, and repo/'s NodeAddress wire
-    # break (the reason the waiver existed) is long merged. A deliberate wire
-    # break gets flagged here and decided in its own PR — which is this one.
-  #
-  # TEMPORARY, REMOVED BY THE FOLLOW-UP PR. parsed_metadata -> parser_results
-  # replaces ParsedMetadata with ParserResult, redefining tags 1-3 (tag 2
-  # especially: an old parser_name now reads back as parser_version, silently).
-  # repo/ is pre-release with no stored payloads and no downstream consumer, so
-  # the break is taken deliberately, once, here. This PR adds no buf module, so
-  # the image sets match and the waiver actually applies. Scoped per-rule to the
-  # one reshaped file, so an UNRELATED break in document.proto still fails.
-  ignore_only:
-    MESSAGE_NO_DELETE:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document.proto
-    FIELD_SAME_JSON_NAME:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document.proto
-    FIELD_SAME_TYPE:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document.proto
-    FIELD_SAME_NAME:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document.proto
+    # No ignores. repo/ and acquire-confluence are pre-release, but the
+    # ignore mechanism breaks the workspace image comparison for any PR
+    # that adds a module, and repo/'s NodeAddress wire break (the reason
+    # the waiver existed) is long merged. A future deliberate wire break
+    # gets flagged here and decided in its own PR.

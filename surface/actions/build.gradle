@@ -21,4 +21,5 @@ dependencies {
     implementation project(':protomolt-index-lucene')
     implementation project(':protomolt-index-opensearch')
     implementation project(':protomolt-index-solr')
+    implementation project(':protomolt-index-qdrant')
 }

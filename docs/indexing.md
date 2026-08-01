@@ -13,6 +13,7 @@ and does not interpret hints at all.
 | `protomolt-index-lucene` | Lucene `Document` mapping |
 | `protomolt-index-opensearch` | OpenSearch document-map mapping |
 | `protomolt-index-solr` | Solr document-map mapping |
+| `protomolt-index-qdrant` | Qdrant point mapping (repo Document semantic chunks → named vectors), a gRPC sink, and collection-schema generation; validates declared rules on write |
 | `protomolt-protobuf-indexing` | Facade chaining optional validation → plan → NDJSON |
 
 ## Indexing hints
@@ -46,7 +47,7 @@ message Doc {
 | Concern | Hint fields | Notes |
 |---|---|---|
 | Core | `type`, `name`, `stored`, `indexed` | `TEXT` vs `KEYWORD` distinguishes analyzed from exact-match strings |
-| Vectors | `vector_dims`, `vector_similarity` (cosine, dot product, L2, max inner product), `vector_element_type` (float32, byte), `hnsw { m, ef_construction }` | Lucene emits `Knn(Float\|Byte)VectorField` with the similarity function; OpenSearch/Solr carry the parameters into schema generation |
+| Vectors | `vector_dims`, `vector_similarity` (cosine, dot product, L2, max inner product), `vector_element_type` (float32, byte), `hnsw { m, ef_construction }` | Lucene emits `Knn(Float\|Byte)VectorField` with the similarity function; OpenSearch/Solr carry the parameters into schema generation; Qdrant renders named vectors with size and distance (`MAX_INNER_PRODUCT` maps to `Dot`, as OpenSearch maps it to `innerproduct`) |
 | Multi-fields | `sub_fields` | The classic text-plus-keyword pattern; named `field.sub` (OpenSearch) / `field_sub` (Solr) |
 | Text analysis | `analyzer`, `search_analyzer` | Engine-interpreted names, carried into the plan and schema generation |
 | Missing values | `null_value`, `skip_if_missing` | `null_value` substitutes a typed value when the field is unset |
@@ -73,6 +74,12 @@ so index setup and document mapping come from the same declaration:
 - `LuceneFieldSpecs` — Lucene has no schema file; this is a typed per-field
   report (doc-values type, vector encoding and similarity, analyzers) that
   consumers apply at `IndexWriter` level.
+- `QdrantSchemaGenerator` — collection schema: one named vector per VECTOR
+  hint (declared size and distance) plus payload field indexes for the
+  scalar kinds, ready to apply with `CreateCollection` and
+  `CreateFieldIndex` calls. On the write path, `QdrantPointMapper` enforces
+  the declared `vector_dims` on every embedding and `QdrantSink` creates
+  the collection from the same specs.
 
 Hints do not have to live in the schema. `IndexingHintSource` is a
 functional interface resolving a hint per field, and sources compose with
@@ -121,7 +128,9 @@ indexer.toNdjsonLine(doc);   // validates first when a validator is configured
 ```
 
 Validation and indexing remain independent standards; chain them only when
-you want the gate.
+you want the gate. Engine plugins may gate on their own write path:
+`QdrantPointMapper` runs the same validator before a document becomes
+points, so an invalid document is never upserted.
 
 
 ## Sensitivity in the index

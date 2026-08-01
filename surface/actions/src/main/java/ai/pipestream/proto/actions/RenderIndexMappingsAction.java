@@ -2,6 +2,8 @@ package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.index.lucene.LuceneFieldSpecs;
 import ai.pipestream.proto.index.opensearch.OpenSearchMappingGenerator;
+import ai.pipestream.proto.index.qdrant.QdrantSchemaGenerator;
+import ai.pipestream.proto.index.qdrant.QdrantVectorSpec;
 import ai.pipestream.proto.index.solr.SolrSchemaGenerator;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexingPlan;
@@ -10,7 +12,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 
-/** Renders the search-index artifact (OpenSearch/Solr/Lucene) for a protobuf message type. */
+/** Renders the search-index artifact (OpenSearch/Solr/Lucene/Qdrant) for a protobuf message type. */
 final class RenderIndexMappingsAction implements ProtoAction {
 
     @Override
@@ -21,9 +23,10 @@ final class RenderIndexMappingsAction implements ProtoAction {
     @Override
     public String description() {
         return "Renders the search-index artifact for a protobuf message type — OpenSearch index "
-                + "mappings JSON, Solr managed-schema pieces, or Lucene field specs — from its "
-                + "indexing hints (ai.pipestream.proto.index.hints.v1 options), inferring sensible "
-                + "field kinds where no hint is declared.";
+                + "mappings JSON, Solr managed-schema pieces, Lucene field specs, or a Qdrant "
+                + "collection schema (named vectors with size+distance, payload field indexes) — "
+                + "from its indexing hints (ai.pipestream.proto.index.hints.v1 options), "
+                + "inferring sensible field kinds where no hint is declared.";
     }
 
     @Override
@@ -41,6 +44,7 @@ final class RenderIndexMappingsAction implements ProtoAction {
         engines.add("opensearch");
         engines.add("solr");
         engines.add("lucene");
+        engines.add("qdrant");
         ObjectNode sensitivityProp = properties.putObject("sensitivity");
         sensitivityProp.put("type", "object");
         sensitivityProp.put("description", "OpenSearch only: apply schema-declared "
@@ -77,10 +81,39 @@ final class RenderIndexMappingsAction implements ProtoAction {
             }
             case "solr" -> solr(plan, context);
             case "lucene" -> lucene(plan, context);
+            case "qdrant" -> qdrant(plan, context);
             default -> throw Inputs.invalidInput(
-                    "Unknown engine '" + engine + "'; expected one of opensearch, solr, lucene",
+                    "Unknown engine '" + engine + "'; expected one of opensearch, solr, lucene, qdrant",
                     "/engine");
         };
+    }
+
+    private static ObjectNode qdrant(IndexingPlan plan, ActionContext context)
+            throws ActionException {
+        QdrantSchemaGenerator.QdrantSchema schema;
+        try {
+            schema = new QdrantSchemaGenerator().generate(plan);
+        } catch (IllegalArgumentException e) {
+            // The plan is derived entirely from the caller's schema, so a plan the
+            // generator rejects (e.g. a VECTOR hint with no vector_dims) is caller
+            // input, not a server fault.
+            throw Inputs.invalidInput(e.getMessage(), "/schema");
+        }
+        ObjectNode output = context.objectMapper().createObjectNode();
+        ArrayNode vectors = output.putArray("vectors");
+        for (QdrantVectorSpec spec : schema.vectors()) {
+            ObjectNode vector = vectors.addObject();
+            vector.put("name", spec.name());
+            vector.put("size", spec.size());
+            vector.put("distance", spec.distance().name());
+        }
+        ArrayNode payloadIndexes = output.putArray("payloadIndexes");
+        for (QdrantSchemaGenerator.PayloadIndex index : schema.payloadIndexes()) {
+            ObjectNode payloadIndex = payloadIndexes.addObject();
+            payloadIndex.put("name", index.fieldName());
+            payloadIndex.put("type", index.fieldType().name());
+        }
+        return output;
     }
 
     /**
