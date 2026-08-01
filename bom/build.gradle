@@ -61,6 +61,7 @@ def supportedModules = [
         'protomolt-index-lucene',
         'protomolt-index-opensearch',
         'protomolt-index-solr',
+        'protomolt-index-qdrant',
         'protomolt-embeddings',
         'protomolt-embeddings-model2vec',
         'protomolt-embeddings-tei',
@@ -88,6 +89,8 @@ def supportedModules = [
         'protomolt-repo-service',
         'protomolt-account-proto',
         'protomolt-account-service',
+        'protomolt-intake-proto',
+        'protomolt-parse-proto',
 ]
 
 javaPlatform {
@@ -108,7 +111,7 @@ catalog {
         bundle('mapping', ['mapper-core', 'mapper-cel', 'metadata', 'projection'])
         bundle('dynamic-runtime', ['actions', 'grpc-invoke', 'grpc-service', 'serve'])
         bundle('search', ['index-spi', 'index-ndjson', 'index-lucene',
-                          'index-opensearch', 'index-solr'])
+                          'index-opensearch', 'index-solr', 'index-qdrant'])
     }
 }
 

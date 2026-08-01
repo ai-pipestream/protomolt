@@ -1,0 +1,38 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The intake contract: the platform front door — authenticated unary, client-streaming and HTTP ingest lanes in front of repo-service'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+
+    // Extract the repo .proto files so protoc can resolve the imports.
+    protobuf project(':protomolt-repo-proto')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.73.0"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

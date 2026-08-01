@@ -140,6 +140,9 @@ project(':protomolt-index-opensearch').projectDir = file('search/index/opensearc
 include 'protomolt-index-solr'
 project(':protomolt-index-solr').projectDir = file('search/index/solr')
 
+include 'protomolt-index-qdrant'
+project(':protomolt-index-qdrant').projectDir = file('search/index/qdrant')
+
 include 'protomolt-embeddings'
 project(':protomolt-embeddings').projectDir = file('search/embeddings/core')
 
@@ -256,6 +259,18 @@ project(':protomolt-account-proto').projectDir = file('account/proto')
 
 include 'protomolt-account-service'
 project(':protomolt-account-service').projectDir = file('account/service')
+
+// intake/ — the platform front door: authenticated ingest lanes in front of
+// repo-service.
+
+include 'protomolt-intake-proto'
+project(':protomolt-intake-proto').projectDir = file('intake/proto')
+
+// parse/ — the parsing coordinator: CEL routing rules, scatter-gather parser
+// fan-out, and the SearchMetadata fold.
+
+include 'protomolt-parse-proto'
+project(':protomolt-parse-proto').projectDir = file('parse/proto')
 
 // host/ — embedding the toolkit into servers and frameworks.
 

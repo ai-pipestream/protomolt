@@ -123,6 +123,44 @@ class RenderIndexMappingsActionTest {
     }
 
     @Test
+    void qdrantCollectionSchemaHonorsHintsAndInference() throws Exception {
+        ObjectNode result = render("qdrant");
+        // The VECTOR hint renders the named vector with its declared size and distance.
+        JsonNode vectors = result.get("vectors");
+        assertThat(vectors).hasSize(1);
+        assertThat(vectors.get(0).get("name").asText()).isEqualTo("embedding");
+        assertThat(vectors.get(0).get("size").asInt()).isEqualTo(4);
+        assertThat(vectors.get(0).get("distance").asText()).isEqualTo("Euclid");
+        // Scalar hints render payload field indexes; inference covers the unhinted count.
+        JsonNode payloadIndexes = result.get("payloadIndexes");
+        assertThat(fieldNamed(payloadIndexes, "title").get("type").asText())
+                .isEqualTo("FieldTypeText");
+        assertThat(fieldNamed(payloadIndexes, "id").get("type").asText())
+                .isEqualTo("FieldTypeKeyword");
+        assertThat(fieldNamed(payloadIndexes, "count").get("type").asText())
+                .isEqualTo("FieldTypeInteger");
+    }
+
+    /**
+     * A VECTOR hint with no vector_dims cannot render a Qdrant named vector. The verb
+     * must answer with a proper invalid-input ActionException naming the field and the
+     * missing hint — not leak the generator's IllegalArgumentException.
+     */
+    @Test
+    void dimensionlessVectorHintIsInvalidInputForQdrant() {
+        context.registry().registerFile(TestFixtures.dimensionlessVectorFile());
+        assertThatThrownBy(() -> catalog.execute("render-index-mappings", obj("""
+                {"schema": {"type": "actions.test.DimensionlessVectorDoc"}, "engine": "qdrant"}
+                """)))
+                .isInstanceOfSatisfying(ActionException.class, e -> {
+                    assertThat(e.code()).isEqualTo("invalid-input");
+                    assertThat(e.getMessage()).contains("'embedding'").contains("vector_dims");
+                    assertThat(e.details().orElseThrow().get("pointer").asText())
+                            .isEqualTo("/schema");
+                });
+    }
+
+    @Test
     void unhintedInlineSchemaFallsBackToInference() throws Exception {
         ObjectNode input = obj("""
                 {"schema": {"sources": {}}, "engine": "opensearch"}

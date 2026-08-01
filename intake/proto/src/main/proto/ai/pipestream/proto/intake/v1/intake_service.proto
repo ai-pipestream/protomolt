@@ -1,0 +1,174 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.intake.v1;
+
+import "ai/pipestream/proto/repo/v1/address.proto";
+import "ai/pipestream/proto/repo/v1/document.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.intake.v1";
+
+// ============================================================================
+// INTAKE — the platform front door.
+//
+// IntakeService is the ONLY public ingest surface of the platform. It
+// authenticates the caller, narrows the request to the caller's scope, wraps
+// the payload into a repo Document, and saves it to the account's intake
+// drive via repo-service's DocumentService. Everything downstream (the
+// parsing coordinator, pipeline graphs) reads from repo — no service other
+// than intake writes intake rows.
+//
+// AUTH IS NOT A PROTO FIELD. The credential rides gRPC metadata
+// (`x-api-key`, or the standard `authorization` header) and is resolved
+// server-side to a scope {account_id, allowed datasource_ids, allowed
+// drives, permissions}; the request messages below only NARROW within that
+// scope, never widen it. Error semantics:
+//   - UNAUTHENTICATED: the key is missing, malformed, or unknown. The
+//     server could not establish WHO is calling.
+//   - PERMISSION_DENIED: the key is valid, but the requested targeting
+//     (datasource_id, drive) falls outside the key's scope.
+//
+// Three lanes, one service identity:
+//   1. IngestDocument — unary, for small documents and pre-assembled
+//      Documents (the typed-crawler lane).
+//   2. IngestStream — client-streaming, for large payloads whose bytes
+//      should not fit one message.
+//   3. HTTP POST raw binary — NOT a gRPC rpc: it mirrors repo-service's
+//      raw-upload route with `x-api-key` replacing the raw account headers,
+//      and is documented in docs/design/intake-and-parsing.md.
+// ============================================================================
+
+// A raw, un-typed payload: bytes plus enough description to wrap them into a
+// Document's BlobBag (content-addressed blob + FileStorageReference).
+message RawPayload {
+  // The payload bytes. Unary RPC: the payload transits the service in
+  // memory — bulk uploads belong on IngestStream or the HTTP POST lane.
+  bytes data = 1;
+  // Original filename, when known (lands on the Blob and SearchMetadata).
+  string filename = 2;
+  // Declared MIME type. A hint only — the parsing coordinator sniffs the
+  // real content type from the bytes and treats this as declarative input.
+  string mime_type = 3;
+}
+
+// Request to ingest one document through the unary lane.
+message IngestDocumentRequest {
+  // The payload, in whichever form the caller already has it: a Document for
+  // callers that speak the repo model, raw bytes for everyone else.
+  oneof content {
+    // A pre-assembled Document (typed crawlers and connectors that already
+    // speak the repo model). Intake validates and re-saves it under the
+    // caller's scope; ownership fields the key's scope dictates win over
+    // whatever the caller supplied.
+    ai.pipestream.proto.repo.v1.Document document = 1;
+    // Raw bytes to wrap into a Document server-side.
+    RawPayload raw = 2;
+  }
+  // Datasource to ingest under. Must be within the API key's scope; a
+  // datasource outside the scope is PERMISSION_DENIED, not UNAUTHENTICATED.
+  // Becomes the row's graph_address_id on the intake-graph save.
+  string datasource_id = 3;
+  // Drive to save to. Must be within the key's allowed drives; default is
+  // the account's "intake" drive.
+  optional string drive = 4;
+  // Extensible key-value metadata forwarded onto the repo save
+  // (extension-metadata map — see the convention in repo's document.proto).
+  map<string, string> metadata = 99;
+}
+
+// Targeting and payload description for a streaming ingest. Carried on the
+// FIRST frame of an IngestStream call; mirrors the targeting fields of
+// IngestDocumentRequest plus the RawPayload description fields.
+message IngestMetadata {
+  // Datasource to ingest under; same scope rule as IngestDocumentRequest.
+  string datasource_id = 1;
+  // Drive to save to; default is the account's "intake" drive.
+  optional string drive = 2;
+  // Original filename, when known.
+  string filename = 3;
+  // Declared MIME type (hint only; see RawPayload.mime_type).
+  string mime_type = 4;
+  // Extensible key-value metadata forwarded onto the repo save
+  // (extension-metadata map — see the convention in repo's document.proto).
+  map<string, string> metadata = 99;
+}
+
+// One frame of the client-streaming lane (the IngestStream request type).
+//
+// Frame discipline: the FIRST frame MUST carry the `metadata` arm; every
+// subsequent frame MUST carry the `data` arm. A stream whose first frame is
+// a data frame is INVALID_ARGUMENT; a metadata frame after the first is
+// INVALID_ARGUMENT. The server assembles the payload as the concatenation
+// of the data frames in stream order.
+message IngestStreamRequest {
+  // Which kind of frame this is. Exactly one metadata frame opens the stream;
+  // every frame after it carries data. See the frame discipline above.
+  oneof frame {
+    // First frame only: targeting + payload description.
+    IngestMetadata metadata = 1;
+    // All later frames: payload bytes, concatenated in stream order.
+    bytes data = 2;
+  }
+}
+
+// The unary lane's intake receipt. Mirrors repo-service's save/upload
+// vocabulary: the caller gets back the stored row's identity, its integrity
+// proof, and whether the write was elided by dedupe.
+message IngestDocumentResponse {
+  // The document id the row was stored under (caller-preserved or derived).
+  string doc_id = 1;
+  // The repository node id assigned to the stored state (derived echo of
+  // `address`; never truth — see repo's address.proto).
+  string node_id = 2;
+  // The stored row's canonical storage address.
+  ai.pipestream.proto.repo.v1.NodeAddress address = 3;
+  // Drive the document was stored on.
+  string drive = 4;
+  // Size of the stored payload in bytes.
+  int64 size_bytes = 5;
+  // Lowercase hex SHA-256 of the payload, computed server-side — the same
+  // integrity proof repo's PutBlob returns.
+  string sha256 = 6;
+  // True when the save was elided by the SHA-256 intake dedupe (identical
+  // content already stored; the existing coordinates are echoed).
+  bool deduplicated = 7;
+}
+
+// The streaming lane's intake receipt. Field-for-field the same receipt as
+// IngestDocumentResponse — every lane answers the same vocabulary — but a
+// distinct type per rpc, so each lane's contract evolves independently.
+message IngestStreamResponse {
+  // The document id the row was stored under (caller-preserved or derived).
+  string doc_id = 1;
+  // The repository node id assigned to the stored state (derived echo of
+  // `address`; never truth — see repo's address.proto).
+  string node_id = 2;
+  // The stored row's canonical storage address.
+  ai.pipestream.proto.repo.v1.NodeAddress address = 3;
+  // Drive the document was stored on.
+  string drive = 4;
+  // Size of the stored payload in bytes.
+  int64 size_bytes = 5;
+  // Lowercase hex SHA-256 of the payload, computed server-side — the same
+  // integrity proof repo's PutBlob returns.
+  string sha256 = 6;
+  // True when the save was elided by the SHA-256 intake dedupe (identical
+  // content already stored; the existing coordinates are echoed).
+  bool deduplicated = 7;
+}
+
+// The platform front door: authenticated ingest into repo-service.
+//
+// Every rpc requires the API-key credential in call metadata (`x-api-key`
+// or `authorization`); no request message carries identity. See the file
+// header for the full auth model and the UNAUTHENTICATED vs
+// PERMISSION_DENIED split.
+service IntakeService {
+  // Ingest one document (typed Document or raw payload) in a single call.
+  rpc IngestDocument(IngestDocumentRequest) returns (IngestDocumentResponse);
+
+  // Ingest one raw payload as a frame stream: one metadata frame, then data
+  // frames. The receipt arrives once the stream half-closes and the save
+  // completes.
+  rpc IngestStream(stream IngestStreamRequest) returns (IngestStreamResponse);
+}

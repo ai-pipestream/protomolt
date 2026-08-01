@@ -3,3 +3,22 @@ Copyright 2026 ai.pipestream
 
 This product includes software developed at ai.pipestream
 (https://github.com/ai-pipestream/protomolt).
+
+This product bundles the following protobuf definitions, vendored verbatim
+(provenance headers aside) under the Apache License, Version 2.0. Each file
+carries its own license and provenance header.
+
+Qdrant gRPC API definitions (v1.18.3)
+Copyright the Qdrant authors
+https://github.com/qdrant/qdrant
+Bundled at: search/index/qdrant/src/main/proto/
+
+Text Embeddings Inference gRPC API definition
+Copyright 2022 Hugging Face
+https://github.com/huggingface/text-embeddings-inference
+Bundled at: search/embeddings/providers/tei/src/main/proto/
+
+KServe Open Inference Protocol (Predict Protocol v2) definition
+Copyright the KServe authors; Copyright 2020 kubeflow.org
+https://github.com/kserve/kserve
+Bundled at: search/embeddings/providers/ovms/src/main/proto/
