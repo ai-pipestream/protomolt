@@ -114,6 +114,12 @@ final class InstructionRenderer {
         for (FieldConstraints constraints : collected) {
             requirements.addAll(constraintProse(field, constraints));
         }
+        if (field.getType() == FieldDescriptor.Type.ENUM) {
+            // The model cannot fill what it cannot name: enum vocabularies live in the
+            // schema, not in any prose it has seen, so spell them out. (Enum value
+            // comments ride SourceCodeInfo, which descriptor sets do not carry.)
+            requirements.add("defined values: " + enumVocabulary(field));
+        }
         if (requirements.isEmpty() && !required) {
             out.append("   Requirements: none beyond the type.\n");
         } else {
@@ -283,6 +289,18 @@ final class InstructionRenderer {
     private static String enumName(FieldDescriptor field, int number) {
         EnumValueDescriptor value = field.getEnumType().findValueByNumber(number);
         return value != null ? value.getName() : "UNKNOWN(" + number + ")";
+    }
+
+    private static String enumVocabulary(FieldDescriptor field) {
+        List<String> names = new ArrayList<>();
+        for (EnumValueDescriptor value : field.getEnumType().getValues()) {
+            if (value.getNumber() == 0 && value.getName().endsWith("_UNSPECIFIED")) {
+                names.add(value.getName() + " (means unknown)");
+            } else {
+                names.add(value.getName());
+            }
+        }
+        return String.join(", ", names);
     }
 
     private static String joinEnums(FieldDescriptor field, List<Integer> numbers) {

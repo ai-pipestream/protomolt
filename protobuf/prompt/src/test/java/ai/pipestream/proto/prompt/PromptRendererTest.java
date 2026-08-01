@@ -61,6 +61,9 @@ class PromptRendererTest {
                 // enum constraint
                 .contains("must be a defined "
                         + "ai.pipestream.proto.prompt.testdata.v1.Posture value")
+                // enum vocabulary: the model cannot fill what it cannot name
+                .contains("defined values: POSTURE_UNSPECIFIED (means unknown),"
+                        + " POSTURE_AFFIRMED, POSTURE_REVERSED")
                 // numeric constraints
                 .contains("must be at least 1600")
                 .contains("must be at most 2100")
