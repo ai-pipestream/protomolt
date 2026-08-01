@@ -8,6 +8,14 @@ modules:
     name: buf.build/ai-pipestream/protobuf-llm
   - path: protobuf/prompt/src/main/proto
     name: buf.build/ai-pipestream/protobuf-prompt
+  - path: protobuf/quality/src/main/proto
+    name: buf.build/ai-pipestream/protobuf-quality
+  - path: protobuf/llm/src/test/proto
+    name: buf.build/ai-pipestream/protobuf-llm-testdata
+  - path: protobuf/prompt/src/test/proto
+    name: buf.build/ai-pipestream/protobuf-prompt-testdata
+  - path: surface/grpc/service/src/main/resources
+    name: buf.build/ai-pipestream/protomolt-service
   - path: protobuf/validation/src/main/proto
     name: buf.build/ai-pipestream/protobuf-validation
   - path: search/index/spi/src/main/proto
@@ -35,8 +43,14 @@ lint:
     # GetDocumentResponse: same payload, two coordinate systems.
     RPC_REQUEST_RESPONSE_UNIQUE:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
+      # ProtoMoltService returns google.protobuf.Struct from its render/invoke
+      # verbs by design: the service is descriptor-native and the canonical
+      # proto3 JSON form of each action envelope IS the response payload.
+      - surface/grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto
     RPC_RESPONSE_STANDARD_NAME:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
+      # Same deliberate Struct responses as RPC_REQUEST_RESPONSE_UNIQUE above.
+      - surface/grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto
 breaking:
   use:
     - FILE

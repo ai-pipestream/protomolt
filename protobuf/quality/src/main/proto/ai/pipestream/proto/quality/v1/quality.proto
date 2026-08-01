@@ -16,11 +16,13 @@ option java_outer_classname = "QualityProto";
 option java_multiple_files = true;
 
 extend google.protobuf.MessageOptions {
+  // The quality dimensions this message declares for itself.
   QualityRules quality = 59100501;
 }
 
 // The quality dimensions a message declares for itself.
 message QualityRules {
+  // The declared dimensions; the composite score is their weighted mean.
   repeated QualityDimension dimension = 1;
 }
 

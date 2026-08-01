@@ -93,7 +93,7 @@ enum Posture {
   // Default, means unknown.
   POSTURE_UNSPECIFIED = 0;
   // The lower court was affirmed.
-  AFFIRMED = 1;
+  POSTURE_AFFIRMED = 1;
   // The lower court was reversed.
-  REVERSED = 2;
+  POSTURE_REVERSED = 2;
 }
