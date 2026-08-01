@@ -8,7 +8,12 @@ option java_package = "ai.pipestream.proto.indexing.testdata";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
+// Test fixture for the indexing-hint integration tests: a document exercising
+// keyword, text, numeric, vector (with HNSW tuning and engine_params),
+// analyzed-with-sub-field, and range hint annotations, combined with
+// protovalidate constraints on the same fields.
 message IndexableDoc {
+  // Required document id, indexed as an exact-match keyword.
   string doc_id = 1 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
     (ai.pipestream.proto.validate.v1.field) = {
@@ -17,6 +22,7 @@ message IndexableDoc {
     }
   ];
 
+  // Required title, indexed as analyzed full text (minimum length 2).
   string title = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT },
     (ai.pipestream.proto.validate.v1.field) = {
@@ -25,6 +31,7 @@ message IndexableDoc {
     }
   ];
 
+  // Non-negative page count, indexed as an int32 point field.
   int32 page_count = 3 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_INT32 },
     (ai.pipestream.proto.validate.v1.field) = {
@@ -32,6 +39,9 @@ message IndexableDoc {
     }
   ];
 
+  // 3-dim test vector indexed with dot-product similarity, explicit HNSW
+  // tuning, and an OpenSearch engine_params override — exercises the vector
+  // hint attributes end to end.
   repeated float embedding = 4 [
     (ai.pipestream.proto.index.hints.v1.index) = {
       type: INDEX_FIELD_TYPE_VECTOR
@@ -42,6 +52,8 @@ message IndexableDoc {
     }
   ];
 
+  // Category indexed as english-analyzed text, sortable, with a null_value
+  // substitute and a keyword "raw" sub-field.
   string category = 5 [
     (ai.pipestream.proto.index.hints.v1.index) = {
       type: INDEX_FIELD_TYPE_TEXT
@@ -52,6 +64,8 @@ message IndexableDoc {
     }
   ];
 
+  // Singular message field hinted as INT_RANGE; PageSpan's (gte, lte) pair
+  // resolves as the range bounds.
   PageSpan page_span = 6 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_INT_RANGE }
   ];
@@ -59,6 +73,8 @@ message IndexableDoc {
 
 // Bounds message for INT_RANGE hints: the (gte, lte) pair resolves as the range bounds.
 message PageSpan {
+  // Lower bound of the range (inclusive).
   int32 gte = 1;
+  // Upper bound of the range (inclusive).
   int32 lte = 2;
 }

@@ -22,6 +22,7 @@ option java_package = "ai.pipestream.proto.account.v1";
 // administrative hold: the store supports it, no RPC sets it yet — it
 // arrives with the policy surface that needs it.
 enum AccountStatus {
+  // Zero value; never stored — present so an unset status is detectable.
   ACCOUNT_STATUS_UNSPECIFIED = 0;
   // Normal operation: drives provisioned, reads and writes allowed.
   ACCOUNT_STATUS_ACTIVE = 1;
@@ -39,6 +40,7 @@ message Account {
   string account_id = 1;
   // Human-facing label (audit/debug; not an identity input).
   string display_name = 2;
+  // Lifecycle state of the account; see AccountStatus.
   AccountStatus status = 3;
   // When the account row was created.
   google.protobuf.Timestamp created_at = 4;

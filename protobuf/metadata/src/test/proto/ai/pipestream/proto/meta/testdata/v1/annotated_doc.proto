@@ -8,6 +8,9 @@ option java_package = "ai.pipestream.proto.meta.testdata";
 import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "google/protobuf/any.proto";
 
+// Fixture for DescriptorMetadata: message- and field-level metadata options in
+// every supported position (description, owner, sensitivity, labels,
+// display_name), so the tests can read them back and flatten them.
 message AnnotatedDoc {
   option (ai.pipestream.proto.meta.v1.message) = {
     description: "Search document"
@@ -19,6 +22,8 @@ message AnnotatedDoc {
     }
   };
 
+  // Stable document id; exercises a fully-populated FieldMeta (description,
+  // display_name, sensitivity, labels).
   string doc_id = 1 [(ai.pipestream.proto.meta.v1.field) = {
     description: "Stable document id"
     display_name: "Document ID"
@@ -29,6 +34,8 @@ message AnnotatedDoc {
     }
   }];
 
+  // Display title; exercises a FieldMeta with owner but no display_name or
+  // labels.
   string title = 2 [(ai.pipestream.proto.meta.v1.field) = {
     description: "Display title"
     owner: "content"
@@ -39,25 +46,42 @@ message AnnotatedDoc {
 // Fixtures for SensitivityMasker: sensitive scalars, maps in every position the
 // masker must reach, and message values nested inside maps.
 message SecretNote {
+  // A pii-classed scalar the masker must redact.
   string body = 1 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+  // An unclassed scalar the masker must leave alone.
   string label = 2;
 }
 
+// Fixture message the masker walks: every field position (scalars, bytes,
+// plain and classed maps, message-valued maps, repeated messages, and Any
+// envelopes) so the tests prove classed data is found wherever it nests.
 message MaskerDoc {
+  // Unclassed scalar; never masked.
   string name = 1;
+  // A pii-classed scalar the masker must redact.
   string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+  // A secret-classed bytes field the masker must seal.
   bytes token = 3 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "secret"}];
+  // Unclassed map; values pass through untouched.
   map<string, string> plain_attrs = 4;
+  // A classed map: the option on the map field classes every value in it.
   map<string, string> secret_attrs = 5
       [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+  // Message-valued map: the masker must descend into each SecretNote value.
   map<string, SecretNote> notes = 6;
+  // Recursive message-valued map: the walk must reach MaskerDoc values nested
+  // at any depth.
   map<string, MaskerDoc> children = 7;
+  // Repeated messages: the masker must descend into every element.
   repeated SecretNote entries = 8;
+  // A classed scalar-valued map: the option classes every value in it.
   map<string, int64> counts = 9
       [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
   // Packed payloads: a classed field is just as sensitive inside an envelope, and an
   // envelope can sit anywhere an ordinary message can.
   google.protobuf.Any envelope = 10;
+  // Repeated envelopes: each element is resolved and masked like `envelope`.
   repeated google.protobuf.Any envelopes = 11;
+  // Map-valued envelopes: the masker must resolve and mask each value.
   map<string, google.protobuf.Any> keyed_envelopes = 12;
 }

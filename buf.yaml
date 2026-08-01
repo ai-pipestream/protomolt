@@ -29,6 +29,7 @@ modules:
 lint:
   use:
     - STANDARD
+    - COMMENTS
   ignore_only:
     # GetDocument and GetDocumentByReference deliberately share
     # GetDocumentResponse: same payload, two coordinate systems.

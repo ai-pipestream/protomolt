@@ -21,18 +21,27 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // The status of hierarchical content (children/descendants trees): only
 // current and archived appear there.
 enum OnlyArchivedAndCurrentContentStatus {
+  // Not specified.
   ONLY_ARCHIVED_AND_CURRENT_CONTENT_STATUS_UNSPECIFIED = 0;
+  // The content is current.
   ONLY_ARCHIVED_AND_CURRENT_CONTENT_STATUS_CURRENT = 1;
+  // The content is archived.
   ONLY_ARCHIVED_AND_CURRENT_CONTENT_STATUS_ARCHIVED = 2;
 }
 
 // The type of ancestor.
 enum AncestorType {
+  // Not specified.
   ANCESTOR_TYPE_UNSPECIFIED = 0;
+  // A page ancestor.
   ANCESTOR_TYPE_PAGE = 1;
+  // A whiteboard ancestor.
   ANCESTOR_TYPE_WHITEBOARD = 2;
+  // A database ancestor.
   ANCESTOR_TYPE_DATABASE = 3;
+  // An embed ancestor.
   ANCESTOR_TYPE_EMBED = 4;
+  // A folder ancestor.
   ANCESTOR_TYPE_FOLDER = 5;
 }
 
@@ -40,6 +49,7 @@ enum AncestorType {
 message Ancestor {
   // ID of the ancestor.
   string id = 1;
+  // The content kind of the ancestor.
   AncestorType type = 2;
 }
 
@@ -48,6 +58,7 @@ message Ancestor {
 message ContentTreeEntry {
   // ID of the child/descendant content.
   string id = 1 [(ai.pipestream.proto.validate.v1.field) = { required: true }];
+  // Status of the content (current or archived).
   OnlyArchivedAndCurrentContentStatus status = 2;
   // Title of the content.
   string title = 3;
@@ -92,6 +103,7 @@ message CustomContent {
   string type = 2 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
+  // The lifecycle status of the custom content.
   ContentStatus status = 3 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
@@ -124,11 +136,17 @@ message CustomContent {
   google.protobuf.Timestamp created_at = 10 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE }
   ];
+  // The current version of the custom content.
   Version version = 11;
+  // The body of the custom content, in the fetched formats.
   Body body = 12;
+  // The labels attached to the custom content.
   repeated Label labels = 13;
+  // The content properties of the custom content.
   repeated ContentProperty properties = 14;
+  // The operations permitted on the custom content.
   repeated Operation operations = 15;
+  // The version history of the custom content.
   repeated Version versions = 16;
   // Human-facing URL of the content, for search results and UIs.
   string web_url = 17;
@@ -149,6 +167,7 @@ message Database {
   ];
   // The content type of the object.
   string type = 2;
+  // The lifecycle status of the database.
   ContentStatus status = 3 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
@@ -158,6 +177,7 @@ message Database {
   ];
   // ID of the parent content, or null if there is no parent content.
   string parent_id = 5;
+  // The content kind of the parent, or unset if there is no parent.
   ParentContentType parent_type = 6;
   // Position of the database within the given parent page tree.
   optional int32 position = 7;
@@ -177,6 +197,7 @@ message Database {
   string space_id = 11 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
+  // The current version of the database.
   Version version = 12;
   // Human-facing URL of the content, for search results and UIs.
   string web_url = 13;
@@ -193,6 +214,7 @@ message Folder {
   ];
   // The content type of the object.
   string type = 2;
+  // The lifecycle status of the folder.
   ContentStatus status = 3 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
@@ -202,6 +224,7 @@ message Folder {
   ];
   // ID of the parent content, or null if there is no parent content.
   string parent_id = 5;
+  // The content kind of the parent, or unset if there is no parent.
   ParentContentType parent_type = 6;
   // Position of the folder within the given parent page tree.
   optional int32 position = 7;
@@ -221,6 +244,7 @@ message Folder {
   string space_id = 11 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
+  // The current version of the folder.
   Version version = 12;
   // Human-facing URL of the content, for search results and UIs.
   string web_url = 13;
@@ -237,6 +261,7 @@ message SmartLink {
   ];
   // The content type of the object.
   string type = 2;
+  // The lifecycle status of the Smart Link.
   ContentStatus status = 3 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
@@ -246,6 +271,7 @@ message SmartLink {
   ];
   // ID of the parent content, or null if there is no parent content.
   string parent_id = 5;
+  // The content kind of the parent, or unset if there is no parent.
   ParentContentType parent_type = 6;
   // Position of the Smart Link within the given parent page tree.
   optional int32 position = 7;
@@ -268,6 +294,7 @@ message SmartLink {
   string space_id = 12 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
+  // The current version of the Smart Link.
   Version version = 13;
   // Human-facing URL of the content, for search results and UIs.
   string web_url = 14;
@@ -284,6 +311,7 @@ message Whiteboard {
   ];
   // The content type of the object.
   string type = 2;
+  // The lifecycle status of the whiteboard.
   ContentStatus status = 3 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
@@ -293,6 +321,7 @@ message Whiteboard {
   ];
   // ID of the parent content, or null if there is no parent content.
   string parent_id = 5;
+  // The content kind of the parent, or unset if there is no parent.
   ParentContentType parent_type = 6;
   // Position of the whiteboard within the given parent page tree.
   optional int32 position = 7;
@@ -312,6 +341,7 @@ message Whiteboard {
   string space_id = 11 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
+  // The current version of the whiteboard.
   Version version = 12;
   // Human-facing URL of the content, for search results and UIs.
   string web_url = 13;

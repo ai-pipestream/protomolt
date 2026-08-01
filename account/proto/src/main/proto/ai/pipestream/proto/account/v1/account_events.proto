@@ -64,9 +64,13 @@ message AccountDeactivated {
 message AccountEvent {
   // The outbox row id; stable across relay retries, so redeliveries dedupe.
   string event_id = 1;
+  // The event payload; exactly one arm is set per record.
   oneof event {
+    // Set when the event is an account creation.
     AccountCreated created = 2;
+    // Set when the event is an account (re)activation.
     AccountActivated activated = 3;
+    // Set when the event is an account deactivation.
     AccountDeactivated deactivated = 4;
   }
   // Extensible key-value metadata (extension-metadata map — see convention).

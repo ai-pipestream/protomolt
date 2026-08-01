@@ -31,6 +31,7 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // The declared format of a body value. Storage is XHTML, atlas_doc_format is
 // serialized ProseMirror JSON, the view formats are rendered XHTML variants.
 enum BodyFormat {
+  // Zero value; a populated body value must not declare this.
   BODY_FORMAT_UNSPECIFIED = 0;
   // Confluence storage format (XHTML).
   BODY_FORMAT_STORAGE_XHTML = 1;
@@ -77,8 +78,12 @@ message BodyType {
 // The body of a piece of content: one slot per format, populated when that
 // format was fetched.
 message Body {
+  // The body in storage format (XHTML), populated when storage was fetched.
   BodyType storage = 1;
+  // The body as a serialized ProseMirror document, populated when
+  // atlas_doc_format was fetched.
   BodyType atlas_doc_format = 2;
+  // The rendered body (XHTML), populated when the view format was fetched.
   BodyType view = 3;
   // Unprocessed editor content; only custom content has this format.
   BodyType raw = 4;
@@ -153,22 +158,36 @@ message VersionedEntity {
 
 // The lifecycle status of a piece of content.
 enum ContentStatus {
+  // Zero value; the status is unknown or was not returned.
   CONTENT_STATUS_UNSPECIFIED = 0;
+  // The current, published version of the content.
   CONTENT_STATUS_CURRENT = 1;
+  // An unpublished draft.
   CONTENT_STATUS_DRAFT = 2;
+  // Archived content; hidden from normal navigation but retained.
   CONTENT_STATUS_ARCHIVED = 3;
+  // A superseded version kept in the version history.
   CONTENT_STATUS_HISTORICAL = 4;
+  // Content moved to the trash.
   CONTENT_STATUS_TRASHED = 5;
+  // Content permanently deleted (purged from the trash).
   CONTENT_STATUS_DELETED = 6;
+  // Filter-only value matching content in any status; never a stored status.
   CONTENT_STATUS_ANY = 7;
 }
 
 // The content kind of a parent, or unset if there is no parent.
 enum ParentContentType {
+  // Zero value; there is no parent.
   PARENT_CONTENT_TYPE_UNSPECIFIED = 0;
+  // The parent is a page.
   PARENT_CONTENT_TYPE_PAGE = 1;
+  // The parent is a whiteboard.
   PARENT_CONTENT_TYPE_WHITEBOARD = 2;
+  // The parent is a database.
   PARENT_CONTENT_TYPE_DATABASE = 3;
+  // The parent is an embed.
   PARENT_CONTENT_TYPE_EMBED = 4;
+  // The parent is a folder.
   PARENT_CONTENT_TYPE_FOLDER = 5;
 }

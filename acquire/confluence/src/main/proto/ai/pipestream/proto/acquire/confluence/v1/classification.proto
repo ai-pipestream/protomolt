@@ -13,25 +13,41 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
 // The status of a classification level.
 enum ClassificationLevelStatus {
+  // Zero value; the status is unknown or was not returned.
   CLASSIFICATION_LEVEL_STATUS_UNSPECIFIED = 0;
+  // The level is a draft and not yet in effect.
   CLASSIFICATION_LEVEL_STATUS_DRAFT = 1;
+  // The level is published and available for use.
   CLASSIFICATION_LEVEL_STATUS_PUBLISHED = 2;
+  // The level is archived and no longer available for use.
   CLASSIFICATION_LEVEL_STATUS_ARCHIVED = 3;
 }
 
 // The color of a classification level.
 enum ClassificationLevelColor {
+  // Zero value; the color is unknown or was not returned.
   CLASSIFICATION_LEVEL_COLOR_UNSPECIFIED = 0;
+  // Red.
   CLASSIFICATION_LEVEL_COLOR_RED = 1;
+  // Red, displayed in bold.
   CLASSIFICATION_LEVEL_COLOR_RED_BOLD = 2;
+  // Orange.
   CLASSIFICATION_LEVEL_COLOR_ORANGE = 3;
+  // Yellow.
   CLASSIFICATION_LEVEL_COLOR_YELLOW = 4;
+  // Green.
   CLASSIFICATION_LEVEL_COLOR_GREEN = 5;
+  // Blue.
   CLASSIFICATION_LEVEL_COLOR_BLUE = 6;
+  // Navy.
   CLASSIFICATION_LEVEL_COLOR_NAVY = 7;
+  // Teal.
   CLASSIFICATION_LEVEL_COLOR_TEAL = 8;
+  // Purple.
   CLASSIFICATION_LEVEL_COLOR_PURPLE = 9;
+  // Grey.
   CLASSIFICATION_LEVEL_COLOR_GREY = 10;
+  // Lime.
   CLASSIFICATION_LEVEL_COLOR_LIME = 11;
 }
 

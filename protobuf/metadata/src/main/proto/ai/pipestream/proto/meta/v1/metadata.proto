@@ -12,6 +12,9 @@ import "google/protobuf/descriptor.proto";
 // Independent of validation and indexing — those standards may read labels but
 // do not own this option namespace.
 
+// Descriptive and operational metadata for one field: docs, ownership,
+// sensitivity class, and free-form labels. Attached via the
+// (ai.pipestream.proto.meta.v1.field) option on FieldOptions.
 message FieldMeta {
   // Human-readable description (docs, OpenAPI, UI).
   string description = 1;
@@ -30,17 +33,25 @@ message FieldMeta {
   string json_name = 6;
 }
 
+// Descriptive and operational metadata for one message. Attached via the
+// (ai.pipestream.proto.meta.v1.message) option on MessageOptions.
 message MessageMeta {
+  // Human-readable description (docs, OpenAPI, UI).
   string description = 1;
+  // Owning team / system.
   string owner = 2;
+  // Sensitivity class: e.g. public, internal, pii, secret.
   string sensitivity = 3;
+  // Free-form labels for routing, policy, and extraction.
   map<string, string> labels = 4;
 }
 
 extend google.protobuf.FieldOptions {
+  // Field-level metadata option: attach a FieldMeta to any field.
   FieldMeta field = 59100491;
 }
 
 extend google.protobuf.MessageOptions {
+  // Message-level metadata option: attach a MessageMeta to any message.
   MessageMeta message = 59100492;
 }

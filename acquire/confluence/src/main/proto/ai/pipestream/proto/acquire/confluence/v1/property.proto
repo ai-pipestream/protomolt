@@ -25,6 +25,7 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 // A well-known Confluence property key. CUSTOM is the escape hatch: when the
 // key is CUSTOM, the property's custom_key carries the API's raw key string.
 enum PropertyKey {
+  // Zero value; the key is unknown or was not returned.
   PROPERTY_KEY_UNSPECIFIED = 0;
   // The editor a page was last edited with ("editor").
   PROPERTY_KEY_EDITOR = 1;
@@ -40,10 +41,15 @@ enum PropertyKey {
 // is only for values that genuinely are structured JSON (custom keys with
 // object values).
 message PropertyValue {
+  // The typed value; the set arm matches the value's actual type.
   oneof value {
+    // String value.
     string string_value = 1;
+    // Integer value.
     int64 integer_value = 2;
+    // Boolean value.
     bool bool_value = 3;
+    // Floating-point value.
     double double_value = 4;
     // Structured JSON value (custom keys with object values). The only
     // google.protobuf.Struct in the schema.

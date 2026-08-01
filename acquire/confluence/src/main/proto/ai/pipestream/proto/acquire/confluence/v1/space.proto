@@ -20,20 +20,31 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
 // The type of space.
 enum SpaceType {
+  // Not specified.
   SPACE_TYPE_UNSPECIFIED = 0;
+  // A global space (a shared team space, as opposed to a personal space).
   SPACE_TYPE_GLOBAL = 1;
+  // A collaboration space.
   SPACE_TYPE_COLLABORATION = 2;
+  // A knowledge-base space.
   SPACE_TYPE_KNOWLEDGE_BASE = 3;
+  // A user's personal space.
   SPACE_TYPE_PERSONAL = 4;
+  // A system space.
   SPACE_TYPE_SYSTEM = 5;
+  // An onboarding space (created for product onboarding).
   SPACE_TYPE_ONBOARDING = 6;
+  // A sample space created by xflow.
   SPACE_TYPE_XFLOW_SAMPLE_SPACE = 7;
 }
 
 // The status of the space.
 enum SpaceStatus {
+  // Not specified.
   SPACE_STATUS_UNSPECIFIED = 0;
+  // The space is active.
   SPACE_STATUS_CURRENT = 1;
+  // The space is archived.
   SPACE_STATUS_ARCHIVED = 2;
 }
 
@@ -51,7 +62,9 @@ message SpaceIcon {
 // requested. Distinct from Body because spaces use the plain/view
 // representations.
 message SpaceDescription {
+  // The plain-text representation of the space description.
   BodyType plain = 1;
+  // The rendered view representation of the space description.
   BodyType view = 2;
 }
 
@@ -74,9 +87,11 @@ message Space {
   string name = 3 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
   ];
+  // The type of the space.
   SpaceType type = 4 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
+  // The status of the space.
   SpaceStatus status = 5 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
@@ -96,11 +111,17 @@ message Space {
   ];
   // ID of the space's homepage.
   string homepage_id = 10;
+  // The description of the space, in the fetched representations.
   SpaceDescription description = 11;
+  // The icon of the space.
   SpaceIcon icon = 12;
+  // The labels attached to the space.
   repeated Label labels = 13;
+  // The properties of the space.
   repeated ContentProperty properties = 14;
+  // The operations permitted on the space.
   repeated Operation operations = 15;
+  // The space permission assignments in effect for the space.
   repeated SpacePermissionAssignment permissions = 16;
   // Human-facing URL of the content, for search results and UIs.
   string web_url = 17;
@@ -126,10 +147,12 @@ message DataPolicy {
   ];
   // Name of the space.
   string name = 3;
+  // The description of the space, in the fetched representations.
   SpaceDescription description = 4;
   // Whether the space contains any content blocked for (inaccessible to) the
   // requesting client application.
   bool any_content_blocked = 5;
+  // The icon of the space.
   SpaceIcon icon = 6;
   // Human-facing URL of the content, for search results and UIs.
   string web_url = 7;

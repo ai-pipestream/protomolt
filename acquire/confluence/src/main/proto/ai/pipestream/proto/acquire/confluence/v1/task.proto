@@ -16,8 +16,11 @@ option java_package = "ai.pipestream.proto.acquire.confluence.v1";
 
 // The status of a task.
 enum TaskStatus {
+  // Zero value; the status is unknown or was not returned.
   TASK_STATUS_UNSPECIFIED = 0;
+  // The task has been completed.
   TASK_STATUS_COMPLETE = 1;
+  // The task has not been completed.
   TASK_STATUS_INCOMPLETE = 2;
 }
 
@@ -39,9 +42,11 @@ message Task {
   string page_id = 4;
   // ID of the blog post the task is in.
   string blog_post_id = 5;
+  // The status of the task.
   TaskStatus status = 6 [
     (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
+  // The body of the task (its text content).
   Body body = 7;
   // Account ID of the user who created this task.
   string created_by = 8 [

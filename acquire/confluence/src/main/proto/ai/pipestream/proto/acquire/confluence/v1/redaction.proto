@@ -50,6 +50,8 @@ message RedactionSectionResponse {
 // includes a unique ID for restoration, except that code block redactions
 // cannot be restored.
 message RedactionResponse {
+  // The redactions applied to the content body.
   RedactionSectionResponse body = 1;
+  // The redactions applied to the content title.
   RedactionSectionResponse title = 2;
 }
