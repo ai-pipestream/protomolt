@@ -39,6 +39,12 @@ service ProtoMoltService {
   // is the schema document itself.
   rpc RenderJsonSchema(RenderJsonSchemaRequest) returns (google.protobuf.Struct);
 
+  // Renders the prompt packet for a message type: the complete LLM
+  // form-filling briefing (instruction prose from the schema's metadata,
+  // validation, quality and llm.v1 annotations, plus the JSON Schema decoder
+  // constraint, plus an optional resolved persona).
+  rpc RenderPrompt(RenderPromptRequest) returns (google.protobuf.Struct);
+
   // Renders the search-index artifact for a message type from its indexing
   // hints. The response shape is engine-specific (OpenSearch mappings, Solr
   // schema pieces, or Lucene field specs).
@@ -231,6 +237,17 @@ message CheckCompatResponse {
 message RenderJsonSchemaRequest {
   SchemaSource schema = 1;
   string type = 2;
+}
+
+message RenderPromptRequest {
+  SchemaSource schema = 1;
+  string type = 2;
+  // The resolved persona to render for, as canonical proto3 JSON of
+  // ai.pipestream.proto.prompt.v1.Persona. Absent renders persona-free.
+  google.protobuf.Struct persona = 3;
+  // Opaque registry reference echoed into the packet so the receiver can
+  // rebuild the descriptor set; empty when the caller has no registry context.
+  string descriptor_set_ref = 4;
 }
 
 message RenderIndexMappingsRequest {

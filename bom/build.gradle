@@ -52,6 +52,8 @@ def supportedModules = [
         'protomolt-metadata',
         'protomolt-protobuf-metadata',
         'protomolt-protobuf-quality',
+        'protomolt-protobuf-llm',
+        'protomolt-protobuf-prompt',
         'protomolt-protobuf-validation',
         'protomolt-protobuf-indexing',
         'protomolt-index-spi',

@@ -82,6 +82,12 @@ project(':protomolt-protobuf-metadata').projectDir = file('protobuf/metadata')
 include 'protomolt-protobuf-quality'
 project(':protomolt-protobuf-quality').projectDir = file('protobuf/quality')
 
+include 'protomolt-protobuf-llm'
+project(':protomolt-protobuf-llm').projectDir = file('protobuf/llm')
+
+include 'protomolt-protobuf-prompt'
+project(':protomolt-protobuf-prompt').projectDir = file('protobuf/prompt')
+
 include 'protomolt-protobuf-validation'
 project(':protomolt-protobuf-validation').projectDir = file('protobuf/validation')
 

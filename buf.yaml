@@ -4,6 +4,10 @@ version: v2
 modules:
   - path: protobuf/metadata/src/main/proto
     name: buf.build/ai-pipestream/protobuf-metadata
+  - path: protobuf/llm/src/main/proto
+    name: buf.build/ai-pipestream/protobuf-llm
+  - path: protobuf/prompt/src/main/proto
+    name: buf.build/ai-pipestream/protobuf-prompt
   - path: protobuf/validation/src/main/proto
     name: buf.build/ai-pipestream/protobuf-validation
   - path: search/index/spi/src/main/proto

@@ -20,9 +20,9 @@ class ActionCatalogTest {
 
     private static final List<String> BUILT_INS = List.of(
             "compile", "validate-message", "diff-schemas", "check-compat", "render-json-schema",
-            "render-index-mappings", "eval-cel", "map-message", "synthesize-shape",
-            "join-messages", "merge-schemas", "check-rules", "infer-schema", "mask-message",
-            "extract-metadata", "list-types");
+            "render-prompt", "render-index-mappings", "eval-cel", "map-message",
+            "synthesize-shape", "join-messages", "merge-schemas", "check-rules", "infer-schema",
+            "mask-message", "extract-metadata", "list-types");
 
     private final ActionCatalog catalog = ActionCatalog.defaults(TestFixtures.personContext());
 
@@ -75,7 +75,7 @@ class ActionCatalogTest {
     }
 
     @Test
-    void defaultsRegistersAllSixteenBuiltIns() {
+    void defaultsRegistersAllSeventeenBuiltIns() {
         assertThat(catalog.names()).containsExactlyInAnyOrderElementsOf(BUILT_INS);
     }
 

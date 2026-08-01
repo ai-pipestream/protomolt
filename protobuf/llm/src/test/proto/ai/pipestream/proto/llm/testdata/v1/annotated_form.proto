@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.llm.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.llm.testdata";
+option java_outer_classname = "AnnotatedFormProto";
+
+import "ai/pipestream/proto/llm/v1/llm.proto";
+
+// A form carrying llm.v1 annotations at both scopes, for the reader tests.
+message AnnotatedForm {
+  option (ai.pipestream.proto.llm.v1.message) = {
+    directive: "Fill this form from the source text alone."
+    safeguards: "Do not use outside knowledge."
+  };
+
+  // The court that issued the opinion.
+  string court = 1 [(ai.pipestream.proto.llm.v1.field) = {
+    directive: "Name the court exactly as it appears in the caption."
+    safeguards: "Do not abbreviate."
+  }];
+
+  // The authority the opinion treats as controlling.
+  string leading_authority = 2 [(ai.pipestream.proto.llm.v1.field) = {
+    directive: "Cite the controlling authority."
+    volatile: true
+  }];
+
+  // A field with no llm.v1 annotation, proving absence reads as empty.
+  string note = 3;
+}

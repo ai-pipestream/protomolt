@@ -34,6 +34,7 @@ public final class ActionCatalog {
         catalog.register(new DiffSchemasAction());
         catalog.register(new CheckCompatAction());
         catalog.register(new RenderJsonSchemaAction());
+        catalog.register(new RenderPromptAction());
         catalog.register(new RenderIndexMappingsAction());
         catalog.register(new EvalCelAction());
         catalog.register(new MapMessageAction());

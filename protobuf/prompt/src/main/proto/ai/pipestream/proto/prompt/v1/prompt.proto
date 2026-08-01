@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.prompt.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.prompt";
+option java_outer_classname = "PromptProto";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
+
+// The prompt packet: a renderer's complete briefing for a model asked to fill one form.
+//
+// Strict protobuf end to end. JSON appears exactly once here, as response_json_schema,
+// and it is opaque decoder configuration for the model backend (LLM serving stacks
+// constrain sampling with JSON Schema), never data. The filled form itself is always a
+// concrete protobuf message; this packet only describes how to produce it.
+
+// A persona: a versioned point of view a form is filled from.
+//
+// Persona definitions are registered in the schema registry like any other message;
+// a renderer receives the RESOLVED persona and never performs registry I/O itself.
+// Human corrections made during review are appended to few_shot so the system's taste
+// compounds with use.
+message Persona {
+  // Stable identifier the persona is registered under (e.g. "litigator").
+  string id = 1 [(ai.pipestream.proto.validate.v1.field).required = true];
+
+  // Version of this persona definition; stamped onto every judgment produced with it.
+  string version = 2 [(ai.pipestream.proto.validate.v1.field).required = true];
+
+  // The persona's standing instructions, in imperative prose
+  // (e.g. "You fill forms as a practicing litigator researching precedent.").
+  string instructions = 3 [(ai.pipestream.proto.validate.v1.field).required = true];
+
+  // Persona-wide prohibitions, rendered before schema safeguards.
+  repeated string safeguards = 4;
+
+  // Example fills of the target type, packed as Any. Rendered as worked examples;
+  // seeded by human review resolutions.
+  repeated google.protobuf.Any few_shot = 5;
+}
+
+// Request to render a PromptPacket for a message type.
+//
+// Carries a fully resolved persona (or none); callers resolving a persona reference
+// against the registry do so before rendering and fail loudly on an unresolvable ref.
+message RenderPromptRequest {
+  // Fully qualified name of the message type to render (e.g.
+  // "ai.pipestream.court.v1.DecoratedOpinion"). Must name a message reachable from
+  // the descriptor set being rendered.
+  string target_type = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$"
+  ];
+
+  // The resolved persona to render for. Absent means render persona-free: schema
+  // directives only, no point of view.
+  Persona persona = 2;
+
+  // Per-document specifics, packed as Any (typically the same type being filled, or a
+  // context message agreed with the persona). Serialized into the instructions as
+  // document-specific context; absent means no per-document override.
+  google.protobuf.Any overrides = 3;
+}
+
+// The complete briefing for filling one form: instructions, decoder constraint, and
+// the persona context they were rendered with.
+message PromptPacket {
+  // Fully qualified name of the message type to fill; echoes the request.
+  string target_type = 1;
+
+  // Opaque reference to the descriptor set the packet was rendered from, meaningful to
+  // the caller's registry (e.g. a repo address). Echoed from the rendering context so
+  // the receiver can build a DynamicMessage without guessing; the renderer itself does
+  // not resolve it.
+  string descriptor_set_ref = 2;
+
+  // The rendered instructions: message and field directives, validation constraints as
+  // requirements, CEL rules as cross-field requirements, quality dimensions as scoring
+  // notes, and all safeguards, in reading order.
+  string instructions = 3;
+
+  // Opaque decoder configuration: a JSON Schema (draft 2020-12) document describing
+  // the canonical proto3 JSON shape of the target type, with validation constraints
+  // folded in. Handed verbatim to the model backend's structured-output mechanism.
+  // NOT data: the filled form is always parsed strictly into the target message.
+  string response_json_schema = 4;
+
+  // The persona the packet was rendered with, echoed for provenance. Absent when the
+  // render was persona-free.
+  Persona persona = 5;
+
+  // Worked examples for the model, from the persona (and any per-document overrides).
+  repeated google.protobuf.Any few_shot = 6;
+}
