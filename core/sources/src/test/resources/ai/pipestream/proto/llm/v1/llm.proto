@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.llm.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.llm";
+option java_outer_classname = "LlmProto";
+
+import "google/protobuf/descriptor.proto";
+
+// LLM-facing schema annotations: how a message instructs the model asked to fill it.
+//
+// Independent of validation, metadata, and quality. Validation says whether data is
+// admissible, metadata describes it for humans, quality scores it after the fact; these
+// options direct the fill itself. They travel with the descriptor exactly like validation
+// rules do: git-reviewable, registry-free, and readable by anything that can read a
+// descriptor set. Renderers (notably protomolt-prompt) turn them into model instructions;
+// nothing here is enforced by the schema itself.
+
+// LLM-facing directives for a single field.
+message FieldLlm {
+  // Instruction to the model for filling this field, in imperative prose
+  // (e.g. "Name the court exactly as it appears in the caption."). Empty means the
+  // field carries no fill-time guidance beyond its type and validation rules.
+  string directive = 1;
+
+  // Things the model must NOT do when filling this field, in imperative prose
+  // (e.g. "Do not invent citations that do not appear in the text."). Safeguards are
+  // rendered as prohibitions, not validations; violating one is a judgment failure,
+  // not a schema error.
+  repeated string safeguards = 2;
+
+  // True when a correct value for this field is time-relative by nature (e.g. "the
+  // leading authority on X"): the value is expected to change as the corpus grows.
+  // Appeals treat reversal of a volatile field as a refresh and reversal of a stable
+  // field as an alarm. False when unset.
+  bool volatile = 3;
+}
+
+// LLM-facing directives for a whole message.
+message MessageLlm {
+  // Overall instruction to the model filling this message, in imperative prose
+  // (e.g. "Fill this form from the perspective of a practicing litigator.").
+  string directive = 1;
+
+  // Fill-wide prohibitions, rendered before the per-field safeguards.
+  repeated string safeguards = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  // LLM-facing directives for this field.
+  FieldLlm field = 59100521;
+}
+
+extend google.protobuf.MessageOptions {
+  // LLM-facing directives for this message.
+  MessageLlm message = 59100522;
+}

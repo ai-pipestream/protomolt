@@ -32,6 +32,13 @@ import java.util.Map;
  * Well-known-type imports the encoder cannot supply are linked from protobuf-java's runtime
  * by {@link GoogleDescriptorLoader}'s fallback.</p>
  *
+ * <p>Wire's {@code SchemaEncoder} encodes structure correctly but mangles options whose
+ * extension fields share a simple name across packages (its intermediate JSON map is keyed by
+ * simple name, so same-named option families collide and only the last survives). The encoded
+ * files therefore pass through {@link LinkedOptionsRepair}, which re-encodes every element's
+ * options from Wire's linked model — keyed by {@code ProtoMember} and fully intact — before
+ * the set is built.</p>
+ *
  * <p>Instances are stateless and thread-safe. This is the single compilation pipeline behind
  * every text-based descriptor source (schema-registry loaders, gatherers).</p>
  */
@@ -66,7 +73,7 @@ public final class ProtoSourceCompiler {
             for (String path : sources.paths()) {
                 encodeWithDependencies(path, schema, encoder, protos);
             }
-            FileDescriptorSet set = FileDescriptorSet.newBuilder().addAllFile(protos.values()).build();
+            FileDescriptorSet set = repairOptions(schema, protos);
             return linkDescriptors(sources, set);
         } catch (IOException e) {
             throw new ProtoCompilationException("Failed to stage sources in memory", e);
@@ -124,13 +131,51 @@ public final class ProtoSourceCompiler {
         FileDescriptorProto proto;
         try {
             proto = FileDescriptorProto.parseFrom(encoder.encode(protoFile).toByteArray());
-        } catch (IOException e) {
-            throw new ProtoCompilationException("Failed to encode " + path, e);
+        } catch (IOException | RuntimeException e) {
+            // SchemaEncoder also throws raw runtime exceptions (e.g. NPE on an enum option
+            // identifier it cannot resolve); compile failures must surface as
+            // ProtoCompilationException either way.
+            throw new ProtoCompilationException("Failed to encode " + path
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage()), e);
         }
         out.put(path, proto);
         for (String dependency : proto.getDependencyList()) {
             encodeWithDependencies(dependency, schema, encoder, out);
         }
+    }
+
+    /**
+     * Re-encodes every element's options from Wire's linked model and returns the repaired set.
+     *
+     * <p>{@code SchemaEncoder} encodes structure correctly but mangles options: it routes the
+     * linked options through a JSON-style map keyed by the option field's simple name, so custom
+     * option extensions that share a field name across packages (the repo's annotation families
+     * all declare extensions named {@code field} / {@code message} under different numbers)
+     * collide — only the last family survives with content. The linked {@code Options} maps are
+     * intact, so {@link LinkedOptionsRepair} rebuilds every non-empty options payload from them.
+     * Extension descriptors resolve against {@link FileDescriptor}s built from the encoded
+     * structure, which is already correct — only option payloads are affected.</p>
+     */
+    private static FileDescriptorSet repairOptions(Schema schema, Map<String, FileDescriptorProto> protos)
+            throws ProtoCompilationException {
+        FileDescriptorSet structural = FileDescriptorSet.newBuilder().addAllFile(protos.values()).build();
+        LinkedOptionsEncoder optionsEncoder;
+        try {
+            optionsEncoder = LinkedOptionsEncoder.over(GoogleDescriptorLoader.fromDescriptorSet(structural));
+        } catch (Exception e) {
+            throw new ProtoCompilationException("Failed to build descriptors for option repair", e);
+        }
+        if (optionsEncoder.isEmpty()) {
+            return structural;
+        }
+        Map<String, FileDescriptorProto> repaired = new LinkedHashMap<>();
+        for (Map.Entry<String, FileDescriptorProto> entry : protos.entrySet()) {
+            ProtoFile protoFile = schema.protoFile(entry.getKey());
+            repaired.put(entry.getKey(), protoFile == null
+                    ? entry.getValue()
+                    : LinkedOptionsRepair.repair(protoFile, entry.getValue(), optionsEncoder));
+        }
+        return FileDescriptorSet.newBuilder().addAllFile(repaired.values()).build();
     }
 
     private static CompiledProtos linkDescriptors(ProtoSourceSet sources, FileDescriptorSet set)
