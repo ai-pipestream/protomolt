@@ -33,7 +33,7 @@ enum DocumentPart {
   // search_metadata.semantic_results — chunk texts, embeddings, analytics.
   // Sub-keyed per chunk set (see PartManifestEntry.sub_key).
   DOCUMENT_PART_CHUNKS = 3;
-  // parsed_metadata — append-only parser exhaust.
+  // parser_results — append-only parser exhaust.
   DOCUMENT_PART_PARSED = 4;
 }
 

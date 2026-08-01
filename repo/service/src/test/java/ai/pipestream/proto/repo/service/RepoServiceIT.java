@@ -35,7 +35,9 @@ import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.repo.v1.ListDrivesRequest;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
-import ai.pipestream.proto.repo.v1.ParsedMetadata;
+import ai.pipestream.proto.repo.v1.ParseStatus;
+import ai.pipestream.proto.repo.v1.ParserDocument;
+import ai.pipestream.proto.repo.v1.ParserResult;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
 import ai.pipestream.proto.repo.v1.PutBlobRequest;
@@ -154,9 +156,11 @@ class RepoServiceIT {
                         .setData(ByteString.copyFromUtf8("raw-pdf-bytes-of-" + docId))
                         .setMimeType("application/pdf")
                         .setFilename("report.pdf")))
-                .putParsedMetadata("tika", ParsedMetadata.newBuilder()
+                .putParserResults("tika", ParserResult.newBuilder()
                         .setParserName("tika")
-                        .setData(Any.pack(StringValue.of("tika-exhaust")))
+                        .setStatus(ParseStatus.PARSE_STATUS_OK)
+                        .setDocument(ParserDocument.newBuilder()
+                                .setShape(Any.pack(StringValue.of("tika-exhaust"))))
                         .build())
                 .build();
     }
@@ -381,10 +385,10 @@ class RepoServiceIT {
         Document doc = fixture("doc-pread-1", account, "ds-1");
         SaveDocumentResponse saved = documents.saveDocument(intakeSave(doc, "docs", account).build());
 
-        // CORE only: everything but blob_bag / parsed_metadata / semantic_results.
+        // CORE only: everything but blob_bag / parser_results / semantic_results.
         Document coreOnly = doc.toBuilder()
                 .clearBlobBag()
-                .clearParsedMetadata()
+                .clearParserResults()
                 .setSearchMetadata(doc.getSearchMetadata().toBuilder().clearSemanticResults())
                 .build();
         GetDocumentResponse core = documents.getDocument(GetDocumentRequest.newBuilder()

@@ -13,7 +13,7 @@ public final class PartLayouts {
 
     /**
      * The default four-part layout for {@link Document}: identity field
-     * {@code doc_id}; BLOBS ← {@code blob_bag}; PARSED ← {@code parsed_metadata};
+     * {@code doc_id}; BLOBS ← {@code blob_bag}; PARSED ← {@code parser_results};
      * CHUNKS ← {@code search_metadata.semantic_results} keyed by
      * {@code result_id}. CORE is implicit — everything unmapped lands there.
      *
@@ -23,7 +23,7 @@ public final class PartLayouts {
         return PartLayout.builder(Document.getDescriptor())
                 .identityField("doc_id")
                 .partField(DocumentPart.DOCUMENT_PART_BLOBS, "blob_bag")
-                .partField(DocumentPart.DOCUMENT_PART_PARSED, "parsed_metadata")
+                .partField(DocumentPart.DOCUMENT_PART_PARSED, "parser_results")
                 .chunkedPart(DocumentPart.DOCUMENT_PART_CHUNKS,
                         "search_metadata.semantic_results", "result_id")
                 .build();

@@ -21,7 +21,7 @@ option java_package = "ai.pipestream.proto.repo.v1";
 // DOCUMENT — the generic core document container of the platform.
 //
 // Reshaped from pipestream's PipeDoc: same part-decomposable shape (the
-// claim-check codec splits on search_metadata / blob_bag / parsed_metadata
+// claim-check codec splits on search_metadata / blob_bag / parser_results
 // boundaries), generic names, and a typed security model (OIS-aligned,
 // see security.proto) instead of bare ACL strings.
 // ============================================================================
@@ -37,6 +37,11 @@ message OwnershipContext {
   optional string connector_id = 3;
   // Document-level security (typed ACLs).
   DocumentSecurity security = 4;
+  // The end-user principal who owns this asset in the source system (e.g.
+  // the OneDrive user a file was crawled from). Distinct from account_id,
+  // which is the account tenant root; source_owner records asset ownership
+  // at the source, not platform tenancy.
+  optional Principal source_owner = 5;
 }
 
 // How a doc_id was determined (auditability and idempotency semantics).
@@ -64,7 +69,7 @@ message DocIdDerivation {
 // The primary data structure flowing through the platform.
 //
 // A stored Document is split on clean proto boundaries into independently
-// addressable parts: CORE (everything except blob_bag, parsed_metadata and
+// addressable parts: CORE (everything except blob_bag, parser_results and
 // search_metadata.semantic_results), BLOBS, CHUNKS (per semantic_results
 // chunk set) and PARSED. Assembly is a field-level merge of the parts in
 // manifest order and round-trips byte-for-byte.
@@ -80,24 +85,75 @@ message Document {
   BlobBag blob_bag = 3;
   // Customer-provided structured data in any protobuf format.
   google.protobuf.Any structured_data = 4;
-  // Immutable parsed metadata from document parsers (Tika, Docling, ...).
+  // Per-parser results from document parsers (Tika, Docling, ...).
   // Append-only: parsers add new entries but never modify or delete existing
   // ones. Keys are parser-specific identifiers (e.g. "tika", "docling").
-  map<string, ParsedMetadata> parsed_metadata = 5;
+  // Renamed from parsed_metadata (was map<string, ParsedMetadata>). This is a
+  // DELIBERATE WIRE BREAK, safe only because repo/ is pre-release: nothing is
+  // stored and nothing downstream reads it. The map framing is unchanged (tag
+  // 5, entry key=1/value=2), but the value message is a full redefinition and
+  // old bytes MUST NOT be read back:
+  //   tag 1  Timestamp parsed_date -> string parser_name   (fails UTF-8, throws)
+  //   tag 2  string    parser_name -> string parser_version (parses SILENTLY,
+  //                                                          wrong field)
+  //   tag 3  Any       data        -> Timestamp parsed_date (wire-type mismatch,
+  //                                                          dropped to unknown)
+  // Tag 2 is why there is no migration path worth writing: it round-trips
+  // cleanly into the wrong field. Any pre-existing payload must be discarded,
+  // not converted.
+  map<string, ParserResult> parser_results = 5;
   // Ownership tracking for security, auditing, and access control.
   optional OwnershipContext ownership = 6;
   // How the doc_id was determined.
   optional DocIdDerivation doc_id_derivation = 7;
 }
 
-// Wrapper for one parser's output.
-message ParsedMetadata {
+// Outcome of one parser's run. A failed parse is recorded (status FAILED,
+// error set), never silently absent.
+enum ParseStatus {
+  // Unset; the parse outcome was not recorded.
+  PARSE_STATUS_UNSPECIFIED = 0;
+  // The parse completed cleanly.
+  PARSE_STATUS_OK = 1;
+  // The parse produced a partial result (e.g. some pages unreadable).
+  PARSE_STATUS_PARTIAL = 2;
+  // The parse failed; `error` carries the reason.
+  PARSE_STATUS_FAILED = 3;
+}
+
+// One parser's full result for a document — the unit stored under each
+// parser_results key (the map key is the authoritative parser identity).
+message ParserResult {
+  // Parser that produced this entry (e.g. "tika", "docling"). Matches the
+  // map key; the key is authoritative.
+  string parser_name = 1;
+  // Version of the parser that ran, for reparse/migration auditability.
+  string parser_version = 2;
   // When the parse ran.
-  optional google.protobuf.Timestamp parsed_date = 1;
-  // Parser that produced this entry (e.g. "tika", "docling").
-  string parser_name = 2;
-  // Parser-specific protobuf payload.
-  google.protobuf.Any data = 3;
+  optional google.protobuf.Timestamp parsed_date = 3;
+  // Outcome of the parse; a failed parse is recorded, not absent.
+  ParseStatus status = 4;
+  // Failure/partial reason; set when status is PARTIAL or FAILED.
+  string error = 5;
+  // Fingerprint of the parser configuration used; the parsing coordinator's
+  // re-run token (a changed fingerprint means the result is stale).
+  string config_fingerprint = 6;
+  // What the parser produced.
+  ParserDocument document = 7;
+  // Extensible run metadata: timings, warnings (extension-metadata map —
+  // see convention).
+  map<string, string> metadata = 99;
+}
+
+// The document a parser produced: the parser-native model plus doc-level
+// claims a parsing coordinator folds into the arbitrated SearchMetadata.
+message ParserDocument {
+  // Parser-native document model (DoclingDocument, tika output, ...).
+  google.protobuf.Any shape = 1;
+  // Doc-level claims (title, author, language, page_count) extracted by the
+  // parser. A parsing coordinator folds these; SearchMetadata stays the
+  // arbitrated winner.
+  google.protobuf.Struct extracted_fields = 2;
   // Extensible key-value metadata (extension-metadata map — see convention).
   map<string, string> metadata = 99;
 }

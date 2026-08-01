@@ -48,3 +48,18 @@ message DocumentSecurity {
   // The explicit ACL rules on this document; evaluated deny-wins.
   repeated AccessRule permissions = 2;
 }
+
+// A person or service principal — same identity vocabulary as AccessRule
+// (identity + identity type + display label), minus the access decision.
+// Used where a principal is referenced rather than granted (e.g.
+// OwnershipContext.source_owner). AccessRule could converge on Principal
+// later; for now the two stay separate.
+message Principal {
+  // SID, email, group id, or "public".
+  string identity = 1;
+  // "windows-sid" | "oauth-group" | "user-principal-name" | "cmis-user" |
+  // "local-role" | "public" | <custom>.
+  string identity_type = 2;
+  // Audit/debug label.
+  string display_name = 3;
+}
