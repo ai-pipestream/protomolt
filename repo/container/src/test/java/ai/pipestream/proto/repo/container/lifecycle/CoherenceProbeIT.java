@@ -12,7 +12,9 @@ import ai.pipestream.proto.repo.v1.BlobBag;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
-import ai.pipestream.proto.repo.v1.ParsedMetadata;
+import ai.pipestream.proto.repo.v1.ParseStatus;
+import ai.pipestream.proto.repo.v1.ParserDocument;
+import ai.pipestream.proto.repo.v1.ParserResult;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
 import com.google.protobuf.Any;
@@ -49,9 +51,11 @@ class CoherenceProbeIT extends AbstractLifecycleIT {
                         .setBlobId("blob-1")
                         .setData(ByteString.copyFromUtf8("raw-bytes"))
                         .setMimeType("application/pdf")))
-                .putParsedMetadata("tika", ParsedMetadata.newBuilder()
+                .putParserResults("tika", ParserResult.newBuilder()
                         .setParserName("tika")
-                        .setData(Any.pack(StringValue.of("tika-exhaust")))
+                        .setStatus(ParseStatus.PARSE_STATUS_OK)
+                        .setDocument(ParserDocument.newBuilder()
+                                .setShape(Any.pack(StringValue.of("tika-exhaust"))))
                         .build())
                 .build();
         NodeAddress address = NodeAddress.newBuilder()
@@ -118,7 +122,7 @@ class CoherenceProbeIT extends AbstractLifecycleIT {
                 Set.of(), Set.of(), Document.getDefaultInstance());
         assertThat(assembled).isNotNull();
         assertThat(assembled.getDocId()).isEqualTo(doc.getDocId());
-        assertThat(assembled.getParsedMetadataMap()).isEmpty();
+        assertThat(assembled.getParserResultsMap()).isEmpty();
         assertThat(assembled.getBlobBag().getBlob().getData())
                 .isEqualTo(ByteString.copyFromUtf8("raw-bytes"));
 

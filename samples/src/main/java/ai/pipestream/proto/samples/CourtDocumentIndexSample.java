@@ -224,7 +224,7 @@ public final class CourtDocumentIndexSample {
                 .put(metadata, "source_path", ResolvedFieldHint.skipped())
                 .put(document, "blob_bag", ResolvedFieldHint.skipped())
                 .put(document, "structured_data", ResolvedFieldHint.skipped())
-                .put(document, "parsed_metadata", ResolvedFieldHint.skipped())
+                .put(document, "parser_results", ResolvedFieldHint.skipped())
                 .put(document, "ownership", ResolvedFieldHint.skipped())
                 .put(document, "doc_id_derivation", ResolvedFieldHint.skipped());
     }

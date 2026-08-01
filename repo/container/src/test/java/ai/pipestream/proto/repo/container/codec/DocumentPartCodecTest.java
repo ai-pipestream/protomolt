@@ -5,7 +5,9 @@ import ai.pipestream.proto.repo.v1.BlobBag;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentPart;
-import ai.pipestream.proto.repo.v1.ParsedMetadata;
+import ai.pipestream.proto.repo.v1.ParseStatus;
+import ai.pipestream.proto.repo.v1.ParserDocument;
+import ai.pipestream.proto.repo.v1.ParserResult;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
 import ai.pipestream.proto.repo.v1.SemanticChunk;
@@ -64,14 +66,14 @@ class DocumentPartCodecTest {
         assertThat(blobs.getDocId()).isEqualTo(doc.getDocId());
         assertThat(blobs.hasBlobBag()).isTrue();
         assertThat(blobs.hasSearchMetadata()).isFalse();
-        assertThat(blobs.getParsedMetadataCount()).isZero();
+        assertThat(blobs.getParserResultsCount()).isZero();
 
         Document core = Document.parseFrom(parts.get(0).bytes());
         assertThat(core.hasSearchMetadata()).isTrue(); // parent kept, as it was set
         assertThat(core.getSearchMetadata().getSemanticResultsCount()).isZero();
         assertThat(core.getSearchMetadata().getTitle()).isEqualTo("A doc");
         assertThat(core.hasBlobBag()).isFalse();
-        assertThat(core.getParsedMetadataCount()).isZero();
+        assertThat(core.getParserResultsCount()).isZero();
 
         // First chunk-set fragment: identity + the two consecutive title-384 results.
         Document chunk = Document.parseFrom(parts.get(2).bytes());
@@ -82,7 +84,7 @@ class DocumentPartCodecTest {
         assertThat(chunk.getSearchMetadata().getTitle()).isEmpty();
 
         Document parsed = Document.parseFrom(parts.get(5).bytes());
-        assertThat(parsed.getParsedMetadataCount()).isEqualTo(1);
+        assertThat(parsed.getParserResultsCount()).isEqualTo(1);
         assertThat(parsed.hasBlobBag()).isFalse();
         assertThat(parsed.hasSearchMetadata()).isFalse();
     }
@@ -223,7 +225,7 @@ class DocumentPartCodecTest {
 
     /**
      * Genericity proof: a layout over the same Document type but mapping ONLY
-     * blob_bag to BLOBS leaves parsed_metadata and semantic_results in CORE —
+     * blob_bag to BLOBS leaves parser_results and semantic_results in CORE —
      * CORE is always the complement of the mapped fields, for any mapping.
      */
     @Test
@@ -240,7 +242,7 @@ class DocumentPartCodecTest {
                 .containsExactly(DocumentPart.DOCUMENT_PART_CORE, DocumentPart.DOCUMENT_PART_BLOBS);
 
         Document core = Document.parseFrom(parts.get(0).bytes());
-        assertThat(core.getParsedMetadataCount()).isEqualTo(1); // unmapped -> CORE
+        assertThat(core.getParserResultsCount()).isEqualTo(1); // unmapped -> CORE
         assertThat(core.getSearchMetadata().getSemanticResultsCount()).isEqualTo(4); // unmapped -> CORE
         assertThat(core.hasBlobBag()).isFalse();
 
@@ -280,9 +282,12 @@ class DocumentPartCodecTest {
                 .setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder()
                         .setBlobId("b1").setFilename("f.pdf").setMimeType("application/pdf")
                         .setData(ByteString.copyFromUtf8("pdf-bytes"))))
-                .putParsedMetadata("tika", ParsedMetadata.newBuilder()
+                .putParserResults("tika", ParserResult.newBuilder()
                         .setParserName("tika")
-                        .setData(Any.pack(StringValue.of("tika-exhaust"))).build())
+                        .setStatus(ParseStatus.PARSE_STATUS_OK)
+                        .setDocument(ParserDocument.newBuilder()
+                                .setShape(Any.pack(StringValue.of("tika-exhaust"))))
+                        .build())
                 .setStructuredData(Any.pack(StringValue.of("customer-data")))
                 .build();
     }

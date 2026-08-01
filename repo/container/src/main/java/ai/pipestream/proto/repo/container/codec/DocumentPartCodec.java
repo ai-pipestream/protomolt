@@ -26,14 +26,14 @@ import java.util.List;
  * <p>With the default {@link PartLayouts#document()} layout a stored
  * {@code Document} is split into:
  * <ul>
- *   <li><b>CORE</b> — everything except {@code blob_bag}, {@code parsed_metadata}
+ *   <li><b>CORE</b> — everything except {@code blob_bag}, {@code parser_results}
  *       and {@code search_metadata.semantic_results};</li>
  *   <li><b>BLOBS</b> — {@code doc_id} + {@code blob_bag};</li>
  *   <li><b>CHUNKS</b> — one fragment per <i>chunk set</i>: a consecutive run of
  *       {@code semantic_results} entries sharing a {@code result_id}.
  *       Consecutive-run grouping (not global grouping) preserves the exact
  *       original ordering on reassembly — a byte-fidelity requirement;</li>
- *   <li><b>PARSED</b> — {@code doc_id} + {@code parsed_metadata}.</li>
+ *   <li><b>PARSED</b> — {@code doc_id} + {@code parser_results}.</li>
  * </ul>
  *
  * <p>Each fragment is itself a valid serialized message of the SAME type

@@ -7,7 +7,7 @@ import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentPart;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
-import ai.pipestream.proto.repo.v1.ParsedMetadata;
+import ai.pipestream.proto.repo.v1.ParserResult;
 import ai.pipestream.proto.repo.v1.PartManifestEntry;
 import ai.pipestream.proto.repo.v1.PartState;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
@@ -155,7 +155,7 @@ class PartStorageTest {
 
         Document expected = doc.toBuilder()
                 .clearBlobBag()
-                .clearParsedMetadata()
+                .clearParserResults()
                 .setSearchMetadata(doc.getSearchMetadata().toBuilder().clearSemanticResults())
                 .build();
         assertThat(coreOnly).isEqualTo(expected);
@@ -174,7 +174,7 @@ class PartStorageTest {
                 .extracting(SemanticProcessingResult::getResultId)
                 .containsExactly("set-a");
         assertThat(oneSet.hasBlobBag()).isFalse();
-        assertThat(oneSet.getParsedMetadataMap()).isEmpty();
+        assertThat(oneSet.getParserResultsMap()).isEmpty();
     }
 
     @Test
@@ -286,7 +286,7 @@ class PartStorageTest {
                 .setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder()
                         .setBlobId("blob-1")
                         .setData(ByteString.copyFromUtf8("raw bytes"))))
-                .putParsedMetadata("tika", ParsedMetadata.newBuilder()
+                .putParserResults("tika", ParserResult.newBuilder()
                         .setParserName("tika")
                         .putMetadata("pages", "3")
                         .build())
