@@ -75,4 +75,57 @@ class RenderPromptActionTest {
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("unknown-type"));
     }
+
+    /**
+     * The live path: compile inline sources, then render from the descriptor-set base64.
+     * {@code SchemaResolver}'s extension registry must know llm.v1 and quality.v1 or their
+     * options drop to unknown fields at parse time and silently never render.
+     */
+    @Test
+    void compiledSourcesKeepLlmAndQualityAnnotations() throws Exception {
+        String probeProto = """
+                syntax = "proto3";
+                package probe;
+                import "ai/pipestream/proto/llm/v1/llm.proto";
+                import "ai/pipestream/proto/quality/v1/quality.proto";
+                message Probe {
+                  option (ai.pipestream.proto.quality.v1.quality) = {
+                    dimension: {id: "completeness", cel: "size(this.court) > 0 ? 1.0 : 0.0"}
+                  };
+                  // The issuing court.
+                  string court = 1 [(ai.pipestream.proto.llm.v1.field) = {
+                    directive: "Name the court exactly as it appears in the caption."
+                    volatile: true
+                  }];
+                }
+                """;
+        ObjectNode compileInput = obj("{\"sources\": {}}");
+        ObjectNode sources = (ObjectNode) compileInput.get("sources");
+        sources.put("probe/probe.proto", probeProto);
+        sources.put("ai/pipestream/proto/llm/v1/llm.proto",
+                classpathProto("/ai/pipestream/proto/llm/v1/llm.proto"));
+        sources.put("ai/pipestream/proto/quality/v1/quality.proto",
+                classpathProto("/ai/pipestream/proto/quality/v1/quality.proto"));
+        ObjectNode compiled = catalog.execute("compile", compileInput);
+        assertThat(compiled.get("ok").asBoolean()).isTrue();
+
+        ObjectNode renderInput = obj("{\"schema\": {}, \"type\": \"probe.Probe\"}");
+        ((ObjectNode) renderInput.get("schema")).put("descriptorSetBase64",
+                compiled.get("descriptorSetBase64").asText());
+        ObjectNode result = catalog.execute("render-prompt", renderInput);
+
+        assertThat(result.get("instructions").asText())
+                .contains("Name the court exactly as it appears in the caption.")
+                .contains("time-relative")
+                .contains("completeness");
+    }
+
+    private static String classpathProto(String path) {
+        try (var in = RenderPromptActionTest.class.getResourceAsStream(path)) {
+            assertThat(in).as("proto on the test classpath: %s", path).isNotNull();
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
 }

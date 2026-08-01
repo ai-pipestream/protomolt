@@ -1,7 +1,9 @@
 package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.index.spi.ProtoOptionsIndexingHintSource;
+import ai.pipestream.proto.llm.DescriptorLlm;
 import ai.pipestream.proto.meta.DescriptorMetadata;
+import ai.pipestream.proto.quality.QualityScorer;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoCompilationException;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
@@ -314,6 +316,8 @@ public final class SchemaResolver {
         ExtensionRegistry registry = ExtensionRegistry.newInstance();
         ValidationResult.registerExtensions(registry);
         DescriptorMetadata.registerExtensions(registry);
+        DescriptorLlm.registerExtensions(registry);
+        QualityScorer.registerExtensions(registry);
         ProtoOptionsIndexingHintSource.registerExtensions(registry);
         return registry;
     }

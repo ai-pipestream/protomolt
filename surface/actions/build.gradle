@@ -10,6 +10,8 @@ dependencies {
     implementation project(':protomolt-compat')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
+    implementation project(':protomolt-protobuf-llm')
+    implementation project(':protomolt-protobuf-quality')
     implementation project(':protomolt-protobuf-prompt')
     implementation project(':protomolt-jsonschema')
     implementation project(':protomolt-mapper-core')
