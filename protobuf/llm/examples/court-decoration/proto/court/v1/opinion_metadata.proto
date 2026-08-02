@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+package court.v1;
+
+import "ai/pipestream/proto/llm/v1/llm.proto";
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// Disposition of the appeal, taken from the holding rather than the
+// procedural history.
+enum Posture {
+  // The disposition is genuinely unclear from the text.
+  POSTURE_UNSPECIFIED = 0;
+  // The lower court's decision stands.
+  AFFIRMED = 1;
+  // The lower court's decision is overturned.
+  REVERSED = 2;
+  // The lower court's decision is set aside.
+  VACATED = 3;
+  // The case is sent back to the lower court.
+  REMANDED = 4;
+  // The appeal or case is thrown out.
+  DISMISSED = 5;
+}
+
+// Cataloging metadata extracted from a court opinion.
+message OpinionMetadata {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Cataloging metadata extracted from a court opinion."
+  };
+  option (ai.pipestream.proto.llm.v1.message) = {
+    directive: "Fill this form from the opinion text alone."
+    safeguards: "Do not use outside legal knowledge."
+  };
+  option (ai.pipestream.proto.validate.v1.message) = {
+    skip_when: "incomplete"
+    cel: {
+      id: "incomplete-needs-reason"
+      message: "incomplete_reason is required when incomplete is declared"
+      expression: "!this.incomplete || size(this.incomplete_reason) > 0"
+    }
+  };
+
+  // The issuing court, as it appears in the caption.
+  string court = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The issuing court, as it appears in the caption."
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Name the court exactly as it appears in the caption."
+      safeguards: "Do not abbreviate."
+    }
+  ];
+
+  // The parties as named in the caption.
+  string caption = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 500}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The parties as named in the caption."
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Use the full caption, including appellant/appellee designations if printed."
+    }
+  ];
+
+  // The docket number as printed.
+  string docket_number = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      cel: {
+        id: "no-prose-values"
+        message: "docket_number must be the printed number or absent, never prose"
+        expression: "!this.matches('(?i)(not (specified|provided)|example|unknown)')"
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The docket number as printed."
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Copy the docket number character-for-character as printed."
+      safeguards: "When no docket number is printed, leave this field out entirely; never write 'not specified', an example value, or an invented number."
+    }
+  ];
+
+  // The year the decision was issued.
+  int32 year = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 1600, lte: 2100}
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "The decision year, not the argument year, when both appear."
+    }
+  ];
+
+  // The disposition of the appeal.
+  Posture posture = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Take the disposition from the holding, not the procedural history."
+      safeguards: "When the disposition is genuinely unclear, use POSTURE_UNSPECIFIED rather than guessing."
+    }
+  ];
+
+  // The judges on the panel.
+  repeated string panel = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 15, unique: true}
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Last names only, in the order the opinion lists them."
+    }
+  ];
+
+  // Broad subject labels a researcher would search under.
+  repeated string topics = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 10, unique: true}
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Broad subject labels a researcher would search under."
+    }
+  ];
+
+  // Cases the opinion relies on as controlling authority.
+  repeated string leading_authorities = 8 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 20, unique: true}
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Cases the opinion relies on as controlling authority, cited as printed on first use."
+      volatile: true
+    }
+  ];
+
+  // One-paragraph summary of the holding.
+  string headnote = 9 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1500}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "One-paragraph summary of the holding."
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Holding first, present tense, under 120 words."
+      safeguards: "Do not editorialize; state what the court held, not whether it was right."
+    }
+  ];
+
+  // True when the text cannot support a truthful fill of this form.
+  bool incomplete = 10 [
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Set when the document cannot support a truthful fill."
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "Set true only when the text genuinely cannot support a truthful fill — e.g. it is not an opinion, is truncated mid-caption, or lacks the holding. A hard or old document is NOT incomplete; fill what it supports and omit what it does not."
+      safeguards: "Never set true to avoid difficult extraction; never invent data to avoid setting true."
+    }
+  ];
+
+  // Why the form could not be filled, in the filler's own words.
+  string incomplete_reason = 11 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 500}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Why the fill was declared incomplete."
+    },
+    (ai.pipestream.proto.llm.v1.field) = {
+      directive: "One or two sentences naming exactly what the text lacks."
+    }
+  ];
+}
