@@ -86,6 +86,10 @@ full harness (runner, analyzer, raw model responses) lives in
   exactly this) lets declarations validate clean: 8/8 clean, residual
   failures are model habits, not contract gaps. The form was frozen at v1.3
   as the basis for the job-manager design.
+- **round-4/** — a one-sentence persona safeguard against prose-in-field
+  values works (12 → 2) but suppresses the declaration channel (8 → 0): a
+  controlled experiment showing how prompt text and escape channels
+  interact. The contract stayed frozen; only persona wording moved.
 
 Read the `FINDINGS-*.md` in each round directory first; `results.jsonl` is
 the raw per-run record (doc, persona, parsed fields, violations, latency).
