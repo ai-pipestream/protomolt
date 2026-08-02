@@ -5,15 +5,22 @@ import java.util.Objects;
 
 /**
  * Neutral, source-agnostic message-level constraints: CEL predicates, synthetic message oneof
- * rules, and the names of real protobuf oneofs marked {@code required}.
+ * rules, the names of real protobuf oneofs marked {@code required}, and an optional
+ * {@code skipWhen} escape channel.
  */
 public record MessageConstraints(
-        List<CelConstraint> cel, List<Oneof> oneofs, List<String> requiredOneofs) {
+        List<CelConstraint> cel, List<Oneof> oneofs, List<String> requiredOneofs, String skipWhen) {
 
     public MessageConstraints {
         cel = List.copyOf(Objects.requireNonNull(cel, "cel"));
         oneofs = List.copyOf(Objects.requireNonNull(oneofs, "oneofs"));
         requiredOneofs = List.copyOf(Objects.requireNonNull(requiredOneofs, "requiredOneofs"));
+        skipWhen = Objects.requireNonNull(skipWhen, "skipWhen");
+    }
+
+    /** Backwards-compatible constructor for sources without a skip-when escape channel. */
+    public MessageConstraints(List<CelConstraint> cel, List<Oneof> oneofs, List<String> requiredOneofs) {
+        this(cel, oneofs, requiredOneofs, "");
     }
 
     public MessageConstraints(List<CelConstraint> cel, List<Oneof> oneofs) {
@@ -26,7 +33,7 @@ public record MessageConstraints(
     }
 
     public boolean isEmpty() {
-        return cel.isEmpty() && oneofs.isEmpty() && requiredOneofs.isEmpty();
+        return cel.isEmpty() && oneofs.isEmpty() && requiredOneofs.isEmpty() && skipWhen.isEmpty();
     }
 
     /**

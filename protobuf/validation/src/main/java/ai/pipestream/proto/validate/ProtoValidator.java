@@ -210,13 +210,31 @@ public final class ProtoValidator {
         List<ValidationResult.Violation> violations = new ArrayList<>();
         Descriptor descriptor = message.getDescriptorForType();
         CompiledRules rules = rulesFor(descriptor);
-        for (FieldDescriptor field : descriptor.getFields()) {
-            validateField(message, rules, field, field.getName(), 0, violations);
+        if (!skipFieldRules(message, descriptor, rules)) {
+            for (FieldDescriptor field : descriptor.getFields()) {
+                validateField(message, rules, field, field.getName(), 0, violations);
+            }
         }
         validateMessageRules(message, descriptor, rules, "", violations);
         return violations.isEmpty()
                 ? ValidationResult.ok()
                 : ValidationResult.failed(violations);
+    }
+
+    /**
+     * Whether the message declares the skip-when escape channel: any source's message constraints
+     * may name a singular boolean field, and when that field is true the entire field walk —
+     * including recursion into nested messages — is suspended. Message-level rules are not
+     * affected; they are what polices the declaration itself (e.g. requiring a reason).
+     */
+    private static boolean skipFieldRules(Message message, Descriptor descriptor, CompiledRules rules) {
+        for (MessageConstraints constraints : rules.messages()) {
+            if (!constraints.skipWhen().isEmpty()
+                    && (Boolean) message.getField(descriptor.findFieldByName(constraints.skipWhen()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ---- rule model assembly and eager compilation ----
@@ -266,6 +284,23 @@ public final class ProtoValidator {
                 if (descriptor.getRealOneofs().stream().noneMatch(o -> o.getName().equals(oneofName))) {
                     throw new RuleCompilationException(
                             "oneof " + oneofName + " not found in message " + descriptor.getFullName());
+                }
+            }
+            // skip_when names the boolean field that suspends field-level rules. As with oneof
+            // member names, an unknown or wrongly-typed name is a schema error: silently ignoring
+            // it would let a producer think it declared incompleteness while the validator still
+            // held every field to the rules.
+            if (!constraints.skipWhen().isEmpty()) {
+                FieldDescriptor skipField = descriptor.findFieldByName(constraints.skipWhen());
+                if (skipField == null) {
+                    throw new RuleCompilationException(
+                            "skip_when field " + constraints.skipWhen()
+                                    + " not found in message " + descriptor.getFullName());
+                }
+                if (skipField.isRepeated() || skipField.getJavaType() != FieldDescriptor.JavaType.BOOLEAN) {
+                    throw new RuleCompilationException(
+                            "skip_when field " + constraints.skipWhen() + " in message "
+                                    + descriptor.getFullName() + " must be a singular boolean field");
                 }
             }
             CelHandle handle = messageCelFor(descriptor);
@@ -422,8 +457,10 @@ public final class ProtoValidator {
         }
         Descriptor descriptor = nested.getDescriptorForType();
         CompiledRules rules = rulesFor(descriptor);
-        for (FieldDescriptor child : descriptor.getFields()) {
-            validateField(nested, rules, child, path + "." + child.getName(), depth + 1, violations);
+        if (!skipFieldRules(nested, descriptor, rules)) {
+            for (FieldDescriptor child : descriptor.getFields()) {
+                validateField(nested, rules, child, path + "." + child.getName(), depth + 1, violations);
+            }
         }
         validateMessageRules(nested, descriptor, rules, path, violations);
     }

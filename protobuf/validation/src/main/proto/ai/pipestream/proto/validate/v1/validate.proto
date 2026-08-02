@@ -311,6 +311,14 @@ message FieldRules {
 message MessageRules {
   // Custom CEL rules evaluated with `this` bound to the message.
   repeated CelRule cel = 1;
+  // Name of a singular boolean field of this message. When that field is true on the message
+  // under validation, every field-level rule is skipped (including recursion into nested
+  // messages); message-level CEL rules still evaluate. This is the escape channel for
+  // producer-declared incompleteness: a filler that cannot satisfy the form declares the
+  // flag instead of fabricating values, and the message CEL rules (e.g. requiring a reason
+  // when the flag is set) police the declaration itself. Naming a field that does not exist
+  // or is not a singular boolean is a schema error and fails rule compilation.
+  string skip_when = 2;
 }
 
 extend google.protobuf.FieldOptions {
