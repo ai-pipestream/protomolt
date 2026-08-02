@@ -79,7 +79,7 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         for (CelRule rule : rules.getCelList()) {
             cel.add(toCel(rule));
         }
-        return Optional.of(new MessageConstraints(cel));
+        return Optional.of(new MessageConstraints(cel, List.of(), List.of(), rules.getSkipWhen()));
     }
 
     /**
