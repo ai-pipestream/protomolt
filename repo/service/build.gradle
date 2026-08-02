@@ -9,7 +9,7 @@ repositories {
 // must run against the kafka-clients this project ships.
 configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClasspath'] }
         .configureEach {
-            resolutionStrategy.force 'org.apache.kafka:kafka-clients:3.9.1'
+            resolutionStrategy.force 'org.apache.kafka:kafka-clients:3.9.2'
         }
 
 dependencies {
