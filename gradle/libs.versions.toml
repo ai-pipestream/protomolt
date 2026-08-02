@@ -36,7 +36,7 @@ parquet = "1.15.2"
 hadoop = "3.4.1"
 iceberg = "1.11.0"
 awssdk = "2.47.5"
-maven-resolver = "1.9.24"
+maven-resolver = "1.9.27"
 maven = "3.9.16"
 graalvm-buildtools = "1.1.6"
 # Persistence stack (framework-free): Hibernate ORM + HikariCP + Flyway.
