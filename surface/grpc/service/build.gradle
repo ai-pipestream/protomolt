@@ -11,6 +11,9 @@ dependencies {
     implementation project(':protomolt-chain')
     implementation project(':protomolt-grpc-invoke')
     implementation project(':protomolt-codegen')
+    // The four chain-jobs verbs (submit-chain, get-job, list-jobs,
+    // complete-step) ride the catalog; the store is injected by the server.
+    implementation project(':protomolt-jobs-service')
     implementation libs.protobuf.java.util
     implementation libs.grpc.stub
     implementation libs.grpc.services

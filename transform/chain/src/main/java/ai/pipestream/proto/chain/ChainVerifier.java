@@ -49,6 +49,12 @@ public final class ChainVerifier {
                         step.method().getFullName() + " is not unary; chains call unary "
                                 + "methods (streaming is a later phase)"));
             }
+            if (!step.completion().isEmpty()
+                    && !ChainDefinition.Step.COMPLETION_EXTERNAL.equals(step.completion())) {
+                findings.add(new Finding(step.name(), "completion",
+                        "completion must be '' (invoke) or 'external'; got '"
+                                + step.completion() + "'"));
+            }
             List<String> gates = step.when() == null || step.when().isBlank()
                     ? List.of() : List.of(step.when());
             for (RuleChecker.Finding finding : checker.checkScoped(scope,

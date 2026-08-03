@@ -19,6 +19,10 @@ dependencies {
     implementation project(':protomolt-server-jdk')
     implementation project(':protomolt-registry')
     implementation project(':protomolt-registry-server')
+    // The chain-jobs fleet (worker, relay, store) starts in this process
+    // when --jobs-jdbc is given.
+    implementation project(':protomolt-jobs-service')
+    implementation libs.kafka.clients
     implementation libs.protobuf.java.util
     implementation libs.swagger.ui
 

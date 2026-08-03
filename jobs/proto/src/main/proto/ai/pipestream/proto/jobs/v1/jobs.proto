@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ai.pipestream.proto.jobs.v1;
 
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -30,7 +32,30 @@ option java_package = "ai.pipestream.proto.jobs.v1";
 // One lifecycle event of one chain job: the payload of the chain-job-events
 // topic and of one chain_job_events_outbox row. event_id is the outbox row
 // id — the consumer dedupe key under at-least-once delivery.
+//
+// The field rules below are not advisory: the protomolt Kafka serde validates
+// on write, so a malformed event never reaches the topic.
 message ChainJobEvent {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "One chain-job lifecycle event: the chain-job-events topic payload and one outbox row."
+    owner: "protomolt"
+    sensitivity: "internal"
+    labels: {key: "component", value: "jobs"}
+    labels: {key: "surface", value: "kafka"}
+  };
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "completed-carries-verdict"
+      message: "a COMPLETED event must carry its one-line verdict"
+      expression: "this.type != 4 || size(this.verdict) > 0"
+    }
+    cel: {
+      id: "terminal-carries-error"
+      message: "a FAILED or DEAD event must carry the verbatim error"
+      expression: "(this.type != 5 && this.type != 6) || size(this.error) > 0"
+    }
+  };
+
   // The job lifecycle stage this record announces. Monotonic per job
   // (ACCEPTED → STEP_CHECKPOINT*/WAITING* → exactly one of
   // COMPLETED/FAILED/DEAD), except that a retried job repeats
@@ -56,43 +81,145 @@ message ChainJobEvent {
   }
 
   // The outbox row id; stable across relay retries, so redeliveries dedupe.
-  string event_id = 1;
+  string event_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The outbox row id; stable across relay retries, so redeliveries dedupe."
+    }
+  ];
   // The job this event belongs to; also the Kafka record key, so one job's
   // events are partition-ordered.
-  string job_id = 2;
+  string job_id = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The job id; also the Kafka record key (per-job partition ordering)."
+    }
+  ];
   // The chain the job runs (the stored chain name, or the inline chain's
   // declared name).
-  string chain_name = 3;
+  string chain_name = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The chain the job runs (stored chain name, or the inline chain's declared name)."
+    }
+  ];
   // The lifecycle stage of this event.
-  Type type = 4;
+  Type type = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The lifecycle stage of this event."
+    }
+  ];
   // The step the event is about; set for STEP_CHECKPOINT, WAITING, and FAILED
   // events that carry a failing step.
-  string step = 5;
+  string step = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The step the event is about (checkpoint, park, or failing step)."
+    }
+  ];
   // The job's attempt counter as of this event (1-based; claim increments).
-  int32 attempt = 6;
+  int32 attempt = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The job's attempt counter as of this event (1-based)."
+    }
+  ];
   // The one-line completion summary ("3 steps, output acme.v1.Ticket"); set
   // on COMPLETED only.
-  string verdict = 7;
+  string verdict = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 500}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The one-line completion summary; set on COMPLETED only."
+    }
+  ];
   // The verbatim last error (validation violations included); set on FAILED
   // and DEAD only.
-  string error = 8;
+  string error = 8 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 4000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The verbatim last error (validation violations included); set on FAILED and DEAD."
+    }
+  ];
   // Small extras that do not justify first-class fields (e.g. the job's
   // status string after the transition).
-  google.protobuf.Struct detail = 9;
+  google.protobuf.Struct detail = 9 [
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Small extras that do not justify first-class fields (e.g. the job's new status)."
+    }
+  ];
   // When the event's transaction committed.
-  google.protobuf.Timestamp occurred_at = 10;
+  google.protobuf.Timestamp occurred_at = 10 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "When the event's transaction committed."
+    }
+  ];
 }
 
 // The request-topic payload: broker-native job submission. Producing one
 // record keyed by job_id is exactly equivalent to calling submit-chain with
 // a stored chain name; inline chains only come via the verb.
 message ChainJobRequest {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Broker-native chain-job submission: one record on the request topic equals one submit-chain call."
+    owner: "protomolt"
+    sensitivity: "internal"
+    labels: {key: "component", value: "jobs"}
+    labels: {key: "surface", value: "kafka"}
+  };
+
   // Client-generated uuid. This is the idempotency key: a redelivered or
   // republished request inserts nothing new, it returns the existing job.
-  string job_id = 1;
+  string job_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Client-generated uuid; the submission idempotency key."
+    }
+  ];
   // The stored chain to run, resolved through the worker's chain repository.
   // An unknown name fails the job loudly (a FAILED row), never a silent drop.
-  string chain_name = 2;
+  string chain_name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The stored chain to run; unknown names fail the job loudly."
+    }
+  ];
   // The chain input, as the proto3 JSON object of the chain's inputType.
-  google.protobuf.Struct input = 3;
+  google.protobuf.Struct input = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The chain input, as the proto3 JSON object of the chain's inputType."
+    }
+  ];
 }

@@ -11,20 +11,27 @@ import ai.pipestream.proto.emit.okf.EmitOkfAction;
 import ai.pipestream.proto.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
+import ai.pipestream.proto.jobs.service.actions.CompleteStepAction;
+import ai.pipestream.proto.jobs.service.actions.GetJobAction;
+import ai.pipestream.proto.jobs.service.actions.ListJobsAction;
+import ai.pipestream.proto.jobs.service.actions.SubmitChainAction;
+import ai.pipestream.proto.jobs.service.store.ChainJobStore;
 
 import java.nio.file.Path;
 
 /**
- * The full twenty-four-verb catalog: the seventeen built-in actions from
+ * The full twenty-eight-verb catalog: the seventeen built-in actions from
  * {@link ActionCatalog#defaults(ActionContext)} plus the gRPC verbs ({@code reflect},
  * {@code grpc-invoke}), {@code generate-stubs}, {@code gather-git}, the chain verbs
- * ({@code run-chain}, {@code check-chain}) and {@code emit-okf} — exactly the RPCs of
- * {@code ProtoMoltService}.
+ * ({@code run-chain}, {@code check-chain}), {@code emit-okf}, and the chain-jobs verbs
+ * ({@code submit-chain}, {@code get-job}, {@code list-jobs}, {@code complete-step}) —
+ * exactly the RPCs of {@code ProtoMoltService}.
  *
  * <p>The MCP server exposes a subset: {@code protomolt-mcp} registers twenty-one, leaving out the
  * three that need server-side wiring ({@code run-chain}, {@code check-chain},
  * {@code emit-okf}), while the {@code /mcp} mount inside {@code protomolt-serve} carries all
- * twenty-four.
+ * twenty-eight. The jobs verbs are always registered; without a store they answer
+ * {@code unavailable} with the operator-facing remedy instead of vanishing from the catalog.
  */
 public final class ProtoMoltCatalog {
 
@@ -50,6 +57,20 @@ public final class ProtoMoltCatalog {
      */
     public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
                                      ChainRepository chains) {
+        return full(context, gatherCacheRoot, chains, null, 0);
+    }
+
+    /**
+     * The jobs-aware catalog.
+     *
+     * @param jobs the chain-jobs store the four jobs verbs read and write; null means
+     *        jobs are not configured and the verbs answer {@code unavailable}
+     * @param maxAttemptsDefault the retry ceiling stamped on newly submitted jobs;
+     *        ignored when {@code jobs} is null
+     */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     ChainRepository chains, ChainJobStore jobs,
+                                     int maxAttemptsDefault) {
         return ActionCatalog.defaults(context)
                 .register(new GrpcInvokeAction())
                 .register(new ReflectAction())
@@ -57,6 +78,10 @@ public final class ProtoMoltCatalog {
                 .register(new GatherGitAction(gatherCacheRoot))
                 .register(new RunChainAction(new ChainRunner(), chains))
                 .register(new CheckChainAction())
-                .register(new EmitOkfAction());
+                .register(new EmitOkfAction())
+                .register(new SubmitChainAction(jobs, chains, maxAttemptsDefault))
+                .register(new GetJobAction(jobs))
+                .register(new ListJobsAction(jobs))
+                .register(new CompleteStepAction(jobs));
     }
 }

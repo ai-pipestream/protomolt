@@ -122,10 +122,10 @@ class ChainTest {
                 file.findMessageTypeByName("Text"), 10_000,
                 List.of(new ChainDefinition.Step("tokenize", "in-process", false,
                                 ChainDefinition.resolveMethod(files, "chain.test.Tokenizer/Tokenize"),
-                                null, List.of("text = input.text"), List.of(), false, 0),
+                                null, List.of("text = input.text"), List.of(), false, 0, ""),
                         new ChainDefinition.Step("embed", "in-process", false,
                                 ChainDefinition.resolveMethod(files, "chain.test.Embedder/Embed"),
-                                when, List.of("ids = tokenize.ids"), List.of(), false, 0)),
+                                when, List.of("ids = tokenize.ids"), List.of(), false, 0, "")),
                 output);
     }
 
@@ -147,7 +147,7 @@ class ChainTest {
                 file.findMessageTypeByName("Text"), 0,
                 List.of(new ChainDefinition.Step("tokenize", "in-process", false,
                         ChainDefinition.resolveMethod(files, "chain.test.Tokenizer/Tokenize"),
-                        "input.text", List.of("text = embed.model"), List.of(), false, 0)),
+                        "input.text", List.of("text = embed.model"), List.of(), false, 0, "")),
                 null);
         List<ChainVerifier.Finding> findings = new ChainVerifier().verify(broken);
         assertThat(findings).hasSize(2);

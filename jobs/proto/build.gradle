@@ -8,6 +8,10 @@ dependencies {
     api libs.protobuf.java
     // Struct and Timestamp ride the contract (event detail, request input).
     api libs.protobuf.java.util
+    // The contract dogfoods the house standards: validate.v1 rules (the
+    // protomolt serde enforces them on write) and meta.v1 descriptions.
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
 }
 
 // Messages only — the verbs live in the descriptor-native ProtoMoltService,
