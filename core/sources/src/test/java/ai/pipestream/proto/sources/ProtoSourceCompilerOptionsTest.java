@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -308,6 +309,65 @@ class ProtoSourceCompilerOptionsTest {
         FieldDescriptor mode = fill.findFieldByName("mode");
         assertThat(((com.google.protobuf.Descriptors.EnumValueDescriptor) value.getField(mode))
                 .getName()).isEqualTo("MODE_FAST");
+    }
+
+    @Test
+    void mapValuedOptionsRoundTrip() throws Exception {
+        ProtoSourceSet set = ProtoSourceSet.builder()
+                .add(METADATA, resource(METADATA), "test")
+                .add("doc.proto", """
+                        syntax = "proto3";
+                        package test.labels;
+                        import "ai/pipestream/proto/meta/v1/metadata.proto";
+                        message Doc {
+                          option (ai.pipestream.proto.meta.v1.message) = {
+                            description: "A labeled document."
+                            labels: {key: "component", value: "jobs"}
+                            labels: {key: "tier", value: "gold"}
+                          };
+                          string title = 1 [
+                            (ai.pipestream.proto.meta.v1.field) = {
+                              description: "The title."
+                              labels: {key: "pii", value: "no"}
+                            }
+                          ];
+                        }
+                        """, "test")
+                .build();
+
+        CompiledProtos compiled = compile(set);
+
+        MessageOptions messageOptions = message(compiled, "doc.proto", "Doc").getOptions();
+        assertThat(messageOptions.getExtension(MetadataProto.message).getLabelsMap())
+                .containsExactlyInAnyOrderEntriesOf(Map.of("component", "jobs", "tier", "gold"));
+        assertThat(messageOptions.getExtension(MetadataProto.message).getDescription())
+                .isEqualTo("A labeled document.");
+
+        FieldOptions fieldOptions = field(compiled, "doc.proto", "Doc", "title").getOptions();
+        assertThat(fieldOptions.getExtension(MetadataProto.field).getLabelsMap())
+                .containsExactlyInAnyOrderEntriesOf(Map.of("pii", "no"));
+        assertThat(fieldOptions.getExtension(MetadataProto.field).getDescription())
+                .isEqualTo("The title.");
+    }
+
+    @Test
+    void allowAliasEnumCompiles() throws Exception {
+        ProtoSourceSet set = ProtoSourceSet.builder()
+                .add("alias.proto", """
+                        syntax = "proto3";
+                        package test.alias;
+                        enum Status {
+                          option allow_alias = true;
+                          STATUS_UNSPECIFIED = 0;
+                          STATUS_ACTIVE = 1;
+                          STATUS_ON = 1;
+                        }
+                        """, "test")
+                .build();
+
+        // allow_alias is structural: stripping it would make the duplicate tags fail to link.
+        assertThat(compile(set).descriptorFor("alias.proto").orElseThrow()
+                .findEnumTypeByName("Status").getOptions().getAllowAlias()).isTrue();
     }
 
     @Test
