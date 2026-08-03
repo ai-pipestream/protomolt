@@ -35,6 +35,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `transform/projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
 | `transform/pipeline/` | `pipeline` | The pipeline schema: chained gRPC calls, projections, and CEL steps as one protobuf message |
 | `transform/chain/` | `chain` | The chain manager: configured, type-checked compositions of gRPC calls (verify statically, run serially with gates and deadlines, store named chains in the registry) — plus keyed/zip joins over two live gRPC streams |
+| `jobs/` | `jobs-proto`, `jobs-service` | Async chain execution as durable jobs: the same chain definition with the same serial semantics, detached — Postgres job rows with per-step checkpoints, park/resume on `completion: 'external'` steps (the human-in-the-loop lane), Kafka request/event topics, retries with typed failure kinds; four verbs (`submit-chain`, `get-job`, `list-jobs`, `complete-step`) ride the catalog |
 | `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Indexing plans and hints; NDJSON output; engine plugins |
 | `search/embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
 | `search/embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
