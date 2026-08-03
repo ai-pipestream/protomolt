@@ -2,8 +2,16 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.chain.ChainRepository;
+import ai.pipestream.proto.chain.ChainRunner;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
+import ai.pipestream.proto.jobs.service.ChainJobsConfig;
+import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
+import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
+import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
+import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
+import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
 import ai.pipestream.proto.mcp.McpServer;
 import ai.pipestream.proto.mcp.RegistryResources;
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
@@ -17,6 +25,7 @@ import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
 
+import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
 
 /**
@@ -36,10 +45,13 @@ public final class ProtoMoltServe implements AutoCloseable {
      * Launcher options; a port of 0 picks a free port. A non-null {@code apiToken} guards
      * every operational surface (gRPC calls, REST verbs, the MCP endpoint) with a shared
      * secret; documentation surfaces (health, OpenAPI, Swagger UI) stay open.
+     *
+     * @param jobs chain-jobs configuration; null disables the jobs worker (the jobs
+     *        verbs stay in the catalog and answer {@code unavailable})
      */
     public record Options(String host, int grpcPort, int httpPort,
                           Path registryGit, int registryPort, String apiToken, boolean demo,
-                          Path gatherCache) {
+                          Path gatherCache, JobsOptions jobs) {
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
             this(host, grpcPort, httpPort, registryGit, registryPort, null, false, null);
@@ -53,6 +65,12 @@ public final class ProtoMoltServe implements AutoCloseable {
         public Options(String host, int grpcPort, int httpPort, Path registryGit,
                        int registryPort, String apiToken, boolean demo) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo, null);
+        }
+
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, null);
         }
 
         public static Options defaults() {
@@ -71,6 +89,13 @@ public final class ProtoMoltServe implements AutoCloseable {
             Path gatherCache = gatherCacheEnv == null || gatherCacheEnv.isBlank()
                     ? null
                     : Path.of(gatherCacheEnv);
+            String jobsJdbc = System.getenv("PROTOMOLT_JOBS_JDBC");
+            String jobsUser = System.getenv("PROTOMOLT_JOBS_USER");
+            String jobsPassword = System.getenv("PROTOMOLT_JOBS_PASSWORD");
+            String jobsKafka = System.getenv("PROTOMOLT_JOBS_KAFKA");
+            String jobsRequestTopic = System.getenv("PROTOMOLT_JOBS_REQUEST_TOPIC");
+            int jobsWorkers = envInt("PROTOMOLT_JOBS_WORKERS", 0);
+            int jobsTargetConcurrency = envInt("PROTOMOLT_JOBS_TARGET_CONCURRENCY", 0);
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--host" -> host = requireValue(args, ++i);
@@ -80,12 +105,23 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--registry-port" -> registryPort = Integer.parseInt(requireValue(args, ++i));
                     case "--api-token" -> apiToken = requireValue(args, ++i);
                     case "--gather-cache" -> gatherCache = Path.of(requireValue(args, ++i));
+                    case "--jobs-jdbc" -> jobsJdbc = requireValue(args, ++i);
+                    case "--jobs-user" -> jobsUser = requireValue(args, ++i);
+                    case "--jobs-password" -> jobsPassword = requireValue(args, ++i);
+                    case "--jobs-kafka" -> jobsKafka = requireValue(args, ++i);
+                    case "--jobs-request-topic" -> jobsRequestTopic = requireValue(args, ++i);
+                    case "--jobs-workers" -> jobsWorkers = Integer.parseInt(requireValue(args, ++i));
+                    case "--jobs-target-concurrency" ->
+                            jobsTargetConcurrency = Integer.parseInt(requireValue(args, ++i));
                     case "--demo" -> demo = true;
                     case "--help", "-h" -> {
                         System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
                                 + "[--http-port <n>] [--registry-git <path> [--registry-port <n>]] "
                                 + "[--api-token <secret>]  (or PROTOMOLT_API_TOKEN) "
-                                + "[--gather-cache <dir>]  (or PROTOMOLT_GATHER_CACHE) [--demo]");
+                                + "[--gather-cache <dir>]  (or PROTOMOLT_GATHER_CACHE) [--demo] "
+                                + "[--jobs-jdbc <url> --jobs-user <u> [--jobs-password <p>] "
+                                + "[--jobs-kafka <bootstrap>] [--jobs-request-topic <name>] "
+                                + "[--jobs-workers <n>] [--jobs-target-concurrency <n>]]");
                         System.exit(0);
                     }
                     default -> {
@@ -97,8 +133,27 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (apiToken != null && apiToken.isBlank()) {
                 apiToken = null;
             }
+            JobsOptions jobs = null;
+            if (jobsJdbc != null && !jobsJdbc.isBlank()) {
+                if (jobsUser == null || jobsUser.isBlank()) {
+                    System.err.println("--jobs-jdbc requires --jobs-user (or PROTOMOLT_JOBS_USER)");
+                    System.exit(2);
+                }
+                jobs = new JobsOptions(jobsJdbc, jobsUser, jobsPassword, jobsKafka,
+                        jobsRequestTopic, jobsWorkers, jobsTargetConcurrency);
+            } else if ((jobsKafka != null && !jobsKafka.isBlank())
+                    || (jobsRequestTopic != null && !jobsRequestTopic.isBlank())) {
+                System.err.println("--jobs-kafka/--jobs-request-topic require --jobs-jdbc: "
+                        + "the job row is the truth; the broker is propagation");
+                System.exit(2);
+            }
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
-                    demo, gatherCache);
+                    demo, gatherCache, jobs);
+        }
+
+        private static int envInt(String name, int fallback) {
+            String value = System.getenv(name);
+            return value == null || value.isBlank() ? fallback : Integer.parseInt(value);
         }
 
         private static String requireValue(String[] args, int i) {
@@ -110,22 +165,47 @@ public final class ProtoMoltServe implements AutoCloseable {
         }
     }
 
+    /**
+     * Chain-jobs launcher options. {@code kafkaBootstrap} is optional: without it the
+     * worker fleet runs verb-submitted jobs with no event relay and no request topic —
+     * useful for a single-box deployment; with it, lifecycle events publish to the
+     * events topic and the request topic is consumed. Zero {@code workers} /
+     * {@code targetConcurrency} take the jobs module's defaults.
+     */
+    public record JobsOptions(String jdbcUrl, String username, String password,
+                              String kafkaBootstrap, String requestTopic,
+                              int workers, int targetConcurrency) {
+
+        public JobsOptions {
+            if (requestTopic != null && (kafkaBootstrap == null || kafkaBootstrap.isBlank())) {
+                throw new IllegalArgumentException("--jobs-request-topic requires --jobs-kafka");
+            }
+        }
+    }
+
     private final ProtoMoltGrpcServer grpc;
     private final JdkProtoRestServer http;
     private final GitSchemaRegistryStore registryStore;
     private final SchemaRegistryServer registry;
     private final int httpPort;
     private final int registryPort;
+    private final ChainJobDatabase jobsDatabase;
+    private final ChainJobWorker jobsWorker;
+    private final ChainJobEventRelay jobsRelay;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http, int httpPort,
                            GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
-                           int registryPort) {
+                           int registryPort, ChainJobDatabase jobsDatabase,
+                           ChainJobWorker jobsWorker, ChainJobEventRelay jobsRelay) {
         this.grpc = grpc;
         this.http = http;
         this.httpPort = httpPort;
         this.registryStore = registryStore;
         this.registry = registry;
         this.registryPort = registryPort;
+        this.jobsDatabase = jobsDatabase;
+        this.jobsWorker = jobsWorker;
+        this.jobsRelay = jobsRelay;
     }
 
     /** Starts every configured surface; closing stops them all. */
@@ -136,6 +216,9 @@ public final class ProtoMoltServe implements AutoCloseable {
         JdkProtoRestServer http = null;
         GitSchemaRegistryStore store = null;
         SchemaRegistryServer registry = null;
+        ChainJobDatabase jobsDatabase = null;
+        ChainJobWorker jobsWorker = null;
+        ChainJobEventRelay jobsRelay = null;
         try {
             Path registryGit = options.registryGit();
             if (registryGit == null && options.demo()) {
@@ -151,9 +234,72 @@ public final class ProtoMoltServe implements AutoCloseable {
                         .repositoryDir(registryGit)
                         .build();
             }
+            ChainRepository chains = store == null ? null : chainRepository(store);
+
+            // Chain jobs: the store boots (and Flyway-migrates) before the catalog so
+            // the jobs verbs serve from the same truth the worker fleet executes from.
+            if (options.jobs() != null) {
+                JobsOptions jobs = options.jobs();
+                jobsDatabase = new ChainJobDatabase(
+                        new ChainJobStoreConfig(jobs.jdbcUrl(), jobs.username(), jobs.password()));
+                JdbcChainJobStore jobStore = new JdbcChainJobStore(jobsDatabase);
+                String requestTopic = jobs.kafkaBootstrap() == null
+                        ? null
+                        : jobs.requestTopic() != null ? jobs.requestTopic() : "chain-job-requests";
+                ChainJobsConfig jobsConfig = new ChainJobsConfig(
+                        "serve-" + ManagementFactory.getRuntimeMXBean().getName(),
+                        jobs.workers(), null, null, 0, 0, jobs.targetConcurrency(),
+                        requestTopic, null, jobs.kafkaBootstrap(), null);
+                jobsWorker = new ChainJobWorker(jobStore, context, chains, new ChainRunner(),
+                        jobsConfig);
+                if (jobs.kafkaBootstrap() != null) {
+                    jobsRelay = new ChainJobEventRelay(jobStore,
+                            ChainJobEventRelay.newProducer(jobs.kafkaBootstrap(), null),
+                            jobsConfig.eventsTopic(), jobsConfig.pollInterval(), 100);
+                }
+
+                // The catalog sees the store so run-chain resolves stored chain names and
+                // the jobs verbs serve the live job rows.
+                ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
+                        chains, jobStore, jobsConfig.maxAttemptsDefault());
+                return startWithJobsCatalog(options, context, catalog, store, chains,
+                        jobsDatabase, jobsWorker, jobsRelay);
+            }
             // The catalog sees the store so run-chain resolves stored chain names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                    store == null ? null : chainRepository(store));
+                    chains);
+            return startWithJobsCatalog(options, context, catalog, store, chains,
+                    null, null, null);
+        } catch (RuntimeException e) {
+            if (registry != null) {
+                registry.close();
+            }
+            if (http != null) {
+                http.close();
+            }
+            if (grpc != null) {
+                grpc.close();
+            }
+            closeQuietly(store);
+            closeQuietly(jobsWorker);
+            closeQuietly(jobsRelay);
+            closeQuietly(jobsDatabase);
+            throw e;
+        }
+    }
+
+    /** The shared tail of {@link #start(Options)}: gRPC, registry, REST, MCP. */
+    private static ProtoMoltServe startWithJobsCatalog(Options options, ActionContext context,
+                                                       ActionCatalog catalog,
+                                                       GitSchemaRegistryStore store,
+                                                       ChainRepository chains,
+                                                       ChainJobDatabase jobsDatabase,
+                                                       ChainJobWorker jobsWorker,
+                                                       ChainJobEventRelay jobsRelay) {
+        ProtoMoltGrpcServer grpc = null;
+        JdkProtoRestServer http = null;
+        SchemaRegistryServer registry = null;
+        try {
             if (options.demo()) {
                 DemoSchemas.seed(context.registry(), store);
             }
@@ -164,6 +310,15 @@ public final class ProtoMoltServe implements AutoCloseable {
                 // The demo chain composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
                 DemoSchemas.seedChain(store, grpc.port());
+            }
+
+            // The jobs fleet starts once the catalog is bound: workers execute and the
+            // relay drains. Broker-less deployments run the worker only.
+            if (jobsWorker != null) {
+                jobsWorker.start();
+            }
+            if (jobsRelay != null) {
+                jobsRelay.start();
             }
 
             // The registry starts before HTTP so the console's same-origin proxy
@@ -225,7 +380,8 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
             int httpPort = http.start();
             selfPort[0] = httpPort;
-            return new ProtoMoltServe(grpc, http, httpPort, store, registry, registryPort);
+            return new ProtoMoltServe(grpc, http, httpPort, store, registry, registryPort,
+                    jobsDatabase, jobsWorker, jobsRelay);
         } catch (RuntimeException e) {
             if (registry != null) {
                 registry.close();
@@ -236,7 +392,6 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (grpc != null) {
                 grpc.close();
             }
-            closeQuietly(store);
             throw e;
         }
     }
@@ -292,6 +447,11 @@ public final class ProtoMoltServe implements AutoCloseable {
 
     @Override
     public void close() {
+        // Stop the fleet first so nothing claims work mid-shutdown, then drain the
+        // relay, then the pool.
+        closeQuietly(jobsWorker);
+        closeQuietly(jobsRelay);
+        closeQuietly(jobsDatabase);
         if (registry != null) {
             registry.close();
         }
@@ -314,6 +474,13 @@ public final class ProtoMoltServe implements AutoCloseable {
         if (serve.registryPort() >= 0) {
             System.out.printf("  Reg   http://%s:%d (Confluent protocol, git-backed)%n",
                     options.host(), serve.registryPort());
+        }
+        if (options.jobs() != null) {
+            System.out.printf("  Jobs  %s (verbs: submit-chain, get-job, list-jobs, complete-step%s)%n",
+                    options.jobs().jdbcUrl(),
+                    options.jobs().kafkaBootstrap() != null
+                            ? "; Kafka " + options.jobs().kafkaBootstrap()
+                            : ", no broker - verb submission only");
         }
         if (options.apiToken() == null) {
             System.out.printf("  UI    http://%s:%d/console%n", options.host(), serve.httpPort());

@@ -37,10 +37,19 @@ public record ChainDefinition(String name, List<FileDescriptor> files, Descripto
      * One serial call. {@code when} is an optional boolean CEL gate (a false skips the
      * step); {@code validate} runs the response's declared validation rules before the
      * chain proceeds.
+     *
+     * @param completion how the step obtains its response: {@code ""} invokes
+     *        {@code method} on {@code target}; {@code "external"} parks the job until
+     *        {@code complete-step} supplies the response (the human-in-the-loop lane).
+     *        External steps only execute as jobs; synchronous {@code run-chain} rejects
+     *        them. Any other value fails verification.
      */
     public record Step(String name, String target, boolean tls, MethodDescriptor method,
                        String when, List<String> rules, List<CelMappingRule> celRules,
-                       boolean validate, long deadlineMs) {
+                       boolean validate, long deadlineMs, String completion) {
+
+        /** {@link #completion()} value marking a step as externally completed. */
+        public static final String COMPLETION_EXTERNAL = "external";
 
         public Step {
             Objects.requireNonNull(name, "name");
@@ -48,6 +57,12 @@ public record ChainDefinition(String name, List<FileDescriptor> files, Descripto
             Objects.requireNonNull(method, "method");
             rules = List.copyOf(rules);
             celRules = List.copyOf(celRules);
+            completion = completion == null ? "" : completion;
+        }
+
+        /** True when the step parks the job and waits for {@code complete-step}. */
+        public boolean external() {
+            return COMPLETION_EXTERNAL.equals(completion);
         }
     }
 

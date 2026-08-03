@@ -41,7 +41,7 @@ class ChainVerifierTest {
     private static ChainDefinition.Step step(String name, String method) {
         return new ChainDefinition.Step(name, "in-process", false,
                 ChainDefinition.resolveMethod(List.of(file), method), null,
-                List.of("text = input.text"), List.of(), false, 0);
+                List.of("text = input.text"), List.of(), false, 0, "");
     }
 
     private static ChainDefinition chain(ChainDefinition.Step... steps) {
@@ -116,7 +116,7 @@ class ChainVerifierTest {
                 new ChainDefinition.Step("count", "in-process", false,
                         ChainDefinition.resolveMethod(List.of(file),
                                 "chain.verify.Tokenizer/Tokenize"),
-                        null, List.of("text = tokenize.missing"), List.of(), false, 0)));
+                        null, List.of("text = tokenize.missing"), List.of(), false, 0, "")));
 
         assertThat(findings).hasSize(2);
         assertThat(findings.get(0).kind()).isEqualTo("method");

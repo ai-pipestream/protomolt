@@ -114,6 +114,27 @@ service ProtoMoltService {
   // concept documents with YAML frontmatter for every message, enum, and
   // service, cross-linked into the knowledge graph agents and catalogs read.
   rpc EmitOkf(EmitOkfRequest) returns (EmitOkfResponse);
+
+  // Submits a chain for asynchronous execution as a job: the same chain
+  // definition and serial semantics as run-chain, detached. The worker
+  // checkpoints every step response, parks on steps declared with
+  // completion='external', and resumes on complete-step. Requires the server
+  // to be started with jobs storage configured.
+  rpc SubmitChain(SubmitChainRequest) returns (SubmitChainResponse);
+
+  // Reads one chain job by id: status, per-step checkpoints, the result when
+  // completed, and the last error verbatim when failed.
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+
+  // Lists chain jobs, optionally filtered by status and chain name; summary
+  // rows only (checkpoints and result are omitted — use GetJob for those).
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+
+  // Completes a parked ('external') step of a waiting job with the supplied
+  // response message and resumes the chain. This is the human-in-the-loop
+  // lane: a judge, reviewer, or external agent resolves the step the worker
+  // parked on. Idempotent on job_id + step_name.
+  rpc CompleteStep(CompleteStepRequest) returns (CompleteStepResponse);
 }
 
 // A schema source. Provide exactly one of 'type', 'sources', or
@@ -777,6 +798,11 @@ message ChainStep {
   bool validate = 8;
   // Per-step deadline, bounded by what remains of the chain's.
   int32 deadline_ms = 9;
+  // How the step obtains its response: '' (the default) invokes 'method' on
+  // 'target'; 'external' parks the job until complete-step supplies the
+  // response — the human-in-the-loop lane. External steps are rejected by
+  // synchronous run-chain; they only execute as jobs.
+  string completion = 10;
 }
 
 // The chain's output mapping; without it the last step's response returns.
@@ -866,6 +892,144 @@ message CheckChainResponse {
   bool ok = 1;
   // One entry per problem; empty when 'ok' is true.
   repeated ChainFinding findings = 2;
+}
+
+// The input of submit-chain: an inline chain or the name of a stored one,
+// the chain input, and an optional client-generated job id.
+message SubmitChainRequest {
+  // The inline chain definition to execute.
+  ChainDefinition chain = 1;
+  // A stored chain to run instead of an inline 'chain' (registered via the
+  // registry's chains endpoint).
+  string chain_name = 2;
+  // The chain input, as proto3 JSON of input_type.
+  google.protobuf.Struct input = 3;
+  // Optional client-generated job id (a UUID). Supplying one makes submit
+  // idempotent: a second submit with the same id returns the existing job.
+  // The server mints one when empty.
+  string job_id = 4;
+}
+
+// The outcome of submit-chain.
+message SubmitChainResponse {
+  // True when the job was accepted (or already existed under 'job_id').
+  bool ok = 1;
+  // The job id, for get-job / complete-step / topic correlation.
+  string job_id = 2;
+  // The job's status after the call: 'QUEUED', or the existing job's status
+  // on an idempotent resubmit.
+  string status = 3;
+  // Why submission failed, when ok=false (chain does not parse or verify,
+  // jobs not configured, malformed input).
+  string error = 4;
+}
+
+// One checkpointed step of a chain job: the persisted response the chain
+// resumes from after a restart or a park.
+message ChainJobCheckpoint {
+  // The step name.
+  string name = 1;
+  // True when the step's 'when' gate evaluated false and the step did not
+  // run; 'response' is then the output type's default instance.
+  bool skipped = 2;
+  // The step's response, as proto3 JSON of its output type.
+  google.protobuf.Struct response = 3;
+}
+
+// One chain job. Job statuses: QUEUED (awaiting a worker), RUNNING (claimed),
+// WAITING (parked on an 'external' step, expecting complete-step), COMPLETED,
+// FAILED (a verdict: validation gate or non-retryable failure), DEAD
+// (attempts exhausted — the dead-letter row).
+message ChainJob {
+  // The job id (a UUID).
+  string job_id = 1;
+  // The chain's name.
+  string chain_name = 2;
+  // QUEUED, RUNNING, WAITING, COMPLETED, FAILED, or DEAD.
+  string status = 3;
+  // Execution attempts so far.
+  int32 attempt = 4;
+  // The parked step's name; set only while WAITING.
+  string outstanding_step = 5;
+  // The chain input, as proto3 JSON.
+  google.protobuf.Struct input = 6;
+  // Persisted per-step responses, in execution order.
+  repeated ChainJobCheckpoint checkpoints = 7;
+  // The chain output, as proto3 JSON; set only when COMPLETED.
+  google.protobuf.Struct result = 8;
+  // The last failure, verbatim; set when FAILED or DEAD.
+  string error = 9;
+  // RFC 3339; when the job was submitted.
+  string created_at = 10;
+  // RFC 3339; when the job row last changed.
+  string updated_at = 11;
+  // RFC 3339; set when the job reached a terminal state.
+  string completed_at = 12;
+}
+
+// The input of get-job.
+message GetJobRequest {
+  // The job id returned by submit-chain.
+  string job_id = 1;
+}
+
+// The outcome of get-job.
+message GetJobResponse {
+  // True when the job exists.
+  bool ok = 1;
+  // The full job record, checkpoints and result included.
+  ChainJob job = 2;
+  // Why the read failed, when ok=false (unknown job, jobs not configured).
+  string error = 3;
+}
+
+// The input of list-jobs.
+message ListJobsRequest {
+  // Optional status filter (QUEUED, RUNNING, WAITING, COMPLETED, FAILED,
+  // DEAD); empty lists every status.
+  string status = 1;
+  // Optional chain-name filter.
+  string chain_name = 2;
+  // Maximum jobs returned; default 50, capped at 500.
+  int32 limit = 3;
+  // Offset into the created_at-descending ordering.
+  int32 offset = 4;
+}
+
+// The outcome of list-jobs.
+message ListJobsResponse {
+  // True when the listing succeeded.
+  bool ok = 1;
+  // The matching jobs, newest first; summary rows (checkpoints and result
+  // are omitted — use get-job for those).
+  repeated ChainJob jobs = 2;
+  // Why the listing failed, when ok=false.
+  string error = 3;
+}
+
+// The input of complete-step: the parked step's response, supplied by
+// whoever the job was parked for.
+message CompleteStepRequest {
+  // The job id.
+  string job_id = 1;
+  // The parked step's name; must match the job's outstanding_step.
+  string step_name = 2;
+  // The step's response, as proto3 JSON of the step's output type. When the
+  // step declares 'validate', the response is checked against its declared
+  // rules before the chain resumes — a rejection fails the job as a verdict.
+  google.protobuf.Struct response = 3;
+}
+
+// The outcome of complete-step.
+message CompleteStepResponse {
+  // True when the response was accepted and the job requeued (or the step
+  // was already completed — idempotent redelivery).
+  bool ok = 1;
+  // The job's status after the call.
+  string status = 2;
+  // Why completion failed, when ok=false (job not WAITING, step mismatch,
+  // response does not parse or failed validation).
+  string error = 3;
 }
 
 // The input of infer-schema.

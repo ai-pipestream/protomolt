@@ -89,6 +89,8 @@ def supportedModules = [
         'protomolt-repo-service',
         'protomolt-account-proto',
         'protomolt-account-service',
+        'protomolt-jobs-proto',
+        'protomolt-jobs-service',
         'protomolt-intake-proto',
         'protomolt-parse-proto',
 ]

@@ -89,13 +89,24 @@ class ProtoMoltServeTest {
     }
 
     @Test
+    void jobsVerbsAnswerUnavailableWithoutAStore() throws Exception {
+        HttpResponse<String> response = post("/grpc-json/ProtoMoltService/GetJob", """
+                {"jobId": "00000000-0000-0000-0000-000000000000"}
+                """);
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.body()).contains("unavailable").contains("jobs");
+    }
+
+    @Test
     void openApiDocumentsEveryVerb() throws Exception {
         HttpResponse<String> response = get("/openapi.json");
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode paths = MAPPER.readTree(response.body()).path("paths");
-        assertThat(paths.size()).isEqualTo(24);
+        assertThat(paths.size()).isEqualTo(28);
         assertThat(paths.has("/grpc-json/ProtoMoltService/GrpcInvoke")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/GenerateStubs")).isTrue();
+        assertThat(paths.has("/grpc-json/ProtoMoltService/SubmitChain")).isTrue();
+        assertThat(paths.has("/grpc-json/ProtoMoltService/CompleteStep")).isTrue();
     }
 
     @Test

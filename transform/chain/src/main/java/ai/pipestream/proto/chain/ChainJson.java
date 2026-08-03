@@ -17,12 +17,16 @@ import java.util.List;
  * message) into the resolved model. Anything unresolvable — schema, types, methods —
  * surfaces as {@link ChainParseException} with the step context, so the verbs can answer
  * with findings instead of stack traces.
+ *
+ * <p>Public so the jobs worker parses stored chain definitions with exactly the verbs'
+ * semantics.</p>
  */
-final class ChainJson {
+public final class ChainJson {
 
     /** A definition that cannot be resolved; {@code step} is empty for chain-level issues. */
-    static final class ChainParseException extends Exception {
-        final String step;
+    public static final class ChainParseException extends Exception {
+        /** The step the parse failed on; empty for chain-level issues. */
+        public final String step;
 
         ChainParseException(String step, String message) {
             super(message);
@@ -33,7 +37,8 @@ final class ChainJson {
     private ChainJson() {
     }
 
-    static ChainDefinition parse(ObjectNode chain, ActionContext context)
+    /** Parses one chain-definition envelope into the resolved model. */
+    public static ChainDefinition parse(ObjectNode chain, ActionContext context)
             throws ChainParseException {
         SchemaResolver.ResolvedSchema schema;
         Descriptor inputType;
@@ -71,7 +76,7 @@ final class ChainJson {
                     step.path("tls").asBoolean(false), resolved, text(step, "when"),
                     strings(step.get("rules")), celRules(step.get("celRules"), name),
                     step.path("validate").asBoolean(false),
-                    step.path("deadlineMs").asLong(0)));
+                    step.path("deadlineMs").asLong(0), text(step, "completion")));
         }
         ChainDefinition.Output output = null;
         JsonNode outputNode = chain.get("output");

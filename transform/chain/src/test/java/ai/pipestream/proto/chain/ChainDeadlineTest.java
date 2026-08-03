@@ -93,7 +93,7 @@ class ChainDeadlineTest {
     private static ChainDefinition.Step step(String name, long deadlineMs) {
         return new ChainDefinition.Step(name, "in-process", false,
                 ChainDefinition.resolveMethod(List.of(file), "chain.deadline.Echo/Call"),
-                null, List.of("text = input.text"), List.of(), false, deadlineMs);
+                null, List.of("text = input.text"), List.of(), false, deadlineMs, "");
     }
 
     private static ChainDefinition chain(long chainDeadlineMs, ChainDefinition.Step... steps) {
