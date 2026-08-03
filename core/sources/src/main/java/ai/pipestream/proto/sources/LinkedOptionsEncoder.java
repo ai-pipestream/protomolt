@@ -85,10 +85,6 @@ final class LinkedOptionsEncoder {
         }
     }
 
-    boolean isEmpty() {
-        return extensions.isEmpty();
-    }
-
     boolean hasOptions(Options options) {
         return options != null && !options.getMap().isEmpty();
     }
