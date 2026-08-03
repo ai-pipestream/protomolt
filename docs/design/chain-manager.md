@@ -40,6 +40,14 @@ one.** It is a sidecar people bolt onto whatever pipeline they already run
   a transaction is a sequence.) If serial composition ever genuinely
   needs branches, that is a signal to reconsider — not a v1 feature.
 
+**Where async execution lives.** The rules above still govern the chain
+engine itself. Detached execution — durable job rows, step checkpoints,
+park/resume on `completion: 'external'` steps, retries with backoff, and
+the Kafka request/event topics — is the `jobs/` modules' layer, built on
+`ChainRunner.runSegment` without changing these invariants: a sync chain
+still lives inside one call, and a job is the same definition with the
+same serial semantics, detached. See `jobs/README.md`.
+
 The test for any future addition: *does this make the chain a better
 sidecar, or does it make it a worse pipeline?* Only the first kind goes in.
 
