@@ -1,0 +1,12 @@
+description = 'The OpenVINO provider: executes catalog models against any OVMS-style OpenAI-compatible endpoint (chat completions, unary and SSE streaming), JDK HttpClient only'
+
+dependencies {
+    api project(':protomolt-inference-spi')
+
+    // The OpenAI wire format at the provider edge; JSON never crosses the
+    // provider boundary (protobuf in, protobuf out).
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+
+    testImplementation libs.slf4j.simple
+}
