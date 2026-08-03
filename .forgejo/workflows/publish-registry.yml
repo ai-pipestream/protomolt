@@ -38,9 +38,10 @@ jobs:
       - name: Publish snapshot to the dev registry
         env:
           FORGEJO_ACTOR: ${{ github.actor }}
-          # The ambient Forgejo actions token; valid for this instance's
-          # package registry and nothing else.
-          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Repo secret holding a publish-capable token. The ambient
+          # GITHUB_TOKEN cannot publish packages on this instance even with
+          # `permissions: packages: write` (kept above as defense in depth).
+          FORGEJO_TOKEN: ${{ secrets.REGISTRY_PUBLISH_TOKEN }}
         run: ./gradlew publishMavenPublicationToRegistryRepository --no-daemon --console=plain
 
       - name: Print resolved snapshot version
