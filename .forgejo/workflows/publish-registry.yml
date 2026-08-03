@@ -6,15 +6,19 @@
 # via nmcp and never needs Forgejo credentials; neither side holds the
 # other's tokens.
 #
-# Runs on every main sync so the registry cannot drift behind the code, and
-# on manual dispatch. This repo is a pull mirror: pushes arrive via mirror
-# sync from GitHub, so "push to main" fires after each sync.
+# Runs on every push to main so the registry cannot drift behind the code,
+# and on manual dispatch. Forgejo is the master repo for this project
+# (since 2026-08-01); GitHub receives the same commits after.
 name: Publish Registry Snapshot
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   publish-registry:
