@@ -32,6 +32,8 @@ modules:
     name: buf.build/ai-pipestream/repo
   - path: account/proto/src/main/proto
     name: buf.build/ai-pipestream/account
+  - path: jobs/proto/src/main/proto
+    name: buf.build/ai-pipestream/jobs
   - path: intake/proto/src/main/proto
     name: buf.build/ai-pipestream/intake
   - path: parse/proto/src/main/proto

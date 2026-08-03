@@ -1,0 +1,42 @@
+description = 'The chain-jobs service: durable asynchronous chain execution — Postgres is the truth, a Kafka request topic in, lifecycle events out via the transactional outbox, no framework'
+
+dependencies {
+    api project(':protomolt-jobs-proto')
+
+    // The chain engine the worker executes with (ChainJson/ChainVerifier/
+    // ChainRunner/ChainRepository); the actions implement ProtoAction.
+    api project(':protomolt-chain')
+    api project(':protomolt-actions')
+
+    // complete-step runs the parked step's declared validation rules as a
+    // verdict before accepting the response.
+    implementation project(':protomolt-protobuf-validation')
+
+    // Persistence stack (framework-free): plain JDBC over HikariCP + Flyway.
+    implementation libs.hikari
+    implementation libs.flyway.core
+    implementation libs.flyway.database.postgresql
+    implementation libs.postgresql
+    // The jsonb columns' serialization (Jackson is the repo-wide JSON
+    // library; see libs.versions.toml).
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+    // The worker's default channel factory reaches step targets over Netty.
+    implementation libs.grpc.netty.shaded
+    // Kafka eventing: the outbox relay publishes and the request-topic
+    // consumer reads through the protomolt serde (Confluent wire format over
+    // the packaged jobs.proto contract).
+    implementation project(':protomolt-serde')
+    implementation libs.kafka.clients
+
+    runtimeOnly libs.slf4j.simple
+
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.stub
+    testImplementation libs.grpc.protobuf
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.redpanda
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}

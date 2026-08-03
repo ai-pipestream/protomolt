@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.jobs.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.jobs.v1";
+
+// ============================================================================
+// CHAIN JOBS — the asynchronous chain-execution Kafka contract.
+//
+// A chain job is one chain definition executed detached from the caller:
+// submitted over the submit-chain verb or produced to the request topic,
+// executed by a worker fleet whose truth is the chain_job Postgres row.
+// Every commit point of that row (accept, step checkpoint, park, terminal
+// state) lands one ChainJobEvent in the chain_job_events_outbox table IN THE
+// SAME TRANSACTION as the row mutation; a relay publishes PENDING rows to the
+// single chain-job-events topic, keyed by job_id so each job's events are
+// partition-ordered. Delivery is at-least-once: consumers dedupe on
+// ChainJobEvent.event_id (the outbox row id).
+//
+// There is deliberately no gRPC service here: the verbs (submit-chain,
+// get-job, list-jobs, complete-step) are descriptor-native ProtoMoltService
+// actions, and broker-native clients never touch gRPC at all — they produce
+// ChainJobRequest records and subscribe to ChainJobEvent records.
+// ============================================================================
+
+// One lifecycle event of one chain job: the payload of the chain-job-events
+// topic and of one chain_job_events_outbox row. event_id is the outbox row
+// id — the consumer dedupe key under at-least-once delivery.
+message ChainJobEvent {
+  // The job lifecycle stage this record announces. Monotonic per job
+  // (ACCEPTED → STEP_CHECKPOINT*/WAITING* → exactly one of
+  // COMPLETED/FAILED/DEAD), except that a retried job repeats
+  // STEP_CHECKPOINTs for re-executed steps. (Values carry the buf-mandated
+  // TYPE_ prefix.)
+  enum Type {
+    // Zero value; never published — present so an unset type is detectable.
+    TYPE_UNSPECIFIED = 0;
+    // The job was accepted and queued (the submit commit point).
+    TYPE_ACCEPTED = 1;
+    // A step's response was checkpointed to the job row.
+    TYPE_STEP_CHECKPOINT = 2;
+    // The job parked on an external-completion step, awaiting complete-step.
+    TYPE_WAITING = 3;
+    // The chain ran to completion; verdict carries the one-line summary.
+    TYPE_COMPLETED = 4;
+    // The job failed terminally (a validation verdict or a non-retryable
+    // error); error carries the verbatim detail.
+    TYPE_FAILED = 5;
+    // Retries were exhausted; the job is dead-lettered with the last error
+    // verbatim. Operator territory — nothing re-enqueues a DEAD job.
+    TYPE_DEAD = 6;
+  }
+
+  // The outbox row id; stable across relay retries, so redeliveries dedupe.
+  string event_id = 1;
+  // The job this event belongs to; also the Kafka record key, so one job's
+  // events are partition-ordered.
+  string job_id = 2;
+  // The chain the job runs (the stored chain name, or the inline chain's
+  // declared name).
+  string chain_name = 3;
+  // The lifecycle stage of this event.
+  Type type = 4;
+  // The step the event is about; set for STEP_CHECKPOINT, WAITING, and FAILED
+  // events that carry a failing step.
+  string step = 5;
+  // The job's attempt counter as of this event (1-based; claim increments).
+  int32 attempt = 6;
+  // The one-line completion summary ("3 steps, output acme.v1.Ticket"); set
+  // on COMPLETED only.
+  string verdict = 7;
+  // The verbatim last error (validation violations included); set on FAILED
+  // and DEAD only.
+  string error = 8;
+  // Small extras that do not justify first-class fields (e.g. the job's
+  // status string after the transition).
+  google.protobuf.Struct detail = 9;
+  // When the event's transaction committed.
+  google.protobuf.Timestamp occurred_at = 10;
+}
+
+// The request-topic payload: broker-native job submission. Producing one
+// record keyed by job_id is exactly equivalent to calling submit-chain with
+// a stored chain name; inline chains only come via the verb.
+message ChainJobRequest {
+  // Client-generated uuid. This is the idempotency key: a redelivered or
+  // republished request inserts nothing new, it returns the existing job.
+  string job_id = 1;
+  // The stored chain to run, resolved through the worker's chain repository.
+  // An unknown name fails the job loudly (a FAILED row), never a silent drop.
+  string chain_name = 2;
+  // The chain input, as the proto3 JSON object of the chain's inputType.
+  google.protobuf.Struct input = 3;
+}

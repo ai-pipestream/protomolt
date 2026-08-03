@@ -260,6 +260,15 @@ project(':protomolt-account-proto').projectDir = file('account/proto')
 include 'protomolt-account-service'
 project(':protomolt-account-service').projectDir = file('account/service')
 
+// jobs/ — asynchronous chain execution: durable chain jobs (Postgres is the
+// truth), a request topic in, lifecycle events out.
+
+include 'protomolt-jobs-proto'
+project(':protomolt-jobs-proto').projectDir = file('jobs/proto')
+
+include 'protomolt-jobs-service'
+project(':protomolt-jobs-service').projectDir = file('jobs/service')
+
 // intake/ — the platform front door: authenticated ingest lanes in front of
 // repo-service.
 
