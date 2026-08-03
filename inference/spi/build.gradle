@@ -1,0 +1,6 @@
+description = 'The inference provider SPI: ServiceLoader-discovered InferenceProvider implementations, a thread-safe model catalog, and the resolution facade every surface (gRPC, jobs) shares'
+
+dependencies {
+    api project(':protomolt-inference-proto')
+    api libs.protobuf.java
+}

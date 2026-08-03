@@ -1,0 +1,39 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The inference contract: the generic InferenceService gRPC surface, the catalog ModelEntry, and provenance-carrying generation envelopes'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+
+    // The contract dogfoods the house standards: validate.v1 rules and
+    // meta.v1 descriptions (map-valued labels included).
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.73.0"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

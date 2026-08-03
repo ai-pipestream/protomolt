@@ -269,6 +269,21 @@ project(':protomolt-jobs-proto').projectDir = file('jobs/proto')
 include 'protomolt-jobs-service'
 project(':protomolt-jobs-service').projectDir = file('jobs/service')
 
+// inference/ — the generic model-inference surface: one typed contract in
+// front of every backend (OpenVINO, NVIDIA, llama.cpp edge boxes), an SPI
+// for providers, and a catalog so models are data, not code.
+include 'protomolt-inference-proto'
+project(':protomolt-inference-proto').projectDir = file('inference/proto')
+
+include 'protomolt-inference-spi'
+project(':protomolt-inference-spi').projectDir = file('inference/spi')
+
+include 'protomolt-inference-openvino'
+project(':protomolt-inference-openvino').projectDir = file('inference/openvino')
+
+include 'protomolt-inference-service'
+project(':protomolt-inference-service').projectDir = file('inference/service')
+
 // intake/ — the platform front door: authenticated ingest lanes in front of
 // repo-service.
 

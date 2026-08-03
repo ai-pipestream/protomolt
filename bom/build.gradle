@@ -91,6 +91,10 @@ def supportedModules = [
         'protomolt-account-service',
         'protomolt-jobs-proto',
         'protomolt-jobs-service',
+        'protomolt-inference-proto',
+        'protomolt-inference-spi',
+        'protomolt-inference-openvino',
+        'protomolt-inference-service',
         'protomolt-intake-proto',
         'protomolt-parse-proto',
 ]

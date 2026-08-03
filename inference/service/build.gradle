@@ -1,0 +1,18 @@
+description = 'The inference gRPC service: the generic InferenceService surface wrapped around the SPI facade, requests validated against their declared validate.v1 rules, blocking provider calls on virtual threads'
+
+dependencies {
+    api project(':protomolt-inference-spi')
+    api project(':protomolt-inference-proto')
+
+    // Requests are validated against the validate.v1 rules declared on the
+    // contract before any provider is touched.
+    implementation project(':protomolt-protobuf-validation')
+
+    implementation libs.grpc.stub
+    implementation libs.grpc.protobuf
+    implementation libs.slf4j.api
+
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.netty.shaded
+    testRuntimeOnly libs.slf4j.simple
+}
