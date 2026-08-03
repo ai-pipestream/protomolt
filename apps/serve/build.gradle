@@ -22,6 +22,10 @@ dependencies {
     // The chain-jobs fleet (worker, relay, store) starts in this process
     // when --jobs-jdbc is given.
     implementation project(':protomolt-jobs-service')
+    // The inference catalog boots from --inference-model specs; the OpenVINO
+    // provider lands on the classpath for ServiceLoader discovery.
+    implementation project(':protomolt-inference-spi')
+    implementation project(':protomolt-inference-openvino')
     implementation libs.kafka.clients
     implementation libs.protobuf.java.util
     implementation libs.swagger.ui

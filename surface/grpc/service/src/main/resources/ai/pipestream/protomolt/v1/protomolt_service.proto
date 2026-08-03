@@ -135,6 +135,20 @@ service ProtoMoltService {
   // lane: a judge, reviewer, or external agent resolves the step the worker
   // parked on. Idempotent on job_id + step_name.
   rpc CompleteStep(CompleteStepRequest) returns (CompleteStepResponse);
+
+  // Runs one inference generation against a model registered in the server's
+  // inference catalog (the inference SPI: OpenVINO today, more providers as
+  // they land). Unary only; streaming lives on the native InferenceService.
+  rpc InferenceGenerate(InferenceGenerateRequest) returns (InferenceGenerateResponse);
+
+  // Lists the server's inference model catalog: the registered models a
+  // caller may name in inference-generate.
+  rpc InferenceListModels(InferenceListModelsRequest)
+      returns (InferenceListModelsResponse);
+
+  // Describes one inference catalog model entry, capabilities included.
+  rpc InferenceDescribeModel(InferenceDescribeModelRequest)
+      returns (InferenceDescribeModelResponse);
 }
 
 // A schema source. Provide exactly one of 'type', 'sources', or
@@ -1074,4 +1088,130 @@ message MaskMessageResponse {
   google.protobuf.Struct message = 1;
   // Paths of the fields that were masked.
   repeated string masked_fields = 2;
+}
+
+// ============================================================================
+// INFERENCE VERBS — the inference SPI exposed through the catalog. Payloads
+// mirror ai.pipestream.proto.inference.v1; they are re-declared here (like
+// the jobs payloads) because this file is self-contained for the runtime
+// compiler. The canonical proto3 JSON form is the action envelope, so the
+// same call works over gRPC, the REST gateway, and MCP.
+// ============================================================================
+
+// One conversational turn for inference-generate.
+message InferenceChatTurn {
+  // The speaker: 'system', 'user', 'assistant', or 'tool'.
+  string role = 1;
+  // The turn's plain-text content.
+  string content = 2;
+}
+
+// The input of inference-generate.
+message InferenceGenerateRequest {
+  // The catalog id of the model to run (see inference-list-models).
+  string model = 1;
+  // The conversation, oldest first.
+  repeated InferenceChatTurn messages = 2;
+  // Sampling temperature; 0 is the provider's default.
+  double temperature = 3;
+  // Nucleus sampling mass; 0 is the provider's default.
+  double top_p = 4;
+  // Hard cap on generated tokens; 0 lets the provider apply its own cap.
+  int32 max_output_tokens = 5;
+  // Requests the model's deliberation mode when it has one.
+  bool enable_thinking = 6;
+}
+
+// Token accounting of one inference generation.
+message InferenceUsage {
+  // Tokens consumed by the prompt.
+  int64 prompt_tokens = 1;
+  // Tokens produced by the model.
+  int64 completion_tokens = 2;
+}
+
+// The outcome of inference-generate.
+message InferenceGenerateResponse {
+  // True when the model answered; false carries 'error'.
+  bool ok = 1;
+  // The generated text.
+  string text = 2;
+  // The catalog model id that ran.
+  string model = 3;
+  // The SPI provider that executed (e.g. 'openvino').
+  string provider = 4;
+  // The provider-reported model version or digest; empty when unreported.
+  string model_version = 5;
+  // Why generation stopped ('stop', 'length', 'aborted').
+  string finish_reason = 6;
+  // Token accounting.
+  InferenceUsage usage = 7;
+  // Why the call failed, when ok=false (unknown model, provider error,
+  // inference not configured).
+  string error = 8;
+}
+
+// What one inference catalog model can do.
+message InferenceModelCapabilities {
+  // The model's total context window in tokens.
+  int64 max_context_tokens = 1;
+  // The largest supported single-generation output in tokens; 0 = unbounded.
+  int32 max_output_tokens = 2;
+  // Whether streaming generation is supported.
+  bool streaming = 3;
+  // Whether the model has a deliberation ('thinking') mode.
+  bool thinking = 4;
+  // Input modalities beyond text; empty = text only.
+  repeated string modalities = 5;
+}
+
+// One inference catalog model registration.
+message InferenceModelEntry {
+  // The catalog id clients request by.
+  string id = 1;
+  // The SPI provider id that executes this model.
+  string provider = 2;
+  // The provider-specific target (base URL or gRPC target).
+  string endpoint = 3;
+  // The model name as the backend knows it; empty = same as id.
+  string backend_model = 4;
+  // Declared capabilities.
+  InferenceModelCapabilities capabilities = 5;
+  // Free-form provenance labels (e.g. machine, gpu, role).
+  map<string, string> labels = 6;
+}
+
+// The input of inference-list-models.
+message InferenceListModelsRequest {
+  // When set, only entries executed by this provider are returned.
+  string provider = 1;
+}
+
+// The outcome of inference-list-models.
+message InferenceListModelsResponse {
+  // True when inference is configured; false carries 'error'.
+  bool ok = 1;
+  // The registered entries (after optional filtering).
+  repeated InferenceModelEntry models = 2;
+  // The catalog generation at the time of the listing.
+  int64 catalog_generation = 3;
+  // Why the read failed, when ok=false (inference not configured).
+  string error = 4;
+}
+
+// The input of inference-describe-model.
+message InferenceDescribeModelRequest {
+  // The catalog id to describe.
+  string model = 1;
+}
+
+// The outcome of inference-describe-model.
+message InferenceDescribeModelResponse {
+  // True when the model is registered; false carries 'error'.
+  bool ok = 1;
+  // The catalog entry.
+  InferenceModelEntry entry = 2;
+  // Why the read failed, when ok=false (unknown model, inference not
+  // configured).
+  string error = 3;
 }

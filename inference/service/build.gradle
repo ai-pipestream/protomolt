@@ -4,12 +4,17 @@ dependencies {
     api project(':protomolt-inference-spi')
     api project(':protomolt-inference-proto')
 
+    // The catalog verbs (inference-generate / inference-list-models /
+    // inference-describe-model) ride the action framework like every other verb.
+    api project(':protomolt-actions')
+
     // Requests are validated against the validate.v1 rules declared on the
     // contract before any provider is touched.
     implementation project(':protomolt-protobuf-validation')
 
     implementation libs.grpc.stub
     implementation libs.grpc.protobuf
+    implementation libs.jackson.databind
     implementation libs.slf4j.api
 
     testImplementation libs.grpc.inprocess

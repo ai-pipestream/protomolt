@@ -102,7 +102,7 @@ class ProtoMoltServeTest {
         HttpResponse<String> response = get("/openapi.json");
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode paths = MAPPER.readTree(response.body()).path("paths");
-        assertThat(paths.size()).isEqualTo(28);
+        assertThat(paths.size()).isEqualTo(31);
         assertThat(paths.has("/grpc-json/ProtoMoltService/GrpcInvoke")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/GenerateStubs")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/SubmitChain")).isTrue();

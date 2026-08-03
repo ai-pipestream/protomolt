@@ -14,6 +14,9 @@ dependencies {
     // The four chain-jobs verbs (submit-chain, get-job, list-jobs,
     // complete-step) ride the catalog; the store is injected by the server.
     implementation project(':protomolt-jobs-service')
+    // The three inference verbs (inference-generate, inference-list-models,
+    // inference-describe-model); the facade is injected by the server.
+    implementation project(':protomolt-inference-service')
     implementation libs.protobuf.java.util
     implementation libs.grpc.stub
     implementation libs.grpc.services

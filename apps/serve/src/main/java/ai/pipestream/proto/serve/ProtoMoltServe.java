@@ -9,6 +9,9 @@ import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.pipestream.proto.jobs.service.ChainJobsConfig;
 import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
 import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
+import ai.pipestream.proto.inference.spi.InferenceCatalog;
+import ai.pipestream.proto.inference.spi.InferenceEngines;
+import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
 import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
 import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
@@ -51,7 +54,8 @@ public final class ProtoMoltServe implements AutoCloseable {
      */
     public record Options(String host, int grpcPort, int httpPort,
                           Path registryGit, int registryPort, String apiToken, boolean demo,
-                          Path gatherCache, JobsOptions jobs) {
+                          Path gatherCache, JobsOptions jobs,
+                          java.util.List<String> inferenceModels) {
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
             this(host, grpcPort, httpPort, registryGit, registryPort, null, false, null);
@@ -71,6 +75,13 @@ public final class ProtoMoltServe implements AutoCloseable {
                        int registryPort, String apiToken, boolean demo, Path gatherCache) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
                     gatherCache, null);
+        }
+
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, java.util.List.of());
         }
 
         public static Options defaults() {
@@ -96,6 +107,15 @@ public final class ProtoMoltServe implements AutoCloseable {
             String jobsRequestTopic = System.getenv("PROTOMOLT_JOBS_REQUEST_TOPIC");
             int jobsWorkers = envInt("PROTOMOLT_JOBS_WORKERS", 0);
             int jobsTargetConcurrency = envInt("PROTOMOLT_JOBS_TARGET_CONCURRENCY", 0);
+            java.util.List<String> inferenceModels = new java.util.ArrayList<>();
+            String inferenceModelsEnv = System.getenv("PROTOMOLT_INFERENCE_MODELS");
+            if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
+                for (String spec : inferenceModelsEnv.split(";")) {
+                    if (!spec.isBlank()) {
+                        inferenceModels.add(spec.trim());
+                    }
+                }
+            }
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--host" -> host = requireValue(args, ++i);
@@ -113,6 +133,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--jobs-workers" -> jobsWorkers = Integer.parseInt(requireValue(args, ++i));
                     case "--jobs-target-concurrency" ->
                             jobsTargetConcurrency = Integer.parseInt(requireValue(args, ++i));
+                    case "--inference-model" -> inferenceModels.add(requireValue(args, ++i));
                     case "--demo" -> demo = true;
                     case "--help", "-h" -> {
                         System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
@@ -121,7 +142,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--gather-cache <dir>]  (or PROTOMOLT_GATHER_CACHE) [--demo] "
                                 + "[--jobs-jdbc <url> --jobs-user <u> [--jobs-password <p>] "
                                 + "[--jobs-kafka <bootstrap>] [--jobs-request-topic <name>] "
-                                + "[--jobs-workers <n>] [--jobs-target-concurrency <n>]]");
+                                + "[--jobs-workers <n>] [--jobs-target-concurrency <n>]] "
+                                + "[--inference-model <id|provider|endpoint[|backend[|k:v,...]]> ...] "
+                                + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated)");
                         System.exit(0);
                     }
                     default -> {
@@ -148,7 +171,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                 System.exit(2);
             }
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
-                    demo, gatherCache, jobs);
+                    demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels));
         }
 
         private static int envInt(String name, int fallback) {
@@ -163,6 +186,48 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
             return args[i];
         }
+    }
+
+    /**
+     * Builds the inference facade from {@code --inference-model} specs
+     * ({@code id|provider|endpoint[|backend[|k:v,...]]}). Empty specs mean inference is
+     * not configured (null; the verbs answer {@code unavailable}). A bad spec or an
+     * unknown provider fails startup loud — a model the server cannot execute must
+     * never sit in the catalog looking runnable.
+     */
+    private static InferenceEngines inferenceEngines(java.util.List<String> specs) {
+        if (specs.isEmpty()) {
+            return null;
+        }
+        InferenceCatalog catalog = new InferenceCatalog();
+        InferenceEngines engines = new InferenceEngines(catalog);
+        for (String spec : specs) {
+            String[] parts = spec.split("\\|", -1);
+            if (parts.length < 3 || parts.length > 5
+                    || parts[0].isBlank() || parts[1].isBlank() || parts[2].isBlank()) {
+                throw new IllegalArgumentException("bad --inference-model spec '" + spec
+                        + "' (want id|provider|endpoint[|backend[|k:v,...]])");
+            }
+            ModelEntry.Builder entry = ModelEntry.newBuilder()
+                    .setId(parts[0].trim())
+                    .setProvider(parts[1].trim())
+                    .setEndpoint(parts[2].trim());
+            if (parts.length >= 4 && !parts[3].isBlank()) {
+                entry.setBackendModel(parts[3].trim());
+            }
+            if (parts.length == 5 && !parts[4].isBlank()) {
+                for (String label : parts[4].split(",")) {
+                    String[] kv = label.split(":", 2);
+                    if (kv.length != 2 || kv[0].isBlank()) {
+                        throw new IllegalArgumentException("bad label '" + label
+                                + "' in --inference-model spec '" + spec + "' (want k:v)");
+                    }
+                    entry.putLabels(kv[0].trim(), kv[1].trim());
+                }
+            }
+            engines.register(entry.build());
+        }
+        return engines;
     }
 
     /**
@@ -261,13 +326,14 @@ public final class ProtoMoltServe implements AutoCloseable {
                 // The catalog sees the store so run-chain resolves stored chain names and
                 // the jobs verbs serve the live job rows.
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                        chains, jobStore, jobsConfig.maxAttemptsDefault());
+                        chains, jobStore, jobsConfig.maxAttemptsDefault(),
+                        inferenceEngines(options.inferenceModels()));
                 return startWithJobsCatalog(options, context, catalog, store, chains,
                         jobsDatabase, jobsWorker, jobsRelay);
             }
             // The catalog sees the store so run-chain resolves stored chain names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                    chains);
+                    chains, null, 0, inferenceEngines(options.inferenceModels()));
             return startWithJobsCatalog(options, context, catalog, store, chains,
                     null, null, null);
         } catch (RuntimeException e) {
