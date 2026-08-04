@@ -25,7 +25,7 @@ apicurio = "3.3.1"
 spring = "7.0.8"
 # Boot line matching Spring Framework 7
 spring-boot = "4.0.7"
-vertx = "5.1.4"
+vertx = "5.1.5"
 netty = "4.2.16.Final"
 # Micronaut 4.x is the JDK 21-compatible line (5.x requires JVM 25+)
 micronaut = "4.9.4"
