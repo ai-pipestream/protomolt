@@ -95,6 +95,7 @@ def supportedModules = [
         'protomolt-inference-spi',
         'protomolt-inference-openvino',
         'protomolt-inference-service',
+        'protomolt-inference-openai',
         'protomolt-intake-proto',
         'protomolt-parse-proto',
 ]

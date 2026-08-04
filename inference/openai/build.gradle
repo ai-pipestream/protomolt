@@ -1,0 +1,9 @@
+description = 'The OpenAI-compatible provider: the openai profile of the shared chat transport for /v1 backends (Ollama, vLLM, llama.cpp) - the NVIDIA and edge-box lane'
+
+dependencies {
+    api project(':protomolt-inference-spi')
+
+    // The shared OpenAI-compatible chat transport lives with the OpenVINO
+    // provider (the first profile).
+    implementation project(':protomolt-inference-openvino')
+}
