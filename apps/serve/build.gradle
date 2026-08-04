@@ -26,6 +26,7 @@ dependencies {
     // provider lands on the classpath for ServiceLoader discovery.
     implementation project(':protomolt-inference-spi')
     implementation project(':protomolt-inference-openvino')
+    implementation project(':protomolt-inference-openai')
     implementation libs.kafka.clients
     implementation libs.protobuf.java.util
     implementation libs.swagger.ui

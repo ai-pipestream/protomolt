@@ -1,5 +1,6 @@
-package ai.pipestream.proto.inference.openvino;
+package ai.pipestream.proto.inference.openai;
 
+import ai.pipestream.proto.inference.openvino.OpenAiChatTransport;
 import ai.pipestream.proto.inference.spi.ChunkObserver;
 import ai.pipestream.proto.inference.spi.InferenceProvider;
 import ai.pipestream.proto.inference.v1.GenerateRequest;
@@ -10,22 +11,25 @@ import ai.pipestream.proto.inference.v1.ModelEntry;
 import java.time.Duration;
 
 /**
- * The OpenVINO provider: the {@code openvino} profile of the shared
- * OpenAI-compatible transport, pointed at the {@code /v3} surface every
- * OpenVINO model server exposes.
+ * The OpenAI-compatible provider: the {@code openai} profile of the shared
+ * chat transport, pointed at the {@code /v1} surface that Ollama, vLLM, and
+ * llama.cpp's server expose. This is the NVIDIA lane (Ollama on CUDA) and
+ * the edge-box lane (llama.cpp on Jetson, Raspberry Pi) — one provider id
+ * with honest provenance: responses name {@code openai}, not the transport
+ * they share with OpenVINO.
  *
  * <p>Instances are stateless and thread-safe; the work lives in
  * {@link OpenAiChatTransport}.</p>
  */
-public final class OpenVinoProvider implements InferenceProvider {
+public final class OpenAiCompatProvider implements InferenceProvider {
 
     /** Provider id catalog entries reference: {@value}. */
-    public static final String ID = "openvino";
+    public static final String ID = "openai";
 
     private final OpenAiChatTransport transport;
 
     /** Creates the provider with a 15-minute request timeout (long prefills). */
-    public OpenVinoProvider() {
+    public OpenAiCompatProvider() {
         this(Duration.ofMinutes(15));
     }
 
@@ -34,8 +38,8 @@ public final class OpenVinoProvider implements InferenceProvider {
      *
      * @param requestTimeout the timeout for one generation call
      */
-    public OpenVinoProvider(Duration requestTimeout) {
-        this.transport = new OpenAiChatTransport(ID, "/v3/chat/completions", requestTimeout);
+    public OpenAiCompatProvider(Duration requestTimeout) {
+        this.transport = new OpenAiChatTransport(ID, "/v1/chat/completions", requestTimeout);
     }
 
     @Override

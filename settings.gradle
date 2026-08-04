@@ -284,6 +284,9 @@ project(':protomolt-inference-openvino').projectDir = file('inference/openvino')
 include 'protomolt-inference-service'
 project(':protomolt-inference-service').projectDir = file('inference/service')
 
+include 'protomolt-inference-openai'
+project(':protomolt-inference-openai').projectDir = file('inference/openai')
+
 // intake/ — the platform front door: authenticated ingest lanes in front of
 // repo-service.
 
