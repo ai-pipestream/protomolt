@@ -8,14 +8,14 @@ kafka = "3.9.2"
 # Confluent 8.0 is the first line compiled against protobuf-java 4.x (7.9.x's ProtobufSchema
 # bytecode references GeneratedMessageV3, removed in protobuf 4). Test-scoped interop only;
 # kafka-clients stays pinned to 3.9.1 above.
-confluent = "8.0.6"
+confluent = "8.3.0"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.0"
 swagger-ui = "5.25.3"
 jackson = "2.22.1"
-quarkus = "3.38.0"
-axion-release = "1.21.2"
+quarkus = "3.38.1"
+axion-release = "1.21.3"
 nmcp = "1.6.1"
 grpc = "1.73.0"
 chicory = "1.7.5"
