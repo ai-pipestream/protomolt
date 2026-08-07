@@ -15,6 +15,7 @@ import ai.pipestream.proto.repo.container.lifecycle.CoherenceProbe;
 import ai.pipestream.proto.repo.container.lifecycle.EventRelay;
 import ai.pipestream.proto.repo.container.lifecycle.JdbcEventOutbox;
 import ai.pipestream.proto.repo.container.lifecycle.JdbcPurgeQueue;
+import ai.pipestream.proto.repo.container.lifecycle.KafkaPurgeQueue;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeQueue;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeSweeper;
 import ai.pipestream.proto.repo.container.lifecycle.S3Purger;
@@ -112,6 +113,8 @@ public final class RepoServices implements AutoCloseable {
     private final JdbcEventOutbox eventOutbox;
     private final EventRelay eventRelay;
     private final KafkaProducer<String, com.google.protobuf.Message> eventProducer;
+    private final KafkaProducer<String, com.google.protobuf.Message> purgeProducer;
+    private final org.apache.kafka.clients.consumer.KafkaConsumer<String, byte[]> purgeConsumer;
 
     private final List<Server> servers = new CopyOnWriteArrayList<>();
     private final List<UploadHttpServer> httpServers = new CopyOnWriteArrayList<>();
@@ -124,7 +127,23 @@ public final class RepoServices implements AutoCloseable {
         this.tx = new Tx(database.entityManagerFactory());
         this.documentLedger = new DocumentLedger(tx);
         this.driveLedger = new DriveLedger(tx);
-        this.purgeQueue = new JdbcPurgeQueue(tx);
+        // Purge-queue selection (DOCUMENT_PLATFORM_PURGE_QUEUE): "jdbc"
+        // claims rows straight from document_purges; "kafka" keeps the row as
+        // the ledger of record and distributes claims through the purge topic
+        // (the config already failed fast when kafka is selected without
+        // bootstrap servers).
+        if (RepoServiceConfig.PURGE_QUEUE_KAFKA.equals(config.purgeQueue())) {
+            this.purgeProducer = KafkaPurgeQueue.newProducer(config.kafkaBootstrapServers(),
+                    config.schemaRegistryUrl());
+            this.purgeConsumer = KafkaPurgeQueue.newConsumer(config.kafkaBootstrapServers(),
+                    PURGE_CONSUMER_GROUP);
+            this.purgeQueue = KafkaPurgeQueue.create(tx, purgeProducer, purgeConsumer,
+                    config.kafkaPurgeTopic(), PURGE_POLL_TIMEOUT);
+        } else {
+            this.purgeProducer = null;
+            this.purgeConsumer = null;
+            this.purgeQueue = new JdbcPurgeQueue(tx);
+        }
         this.s3Client = buildS3Client(config);
         // Blob-store selection (DOCUMENT_PLATFORM_BLOB_STORE): "s3" is the
         // direct object-storage path; "repo"/"repo-inprocess" dogfood the
@@ -357,6 +376,12 @@ public final class RepoServices implements AutoCloseable {
     /** Event-relay drain batch size per loop iteration. */
     private static final int RELAY_BATCH_SIZE = 100;
 
+    /** The purger fleet's consumer group (Kafka purge queue only). */
+    private static final String PURGE_CONSUMER_GROUP = "repo-purger";
+
+    /** The Kafka purge queue's consumer poll budget per claim. */
+    private static final java.time.Duration PURGE_POLL_TIMEOUT = java.time.Duration.ofSeconds(1);
+
     /** One reconcile pass over every drive's bucket scope. */
     private void reconcileAllDrives() {
         for (DriveRecord drive : driveLedger.listAll(1000)) {
@@ -429,6 +454,12 @@ public final class RepoServices implements AutoCloseable {
         servers.clear();
         if (eventProducer != null) {
             eventProducer.close();
+        }
+        if (purgeConsumer != null) {
+            purgeConsumer.close();
+        }
+        if (purgeProducer != null) {
+            purgeProducer.close();
         }
         if (remoteChannel != null) {
             remoteChannel.shutdownNow();
