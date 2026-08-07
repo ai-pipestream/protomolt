@@ -1,23 +1,27 @@
 [versions]
 protobuf = "4.35.1"
 cel = "0.13.1"
-junit = "6.1.1"
+junit = "6.1.2"
 assertj = "3.27.7"
 slf4j = "2.0.18"
-kafka = "3.9.1"
-# Confluent 8.0 is the first line compiled against protobuf-java 4.x (7.9.x's ProtobufSchema
-# bytecode references GeneratedMessageV3, removed in protobuf 4). Test-scoped interop only;
-# kafka-clients stays pinned to 3.9.1 above.
+kafka = "3.9.2"
+# Confluent is boxed into the 8.0.x line from both sides. Floor: 8.0 is the first line
+# compiled against protobuf-java 4.x (7.9.x's ProtobufSchema bytecode references
+# GeneratedMessageV3, removed in protobuf 4). Ceiling: 8.1+ (the Kafka 4.1-based lines,
+# verified through 8.3.0) reference org.apache.kafka.common.metrics.Monitorable (KIP-877),
+# which does not exist in the kafka-clients 3.9 line pinned above — the interop tests fail
+# to compile. Do not bump past 8.0.x until kafka-clients moves to >= 4.1.
+# Test-scoped interop only.
 confluent = "8.0.6"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.0"
 swagger-ui = "5.25.3"
 jackson = "2.22.1"
-quarkus = "3.38.0"
-axion-release = "1.21.2"
+quarkus = "3.38.1"
+axion-release = "1.21.3"
 nmcp = "1.6.1"
-grpc = "1.73.0"
+grpc = "1.83.1"
 chicory = "1.7.5"
 lucene = "11.0.0-experimental-SNAPSHOT"
 opennlp = "3.x-preview-SNAPSHOT"
@@ -25,8 +29,8 @@ apicurio = "3.3.1"
 spring = "7.0.8"
 # Boot line matching Spring Framework 7
 spring-boot = "4.0.7"
-vertx = "5.1.4"
-netty = "4.2.16.Final"
+vertx = "5.1.6"
+netty = "4.2.17.Final"
 # Micronaut 4.x is the JDK 21-compatible line (5.x requires JVM 25+)
 micronaut = "4.9.4"
 protobuf-gradle = "0.10.0"
@@ -35,10 +39,10 @@ jgit = "7.3.0.202506031305-r"
 parquet = "1.15.2"
 hadoop = "3.4.1"
 iceberg = "1.11.0"
-awssdk = "2.47.5"
+awssdk = "2.51.1"
 maven-resolver = "1.9.27"
 maven = "3.9.16"
-graalvm-buildtools = "1.1.6"
+graalvm-buildtools = "1.1.7"
 # Persistence stack (framework-free): Hibernate ORM + HikariCP + Flyway.
 hibernate = "7.4.5.Final"
 hikari = "7.1.0"

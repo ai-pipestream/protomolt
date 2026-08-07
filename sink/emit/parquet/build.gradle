@@ -8,7 +8,7 @@ dependencies {
     implementation project(':protomolt-protobuf-metadata')
 
     implementation libs.parquet.hadoop
-    implementation 'org.xerial.snappy:snappy-java:1.1.10.7'
+    implementation 'org.xerial.snappy:snappy-java:1.1.10.8'
     // Hadoop appears in parquet-hadoop method signatures only; nothing on the write
     // path loads a Hadoop class at run time (HadoopFreeParquetTest proves it), so the
     // API jar is compile-time only and consumers get zero Hadoop jars.
