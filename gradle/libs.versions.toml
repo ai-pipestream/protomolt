@@ -12,7 +12,7 @@ kafka = "3.9.2"
 # which does not exist in the kafka-clients 3.9 line pinned above — the interop tests fail
 # to compile. Do not bump past 8.0.x until kafka-clients moves to >= 4.1.
 # Test-scoped interop only.
-confluent = "8.0.6"
+confluent = "8.0.7"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.0"
