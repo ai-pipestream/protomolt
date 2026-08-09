@@ -154,4 +154,49 @@ class RepoServiceConfigTest {
                 null, null, null, " standalone ");
         assertThat(set.seedAccountId()).isEqualTo("standalone");
     }
+
+    @Test
+    void purgeQueueDefaultsToJdbcWithTheDefaultPurgeTopic() {
+        // Every compatibility constructor keeps the JDBC queue.
+        assertThat(config(-1, null, null, null).purgeQueue()).isEqualTo("jdbc");
+        RepoServiceConfig compat = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                null, null, null, null);
+        assertThat(compat.purgeQueue()).isEqualTo("jdbc");
+        assertThat(compat.kafkaPurgeTopic()).isEqualTo("document-purges");
+    }
+
+    @Test
+    void unknownPurgeQueueIsRejected() {
+        assertThatThrownBy(() -> new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                null, null, null, null, "rabbit", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DOCUMENT_PLATFORM_PURGE_QUEUE");
+    }
+
+    @Test
+    void kafkaPurgeQueueRequiresBootstrapServers() {
+        assertThatThrownBy(() -> new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                null, null, null, null, "kafka", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS");
+
+        RepoServiceConfig kafka = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "broker:9092", null, null, null, " KAFKA ", "purges-v2");
+        assertThat(kafka.purgeQueue()).isEqualTo("kafka");
+        assertThat(kafka.kafkaPurgeTopic()).isEqualTo("purges-v2");
+
+        RepoServiceConfig defaultTopic = new RepoServiceConfig(0, LEDGER, null, null, null, null,
+                null, 0, null, null, null, null, -1, -1L,
+                true, -1L, -1L, false, true, -1L,
+                "broker:9092", null, null, null, "kafka", "  ");
+        assertThat(defaultTopic.kafkaPurgeTopic()).isEqualTo("document-purges");
+    }
 }

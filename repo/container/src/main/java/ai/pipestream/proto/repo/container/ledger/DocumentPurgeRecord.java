@@ -123,6 +123,16 @@ public class DocumentPurgeRecord {
     public String lastError;
 
     /**
+     * When the Kafka-backed purge queue relayed this record to the purge
+     * topic; null until relayed, and null forever on the JDBC queue (V5).
+     * The relay republishes any PENDING row whose relayed_at is still null,
+     * so a crash between the broker ack and this stamp causes a duplicate on
+     * the topic - tolerated, because settling is conditional on PENDING.
+     */
+    @Column(name = "relayed_at")
+    public Instant relayedAt;
+
+    /**
      * Deserialize {@link #objectKeys} (a JSON array of strings) into the
      * snapshot key list.
      *
