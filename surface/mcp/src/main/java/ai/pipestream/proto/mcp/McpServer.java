@@ -42,25 +42,65 @@ public final class McpServer {
     /** Latest protocol revision this server implements. */
     public static final String PROTOCOL_VERSION = "2025-06-18";
 
+    /**
+     * Guidance shown to an MCP client during initialization when no custom instructions are
+     * supplied. The opening is deliberately self-contained so clients that truncate
+     * initialization metadata still get the complete gRPC workflow.
+     */
+    public static final String DEFAULT_INSTRUCTIONS =
+            "ProtoMolt workflow: with a service workspace, call `service-register` once, then use "
+                    + "`service-inspect` and its MCP resources; refresh only when the schema changes. "
+                    + "For ad hoc targets, call `reflect`, choose the exact service, method, and request "
+                    + "fields from its schema, then call `grpc-invoke` with proto3 JSON. Check `ok` and "
+                    + "status before continuing. Use `generate-stubs` only when promoting a native "
+                    + "client. Never guess methods or payloads when descriptors can answer.";
+
     private static final List<String> SUPPORTED_VERSIONS =
             List.of("2025-06-18", "2025-03-26", "2024-11-05");
 
     private final ActionCatalog catalog;
-    private final RegistryResources resources;
+    private final McpResources resources;
     private final String serverName;
     private final String serverVersion;
+    private final String instructions;
     private final ObjectMapper mapper = new ObjectMapper();
 
     /**
      * @param catalog   tools; every catalog action is exposed
      * @param resources registry-backed resources, or {@code null} to serve tools only
      */
+    public McpServer(ActionCatalog catalog, McpResources resources,
+                     String serverName, String serverVersion) {
+        this(catalog, resources, serverName, serverVersion, DEFAULT_INSTRUCTIONS);
+    }
+
+    /**
+     * Binary-compatible constructor retained for consumers compiled against the original
+     * registry-only resource surface.
+     */
     public McpServer(ActionCatalog catalog, RegistryResources resources,
                      String serverName, String serverVersion) {
+        this(catalog, (McpResources) resources, serverName, serverVersion,
+                DEFAULT_INSTRUCTIONS);
+    }
+
+    /**
+     * Creates an MCP server with explicit client guidance returned in {@code initialize}.
+     * Passing an empty string omits the optional MCP {@code instructions} member.
+     *
+     * @param catalog tools; every catalog action is exposed
+     * @param resources registry-backed resources, or {@code null} to serve tools only
+     * @param serverName server identity exposed during initialization
+     * @param serverVersion server version exposed during initialization
+     * @param instructions guidance for an MCP client, or an empty string to omit it
+     */
+    public McpServer(ActionCatalog catalog, McpResources resources,
+                     String serverName, String serverVersion, String instructions) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.resources = resources;
         this.serverName = Objects.requireNonNull(serverName, "serverName");
         this.serverVersion = Objects.requireNonNull(serverVersion, "serverVersion");
+        this.instructions = Objects.requireNonNull(instructions, "instructions");
     }
 
     /**
@@ -148,6 +188,9 @@ public final class McpServer {
         ObjectNode serverInfo = result.putObject("serverInfo");
         serverInfo.put("name", serverName);
         serverInfo.put("version", serverVersion);
+        if (!instructions.isEmpty()) {
+            result.put("instructions", instructions);
+        }
         return result;
     }
 

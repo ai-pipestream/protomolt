@@ -1,9 +1,11 @@
 # The command line
 
 `protomolt-cli` is the [action catalog](actions.md) on the command line. It
-adds no verbs of its own: it builds the same twenty-three-verb catalog the
-gRPC service, the [MCP server](mcp.md), and the [ACP agent](acp.md) serve,
-and dispatches to it with one JSON document in and one JSON document out.
+adds no verbs of its own: it builds the same thirty-five-verb catalog as the
+gRPC service and dispatches to it with one JSON document in and one JSON
+document out. Verbs whose jobs, inference, or service-workspace backends are
+not configured remain discoverable and answer `unavailable`. The standalone
+[MCP server](mcp.md) exposes a smaller host-independent subset.
 
 ```shell
 ./gradlew :protomolt-cli:installDist

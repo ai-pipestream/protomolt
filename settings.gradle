@@ -213,6 +213,12 @@ project(':protomolt-grpc-invoke').projectDir = file('surface/grpc/invoke')
 include 'protomolt-grpc-service'
 project(':protomolt-grpc-service').projectDir = file('surface/grpc/service')
 
+include 'protomolt-grpc-service-profile'
+project(':protomolt-grpc-service-profile').projectDir = file('surface/grpc/service-profile')
+
+include 'protomolt-grpc-service-workspace'
+project(':protomolt-grpc-service-workspace').projectDir = file('surface/grpc/service-workspace')
+
 include 'protomolt-grpc-validation'
 project(':protomolt-grpc-validation').projectDir = file('surface/grpc/validation')
 
