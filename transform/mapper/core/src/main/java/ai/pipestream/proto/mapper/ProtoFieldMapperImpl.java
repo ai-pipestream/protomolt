@@ -332,7 +332,9 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
                                 throw new MappingException("Path '" + path + "' attempts to traverse through non-message or repeated field '" + part + "'", rule);
                             }
                             if (!currentMsg.hasField(fd)) {
-                                throw new MappingException("Path '" + path + "' is invalid because intermediate field '" + part + "' is not set.", rule);
+                                throw MappingException.absentIntermediate(
+                                        "Path '" + path + "' is invalid because intermediate field '"
+                                                + part + "' is not set.", rule);
                             }
                             Object fieldValue = currentMsg.getField(fd);
 

@@ -119,6 +119,25 @@ class ProtoSourceCompilerOptionsRepairTest {
     }
 
     @Test
+    void extensionFieldsWithTheSameNumberAreMatchedByExtendee() throws Exception {
+        FileDescriptor file = compileSingle("same_tag.proto", """
+                syntax = "proto2";
+                package test.repair;
+                message First { extensions 100 to 199; }
+                message Second { extensions 100 to 199; }
+                extend First {
+                  optional string first_note = 100 [deprecated = true];
+                }
+                extend Second {
+                  optional string second_note = 100;
+                }
+                """);
+
+        assertThat(file.findExtensionByName("first_note").getOptions().getDeprecated()).isTrue();
+        assertThat(file.findExtensionByName("second_note").getOptions().getDeprecated()).isFalse();
+    }
+
+    @Test
     void nestedExtendDeclarationsFailLoud() {
         // Wire's SchemaEncoder drops nested extend declarations from the encoded descriptor
         // entirely, so the repair pass fails the compile on the model/encoder mismatch instead

@@ -22,6 +22,7 @@ class PathErrorSemanticsTest {
         MappingException e = assertThrows(MappingException.class,
                 () -> mapper.getValue(document, "nope"));
         assertTrue(e.getMessage().contains("Field 'nope' not found in message 'Document'"), e.getMessage());
+        assertEquals(MappingException.Category.GENERAL, e.category());
     }
 
     @Test
@@ -47,6 +48,7 @@ class PathErrorSemanticsTest {
         MappingException e = assertThrows(MappingException.class,
                 () -> mapper.getValue(document, "info.version"));
         assertTrue(e.getMessage().contains("intermediate field 'info' is not set"), e.getMessage());
+        assertEquals(MappingException.Category.ABSENT_INTERMEDIATE, e.category());
     }
 
     @Test

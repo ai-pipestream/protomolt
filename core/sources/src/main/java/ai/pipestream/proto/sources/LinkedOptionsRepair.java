@@ -195,13 +195,14 @@ final class LinkedOptionsRepair {
         if (extendBlocks.isEmpty()) {
             return;
         }
-        Map<Integer, FieldDescriptorProto.Builder> byNumber = new HashMap<>();
+        Map<String, FieldDescriptorProto.Builder> byExtendeeAndNumber = new HashMap<>();
         for (FieldDescriptorProto.Builder field : extensionBuilders) {
-            byNumber.put(field.getNumber(), field);
+            byExtendeeAndNumber.put(extensionKey(field.getExtendee(), field.getNumber()), field);
         }
         for (Extend extend : extendBlocks) {
             for (Field field : extend.getFields()) {
-                FieldDescriptorProto.Builder target = byNumber.get(field.getTag());
+                FieldDescriptorProto.Builder target = byExtendeeAndNumber.get(
+                        extensionKey(extend.getType().toString(), field.getTag()));
                 if (target == null) {
                     throw new OptionEncodingException("extend " + extend.getName() + " in " + path
                             + ": encoded descriptor has no extension field #" + field.getTag()
@@ -215,6 +216,11 @@ final class LinkedOptionsRepair {
                 }
             }
         }
+    }
+
+    private static String extensionKey(String extendee, int number) {
+        String normalizedExtendee = extendee.startsWith(".") ? extendee.substring(1) : extendee;
+        return normalizedExtendee + '#' + number;
     }
 
     private static <M extends Message> M encode(Options options, String optionsType, Parser<M> parser,

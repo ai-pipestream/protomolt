@@ -101,6 +101,18 @@ public final class ScopedProtoMapper {
         if (dot < 0) {
             return source;
         }
-        return mapper.getValue(source, scopedPath.substring(dot + 1));
+        try {
+            return mapper.getValue(source, scopedPath.substring(dot + 1));
+        } catch (MappingException e) {
+            // A missing intermediate message is the one unresolvable case that has join
+            // semantics: the source contributes no value, so its rule is skipped. Keep all
+            // other mapping failures visible. In particular, swallowing this exception
+            // wholesale would turn misspelled fields, repeated/scalar traversal, and Any
+            // unpack failures into silent omissions.
+            if (e.category() == MappingException.Category.ABSENT_INTERMEDIATE) {
+                return null;
+            }
+            throw e;
+        }
     }
 }

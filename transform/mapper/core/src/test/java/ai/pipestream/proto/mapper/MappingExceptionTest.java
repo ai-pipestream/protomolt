@@ -12,6 +12,7 @@ class MappingExceptionTest {
     void ruleTextIsAppendedToTheMessage() {
         MappingException e = new MappingException("bad path", "a = b");
         assertEquals("bad path (Rule: 'a = b')", e.getMessage());
+        assertEquals(MappingException.Category.GENERAL, e.category());
     }
 
     @Test

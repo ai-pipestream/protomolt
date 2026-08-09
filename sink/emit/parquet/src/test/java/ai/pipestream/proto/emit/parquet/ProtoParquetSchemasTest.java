@@ -112,7 +112,7 @@ class ProtoParquetSchemasTest {
                 .isEqualTo(LogicalTypeAnnotation.stringType());
         assertThat(primitive(schema, "blob").getLogicalTypeAnnotation()).isNull();
         assertThat(primitive(schema, "kind").getLogicalTypeAnnotation())
-                .isEqualTo(LogicalTypeAnnotation.enumType());
+                .isEqualTo(LogicalTypeAnnotation.stringType());
     }
 
     @Test

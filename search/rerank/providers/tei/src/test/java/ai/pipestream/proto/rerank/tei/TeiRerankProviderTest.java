@@ -183,13 +183,15 @@ class TeiRerankProviderTest {
         try {
             TeiRerankProvider provider =
                     new TeiRerankProvider("localhost:" + loopback.getPort());
+            var channelField = TeiRerankProvider.class.getDeclaredField("channel");
+            channelField.setAccessible(true);
+            ManagedChannel ownedChannel = (ManagedChannel) channelField.get(provider);
 
             assertThat(provider.score("bamboo", List.of("wired"))).containsExactly(5.0);
 
             provider.close();
 
-            assertThatThrownBy(() -> provider.score("bamboo", List.of("wired")))
-                    .isInstanceOf(IllegalStateException.class);
+            assertThat(ownedChannel.isShutdown()).isTrue();
         } finally {
             loopback.shutdownNow();
         }

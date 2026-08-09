@@ -29,39 +29,32 @@ public final class DemoSearchServer {
 
     public static void main(String[] args) throws Exception {
         Server server = ServerBuilder.forPort(PORT)
-                .addService(new DemoSearchService())
+                .addService(new DemoSearchGrpc.DemoSearchImplBase() {
+                    @Override
+                    public void search(SearchRequest request, StreamObserver<SearchHit> out) {
+                        int hits = request.getHits() <= 0 ? 5 : request.getHits();
+                        long delayMs = request.getDelayMs() <= 0 ? 400 : request.getDelayMs();
+                        for (int i = 0; i < hits; i++) {
+                            out.onNext(SearchHit.newBuilder()
+                                    .setDocId("doc-" + (i + 1))
+                                    .setScore(0.98f - 0.07f * i)
+                                    .setText(TEXTS[i % TEXTS.length])
+                                    .build());
+                            try {
+                                Thread.sleep(delayMs);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                        }
+                        out.onCompleted();
+                    }
+                })
                 .build()
                 .start();
         System.out.println("DemoSearch listening on localhost:" + PORT
                 + " (server-streaming; Ctrl+C to stop)");
         server.awaitTermination();
-    }
-
-    /**
-     * The streaming search implementation, extracted from {@code main} so tests can bind it
-     * to an in-process server. Non-positive {@code hits}/{@code delayMs} fall back to 5 hits
-     * 400ms apart; texts cycle through {@link #TEXTS}.
-     */
-    static final class DemoSearchService extends DemoSearchGrpc.DemoSearchImplBase {
-        @Override
-        public void search(SearchRequest request, StreamObserver<SearchHit> out) {
-            int hits = request.getHits() <= 0 ? 5 : request.getHits();
-            long delayMs = request.getDelayMs() <= 0 ? 400 : request.getDelayMs();
-            for (int i = 0; i < hits; i++) {
-                out.onNext(SearchHit.newBuilder()
-                        .setDocId("doc-" + (i + 1))
-                        .setScore(0.98f - 0.07f * i)
-                        .setText(TEXTS[i % TEXTS.length])
-                        .build());
-                try {
-                    Thread.sleep(delayMs);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-            out.onCompleted();
-        }
     }
 
     private DemoSearchServer() {
