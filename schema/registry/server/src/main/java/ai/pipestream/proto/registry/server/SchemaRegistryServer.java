@@ -11,14 +11,18 @@ import ai.pipestream.proto.registry.SchemaReference;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
 import ai.pipestream.proto.registry.StoredSchema;
 import ai.pipestream.proto.registry.StoredSchemaSources;
+import ai.pipestream.proto.emit.parquet.ProtoParquetSchemas;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FileDescriptor;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.apache.parquet.schema.MessageType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,7 +34,9 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -53,8 +59,11 @@ import java.util.concurrent.atomic.AtomicReference;
  *       Confluent key quirk: PUT bodies/responses use {@code compatibility}, GET responses use
  *       {@code compatibilityLevel}</li>
  *   <li>native extras: {@code GET {nativePrefix}/subjects/{subject}/descriptor-set} (binary
- *       {@code FileDescriptorSet} of the subject's latest schema plus transitive references)
- *       and {@code GET /health}</li>
+ *       {@code FileDescriptorSet} of the subject's latest schema plus transitive references),
+ *       {@code GET {nativePrefix}/subjects/{subject}/parquet-schema?message={fqn}[&version={n}]}
+ *       (the Parquet schema of one message of the subject as canonical schema text — a pure
+ *       function of the descriptor, derived on read and never stored) and
+ *       {@code GET /health}</li>
  * </ul>
  *
  * <p>Errors are Confluent-style {@code {error_code, message}} JSON: 40401 unknown subject,
@@ -74,6 +83,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
 
     private static final String JSON_CONTENT_TYPE = "application/vnd.schemaregistry.v1+json";
     private static final String PROTOBUF_CONTENT_TYPE = "application/x-protobuf";
+    private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
 
     private final SchemaRegistryServerConfig config;
     private final SchemaRegistryStore store;
@@ -236,6 +246,9 @@ public final class SchemaRegistryServer implements AutoCloseable {
         } else if (segments.size() == 4 && segments.get(0).equals(nativePrefix)
                 && segments.get(1).equals("subjects") && segments.get(3).equals("descriptor-set")) {
             requireMethod(exchange, method, "GET", () -> descriptorSet(exchange, segments.get(2)));
+        } else if (segments.size() == 4 && segments.get(0).equals(nativePrefix)
+                && segments.get(1).equals("subjects") && segments.get(3).equals("parquet-schema")) {
+            requireMethod(exchange, method, "GET", () -> parquetSchema(exchange, segments.get(2)));
         } else if (segments.size() == 2 && segments.get(0).equals(nativePrefix)
                 && segments.get(1).equals("chains")) {
             requireMethod(exchange, method, "GET", () -> listChains(exchange));
@@ -537,6 +550,110 @@ public final class SchemaRegistryServer implements AutoCloseable {
         }
         writeBytes(exchange, 200, PROTOBUF_CONTENT_TYPE,
                 topologicallyOrdered(compiled.descriptorSet()).toByteArray());
+    }
+
+    /**
+     * The Parquet schema of one message of the subject, derived on read from the compiled
+     * descriptors and never stored. {@code message} (a fully qualified message name) is
+     * required because a subject's descriptor set can hold many messages; {@code version}
+     * pins the schema version and defaults to latest.
+     */
+    private void parquetSchema(HttpExchange exchange, String subject) throws IOException {
+        Map<String, String> query = queryParams(exchange);
+        String message = query.get("message");
+        if (message == null || message.isBlank()) {
+            writeError(exchange, 400, 400,
+                    "The 'message' query parameter is required (a fully qualified message name)");
+            return;
+        }
+        if (store.versions(subject).isEmpty()) {
+            subjectNotFound(exchange, subject);
+            return;
+        }
+        String versionSpec = query.getOrDefault("version", "latest");
+        Optional<StoredSchema> schema;
+        if ("latest".equals(versionSpec)) {
+            schema = store.latest(subject);
+        } else {
+            int version;
+            try {
+                version = Integer.parseInt(versionSpec);
+            } catch (NumberFormatException e) {
+                writeError(exchange, 422, 42202, "The specified version '" + versionSpec
+                        + "' is not a valid version id.");
+                return;
+            }
+            schema = store.version(subject, version);
+        }
+        if (schema.isEmpty()) {
+            writeError(exchange, 404, 40402, "Version " + versionSpec + " not found.");
+            return;
+        }
+        CompiledProtos compiled;
+        try {
+            compiled = compiler.compile(StoredSchemaSources.resolve(store, schema.get()).sources());
+        } catch (Exception e) {
+            // Registered schemas are compile-verified; failure here is a store inconsistency.
+            internalError(exchange, "compiling subject " + subject, e);
+            return;
+        }
+        Descriptor descriptor = findMessage(compiled, message);
+        if (descriptor == null) {
+            writeError(exchange, 404, 40403, "Message '" + message
+                    + "' is not defined by subject '" + subject + "'.");
+            return;
+        }
+        MessageType parquet;
+        try {
+            parquet = ProtoParquetSchemas.schema(descriptor);
+        } catch (IllegalArgumentException e) {
+            // A valid protobuf schema can still refuse columnar form (recursive types).
+            writeError(exchange, 422, 42201, e.getMessage());
+            return;
+        }
+        writeBytes(exchange, 200, TEXT_CONTENT_TYPE,
+                parquet.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The message with the given fully qualified name, nested types included. */
+    private static Descriptor findMessage(CompiledProtos compiled, String fullName) {
+        for (FileDescriptor file : compiled.fileDescriptors()) {
+            Descriptor found = findMessage(file.getMessageTypes(), fullName);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static Descriptor findMessage(List<Descriptor> messages, String fullName) {
+        for (Descriptor message : messages) {
+            if (message.getFullName().equals(fullName)) {
+                return message;
+            }
+            Descriptor nested = findMessage(message.getNestedTypes(), fullName);
+            if (nested != null) {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    /** Decoded query parameters; the last value wins on a repeated name. */
+    private static Map<String, String> queryParams(HttpExchange exchange) {
+        Map<String, String> params = new LinkedHashMap<>();
+        String raw = exchange.getRequestURI().getRawQuery();
+        if (raw == null) {
+            return params;
+        }
+        for (String pair : raw.split("&")) {
+            int equals = pair.indexOf('=');
+            String name = equals < 0 ? pair : pair.substring(0, equals);
+            String value = equals < 0 ? "" : pair.substring(equals + 1);
+            params.put(URLDecoder.decode(name, StandardCharsets.UTF_8),
+                    URLDecoder.decode(value, StandardCharsets.UTF_8));
+        }
+        return params;
     }
 
     /**

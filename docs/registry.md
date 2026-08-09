@@ -53,13 +53,20 @@ version listing, version envelopes with references, registration,
 content lookup, `/schemas/ids/{id}`, and global and per-subject config —
 including the protocol's quirks (`compatibility` in PUT bodies,
 `compatibilityLevel` in GET responses), verified against Confluent's error
-codes. Three groups of native routes go beyond the protocol, all under the
+codes. Four groups of native routes go beyond the protocol, all under the
 configured native path prefix (`/protomolt` by default):
 
 - `GET /protomolt/subjects/{subject}/descriptor-set` — the subject's latest
   version and its transitive references compiled to a binary
   `FileDescriptorSet`. This is the gRPC path: build-time consumers, runtime
   loaders, and reflection all speak descriptor sets, in any language.
+- `GET /protomolt/subjects/{subject}/parquet-schema?message={fqn}[&version={n}]`
+  — the Parquet schema of one message of the subject as canonical schema
+  text (`text/plain`). The schema is a pure function of the descriptor, so
+  it is derived on read and never stored; `message` (a fully qualified
+  message name) is required because a subject's descriptor set can hold
+  many messages, and `version` pins the schema version, defaulting to
+  latest.
 - `GET /protomolt/chains` and `GET/PUT /protomolt/chains/{name}` — named
   chain definitions, versioned by Git commits, with `check-chain` as the
   write gate when the action catalog is mounted.
