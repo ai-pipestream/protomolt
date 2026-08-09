@@ -18,5 +18,5 @@ dependencies {
     testImplementation project(':protomolt-proto-sources')
     // The example Group reader used to verify round-trips materializes a Hadoop
     // Configuration; the writer under test never does.
-    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
+    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.5.0'
 }

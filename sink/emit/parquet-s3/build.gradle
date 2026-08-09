@@ -18,5 +18,5 @@ dependencies {
     // The example Group reader used to verify round-trips materializes a Hadoop
     // Configuration; the writer and the sink never do.
     testCompileOnly libs.hadoop.client.api
-    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.4.1'
+    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.5.0'
 }
