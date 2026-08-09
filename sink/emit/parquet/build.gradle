@@ -6,6 +6,8 @@ dependencies {
     implementation libs.protobuf.java.util
     // Masking-on-export reads the sensitivity field option through SensitivityMasker.
     implementation project(':protomolt-protobuf-metadata')
+    // Validate-on-write enforces the descriptor's declared constraint and CEL rules.
+    api project(':protomolt-protobuf-validation')
 
     implementation libs.parquet.hadoop
     implementation 'org.xerial.snappy:snappy-java:1.1.10.8'

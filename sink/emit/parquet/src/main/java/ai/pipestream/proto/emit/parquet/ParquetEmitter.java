@@ -2,6 +2,8 @@ package ai.pipestream.proto.emit.parquet;
 
 import ai.pipestream.proto.emit.Bundle;
 import ai.pipestream.proto.meta.SensitivityMasker;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 import org.apache.hadoop.conf.Configuration;
@@ -22,6 +24,11 @@ import java.util.Objects;
  * {@link Bundle} entry), so where the data lands is always the caller's explicit act
  * through a sink — this module never chooses a destination, matching the toolkit's
  * message-data disk policy.
+ *
+ * <p>Every message is validated against the constraint and CEL rules its descriptor declares
+ * before it is written (see {@link ai.pipestream.proto.validate.ProtoValidator}); the write
+ * fails fast on the first violation. {@link ParquetExportOptions#withoutValidation()} opts
+ * out.</p>
  */
 public final class ParquetEmitter {
 
@@ -45,8 +52,13 @@ public final class ParquetEmitter {
     }
 
     /**
-     * Writes an export: only the projected columns, each message masked first per
-     * {@code options}. See {@link ParquetExportOptions}.
+     * Writes an export: only the projected columns, each message validated against its
+     * descriptor's declared rules and then masked per {@code options}. Validation runs on the
+     * original message, before masking, and the write fails on the first offending message.
+     * See {@link ParquetExportOptions}.
+     *
+     * @throws IOException when a message violates its descriptor's rules and
+     *         {@code options.skipValidation()} is {@code false}
      */
     public static byte[] toBytes(Descriptor descriptor, Iterable<? extends Message> messages,
                                  ProtoParquetSchemas.FieldIdResolver ids,
@@ -55,6 +67,10 @@ public final class ParquetEmitter {
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(messages, "messages");
         Objects.requireNonNull(options, "options");
+        // One validator per file, not per message: rule compilation and CEL environment
+        // setup happen here, the loop only evaluates.
+        ProtoValidator validator = options.skipValidation()
+                ? null : ProtoValidator.forMessageType(descriptor);
         InMemoryOutputFile output = new InMemoryOutputFile();
         try (ParquetWriter<Message> writer = new Builder(output,
                 new ProtoParquetWriteSupport(descriptor, ids, options.columns()))
@@ -66,16 +82,35 @@ public final class ParquetEmitter {
                 .withCodecFactory(new HadoopFreeCodecs())
                 .withConf(new org.apache.parquet.conf.PlainParquetConfiguration())
                 .build()) {
+            int index = 0;
             for (Message message : messages) {
                 if (!message.getDescriptorForType().getFullName()
                         .equals(descriptor.getFullName())) {
                     throw new IOException("Expected " + descriptor.getFullName() + " but got "
                             + message.getDescriptorForType().getFullName());
                 }
+                if (validator != null) {
+                    ValidationResult result = validator.validate(message);
+                    if (!result.valid()) {
+                        throw validationFailure(descriptor, index, result);
+                    }
+                }
                 writer.write(masked(message, options));
+                index++;
             }
         }
         return output.bytes();
+    }
+
+    private static IOException validationFailure(Descriptor descriptor, int index,
+                                                 ValidationResult result) {
+        StringBuilder sb = new StringBuilder("Message ").append(index).append(" of type ")
+                .append(descriptor.getFullName()).append(" failed validation:");
+        for (ValidationResult.Violation violation : result.violations()) {
+            sb.append(" [").append(violation.path()).append("] ")
+                    .append(violation.ruleId()).append(": ").append(violation.message());
+        }
+        return new IOException(sb.toString());
     }
 
     private static Message masked(Message message, ParquetExportOptions options) {

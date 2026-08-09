@@ -6,6 +6,7 @@ import ai.pipestream.proto.acquire.confluence.v1.ConfluenceChange;
 import ai.pipestream.proto.acquire.confluence.v1.ConfluenceEntity;
 import ai.pipestream.proto.acquire.confluence.v1.ConfluenceSnapshot;
 import ai.pipestream.proto.acquire.confluence.v1.Page;
+import com.google.protobuf.Timestamp;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.api.ReadSupport;
@@ -83,7 +84,10 @@ class ParquetChangeSinkTest {
                 .setOperation(ChangeOperation.CHANGE_OPERATION_UPSERT)
                 .setEntity(ConfluenceEntity.newBuilder()
                         .setEntityId("page-" + i)
-                        .setPage(Page.newBuilder().setId("page-" + i).setTitle("Page " + i)))
+                        .setIngestedAt(Timestamp.newBuilder()
+                                .setSeconds(1_700_000_000L + i))
+                        .setPage(Page.newBuilder().setId("page-" + i).setTitle("Page " + i)
+                                .setSpaceId("space-1")))
                 .build();
     }
 
@@ -93,7 +97,10 @@ class ParquetChangeSinkTest {
                 .setOperation(ChangeOperation.CHANGE_OPERATION_UPSERT)
                 .setEntity(ConfluenceEntity.newBuilder()
                         .setEntityId("blog-" + i)
-                        .setBlogPost(BlogPost.newBuilder().setId("blog-" + i)))
+                        .setIngestedAt(Timestamp.newBuilder()
+                                .setSeconds(1_700_000_000L + i))
+                        .setBlogPost(BlogPost.newBuilder().setId("blog-" + i)
+                                .setSpaceId("space-1")))
                 .build();
     }
 

@@ -98,6 +98,13 @@ sign. Recursive
 message types cannot exist in a columnar schema and are rejected with the
 cycle named.
 
+Every message is validated against the constraint and CEL rules its descriptor
+declares before it is written, and the write fails on the first offending
+message with every violation named. Opt out per export with
+`ParquetExportOptions.NONE.withoutValidation()` (or on any other options
+instance) — for replaying rows that predate the rules, or when an upstream
+stage already validated.
+
 ### Projection and masking on export
 
 `ParquetExportOptions` controls what leaves in the file. Two independent tools:
