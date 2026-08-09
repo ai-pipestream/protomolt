@@ -19,6 +19,7 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 | [Stream connectors](connector.md) | The `StreamSource` SPI: push-style inputs (gRPC server streams, Kafka topics) with pause/resume flow control, bridged to synchronous consumers by the bounded `SourcePump` |
 | [Streaming demo](demo-streaming.md) | A server-streaming gRPC call rendered live through the ACP agent, in the terminal or an IDE |
 | [The gRPC service](grpc-service.md) | The catalog as `ProtoMoltService` — typed RPCs served descriptor-natively with reflection; JSON/REST with OpenAPI and Swagger UI; the `protomolt-serve` launcher |
+| [gRPC service workspaces](service-workspace.md) | Register stable service identities, persist reflected descriptors, inspect method contracts through tools and MCP resources, and refresh schemas explicitly |
 | [Kafka Connect](kafka-connect.md) | The sink (topics drive gRPC methods), the source (server streams feed topics, resumable via CEL tokens), and four protobuf-aware transforms (validate, map, redact, CEL filter) |
 | [Kafka serde](kafka-serde.md) | A protobuf serializer and deserializer speaking the Confluent wire format, enforcing the schema's declared rules on write, with the packaged descriptor set as a floor under the registry |
 | [Joins and derived shapes](design/join-shapes.md) | Multi-source mapping scopes; envelope/projection/oneof output shapes; schema merging with clash resolution; derived schemas as registry subjects; the shape verbs |
@@ -59,6 +60,9 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 - [Pipeline design](design/pipeline.md): a pipeline is a protobuf message
   that chains steps together; any gRPC service can be a step, alongside
   projections, CEL filters and selects, unnest, and collect
+- [gRPC recipe workbench](design/grpc-recipe-workbench.md) — the
+  explore-to-verify-to-promote lifecycle for service profiles, agent-assisted
+  recipes, run evidence, structured inference, and standalone applications
 
 ## Records
 

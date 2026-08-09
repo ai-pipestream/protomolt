@@ -3,11 +3,11 @@
 `protomolt-grpc-service` is the action catalog as a gRPC service, and
 `protomolt-serve` is the one-process server that mounts it everywhere at
 once: gRPC with server reflection, JSON/REST with a generated OpenAPI
-document, Swagger UI, and optionally the git-backed registry — the same
-twenty-three verbs on every surface.
+document, Swagger UI, and optionally the git-backed registry: the same
+thirty-five verbs on every surface.
 
 The service is defined in protobuf, of course:
-`ai.pipestream.protomolt.v1.ProtoMoltService`, twenty-three typed RPCs in
+`ai.pipestream.protomolt.v1.ProtoMoltService`, thirty-five typed RPCs in
 [`protomolt_service.proto`](../grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto).
 Each request and response message is designed so its canonical proto3 JSON
 form is exactly the action's JSON envelope. That one decision makes every
@@ -41,9 +41,10 @@ try (var server = ProtoMoltGrpcServer.start(9090, catalog)) {
 
 Operator flags cover every disk location the server may touch:
 `--registry-git` for the registry's Git repository and `--gather-cache`
-(or `PROTOMOLT_GATHER_CACHE`) for `gather-git`'s clone caches — cache
-placement is server configuration, never request input. Nothing else
-writes to disk.
+(or `PROTOMOLT_GATHER_CACHE`) for `gather-git`'s clone caches, plus
+`--service-workspace` (or `PROTOMOLT_SERVICE_WORKSPACE`) for durable gRPC
+service profiles and descriptor artifacts. Placement is server
+configuration, never request input.
 
 When the console has been built (`cd apps/console && npm ci && npm run build`)
 before `protomolt-serve`, its bundle rides inside the jar and is served at
@@ -60,11 +61,13 @@ docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --dem
 serve/build/install/protomolt-serve/bin/protomolt-serve \
     [--host <addr>] [--grpc-port <n>] [--http-port <n>] \
     [--registry-git <path> [--registry-port <n>]] \
-    [--api-token <secret>] [--gather-cache <dir>] [--demo]
+    [--api-token <secret>] [--gather-cache <dir>] \
+    [--service-workspace <dir>] [--demo]
 ```
 
-That is the whole flag set; `--help` (or `-h`) prints it and exits, and any
-other argument exits 2.
+`--help` (or `-h`) prints the complete flag set, including the optional jobs
+and inference backends, and exits. Any unknown argument exits 2. The core and
+service-workspace flags are:
 
 | Flag | Environment variable | Default | Meaning |
 |---|---|---|---|
@@ -75,6 +78,7 @@ other argument exits 2.
 | `--registry-port` | — | `8081` | Port for the registry server; used only when the registry is mounted (`--registry-git` or `--demo`) |
 | `--api-token` | `PROTOMOLT_API_TOKEN` | — | Shared secret guarding every operational surface |
 | `--gather-cache` | `PROTOMOLT_GATHER_CACHE` | the library default under the process owner's home | Directory for `gather-git`'s per-repo clone caches |
+| `--service-workspace` | `PROTOMOLT_SERVICE_WORKSPACE` | — | Directory for durable gRPC service profiles and content-addressed descriptor artifacts |
 | `--demo` | — | off | Seed the sample schema described below |
 
 `--demo` seeds a sample order-management schema (validation rules, indexing
@@ -102,6 +106,9 @@ The `/mcp` endpoint is the [MCP server](mcp.md) on the streamable HTTP
 transport: any MCP client on the network becomes gRPC-aware with
 `claude mcp add --transport http protomolt http://host:8080/mcp` — no
 local install, and the registry resources ride along when mounted.
+With `--service-workspace`, the same endpoint also publishes registered
+service and method contracts as bounded MCP resources. See
+[gRPC service workspaces](service-workspace.md).
 
 ### Authentication
 
@@ -176,7 +183,7 @@ $ curl -s -H 'content-type: application/json' \
 }
 ```
 
-`GET /openapi.json` documents all twenty-three operations with schemas derived
+`GET /openapi.json` documents all thirty-five operations with schemas derived
 from the same descriptors, and `GET /docs` serves Swagger UI over that
 document — a browsable, try-it console with no frontend build. Action
 failures with client-repairable codes return 400 with the code in the body;

@@ -22,7 +22,7 @@ repair strategies, which matters when the caller is a model.
 
 ## The built-in catalog
 
-`ActionCatalog.defaults(...)` registers sixteen actions — the ones that need
+`ActionCatalog.defaults(...)` registers seventeen actions: the ones that need
 nothing beyond a descriptor and the toolkit's own libraries:
 
 | Action | Does |
@@ -33,6 +33,7 @@ nothing beyond a descriptor and the toolkit's own libraries:
 | `diff-schemas` | Typed change list between two schemas (rule, path, impacts) |
 | `check-compat` | Compatibility verdict under a mode, with violations and the full change list |
 | `render-json-schema` | JSON Schema (2020-12) for a message type |
+| `render-prompt` | Render a descriptor-grounded LLM prompt for a message type |
 | `render-index-mappings` | OpenSearch mappings / Solr schema / Lucene field specs from indexing hints |
 | `eval-cel` | Evaluate a CEL expression against a message |
 | `map-message` | Apply text and CEL mapping rules to a message |
@@ -46,10 +47,9 @@ nothing beyond a descriptor and the toolkit's own libraries:
 
 ## Verbs from other modules
 
-Seven more actions live in the modules that carry their dependencies — a
-gRPC channel, JGit, protoc-as-WebAssembly — so a host that only needs the
-built-ins does not pull them in. Each implements the same `ProtoAction`
-interface and is registered onto a catalog by the host:
+Eighteen more actions live in the modules that carry their dependencies, so a
+host that only needs the built-ins does not pull them in. Each implements the
+same `ProtoAction` interface and is registered onto a catalog by the host:
 
 | Action | Module | Does |
 |---|---|---|
@@ -60,11 +60,22 @@ interface and is registered onto a catalog by the host:
 | `run-chain` | `protomolt-chain` | Execute a chain: serial unary gRPC calls, each request mapped from the chain input and prior steps' responses, with gates, per-step validation, and nested deadlines |
 | `check-chain` | `protomolt-chain` | Verify a chain without running it: methods resolve and are unary, step names are valid scope variables, gates are boolean CEL, and every mapping type-checks |
 | `emit-okf` | `protomolt-emit-okf` | Render a schema as an Open Knowledge Format (OKF v0.1) bundle: linked markdown concept documents for every message, enum, and service, inline plus zipped |
+| `submit-chain` | `protomolt-jobs-service` | Submit a chain for durable asynchronous execution |
+| `get-job` | `protomolt-jobs-service` | Read one chain job and its step checkpoints |
+| `list-jobs` | `protomolt-jobs-service` | List durable chain jobs |
+| `complete-step` | `protomolt-jobs-service` | Resume a parked external-completion step with its result |
+| `inference-generate` | `protomolt-inference-service` | Run generation through a configured inference provider |
+| `inference-list-models` | `protomolt-inference-service` | List configured inference models without exposing provider credentials |
+| `inference-describe-model` | `protomolt-inference-service` | Inspect one configured model and its capabilities |
+| `service-register` | `protomolt-grpc-service-workspace` | Reflect a gRPC endpoint and persist its profile plus a content-addressed descriptor artifact |
+| `service-list` | `protomolt-grpc-service-workspace` | List durable service identities and descriptor fingerprints |
+| `service-inspect` | `protomolt-grpc-service-workspace` | Read a service's methods, streaming modes, and request/response field shapes without returning descriptor bytes |
+| `service-refresh` | `protomolt-grpc-service-workspace` | Re-reflect a registered endpoint and update its schema identity when it changed |
 
 `ProtoMoltCatalog.full(...)` in `protomolt-grpc-service` assembles the
-built-ins plus all seven — the twenty-three-verb catalog behind the gRPC
+built-ins plus all eighteen: the thirty-five-verb catalog behind the gRPC
 service, its REST mount, and the console. The standalone
-[MCP server](mcp.md) registers a twenty-tool subset; see that page for which.
+[MCP server](mcp.md) registers a twenty-five-tool subset; see that page for which.
 
 ```java
 var catalog = ProtoMoltCatalog.full(ActionContext.create());

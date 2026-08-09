@@ -3,6 +3,7 @@ package ai.pipestream.proto.grpc.service;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.grpc.invoke.ReflectionClient;
+import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Descriptors.MethodDescriptor;
@@ -19,7 +20,9 @@ import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -46,10 +49,16 @@ class ProtoMoltGrpcServiceTest {
     private static Server server;
     private static ManagedChannel channel;
 
+    @TempDir
+    static Path serviceWorkspace;
+
     @BeforeAll
     static void start() throws Exception {
+        var serviceProfiles = new FileSystemServiceProfileRepository(serviceWorkspace);
+        var catalog = ProtoMoltCatalog.full(ActionContext.create(), null, null, null, 0, null,
+                serviceProfiles);
         server = InProcessServerBuilder.forName("protomolt-service-test")
-                .addService(ProtoMoltGrpcService.definition(ProtoMoltCatalog.full(ActionContext.create())))
+                .addService(ProtoMoltGrpcService.definition(catalog))
                 .addService(ProtoReflectionServiceV1.newInstance())
                 .build()
                 .start();
@@ -82,10 +91,10 @@ class ProtoMoltGrpcServiceTest {
     }
 
     @Test
-    void schemaCompilesAndDeclaresThirtyOneRpcs() {
+    void schemaCompilesAndDeclaresThirtyFiveRpcs() {
         assertThat(ProtoMoltServiceSchema.service().getFullName())
                 .isEqualTo("ai.pipestream.protomolt.v1.ProtoMoltService");
-        assertThat(ProtoMoltServiceSchema.service().getMethods()).hasSize(31);
+        assertThat(ProtoMoltServiceSchema.service().getMethods()).hasSize(35);
     }
 
     @Test
@@ -120,6 +129,14 @@ class ProtoMoltGrpcServiceTest {
         assertThat(result.path("descriptorSetBase64").asText()).isNotEmpty();
         assertThat(result.path("files")).anySatisfy(f ->
                 assertThat(f.asText()).isEqualTo("shop/v1/order.proto"));
+    }
+
+    @Test
+    void serviceWorkspaceStructRoundTripsThroughTheTypedSurface() throws Exception {
+        JsonNode result = call("ServiceList", "{}");
+
+        assertThat(result.path("services").isArray()).isTrue();
+        assertThat(result.path("services")).isEmpty();
     }
 
     @Test

@@ -1,10 +1,12 @@
 package ai.pipestream.proto.mcp;
 
+import ai.pipestream.proto.actions.ActionContext;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -14,6 +16,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * unit-testable in-process.
  */
 class McpMainTest {
+
+    private static final List<String> STANDALONE_TOOLS = List.of(
+            "compile", "validate-message", "diff-schemas", "check-compat", "render-json-schema",
+            "render-prompt", "render-index-mappings", "eval-cel", "map-message",
+            "synthesize-shape", "join-messages", "merge-schemas", "check-rules", "infer-schema",
+            "mask-message", "extract-metadata", "list-types", "grpc-invoke", "reflect",
+            "generate-stubs", "gather-git", "service-register", "service-list",
+            "service-inspect", "service-refresh");
 
     @Test
     void helpPrintsUsageToStderrAndReturns() throws Exception {
@@ -27,6 +37,12 @@ class McpMainTest {
         }
         assertThat(captured.toString(StandardCharsets.UTF_8))
                 .contains("usage: protomolt-mcp")
-                .contains("--registry-git");
+                .contains("--registry-git", "--service-workspace");
+    }
+
+    @Test
+    void standaloneCatalogMatchesDocumentedInventory() {
+        assertThat(McpMain.catalog(ActionContext.create()).names())
+                .containsExactlyInAnyOrderElementsOf(STANDALONE_TOOLS);
     }
 }

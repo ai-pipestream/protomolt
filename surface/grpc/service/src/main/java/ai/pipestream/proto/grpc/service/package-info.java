@@ -3,7 +3,8 @@
  * service.
  *
  * <p>Every verb is one typed RPC. {@link ProtoMoltCatalog} assembles the full catalog — the
- * built-in actions plus the gRPC, codegen, chain, and gather verbs — and
+ * built-in actions plus the gRPC, service-workspace, codegen, chain, jobs, inference, gather,
+ * and emit verbs, and
  * {@link ProtoMoltGrpcService} binds an
  * {@link ai.pipestream.proto.actions.ActionCatalog} as the service. Dispatch runs through
  * {@link CatalogBridge}: each request message's canonical proto3 JSON form is exactly the

@@ -2,10 +2,11 @@
 
 `protomolt-mcp` exposes the toolkit to AI agents over the Model Context
 Protocol. Every [action](actions.md) becomes an MCP tool with no translation
-layer — the catalog manifest's `{name, description, inputSchema}` entries are
+layer. The catalog manifest's `{name, description, inputSchema}` entries are
 already the shape MCP requires, and the input schemas are JSON Schema in both
-worlds — and a schema registry is optionally served as MCP resources, so an
-agent browses subjects and reads schema versions without spending tool calls.
+worlds. Schema registries and durable gRPC service workspaces are optionally
+served as MCP resources, so an agent can browse their contracts without
+spending tool calls.
 
 Together with the gRPC verbs (`reflect`, `grpc-invoke`) this makes any gRPC
 service an agent-operable service: given a schema — registered, pasted, or
@@ -22,18 +23,23 @@ stdio loop, the tests, and any future transport drive it the same way.
 
 ```shell
 ./gradlew :protomolt-mcp:installDist
-surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp [--registry-git <path>]
+surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp \
+  [--registry-git <path>] [--service-workspace <path>]
 ```
 
 Register it with an MCP client, for example Claude Code:
 
 ```shell
 claude mcp add protomolt -- \
-  /path/to/protomolt-mcp/bin/protomolt-mcp --registry-git /srv/schemas.git
+  /path/to/protomolt-mcp/bin/protomolt-mcp \
+  --registry-git /srv/schemas.git \
+  --service-workspace /srv/protomolt-services
 ```
 
-Without `--registry-git` the server exposes the tools only. With it, the
-git-backed registry at the path is additionally served as resources.
+`--registry-git` adds git-backed schema resources. `--service-workspace` adds
+durable service profiles, reflected descriptor storage, and service/method
+resources. The four service tools remain discoverable without the latter but
+answer `unavailable` with the configuration remedy.
 
 ### Streamable HTTP
 
@@ -41,7 +47,7 @@ The same server is also reachable over MCP's streamable HTTP transport, with
 no local install: [`protomolt-serve`](grpc-service.md) mounts it at
 `/mcp` next to the gRPC and REST surfaces, so one running process makes
 every agent on the network gRPC-aware. That mount carries the full
-twenty-three-verb catalog, three tools more than the standalone binary:
+thirty-five-verb catalog, ten tools more than the standalone binary:
 
 ```shell
 claude mcp add --transport http protomolt http://host:8080/mcp
@@ -50,17 +56,17 @@ claude mcp add --transport http protomolt http://host:8080/mcp \
   --header "api_token: <secret>"
 ```
 
-The server core is stateless, so there is no session handshake to manage;
-POST one JSON-RPC message, get one response (`202` for notifications).
+The server core does not allocate a server-side session ID: initialize once,
+then POST one JSON-RPC message per request (`202` for notifications).
 Server-initiated streams are not used, and browser requests from non-local
 origins are refused (the specification's DNS-rebinding guard). Registry
 resources ride along when the launcher mounts a registry.
 
 ## Tools
 
-The standalone binary registers twenty tools: the sixteen built-in
-[actions](actions.md) plus `reflect`, `grpc-invoke`, `generate-stubs`, and
-`gather-git`. It prints the count to stderr at startup.
+The standalone binary registers twenty-five tools: the seventeen built-in
+[actions](actions.md), `reflect`, `grpc-invoke`, `generate-stubs`, `gather-git`,
+and the four service-workspace tools. It prints the count to stderr at startup.
 
 | Tool | Does |
 |---|---|
@@ -70,6 +76,7 @@ The standalone binary registers twenty tools: the sixteen built-in
 | `diff-schemas` | Typed change list between two schemas (rule, path, impacts) |
 | `check-compat` | Compatibility verdict under a mode, with violations and change list |
 | `render-json-schema` | JSON Schema (2020-12) for a message type |
+| `render-prompt` | Render a descriptor-grounded LLM prompt for a message type |
 | `render-index-mappings` | OpenSearch / Solr / Lucene field specs from indexing hints |
 | `eval-cel` | Evaluate a CEL expression against a message |
 | `map-message` | Apply text and CEL mapping rules to a message |
@@ -84,10 +91,14 @@ The standalone binary registers twenty tools: the sixteen built-in
 | `grpc-invoke` | Call a unary or server-streaming gRPC method, no generated stubs |
 | `generate-stubs` | Generate client/message code in eight languages (protoc as WebAssembly) |
 | `gather-git` | Gather `.proto` sources from a git repository (branch, tag, or commit) and compile them to a descriptor set |
+| `service-register` | Reflect a gRPC endpoint into a durable service profile and content-addressed descriptor artifact |
+| `service-list` | List registered service identities and descriptor fingerprints |
+| `service-inspect` | Read a registered service's methods and request/response field shapes without returning descriptor bytes |
+| `service-refresh` | Re-reflect a registered endpoint and report whether its schema fingerprint changed |
 
-`run-chain`, `check-chain`, and `emit-okf` are not in the standalone binary's
-catalog. They are served over the HTTP transport below, which mounts the full
-twenty-three-verb catalog.
+Chains, jobs, inference, and `emit-okf` are not in the standalone binary's
+catalog because they require host-side wiring. `protomolt-serve` mounts the
+full thirty-five-verb catalog over HTTP.
 
 Wherever a tool takes a schema it accepts exactly one of `{"type": "fully.qualified.Name"}`
 (resolved from the registry), `{"sources": {...}}` (inline `.proto`, compiled
@@ -97,24 +108,49 @@ every other verb.
 
 ## Resources
 
-With `--registry-git`, the registry is browsable as MCP resources — reads that
-do not spend tool calls:
+With `--registry-git`, the registry is browsable as MCP resources. With
+`--service-workspace`, registered gRPC service contracts are resources too.
+These reads do not spend tool calls:
 
 | URI | Contents |
 |---|---|
 | `protomolt://registry/subjects` | All subjects plus the global compatibility mode |
 | `protomolt://registry/subjects/{subject}` | Version index, per-subject mode, latest schema |
 | `protomolt://registry/subjects/{subject}/versions/{n}` | One exact version with references |
+| `protomolt://services` | Service identities, endpoint names, and descriptor fingerprints |
+| `protomolt://services/{profile}` | One connection profile plus its reflected service and method contracts |
+| `protomolt://services/{profile}/methods/{full-method}` | One method's streaming mode, request/response types, and top-level fields |
 
-Subject names are URL-encoded in URIs. All resource contents are JSON.
+Subject, profile, and method names are URL-encoded in URIs. All resource
+contents are JSON. Descriptor bytes never appear in service resources.
+`resources/list` stays small by listing the service root and profiles only;
+method URIs are addressable after reading the selected profile contract.
 
 ## The gRPC agent workflow
 
-The three gRPC verbs compose into a single capability: **point an agent at a
-running gRPC service and let it operate the service.** The path an agent takes:
+The gRPC tools compose into a single capability: **point an agent at a running
+gRPC service and let it operate the service.** For work that should survive the
+current conversation, the preferred path is:
+
+1. **`service-register` once.** Supply a stable profile name and one or more
+   endpoints. ProtoMolt validates the caller-authored profile before opening a
+   connection, reflects the selected endpoint, and stores the descriptor set
+   outside agent context under its SHA-256 identity.
+
+2. **`service-inspect` or read its resources.** Ground method selection and
+   request construction in the persisted contract. The profile remains useful
+   after the target is offline and after ProtoMolt restarts.
+
+3. **Invoke and verify.** Use `grpc-invoke` with the exact method and proto3
+   JSON shape. Check `ok` and gRPC status before using the result.
+
+4. **`service-refresh` explicitly.** Re-reflect only when the deployed schema
+   may have changed. The returned `changed` flag compares schema fingerprints.
+
+For one-off exploration without a workspace:
 
 1. **`reflect` the address.** If the server enables gRPC server reflection,
-   this returns its service names and a descriptor set — no schema needed in
+   this returns its service names and a descriptor set with no schema needed in
    advance. Feed that descriptor set straight to the next steps.
 
 2. **Fall back to a schema when reflection is off.** Many production servers

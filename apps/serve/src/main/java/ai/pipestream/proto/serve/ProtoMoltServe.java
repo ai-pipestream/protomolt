@@ -6,6 +6,8 @@ import ai.pipestream.proto.chain.ChainRepository;
 import ai.pipestream.proto.chain.ChainRunner;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
+import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
+import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.jobs.service.ChainJobsConfig;
 import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
 import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
@@ -16,7 +18,9 @@ import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
 import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
 import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
 import ai.pipestream.proto.mcp.McpServer;
+import ai.pipestream.proto.mcp.CompositeResources;
 import ai.pipestream.proto.mcp.RegistryResources;
+import ai.pipestream.proto.mcp.ServiceProfileResources;
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.server.SchemaRegistryServer;
@@ -40,6 +44,7 @@ import java.nio.file.Path;
  * <pre>
  * protomolt-serve [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080]
  *                 [--registry-git /srv/schemas.git [--registry-port 8081]]
+ *                 [--service-workspace /srv/protomolt-services]
  * </pre>
  */
 public final class ProtoMoltServe implements AutoCloseable {
@@ -55,7 +60,7 @@ public final class ProtoMoltServe implements AutoCloseable {
     public record Options(String host, int grpcPort, int httpPort,
                           Path registryGit, int registryPort, String apiToken, boolean demo,
                           Path gatherCache, JobsOptions jobs,
-                          java.util.List<String> inferenceModels) {
+                          java.util.List<String> inferenceModels, Path serviceWorkspace) {
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
             this(host, grpcPort, httpPort, registryGit, registryPort, null, false, null);
@@ -84,6 +89,13 @@ public final class ProtoMoltServe implements AutoCloseable {
                     gatherCache, jobs, java.util.List.of());
         }
 
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, null);
+        }
+
         public static Options defaults() {
             return new Options("0.0.0.0", 9090, 8080, null, 8081, null, false, null);
         }
@@ -108,6 +120,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             int jobsWorkers = envInt("PROTOMOLT_JOBS_WORKERS", 0);
             int jobsTargetConcurrency = envInt("PROTOMOLT_JOBS_TARGET_CONCURRENCY", 0);
             java.util.List<String> inferenceModels = new java.util.ArrayList<>();
+            String serviceWorkspaceEnv = System.getenv("PROTOMOLT_SERVICE_WORKSPACE");
+            Path serviceWorkspace = serviceWorkspaceEnv == null || serviceWorkspaceEnv.isBlank()
+                    ? null : Path.of(serviceWorkspaceEnv);
             String inferenceModelsEnv = System.getenv("PROTOMOLT_INFERENCE_MODELS");
             if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
                 for (String spec : inferenceModelsEnv.split(";")) {
@@ -134,6 +149,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--jobs-target-concurrency" ->
                             jobsTargetConcurrency = Integer.parseInt(requireValue(args, ++i));
                     case "--inference-model" -> inferenceModels.add(requireValue(args, ++i));
+                    case "--service-workspace" ->
+                            serviceWorkspace = Path.of(requireValue(args, ++i));
                     case "--demo" -> demo = true;
                     case "--help", "-h" -> {
                         System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
@@ -144,7 +161,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--jobs-kafka <bootstrap>] [--jobs-request-topic <name>] "
                                 + "[--jobs-workers <n>] [--jobs-target-concurrency <n>]] "
                                 + "[--inference-model <id|provider|endpoint[|backend[|k:v,...]]> ...] "
-                                + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated)");
+                                + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
+                                + "[--service-workspace <dir>] "
+                                + "(or PROTOMOLT_SERVICE_WORKSPACE)");
                         System.exit(0);
                     }
                     default -> {
@@ -171,7 +190,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                 System.exit(2);
             }
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
-                    demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels));
+                    demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
+                    serviceWorkspace);
         }
 
         private static int envInt(String name, int fallback) {
@@ -284,6 +304,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         ChainJobDatabase jobsDatabase = null;
         ChainJobWorker jobsWorker = null;
         ChainJobEventRelay jobsRelay = null;
+        ServiceProfileRepository serviceProfiles = null;
         try {
             Path registryGit = options.registryGit();
             if (registryGit == null && options.demo()) {
@@ -300,6 +321,15 @@ public final class ProtoMoltServe implements AutoCloseable {
                         .build();
             }
             ChainRepository chains = store == null ? null : chainRepository(store);
+            if (options.serviceWorkspace() != null) {
+                try {
+                    serviceProfiles = new FileSystemServiceProfileRepository(
+                            options.serviceWorkspace());
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException("Failed to open service workspace at "
+                            + options.serviceWorkspace(), e);
+                }
+            }
 
             // Chain jobs: the store boots (and Flyway-migrates) before the catalog so
             // the jobs verbs serve from the same truth the worker fleet executes from.
@@ -327,15 +357,15 @@ public final class ProtoMoltServe implements AutoCloseable {
                 // the jobs verbs serve the live job rows.
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         chains, jobStore, jobsConfig.maxAttemptsDefault(),
-                        inferenceEngines(options.inferenceModels()));
+                        inferenceEngines(options.inferenceModels()), serviceProfiles);
                 return startWithJobsCatalog(options, context, catalog, store, chains,
-                        jobsDatabase, jobsWorker, jobsRelay);
+                        serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
             }
             // The catalog sees the store so run-chain resolves stored chain names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                    chains, null, 0, inferenceEngines(options.inferenceModels()));
+                    chains, null, 0, inferenceEngines(options.inferenceModels()), serviceProfiles);
             return startWithJobsCatalog(options, context, catalog, store, chains,
-                    null, null, null);
+                    serviceProfiles, null, null, null);
         } catch (RuntimeException e) {
             if (registry != null) {
                 registry.close();
@@ -359,6 +389,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                                                        ActionCatalog catalog,
                                                        GitSchemaRegistryStore store,
                                                        ChainRepository chains,
+                                                       ServiceProfileRepository serviceProfiles,
                                                        ChainJobDatabase jobsDatabase,
                                                        ChainJobWorker jobsWorker,
                                                        ChainJobEventRelay jobsRelay) {
@@ -415,7 +446,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                             ProtoApiTokenValidator.sharedSecret(options.apiToken()));
             String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
             McpServer mcp = new McpServer(catalog,
-                    store != null ? new RegistryResources(store) : null,
+                    CompositeResources.of(
+                            store != null ? new RegistryResources(store) : null,
+                            serviceProfiles != null
+                                    ? new ServiceProfileResources(serviceProfiles) : null),
                     "protomolt", version != null ? version : "dev");
             int boundRegistryPort = registryPort;
             int[] selfPort = {-1};

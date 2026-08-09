@@ -17,6 +17,12 @@ class McpServerTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private McpServer server;
 
+    @Test
+    void retainsTheOriginalRegistryResourcesConstructorForBinaryCompatibility() throws Exception {
+        assertThat(McpServer.class.getConstructor(ActionCatalog.class, RegistryResources.class,
+                String.class, String.class)).isNotNull();
+    }
+
     @BeforeEach
     void setUp() {
         server = new McpServer(ActionCatalog.defaults(ActionContext.create()), null,
@@ -57,6 +63,39 @@ class McpServerTest {
         params.put("protocolVersion", "1999-01-01");
         JsonNode result = respond(request(1, "initialize", params)).get("result");
         assertThat(result.get("protocolVersion").asText()).isEqualTo(McpServer.PROTOCOL_VERSION);
+    }
+
+    @Test
+    void initializeIncludesSelfContainedDefaultWorkflowInstructions() {
+        JsonNode instructions = respond(request(1, "initialize", null))
+                .get("result").get("instructions");
+
+        assertThat(instructions.asText()).isEqualTo(McpServer.DEFAULT_INSTRUCTIONS);
+        assertThat(instructions.asText().length()).isLessThanOrEqualTo(512);
+        assertThat(instructions.asText()).contains("service-register", "service-inspect",
+                "reflect", "grpc-invoke", "generate-stubs");
+    }
+
+    @Test
+    void initializeUsesConfiguredInstructions() {
+        McpServer configured = new McpServer(ActionCatalog.defaults(ActionContext.create()), null,
+                "configured", "1", "Use the supplied recipe.");
+
+        JsonNode result = configured.handle(request(1, "initialize", null)).orElseThrow()
+                .get("result");
+
+        assertThat(result.get("instructions").asText()).isEqualTo("Use the supplied recipe.");
+    }
+
+    @Test
+    void initializeCanOmitInstructionsWhenConfiguredEmpty() {
+        McpServer configured = new McpServer(ActionCatalog.defaults(ActionContext.create()), null,
+                "configured", "1", "");
+
+        JsonNode result = configured.handle(request(1, "initialize", null)).orElseThrow()
+                .get("result");
+
+        assertThat(result.has("instructions")).isFalse();
     }
 
     @Test

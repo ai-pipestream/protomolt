@@ -30,6 +30,18 @@ import java.util.concurrent.TimeUnit;
  */
 public final class ReflectionClient {
 
+    /** Maximum total wall-clock time for one reflection walk. */
+    public static final long MAX_TIMEOUT_MS = 60_000;
+
+    /** Maximum advertised services accepted from one endpoint. */
+    public static final int MAX_SERVICES = 4_096;
+
+    /** Maximum distinct descriptor files accumulated by one reflection walk. */
+    public static final int MAX_FILES = 4_096;
+
+    /** Maximum serialized descriptor-set size accumulated by one reflection walk. */
+    public static final int MAX_DESCRIPTOR_SET_BYTES = 16 * 1024 * 1024;
+
     /** What a reflection walk found: the advertised service names and their full descriptor set. */
     public record Result(List<String> services, FileDescriptorSet descriptorSet) {
     }
@@ -44,10 +56,19 @@ public final class ReflectionClient {
      * @throws ReflectionException on a reflection error response, a stream failure, or timeout
      */
     public static Result discover(Channel channel, long timeoutMs) throws ReflectionException {
+        if (timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
+            throw new ReflectionException("Reflection timeout must be from 1 to "
+                    + MAX_TIMEOUT_MS + "ms");
+        }
         try (Stream stream = new Stream(channel, timeoutMs)) {
             List<String> services = stream.listServices();
+            if (services.size() > MAX_SERVICES) {
+                throw new ReflectionException("Server advertised more than " + MAX_SERVICES
+                        + " services");
+            }
             Map<String, FileDescriptorProto> files = new LinkedHashMap<>();
             Deque<String> pending = new ArrayDeque<>();
+            long descriptorBytes = 0;
 
             for (String service : services) {
                 // The reflection well-known service is an implementation detail, not app schema.
@@ -55,11 +76,8 @@ public final class ReflectionClient {
                         || service.equals("grpc.reflection.v1alpha.ServerReflection")) {
                     continue;
                 }
-                for (FileDescriptorProto file : stream.fileContainingSymbol(service)) {
-                    if (files.putIfAbsent(file.getName(), file) == null) {
-                        pending.add(file.getName());
-                    }
-                }
+                descriptorBytes = addFiles(stream.fileContainingSymbol(service), files, pending,
+                        descriptorBytes);
             }
             while (!pending.isEmpty()) {
                 FileDescriptorProto file = files.get(pending.poll());
@@ -67,27 +85,55 @@ public final class ReflectionClient {
                     if (files.containsKey(dependency)) {
                         continue;
                     }
-                    for (FileDescriptorProto fetched : stream.fileByFilename(dependency)) {
-                        if (files.putIfAbsent(fetched.getName(), fetched) == null) {
-                            pending.add(fetched.getName());
-                        }
-                    }
+                    descriptorBytes = addFiles(stream.fileByFilename(dependency), files, pending,
+                            descriptorBytes);
                 }
             }
-            return new Result(services,
-                    FileDescriptorSet.newBuilder().addAllFile(files.values()).build());
+            FileDescriptorSet descriptorSet = FileDescriptorSet.newBuilder()
+                    .addAllFile(files.values()).build();
+            if (descriptorSet.getSerializedSize() > MAX_DESCRIPTOR_SET_BYTES) {
+                throw new ReflectionException("Reflected descriptor set exceeds "
+                        + MAX_DESCRIPTOR_SET_BYTES + " bytes");
+            }
+            return new Result(services, descriptorSet);
         }
+    }
+
+    private static long addFiles(List<FileDescriptorProto> candidates,
+                                 Map<String, FileDescriptorProto> files,
+                                 Deque<String> pending, long descriptorBytes)
+            throws ReflectionException {
+        long total = descriptorBytes;
+        for (FileDescriptorProto file : candidates) {
+            if (files.containsKey(file.getName())) {
+                continue;
+            }
+            if (files.size() == MAX_FILES) {
+                throw new ReflectionException("Reflected schema exceeds " + MAX_FILES
+                        + " descriptor files");
+            }
+            total += file.getSerializedSize();
+            if (total > MAX_DESCRIPTOR_SET_BYTES) {
+                throw new ReflectionException("Reflected descriptor set exceeds "
+                        + MAX_DESCRIPTOR_SET_BYTES + " bytes");
+            }
+            files.put(file.getName(), file);
+            pending.add(file.getName());
+        }
+        return total;
     }
 
     /** One reflection bidi stream, driven synchronously. */
     private static final class Stream implements AutoCloseable {
         private final long timeoutMs;
+        private final long deadlineNanos;
         private final BlockingQueue<Object> responses = new ArrayBlockingQueue<>(64);
         private final StreamObserver<ServerReflectionRequest> requests;
         private static final Object COMPLETED = new Object();
 
         Stream(Channel channel, long timeoutMs) {
             this.timeoutMs = timeoutMs;
+            this.deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
             ServerReflectionGrpc.ServerReflectionStub stub = ServerReflectionGrpc.newStub(channel);
             this.requests = stub.serverReflectionInfo(new StreamObserver<>() {
                 @Override
@@ -143,7 +189,9 @@ public final class ReflectionClient {
             requests.onNext(request);
             Object taken;
             try {
-                taken = responses.poll(timeoutMs, TimeUnit.MILLISECONDS);
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                taken = remainingNanos <= 0 ? null
+                        : responses.poll(remainingNanos, TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new ReflectionException("Interrupted while reflecting", e);

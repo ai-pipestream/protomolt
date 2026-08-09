@@ -22,7 +22,7 @@ import java.util.Optional;
  * version. Subject names are URL-encoded in URIs, matching the registry's own storage
  * encoding. All contents are JSON documents.</p>
  */
-public final class RegistryResources {
+public final class RegistryResources implements McpResources {
 
     private static final String ROOT = "protomolt://registry/subjects";
 
@@ -33,6 +33,7 @@ public final class RegistryResources {
     }
 
     /** The resource index: the subjects list plus one entry per subject. */
+    @Override
     public ArrayNode list(ObjectMapper mapper) {
         ArrayNode resources = mapper.createArrayNode();
         ObjectNode index = resources.addObject();
@@ -51,6 +52,7 @@ public final class RegistryResources {
     }
 
     /** The contents of one resource, or empty when the URI is not served. */
+    @Override
     public Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
         if (ROOT.equals(uri)) {
             return Optional.of(contents(mapper, uri, subjectsIndex(mapper)));
