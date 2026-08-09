@@ -53,7 +53,13 @@ public final class ProtoParquetSchemas {
     private ProtoParquetSchemas() {
     }
 
-    static MessageType schema(Descriptor descriptor) {
+    /**
+     * The canonical Parquet schema for a message descriptor — the stable
+     * descriptor-to-schema entry point, a pure function of the descriptor. Strings and enums
+     * become annotated UTF-8 binary columns, {@code google.protobuf.Timestamp} a microsecond
+     * UTC timestamp column; the class javadoc carries the full mapping.
+     */
+    public static MessageType schema(Descriptor descriptor) {
         return schema(descriptor, FieldIdResolver.NONE);
     }
 

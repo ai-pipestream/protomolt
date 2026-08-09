@@ -4,6 +4,11 @@ dependencies {
     api project(':protomolt-registry')
     api project(':protomolt-actions')
 
+    implementation project(':protomolt-emit-parquet')
+    // MessageType (parquet-column) rides in on parquet-hadoop's compile scope; the parquet-schema
+    // endpoint only renders the schema to text and touches no Hadoop-signature method.
+    implementation libs.parquet.hadoop
+
     implementation libs.jackson.databind
     implementation libs.slf4j.api
 
