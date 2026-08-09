@@ -59,6 +59,9 @@ build-from-clone quick start. The guides here cover each subsystem in depth.
 - [Pipeline design](design/pipeline.md): a pipeline is a protobuf message
   that chains steps together; any gRPC service can be a step, alongside
   projections, CEL filters and selects, unnest, and collect
+- [gRPC recipe workbench](design/grpc-recipe-workbench.md) — the
+  explore-to-verify-to-promote lifecycle for service profiles, agent-assisted
+  recipes, run evidence, structured inference, and standalone applications
 
 ## Records
 
