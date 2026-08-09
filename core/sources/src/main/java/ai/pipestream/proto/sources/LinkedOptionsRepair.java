@@ -99,6 +99,12 @@ final class LinkedOptionsRepair {
             fields.put(field.getNumber(), field);
         }
         for (Field field : message.getFieldsAndOneOfFields()) {
+            // Wire links extension fields onto their extendee, so this list carries fields the
+            // encoded descriptor holds in its extension list, not its field list. Their options
+            // are repaired from the Extend blocks (repairExtensionFields).
+            if (field.isExtension()) {
+                continue;
+            }
             if (encoder.hasOptions(field.getOptions())) {
                 FieldDescriptorProto.Builder target = fields.get(field.getTag());
                 if (target == null) {
@@ -173,7 +179,15 @@ final class LinkedOptionsRepair {
         }
     }
 
-    /** Options on extension field declarations themselves (e.g. {@code [deprecated = true]}). */
+    /**
+     * Options on extension field declarations themselves (e.g. {@code [deprecated = true]}).
+     *
+     * <p>Every declared extension field must exist in the encoded descriptor — with options or
+     * without. Wire's {@code SchemaEncoder} drops nested {@code extend} declarations entirely, so
+     * a nested extension would otherwise vanish from the compiled set without a word; that is a
+     * structural mismatch between the model and the encoded tree, and this pass fails loud on
+     * those by design.
+     */
     private static void repairExtensionFields(List<Extend> extendBlocks,
                                               List<FieldDescriptorProto.Builder> extensionBuilders,
                                               LinkedOptionsEncoder encoder, String path)
@@ -181,18 +195,20 @@ final class LinkedOptionsRepair {
         if (extendBlocks.isEmpty()) {
             return;
         }
-        Map<Integer, FieldDescriptorProto.Builder> byNumber = new HashMap<>();
+        Map<String, FieldDescriptorProto.Builder> byExtendeeAndNumber = new HashMap<>();
         for (FieldDescriptorProto.Builder field : extensionBuilders) {
-            byNumber.put(field.getNumber(), field);
+            byExtendeeAndNumber.put(extensionKey(field.getExtendee(), field.getNumber()), field);
         }
         for (Extend extend : extendBlocks) {
             for (Field field : extend.getFields()) {
+                FieldDescriptorProto.Builder target = byExtendeeAndNumber.get(
+                        extensionKey(extend.getType().toString(), field.getTag()));
+                if (target == null) {
+                    throw new OptionEncodingException("extend " + extend.getName() + " in " + path
+                            + ": encoded descriptor has no extension field #" + field.getTag()
+                            + " (" + field.getName() + ") — encoder/model mismatch");
+                }
                 if (encoder.hasOptions(field.getOptions())) {
-                    FieldDescriptorProto.Builder target = byNumber.get(field.getTag());
-                    if (target == null) {
-                        throw new OptionEncodingException("extend " + extend.getName() + " in " + path
-                                + ": encoded descriptor has no extension field #" + field.getTag());
-                    }
                     target.setOptions(encode(field.getOptions(), "google.protobuf.FieldOptions",
                             FieldOptions.parser(), encoder,
                             "extension field " + field.getName() + " of extend " + extend.getName()
@@ -200,6 +216,11 @@ final class LinkedOptionsRepair {
                 }
             }
         }
+    }
+
+    private static String extensionKey(String extendee, int number) {
+        String normalizedExtendee = extendee.startsWith(".") ? extendee.substring(1) : extendee;
+        return normalizedExtendee + '#' + number;
     }
 
     private static <M extends Message> M encode(Options options, String optionsType, Parser<M> parser,

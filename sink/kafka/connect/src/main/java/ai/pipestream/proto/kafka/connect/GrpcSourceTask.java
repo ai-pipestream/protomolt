@@ -12,6 +12,7 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.util.JsonFormat;
+import dev.cel.common.values.CelByteString;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -250,6 +251,12 @@ public final class GrpcSourceTask extends SourceTask {
         }
         if (value instanceof ByteString bytes) {
             return Base64.getEncoder().encodeToString(bytes.toByteArray());
+        }
+        if (value instanceof CelByteString bytes) {
+            return Base64.getEncoder().encodeToString(bytes.toByteArray());
+        }
+        if (value instanceof byte[] bytes) {
+            return Base64.getEncoder().encodeToString(bytes);
         }
         return String.valueOf(value);
     }

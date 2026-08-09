@@ -215,6 +215,20 @@ class FormatsTest {
     }
 
     @Test
+    void twoArgumentIpPrefixDispatchesOnVersion() {
+        assertThat(Formats.isIpPrefix("192.168.0.0/24", 4)).isTrue();
+        assertThat(Formats.isIpPrefix("192.168.0.0/24", 6)).isFalse();
+        assertThat(Formats.isIpPrefix("192.168.0.0/24", 0)).isTrue();
+        assertThat(Formats.isIpPrefix("2001:db8::/32", 6)).isTrue();
+        assertThat(Formats.isIpPrefix("2001:db8::/32", 4)).isFalse();
+        assertThat(Formats.isIpPrefix("2001:db8::/32", 0)).isTrue();
+        assertThat(Formats.isIpPrefix("2001:db8::/32", 5)).isFalse();
+        // Host bits are tolerated: the two-argument form is never strict.
+        assertThat(Formats.isIpPrefix("192.168.0.1/24", 4)).isTrue();
+        assertThat(Formats.isIpPrefix("2001:db8::1/32", 6)).isTrue();
+    }
+
+    @Test
     void protobufNameFacades() {
         assertThat(Formats.isProtobufFqn("foo.bar.Baz")).isTrue();
         assertThat(Formats.isProtobufFqn(".foo.bar.Baz")).isFalse();

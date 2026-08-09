@@ -40,6 +40,12 @@ final class Literals {
         if (source.startsWith("\"")) {
             return source.substring(1, source.length() - 1);
         }
-        return source.contains(".") ? Double.valueOf(source) : Long.valueOf(source);
+        // Keep these branches separate. A conditional expression combining boxed
+        // Double and Long values is subject to numeric unboxing/promotion and boxes
+        // the integral branch back to Double (for example, 42 becomes 42.0).
+        if (source.contains(".")) {
+            return Double.valueOf(source);
+        }
+        return Long.valueOf(source);
     }
 }

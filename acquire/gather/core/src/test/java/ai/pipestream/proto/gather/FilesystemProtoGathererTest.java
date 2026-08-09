@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -208,5 +209,74 @@ class FilesystemProtoGathererTest {
                 .contains("root")
                 .contains("checkout");
         assertThat(gatherer.isAvailable()).isTrue();
+    }
+
+    @Test
+    void builderRejectsNullArguments() {
+        FilesystemProtoGatherer.Builder builder = FilesystemProtoGatherer.builder();
+
+        assertThatThrownBy(() -> builder.root(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> builder.roots(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> builder.scanRoot(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void rootsCollectionAddsEveryRoot() throws Exception {
+        write("rootA/a.proto", COMMON_PROTO);
+        write("rootB/b.proto", APP_PROTO);
+
+        ProtoSourceSet set = FilesystemProtoGatherer.builder()
+                .roots(List.of(tempDir.resolve("rootA"), tempDir.resolve("rootB")))
+                .build()
+                .gather();
+
+        assertThat(set.paths()).containsExactlyInAnyOrder("a.proto", "b.proto");
+    }
+
+    @Test
+    void aRegularFileRootIsTreatedAsMissing() throws Exception {
+        Path file = write("not-a-dir.proto", COMMON_PROTO);
+
+        FilesystemProtoGatherer failing = FilesystemProtoGatherer.builder()
+                .root(file)
+                .build();
+        assertThatThrownBy(failing::gather)
+                .isInstanceOf(GatherException.class)
+                .hasMessageContaining("not-a-dir.proto");
+
+        ProtoSourceSet skipped = FilesystemProtoGatherer.builder()
+                .root(file)
+                .failIfMissing(false)
+                .build()
+                .gather();
+        assertThat(skipped.paths()).isEmpty();
+    }
+
+    @Test
+    void missingScanRootIsSkippedWhenNotFailingOnMissing() throws Exception {
+        write("root/a.proto", APP_PROTO);
+
+        ProtoSourceSet set = FilesystemProtoGatherer.builder()
+                .root(tempDir.resolve("root"))
+                .scanRoot(tempDir.resolve("no-such-tree"))
+                .failIfMissing(false)
+                .build()
+                .gather();
+
+        assertThat(set.paths()).containsExactly("a.proto");
+    }
+
+    @Test
+    void scanRootItselfIsExemptFromTheBuildDirectorySkip() throws Exception {
+        // Only descendants named "build" (or hidden) are skipped; a scan root literally
+        // named "build" is still scanned.
+        write("build/module/src/main/proto/a.proto", APP_PROTO);
+
+        ProtoSourceSet set = FilesystemProtoGatherer.builder()
+                .scanRoot(tempDir.resolve("build"))
+                .build()
+                .gather();
+
+        assertThat(set.paths()).containsExactly("a.proto");
     }
 }

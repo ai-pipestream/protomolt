@@ -26,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
@@ -117,6 +118,34 @@ class TeiRerankProviderTest {
     }
 
     @Test
+    void duplicatedRankIndexThrows() {
+        fake.duplicateFirstRank = true;
+        TeiRerankProvider provider = new TeiRerankProvider(channel);
+
+        assertThatThrownBy(() -> provider.score("bamboo", List.of("a", "b")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("twice");
+    }
+
+    @Test
+    void scoreRejectsNullArguments() {
+        TeiRerankProvider provider = new TeiRerankProvider(channel);
+
+        assertThatThrownBy(() -> provider.score(null, List.of("a")))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.score("bamboo", null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void constructorsRejectNullArguments() {
+        assertThatThrownBy(() -> new TeiRerankProvider((String) null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new TeiRerankProvider((ManagedChannel) null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     void missingRankThrows() {
         fake.dropLastRank = true;
         TeiRerankProvider provider = new TeiRerankProvider(channel);
@@ -145,6 +174,34 @@ class TeiRerankProviderTest {
 
         assertThat(channel.isShutdown()).isFalse();
         assertThat(provider.score("bamboo", List.of("still open"))).hasSize(1);
+    }
+
+    @Test
+    void theTargetConstructorOwnsItsChannelAndCloseShutsItDown() throws Exception {
+        Server loopback = NettyServerBuilder.forPort(0).addService(new FakeRerank())
+                .build().start();
+        try {
+            TeiRerankProvider provider =
+                    new TeiRerankProvider("localhost:" + loopback.getPort());
+            var channelField = TeiRerankProvider.class.getDeclaredField("channel");
+            channelField.setAccessible(true);
+            ManagedChannel ownedChannel = (ManagedChannel) channelField.get(provider);
+
+            assertThat(provider.score("bamboo", List.of("wired"))).containsExactly(5.0);
+
+            provider.close();
+
+            assertThat(ownedChannel.isShutdown()).isTrue();
+        } finally {
+            loopback.shutdownNow();
+        }
+    }
+
+    @Test
+    void closeBeforeTheChannelIsEverCreatedIsANoOp() {
+        TeiRerankProvider provider = new TeiRerankProvider();
+
+        assertThatCode(provider::close).doesNotThrowAnyException();
     }
 
     @Test
@@ -196,6 +253,7 @@ class TeiRerankProviderTest {
         private volatile io.grpc.StatusRuntimeException failWith;
         private volatile int extraRankIndex = -1;
         private volatile boolean dropLastRank;
+        private volatile boolean duplicateFirstRank;
 
         @Override
         public void rerank(RerankRequest request, StreamObserver<RerankResponse> observer) {
@@ -217,6 +275,9 @@ class TeiRerankProviderTest {
             }
             if (extraRankIndex >= 0) {
                 ranks.add(Rank.newBuilder().setIndex(extraRankIndex).setScore(0).build());
+            }
+            if (duplicateFirstRank && !ranks.isEmpty()) {
+                ranks.add(ranks.get(0));
             }
             lastRankOrder.clear();
             RerankResponse.Builder response = RerankResponse.newBuilder();
