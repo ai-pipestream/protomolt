@@ -9,6 +9,8 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 
@@ -135,5 +137,41 @@ class CompositeProtoGathererTest {
     void requiresAtLeastOneGatherer() {
         assertThatThrownBy(CompositeProtoGatherer::of)
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsANullGathererList() {
+        assertThatThrownBy(() -> new CompositeProtoGatherer(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void defensivelyCopiesTheGathererList() {
+        List<ProtoGatherer> mutable = new ArrayList<>();
+        mutable.add(fixed(ProtoSourceSet.empty(), "a", true));
+
+        CompositeProtoGatherer composite = new CompositeProtoGatherer(mutable);
+        mutable.add(fixed(ProtoSourceSet.empty(), "b", true));
+
+        assertThat(composite.origin()).isEqualTo("composite[a]");
+    }
+
+    @Test
+    void childGatherExceptionPropagatesUnwrapped() {
+        GatherException failure = new GatherException("transport down");
+        ProtoGatherer failing = new ProtoGatherer() {
+            @Override
+            public ProtoSourceSet gather() throws GatherException {
+                throw failure;
+            }
+
+            @Override
+            public String origin() {
+                return "failing";
+            }
+        };
+
+        assertThatThrownBy(() -> CompositeProtoGatherer.of(failing).gather())
+                .isSameAs(failure);
     }
 }

@@ -181,4 +181,44 @@ class GatheringDescriptorLoaderTest {
             assertThat(loader.getLoaderType()).isEqualTo("Proto Gatherer (nowhere)");
         }
     }
+
+    @Test
+    void rejectsNullConstructorArguments() {
+        FilesystemProtoGatherer gatherer = FilesystemProtoGatherer.builder()
+                .root(tempDir)
+                .build();
+
+        assertThatThrownBy(() -> new GatheringDescriptorLoader(null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new GatheringDescriptorLoader(gatherer, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void closeDropsTheCacheLikeRefresh() throws Exception {
+        Path root = writeRoot();
+        GatheringDescriptorLoader loader = loaderFor(root);
+        assertThat(loader.loadDescriptors()).hasSize(2);
+
+        loader.close();
+
+        Files.writeString(root.resolve("app/extra.proto"), """
+                syntax = "proto3";
+                package app;
+                message Extra { string note = 1; }
+                """);
+        // close() cleared the cache, so the next load gathers again and sees the new file.
+        assertThat(loader.loadDescriptors()).hasSize(3);
+        loader.close();
+    }
+
+    @Test
+    void findsNestedTypeBySimpleName() throws Exception {
+        try (GatheringDescriptorLoader loader = loaderFor(writeRoot())) {
+            FileDescriptor byNestedSimpleName = loader.loadDescriptorForType("Entry");
+
+            assertThat(byNestedSimpleName).isNotNull();
+            assertThat(byNestedSimpleName.getName()).isEqualTo("common/v1/audit.proto");
+        }
+    }
 }

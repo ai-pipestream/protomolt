@@ -2,6 +2,7 @@ package ai.pipestream.proto.server.micronaut;
 
 import ai.pipestream.proto.json.ProtobufJsonTranscoder;
 import ai.pipestream.proto.rest.ApiTokenRequirement;
+import ai.pipestream.proto.rest.ProtoApiToken;
 import ai.pipestream.proto.rest.ProtoApiTokenValidator;
 import ai.pipestream.proto.rest.ProtoRestGateway;
 import ai.pipestream.proto.rest.ProtoRestMethod;
@@ -12,9 +13,12 @@ import com.google.protobuf.Value;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MicronautProtoRestFacadeTest {
 
@@ -56,6 +60,12 @@ class MicronautProtoRestFacadeTest {
                     throw new RuntimeException("kaboom-secret-detail");
                 })
                 .requestType(Struct.class)
+                .build());
+        registry.register(ProtoRestMethod.builder("QueryService", "Check",
+                        request -> Struct.getDefaultInstance())
+                .requestType(Struct.class)
+                .apiToken(new ApiTokenRequirement("tok", ProtoApiToken.In.QUERY,
+                        ProtoApiToken.Scheme.API_KEY, "bearer", true, "query token"))
                 .build());
         return registry;
     }
@@ -134,5 +144,115 @@ class MicronautProtoRestFacadeTest {
                 "POST", "SecureService", "Ping", "{}",
                 Map.of("api_token", "any-junk-token"), Map.of()).status())
                 .isEqualTo(401);
+    }
+
+    @Test
+    void openApiResponseIsCachedUntilInvalidated() {
+        ProtoRestMethodRegistry registry = newRegistry();
+        MicronautProtoRestFacade caching = new MicronautProtoRestFacade(
+                new ProtoRestGateway(registry, new ProtobufJsonTranscoder(),
+                        ProtoApiTokenValidator.sharedSecret("secret-token")),
+                ProtoToolsServerConfig.defaults());
+        String first = caching.openApiJson();
+        assertThat(first).contains("EchoService");
+
+        registry.register(ProtoRestMethod.builder("LateService", "Late",
+                        request -> Struct.getDefaultInstance())
+                .requestType(Struct.class)
+                .build());
+        // The cached document is served until explicitly invalidated.
+        assertThat(caching.openApiJson()).isSameAs(first);
+        assertThat(caching.openApiJson()).doesNotContain("LateService");
+
+        caching.invalidateOpenApiCache();
+        assertThat(caching.openApiJson()).contains("LateService");
+    }
+
+    @Test
+    void headerNamesAreLowercasedBeforeValidation() {
+        assertThat(facade.invoke("POST", "SecureService", "Ping", "{}",
+                Map.of("API_TOKEN", "secret-token"), Map.of()).status())
+                .isEqualTo(200);
+
+        // Two keys that differ only by case collapse to one; the first value wins.
+        Map<String, String> dupes = new LinkedHashMap<>();
+        dupes.put("Api_Token", "secret-token");
+        dupes.put("API_TOKEN", "junk");
+        assertThat(facade.invoke("POST", "SecureService", "Ping", "{}", dupes, Map.of()).status())
+                .isEqualTo(200);
+    }
+
+    @Test
+    void legacyInvokeSkipsVerbEnforcement() {
+        // The 5-arg legacy signature passes a null verb, so declared httpMethods are not enforced.
+        MicronautProtoRestFacade.Result res = facade.invoke(
+                "RestrictedService", "PostOnly", "{}", Map.of(), Map.of());
+        assertThat(res.status()).isEqualTo(200);
+        assertThat(res.headers()).isEmpty();
+    }
+
+    @Test
+    void blankBodyIsCoercedToEmptyJson() {
+        MicronautProtoRestFacade.Result res = facade.invoke(
+                "POST", "EchoService", "Echo", "   ", Map.of(), Map.of());
+        assertThat(res.status()).isEqualTo(200);
+        assertThat(res.body()).contains("hello ");
+    }
+
+    @Test
+    void malformedJsonBodyIs400() {
+        MicronautProtoRestFacade.Result res = facade.invoke(
+                "POST", "EchoService", "Echo", "{not-json", Map.of(), Map.of());
+        assertThat(res.status()).isEqualTo(400);
+        assertThat(res.body()).contains("\"status\":400");
+    }
+
+    @Test
+    void tokenAcceptedViaQueryParam() {
+        assertThat(facade.invoke("POST", "QueryService", "Check", "{}", Map.of(), Map.of()).status())
+                .isEqualTo(401);
+        assertThat(facade.invoke("POST", "QueryService", "Check", "{}",
+                Map.of(), Map.of("tok", "secret-token")).status())
+                .isEqualTo(200);
+    }
+
+    @Test
+    void bodyExactlyAtSizeLimitIsAccepted() {
+        MicronautProtoRestFacade small = new MicronautProtoRestFacade(
+                new ProtoRestGateway(newRegistry(), new ProtobufJsonTranscoder(),
+                        ProtoApiTokenValidator.sharedSecret("secret-token")),
+                ProtoToolsServerConfig.defaults().withMaxRequestBytes(64));
+        // ASCII bodies: 9 + 53 + 2 = 64 bytes exactly, one more byte tips over the limit.
+        String exact = "{\"name\":\"" + "x".repeat(53) + "\"}";
+        assertThat(small.invoke("POST", "EchoService", "Echo", exact, Map.of(), Map.of()).status())
+                .isEqualTo(200);
+        String over = "{\"name\":\"" + "x".repeat(54) + "\"}";
+        assertThat(small.invoke("POST", "EchoService", "Echo", over, Map.of(), Map.of()).status())
+                .isEqualTo(413);
+    }
+
+    @Test
+    void configAccessorReturnsInjectedConfig() {
+        assertThat(facade.config()).isEqualTo(ProtoToolsServerConfig.defaults());
+        assertThat(facade.config().maxRequestBytes())
+                .isEqualTo(ProtoToolsServerConfig.DEFAULT_MAX_REQUEST_BYTES);
+    }
+
+    @Test
+    void resultRecordNormalizesAndDefensivelyCopiesHeaders() {
+        MicronautProtoRestFacade.Result nullHeaders =
+                new MicronautProtoRestFacade.Result(200, "ok", null);
+        assertThat(nullHeaders.headers()).isEmpty();
+
+        MicronautProtoRestFacade.Result twoArg = new MicronautProtoRestFacade.Result(200, "ok");
+        assertThat(twoArg.headers()).isEmpty();
+
+        Map<String, String> mutable = new HashMap<>();
+        mutable.put("Allow", "POST");
+        MicronautProtoRestFacade.Result copied = new MicronautProtoRestFacade.Result(405, "err", mutable);
+        mutable.put("X-Evil", "1");
+        assertThat(copied.headers()).containsExactly(Map.entry("Allow", "POST"));
+        assertThatThrownBy(() -> copied.headers().put("a", "b"))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 }

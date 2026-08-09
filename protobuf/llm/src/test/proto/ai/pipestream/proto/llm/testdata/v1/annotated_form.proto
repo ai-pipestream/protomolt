@@ -29,4 +29,17 @@ message AnnotatedForm {
 
   // A field with no llm.v1 annotation, proving absence reads as empty.
   string note = 3;
+
+  // A field carrying several safeguards, proving order is preserved.
+  repeated string citations = 4 [(ai.pipestream.proto.llm.v1.field) = {
+    directive: "List every authority the text cites."
+    safeguards: "Do not invent citations."
+    safeguards: "Do not cite authority the text does not mention."
+  }];
+}
+
+// A form carrying no llm.v1 annotations at either scope.
+message PlainForm {
+  // A plain field with no options.
+  string title = 1;
 }

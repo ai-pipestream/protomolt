@@ -71,6 +71,38 @@ class IcebergPartitionsTest {
     }
 
     @Test
+    void aTruncateWithoutAWidthIsRejected() {
+        assertThatThrownBy(() -> IcebergPartitions.bind(SCHEMA,
+                List.of(new IcebergPartitions.PartitionField("symbol", "truncate"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("truncate")
+                .hasMessageContaining("width");
+    }
+
+    @Test
+    void aNonNumericWidthIsRejected() {
+        assertThatThrownBy(() -> IcebergPartitions.bind(SCHEMA,
+                List.of(new IcebergPartitions.PartitionField("symbol", "bucket[sixteen]"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid 'bucket' width");
+    }
+
+    @Test
+    void anUnterminatedWidthIsRejected() {
+        assertThatThrownBy(() -> IcebergPartitions.bind(SCHEMA,
+                List.of(new IcebergPartitions.PartitionField("symbol", "bucket[16"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("width");
+    }
+
+    @Test
+    void transformSpellingIsCaseAndWhitespaceTolerant() {
+        PartitionSpec spec = IcebergPartitions.bind(SCHEMA,
+                List.of(new IcebergPartitions.PartitionField("at", "  HOUR ")));
+        assertThat(spec.fields().get(0).transform().toString()).isEqualTo("hour");
+    }
+
+    @Test
     void fromHintsReadsThePartitionLabelDeclaredOnFields() throws Exception {
         // The descriptor is built directly with the metadata extension set: ProtoMolt's own
         // compiler cannot yet parse a map-typed custom option in .proto text, so a partition

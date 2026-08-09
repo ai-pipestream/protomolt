@@ -39,4 +39,44 @@ class RerankProviderTest {
         assertThatThrownBy(() -> provider.rank("q", List.of("a memoir"), -1))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void rankKeepsInputOrderBetweenTiedScores() {
+        RerankProvider provider = new AllTiedRerankProvider();
+
+        List<ScoredText> ranked = provider.rank("q", List.of("first", "second", "third"), 3);
+
+        assertThat(ranked).containsExactly(
+                new ScoredText(0, "first", 0.5),
+                new ScoredText(1, "second", 0.5),
+                new ScoredText(2, "third", 0.5));
+    }
+
+    @Test
+    void rankWithAZeroTopKReturnsEmpty() {
+        RerankProvider provider = new FixedScoreRerankProvider();
+
+        assertThat(provider.rank("q", List.of("bamboo shoots"), 0)).isEmpty();
+    }
+
+    @Test
+    void rankOverAnEmptyBatchReturnsEmpty() {
+        RerankProvider provider = new FixedScoreRerankProvider();
+
+        assertThat(provider.rank("q", List.of(), 5)).isEmpty();
+    }
+
+    /** Scores every text the same, so every comparison is a tie. */
+    private static final class AllTiedRerankProvider implements RerankProvider {
+
+        @Override
+        public String providerId() {
+            return "all-tied";
+        }
+
+        @Override
+        public List<Double> score(String query, List<String> texts) {
+            return texts.stream().map(text -> 0.5).toList();
+        }
+    }
 }

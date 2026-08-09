@@ -151,6 +151,96 @@ class OvmsRerankProviderTest {
     }
 
     @Test
+    void aNegativeIndexThrows() {
+        fake.responseBody = "{\"results\":[{\"index\":-1,\"relevance_score\":0.5},"
+                + "{\"index\":1,\"relevance_score\":0.1}]}";
+        OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl, MODEL);
+
+        assertThatThrownBy(() -> provider.score("bamboo", List.of("a", "b")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("result index -1");
+    }
+
+    @Test
+    void aNonJsonBodyThrows() {
+        fake.responseBody = "this is not json";
+        OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl, MODEL);
+
+        assertThatThrownBy(() -> provider.score("bamboo", List.of("a")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not JSON");
+    }
+
+    @Test
+    void aResponseWithoutAResultsArrayThrows() {
+        fake.responseBody = "{\"unexpected\":true}";
+        OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl, MODEL);
+
+        assertThatThrownBy(() -> provider.score("bamboo", List.of("a")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no 'results' array");
+    }
+
+    @Test
+    void anIoFailureIsWrappedNamingModelAndUrl() {
+        OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl, MODEL,
+                FailingHttpClient.failingWith(new IOException("connection reset")));
+
+        assertThatThrownBy(() -> provider.score("bamboo", List.of("a")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(MODEL)
+                .hasMessageContaining(baseUrl)
+                .hasCauseInstanceOf(IOException.class);
+    }
+
+    @Test
+    void anInterruptionIsWrappedAndRestoresTheInterruptFlag() {
+        OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl, MODEL,
+                FailingHttpClient.interrupting());
+        try {
+            assertThatThrownBy(() -> provider.score("bamboo", List.of("a")))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Interrupted")
+                    .hasCauseInstanceOf(InterruptedException.class);
+
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            // Keep the flag from leaking into the next test on this worker thread.
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void repeatedTrailingSlashesOnTheBaseUrlAreStripped() {
+        OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl + "//", MODEL);
+
+        provider.score("bamboo", List.of("a"));
+
+        assertThat(fake.requests).singleElement().satisfies(
+                request -> assertThat(request.path()).isEqualTo("/v3/rerank"));
+    }
+
+    @Test
+    void scoreRejectsNullArguments() {
+        OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl, MODEL);
+
+        assertThatThrownBy(() -> provider.score(null, List.of("a")))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.score("bamboo", null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void constructorsRejectNullArguments() {
+        assertThatThrownBy(() -> new OvmsRerankProvider(null, MODEL))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new OvmsRerankProvider(baseUrl, null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new OvmsRerankProvider(baseUrl, MODEL, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     void emptyTextsReturnEmptyWithoutARequest() {
         OvmsRerankProvider provider = new OvmsRerankProvider(baseUrl, MODEL);
 

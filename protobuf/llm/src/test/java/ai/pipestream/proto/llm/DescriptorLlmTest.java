@@ -33,4 +33,31 @@ class DescriptorLlmTest {
     void absentAnnotationReadsAsEmpty() {
         assertThat(DescriptorLlm.field(FORM.findFieldByName("note"))).isEmpty();
     }
+
+    @Test
+    void absentMessageAnnotationReadsAsEmpty() {
+        Descriptor plain = ai.pipestream.proto.llm.testdata.PlainForm.getDescriptor();
+        assertThat(DescriptorLlm.message(plain)).isEmpty();
+        assertThat(DescriptorLlm.field(plain.findFieldByName("title"))).isEmpty();
+    }
+
+    @Test
+    void safeguardsKeepTheirDeclaredOrder() {
+        FieldLlm citations = DescriptorLlm.field(FORM.findFieldByName("citations")).orElseThrow();
+        assertThat(citations.getSafeguardsList()).containsExactly(
+                "Do not invent citations.",
+                "Do not cite authority the text does not mention.");
+        assertThat(citations.getDirective()).isEqualTo("List every authority the text cites.");
+        assertThat(citations.getVolatile()).isFalse();
+    }
+
+    @Test
+    void rejectsNullArguments() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> DescriptorLlm.field(null))
+                .isInstanceOf(NullPointerException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> DescriptorLlm.message(null))
+                .isInstanceOf(NullPointerException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> DescriptorLlm.registerExtensions(null))
+                .isInstanceOf(NullPointerException.class);
+    }
 }

@@ -29,4 +29,11 @@ class RerankProvidersTest {
                 .hasMessage("Unknown rerank provider 'no-such-provider'."
                         + " Available providers: fixed-score");
     }
+
+    @Test
+    void allReturnsAnUnmodifiableMap() {
+        assertThatThrownBy(
+                () -> RerankProviders.all().put("extra", new FixedScoreRerankProvider()))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
 }
