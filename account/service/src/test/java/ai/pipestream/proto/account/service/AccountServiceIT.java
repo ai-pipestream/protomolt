@@ -1,6 +1,7 @@
 package ai.pipestream.proto.account.service;
 
 import ai.pipestream.proto.account.service.events.AccountEventRecord;
+import ai.pipestream.proto.account.service.store.AccountRecord;
 import ai.pipestream.proto.account.service.store.AccountStoreConfig;
 import ai.pipestream.proto.account.v1.Account;
 import ai.pipestream.proto.account.v1.AccountEvent;
@@ -573,5 +574,71 @@ class AccountServiceIT {
             assertThat(outboxRowsFor(accountId)).isEmpty();
             offChannel.shutdownNow();
         }
+    }
+
+    @Test
+    void accountIdIsTrimmedOnTheWayIn() {
+        // Whitespace around a caller-minted id is not part of the key: the
+        // row, the drive calls, and every later lookup use the trimmed form.
+        String accountId = uniqueId("acct-padded");
+        Account created = accounts.createAccount(CreateAccountRequest.newBuilder()
+                .setAccountId("  " + accountId + "  ")
+                .build()).getAccount();
+        assertThat(created.getAccountId()).isEqualTo(accountId);
+
+        // Provisioning saw the trimmed id, not the padded one.
+        assertThat(fakeDrives.callsFor(accountId)).hasSize(2);
+
+        // And reads trim too: the padded form finds the same row.
+        Account got = accounts.getAccount(GetAccountRequest.newBuilder()
+                .setAccountId(" " + accountId + " ")
+                .build()).getAccount();
+        assertThat(got.getAccountId()).isEqualTo(accountId);
+    }
+
+    @Test
+    void listDefaultsToOneHundredAndClampsAtOneThousand() {
+        // Seed more than MAX_LIST_LIMIT rows directly through the store (no
+        // RPC ceremony, no outbox rows): 1001 ACTIVE accounts. The cohort is
+        // shared with the other tests, so every assertion is a page-size one
+        // — deterministic no matter what the other rows are.
+        String prefix = "acct-flood-" + UUID.randomUUID().toString().substring(0, 8) + "-";
+        services.database().inTransaction(c -> {
+            for (int i = 0; i < 1001; i++) {
+                AccountRecord record = new AccountRecord();
+                record.accountId = prefix + i;
+                record.displayName = "flood " + i;
+                record.status = AccountStatus.ACCOUNT_STATUS_ACTIVE;
+                services.accountStore().create(c, record);
+            }
+            return null;
+        });
+
+        // No limit on the wire → the DEFAULT_LIST_LIMIT (100) applies.
+        ListAccountsResponse defaultPage = accounts.listAccounts(
+                ListAccountsRequest.newBuilder()
+                        .setStatusFilter(AccountStatus.ACCOUNT_STATUS_ACTIVE)
+                        .build());
+        assertThat(defaultPage.getAccountsCount()).isEqualTo(100);
+        assertThat(defaultPage.getTotalCount()).isGreaterThanOrEqualTo(1001);
+        assertThat(defaultPage.getNextContinuationToken()).isEqualTo("100");
+
+        // A limit past MAX_LIST_LIMIT is clamped to 1000, not honored.
+        ListAccountsResponse clamped = accounts.listAccounts(
+                ListAccountsRequest.newBuilder()
+                        .setStatusFilter(AccountStatus.ACCOUNT_STATUS_ACTIVE)
+                        .setLimit(Integer.MAX_VALUE)
+                        .build());
+        assertThat(clamped.getAccountsCount()).isEqualTo(1000);
+        assertThat(clamped.getNextContinuationToken()).isEqualTo("1000");
+
+        // The clamped token resumes the drain where the clamp left off.
+        ListAccountsResponse resumed = accounts.listAccounts(
+                ListAccountsRequest.newBuilder()
+                        .setStatusFilter(AccountStatus.ACCOUNT_STATUS_ACTIVE)
+                        .setLimit(Integer.MAX_VALUE)
+                        .setContinuationToken(clamped.getNextContinuationToken())
+                        .build());
+        assertThat(resumed.getAccountsCount()).isGreaterThanOrEqualTo(1);
     }
 }

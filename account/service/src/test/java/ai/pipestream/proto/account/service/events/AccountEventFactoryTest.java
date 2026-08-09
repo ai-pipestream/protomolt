@@ -82,6 +82,34 @@ class AccountEventFactoryTest {
     }
 
     @Test
+    void everyEventMintsItsOwnDedupeId() {
+        // The dedupe key is per EVENT, not per account: two events for the
+        // same account must never collide.
+        AccountEventRecord first = AccountEventFactory.created(row("acct-dedupe"), WHEN);
+        AccountEventRecord second = AccountEventFactory.created(row("acct-dedupe"), WHEN);
+        assertThat(first.eventId).isNotEqualTo(second.eventId);
+        assertThat(first.payload).isNotEqualTo(second.payload);
+    }
+
+    @Test
+    void transitionRecordsAreKeyedStampedAndPending() {
+        // The row-level contract for the transition events: kafka key, commit
+        // instant, initial status, attempts.
+        AccountEventRecord activated = AccountEventFactory.activated(row("acct-4"), WHEN);
+        assertThat(activated.kafkaKey).isEqualTo("acct-4");
+        assertThat(activated.createdAt).isEqualTo(WHEN);
+        assertThat(activated.status).isEqualTo(AccountEventRecord.STATUS_PENDING);
+        assertThat(activated.attempts).isZero();
+        assertThat(activated.publishedAt).isNull();
+        assertThat(activated.lastError).isNull();
+
+        AccountEventRecord deactivated = AccountEventFactory.deactivated(row("acct-4"), WHEN);
+        assertThat(deactivated.kafkaKey).isEqualTo("acct-4");
+        assertThat(deactivated.createdAt).isEqualTo(WHEN);
+        assertThat(deactivated.status).isEqualTo(AccountEventRecord.STATUS_PENDING);
+    }
+
+    @Test
     void descriptorSetParsesAndContainsTheContract() throws Exception {
         // The serde frames every record against this set: it must decode, and
         // it must carry account_events.proto plus its transitive imports.
