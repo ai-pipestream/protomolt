@@ -83,14 +83,42 @@ class ServiceWorkspaceMcpTest {
 
     private static JsonNode rpc(HttpClient http, int port, String method, ObjectNode params)
             throws Exception {
+        String endpoint = "http://127.0.0.1:" + port + "/mcp";
+        HttpRequest.Builder initialize = HttpRequest.newBuilder(URI.create(endpoint))
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString("""
+                        {"jsonrpc":"2.0","id":99,"method":"initialize","params":
+                         {"protocolVersion":"2025-06-18","capabilities":{},
+                          "clientInfo":{"name":"workspace-test","version":"0"}}}
+                        """));
+        HttpResponse<String> initialized = http.send(initialize.build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(initialized.statusCode()).isEqualTo(200);
+        String sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        String version = MAPPER.readTree(initialized.body()).path("result")
+                .path("protocolVersion").asText();
+        HttpRequest handshake = HttpRequest.newBuilder(URI.create(endpoint))
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", version)
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"))
+                .build();
+        assertThat(http.send(handshake, HttpResponse.BodyHandlers.ofString()).statusCode())
+                .isEqualTo(202);
         ObjectNode request = MAPPER.createObjectNode();
         request.put("jsonrpc", "2.0");
         request.put("id", 1);
         request.put("method", method);
         request.set("params", params);
         HttpResponse<String> response = http.send(HttpRequest.newBuilder(
-                        URI.create("http://127.0.0.1:" + port + "/mcp"))
+                        URI.create(endpoint))
                 .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", version)
                 .POST(HttpRequest.BodyPublishers.ofString(request.toString()))
                 .build(), HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(200);

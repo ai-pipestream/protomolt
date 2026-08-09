@@ -109,10 +109,24 @@ final class ServiceActionSupport {
         }
         String target = target(endpoint);
         boolean tls = endpoint.getTransport() == Transport.TRANSPORT_TLS;
-        ManagedChannel channel = channels.open(target, tls);
+        try {
+            channels.validateTarget(target, tls);
+            channels.validateDeadline(deadlineMs);
+        } catch (IllegalArgumentException e) {
+            throw invalid(e.getMessage(), e.getMessage().contains("deadline")
+                    ? "/deadlineMs" : "/profile/endpoints");
+        }
+        ManagedChannel channel;
+        try {
+            channel = channels.open(target, tls);
+        } catch (IllegalArgumentException e) {
+            throw invalid(e.getMessage(), "/profile/endpoints");
+        }
         ReflectionClient.Result reflected;
         try {
-            reflected = ReflectionClient.discover(channel, deadlineMs);
+            reflected = channels.policy() == null
+                    ? ReflectionClient.discover(channel, deadlineMs)
+                    : ReflectionClient.discover(channel, deadlineMs, channels.policy());
         } finally {
             channel.shutdownNow();
         }

@@ -3,6 +3,7 @@ description = 'The chain manager: configured, type-checked compositions of gRPC 
 dependencies {
     api project(':protomolt-shapes')
     api project(':protomolt-grpc-invoke')
+    api project(':protomolt-grpc-channel-policy')
     // RunChainAction and CheckChainAction implement ProtoAction from this module.
     api project(':protomolt-actions')
 

@@ -22,8 +22,10 @@ repair strategies, which matters when the caller is a model.
 
 ## The built-in catalog
 
-`ActionCatalog.defaults(...)` registers seventeen actions: the ones that need
-nothing beyond a descriptor and the toolkit's own libraries:
+`ActionCatalog.defaults(...)` registers the built-in actions: the ones that need
+nothing beyond a descriptor and the toolkit's own libraries. The generated
+[action inventory](generated/action-inventory.json) is the authoritative list
+for this and every assembled surface:
 
 | Action | Does |
 |---|---|
@@ -47,9 +49,9 @@ nothing beyond a descriptor and the toolkit's own libraries:
 
 ## Verbs from other modules
 
-Eighteen more actions live in the modules that carry their dependencies, so a
-host that only needs the built-ins does not pull them in. Each implements the
-same `ProtoAction` interface and is registered onto a catalog by the host:
+Additional actions live in the modules that carry their dependencies, so a host
+that only needs the built-ins does not pull them in. Each implements the same
+`ProtoAction` interface and is registered onto a catalog by the host:
 
 | Action | Module | Does |
 |---|---|---|
@@ -72,10 +74,10 @@ same `ProtoAction` interface and is registered onto a catalog by the host:
 | `service-inspect` | `protomolt-grpc-service-workspace` | Read a service's methods, streaming modes, and request/response field shapes without returning descriptor bytes |
 | `service-refresh` | `protomolt-grpc-service-workspace` | Re-reflect a registered endpoint and update its schema identity when it changed |
 
-`ProtoMoltCatalog.full(...)` in `protomolt-grpc-service` assembles the
-built-ins plus all eighteen: the thirty-five-verb catalog behind the gRPC
-service, its REST mount, and the console. The standalone
-[MCP server](mcp.md) registers a twenty-five-tool subset; see that page for which.
+`ProtoMoltCatalog.full(...)` in `protomolt-grpc-service` assembles the full
+catalog behind the gRPC service, its REST mount, and the console. The standalone
+[MCP server](mcp.md) registers its host-independent subset. The generated
+[action inventory](generated/action-inventory.json) records both exact name sets.
 
 ```java
 var catalog = ProtoMoltCatalog.full(ActionContext.create());

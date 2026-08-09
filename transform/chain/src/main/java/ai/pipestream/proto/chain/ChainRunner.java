@@ -5,6 +5,8 @@ import ai.pipestream.proto.cel.CelEvaluator;
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.cel.CelProtoMapper;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
+import ai.pipestream.proto.grpc.policy.OutboundChannelPolicyException;
+import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import ai.pipestream.proto.shapes.MessageScope;
 import ai.pipestream.proto.shapes.ScopedProtoMapper;
 import ai.pipestream.proto.validate.ProtoValidator;
@@ -22,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -39,6 +42,14 @@ public final class ChainRunner {
     /** Opens the channel a step calls through; a test seam and a TLS/policy hook. */
     public interface ChannelFactory {
         ManagedChannel open(ChainDefinition.Step step);
+
+        /** Validates a step target before the chain performs its first network operation. */
+        default void validateTarget(ChainDefinition.Step step) {
+        }
+
+        /** Validates the effective per-call deadline against the host policy. */
+        default void validateDeadline(long deadlineMillis) {
+        }
     }
 
     /** How the chain ended per step: executed or gate-skipped. */
@@ -122,13 +133,37 @@ public final class ChainRunner {
     private final ChannelFactory channels;
 
     public ChainRunner() {
-        this(step -> {
-            ManagedChannelBuilder<?> builder = ManagedChannelBuilder.forTarget(step.target());
-            if (!step.tls()) {
-                builder.usePlaintext();
+        this(OutboundChannelPolicy.defaults());
+    }
+
+    /** Creates a runner using a host-configured shared outbound channel policy. */
+    public ChainRunner(OutboundChannelPolicy policy) {
+        this(policyFactory(Objects.requireNonNull(policy, "channel policy")));
+    }
+
+    private static ChannelFactory policyFactory(OutboundChannelPolicy policy) {
+        return new ChannelFactory() {
+            @Override
+            public ManagedChannel open(ChainDefinition.Step step) {
+                return policy.open(step.target(), step.tls(), canonical -> {
+                    ManagedChannelBuilder<?> builder = ManagedChannelBuilder.forTarget(canonical);
+                    if (!step.tls()) {
+                        builder.usePlaintext();
+                    }
+                    return builder.build();
+                });
             }
-            return builder.build();
-        });
+
+            @Override
+            public void validateTarget(ChainDefinition.Step step) {
+                policy.validateTarget(step.target(), step.tls());
+            }
+
+            @Override
+            public void validateDeadline(long deadlineMillis) {
+                policy.validateDeadline(deadlineMillis);
+            }
+        };
     }
 
     public ChainRunner(ChannelFactory channels) {
@@ -254,9 +289,23 @@ public final class ChainRunner {
                 long callMs = step.deadlineMs() > 0
                         ? Math.min(step.deadlineMs(), remainingMs)
                         : remainingMs;
-                ManagedChannel channel = open.computeIfAbsent(
-                        step.target() + (step.tls() ? "+tls" : ""),
-                        key -> channels.open(step));
+                try {
+                    channels.validateTarget(step);
+                    channels.validateDeadline(callMs);
+                } catch (IllegalArgumentException e) {
+                    throw new ChainExecutionException(step.name(), FailureKind.CHAIN, null,
+                            "outbound channel policy rejected step: " + e.getMessage(), e);
+                }
+                ManagedChannel channel;
+                try {
+                    channel = open.computeIfAbsent(
+                            step.target() + (step.tls() ? "+tls" : ""),
+                            key -> channels.open(step));
+                } catch (OutboundChannelPolicyException e) {
+                    throw new ChainExecutionException(step.name(), FailureKind.GRPC,
+                            io.grpc.Status.Code.RESOURCE_EXHAUSTED,
+                            "outbound channel policy rejected step: " + e.getMessage(), e);
+                }
                 DynamicMessage response;
                 try {
                     response = DynamicGrpcCalls.call(channel, step.method(), request,

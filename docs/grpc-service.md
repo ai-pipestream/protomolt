@@ -3,11 +3,13 @@
 `protomolt-grpc-service` is the action catalog as a gRPC service, and
 `protomolt-serve` is the one-process server that mounts it everywhere at
 once: gRPC with server reflection, JSON/REST with a generated OpenAPI
-document, Swagger UI, and optionally the git-backed registry: the same
-thirty-five verbs on every surface.
+document, Swagger UI, and optionally the git-backed registry: one catalog on
+every surface. The generated [action inventory](generated/action-inventory.json)
+is the source of truth for the assembled name set.
 
 The service is defined in protobuf, of course:
-`ai.pipestream.protomolt.v1.ProtoMoltService`, thirty-five typed RPCs in
+`ai.pipestream.protomolt.v1.ProtoMoltService`, one typed RPC per full-catalog
+action in
 [`protomolt_service.proto`](../grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto).
 Each request and response message is designed so its canonical proto3 JSON
 form is exactly the action's JSON envelope. That one decision makes every
@@ -80,6 +82,11 @@ service-workspace flags are:
 | `--gather-cache` | `PROTOMOLT_GATHER_CACHE` | the library default under the process owner's home | Directory for `gather-git`'s per-repo clone caches |
 | `--service-workspace` | `PROTOMOLT_SERVICE_WORKSPACE` | — | Directory for durable gRPC service profiles and content-addressed descriptor artifacts |
 | `--demo` | — | off | Seed the sample schema described below |
+
+Outbound reflection, invocation, service refresh, and chain execution share
+one host-configured target, transport, deadline, and channel-concurrency
+boundary. See [Outbound gRPC channel policy](grpc-channel-policy.md) for its
+launcher flags, environment variables, defaults, and embedding API.
 
 `--demo` seeds a sample order-management schema (validation rules, indexing
 hints, metadata, a service) into a temp-directory registry and registers its
@@ -183,7 +190,7 @@ $ curl -s -H 'content-type: application/json' \
 }
 ```
 
-`GET /openapi.json` documents all thirty-five operations with schemas derived
+`GET /openapi.json` documents all operations with schemas derived
 from the same descriptors, and `GET /docs` serves Swagger UI over that
 document — a browsable, try-it console with no frontend build. Action
 failures with client-repairable codes return 400 with the code in the body;
