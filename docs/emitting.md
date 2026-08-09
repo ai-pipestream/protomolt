@@ -92,8 +92,9 @@ Bundle file = ParquetEmitter.bundle("readings.parquet", descriptor, messages);
 Mapping: plain singular scalars are `required` (proto3 defaults are values),
 `optional`-keyword scalars and message fields are `optional` and written only
 when present, repeated fields are `repeated`, maps are repeated
-`(key, value)` groups, enums are strings carrying the enum annotation, and
-unsigned 32-bit values widen to `int64` so no value changes sign. Recursive
+`(key, value)` groups, enums are plain UTF-8 strings holding the value
+name, and unsigned 32-bit values widen to `int64` so no value changes
+sign. Recursive
 message types cannot exist in a columnar schema and are rejected with the
 cycle named.
 
