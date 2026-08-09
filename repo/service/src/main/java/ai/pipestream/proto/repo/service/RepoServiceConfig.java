@@ -96,6 +96,18 @@ import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
  *        {@code pipeline}) exist at boot. Treat the value as a permanent
  *        namespace once used: the account id is baked into identity hashes
  *        and S3 prefixes, so never change it against an existing store
+ * @param purgeQueue which {@code PurgeQueue} implementation backs the
+ *        two-phase delete ({@code DOCUMENT_PLATFORM_PURGE_QUEUE}):
+ *        {@code "jdbc"} (default; the purger claims rows straight from
+ *        {@code document_purges}) or {@code "kafka"} (the row stays the
+ *        ledger of record; a relay publishes each PENDING row to the purge
+ *        topic and purgers claim through a consumer group - see
+ *        {@code KafkaPurgeQueue}). {@code "kafka"} requires
+ *        {@code kafkaBootstrapServers}
+ * @param kafkaPurgeTopic the purge-commands topic
+ *        ({@code DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC}, default
+ *        {@code "document-purges"}); used only when {@code purgeQueue} is
+ *        {@code "kafka"}
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -121,7 +133,9 @@ public record RepoServiceConfig(
         String kafkaBootstrapServers,
         String kafkaTopic,
         String schemaRegistryUrl,
-        String seedAccountId) {
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -176,6 +190,14 @@ public record RepoServiceConfig(
      * account's {@code intake} and {@code pipeline} drives exist at boot.
      */
     public static final String ENV_SEED_ACCOUNT_ID = "DOCUMENT_PLATFORM_SEED_ACCOUNT_ID";
+    /**
+     * Environment variable selecting the purge-queue implementation:
+     * {@code jdbc} (default) or {@code kafka} (requires
+     * {@link #ENV_KAFKA_BOOTSTRAP_SERVERS}).
+     */
+    public static final String ENV_PURGE_QUEUE = "DOCUMENT_PLATFORM_PURGE_QUEUE";
+    /** Environment variable for the purge-commands topic (kafka purge queue only). */
+    public static final String ENV_KAFKA_PURGE_TOPIC = "DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -203,6 +225,12 @@ public record RepoServiceConfig(
     static final long DEFAULT_RECONCILE_MIN_AGE_MS = 3600000L;
     /** Default document-events topic. */
     public static final String DEFAULT_KAFKA_TOPIC = "document-events";
+    /** Purge-queue selection value: claim rows straight from document_purges (the default). */
+    public static final String PURGE_QUEUE_JDBC = "jdbc";
+    /** Purge-queue selection value: Kafka distributes claims, the row stays the ledger of record. */
+    public static final String PURGE_QUEUE_KAFKA = "kafka";
+    /** Default purge-commands topic (kafka purge queue). */
+    public static final String DEFAULT_KAFKA_PURGE_TOPIC = "document-purges";
 
     /**
      * Compatibility constructor: the 14 pre-lifecycle components, with the
@@ -270,6 +298,26 @@ public record RepoServiceConfig(
                 redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
                 reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
                 kafkaTopic, schemaRegistryUrl, null);
+    }
+
+    /**
+     * Compatibility constructor: the 25 pre-purge-queue components, with the
+     * JDBC purge queue (the default; no Kafka claim distribution).
+     */
+    public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
+            String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
+            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
+            long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
+            boolean reconcileDryRun, long reconcileMinAgeMs,
+            String kafkaBootstrapServers, String kafkaTopic, String schemaRegistryUrl,
+            String seedAccountId) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
+                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
+                reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
+                kafkaTopic, schemaRegistryUrl, seedAccountId, PURGE_QUEUE_JDBC,
+                DEFAULT_KAFKA_PURGE_TOPIC);
     }
 
     public RepoServiceConfig {
@@ -340,6 +388,21 @@ public record RepoServiceConfig(
         }
         schemaRegistryUrl = blankToNull(schemaRegistryUrl);
         seedAccountId = blankToNull(seedAccountId);
+        if (purgeQueue == null || purgeQueue.isBlank()) {
+            purgeQueue = PURGE_QUEUE_JDBC;
+        }
+        purgeQueue = purgeQueue.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!purgeQueue.equals(PURGE_QUEUE_JDBC) && !purgeQueue.equals(PURGE_QUEUE_KAFKA)) {
+            throw new IllegalArgumentException(ENV_PURGE_QUEUE
+                    + " must be one of jdbc|kafka (got \"" + purgeQueue + "\")");
+        }
+        if (purgeQueue.equals(PURGE_QUEUE_KAFKA) && kafkaBootstrapServers == null) {
+            throw new IllegalArgumentException(ENV_KAFKA_BOOTSTRAP_SERVERS + " is required when "
+                    + ENV_PURGE_QUEUE + "=" + PURGE_QUEUE_KAFKA);
+        }
+        if (kafkaPurgeTopic == null || kafkaPurgeTopic.isBlank()) {
+            kafkaPurgeTopic = DEFAULT_KAFKA_PURGE_TOPIC;
+        }
     }
 
     /**
@@ -395,7 +458,9 @@ public record RepoServiceConfig(
                 System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
                 envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
                 System.getenv(ENV_SCHEMA_REGISTRY_URL),
-                System.getenv(ENV_SEED_ACCOUNT_ID));
+                System.getenv(ENV_SEED_ACCOUNT_ID),
+                envOrDefault(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
+                envOrDefault(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */

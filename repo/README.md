@@ -117,6 +117,28 @@ PENDING, so a re-claim settles to one winner) and per record:
    the record in **FAILED** and the row in `PURGE_FAILED`. The FAILED record
    IS the dead-letter queue for now — recovery is operator territory.
 
+**Kafka claim distribution** (`DOCUMENT_PLATFORM_PURGE_QUEUE=kafka`, Flyway
+V5): the `document_purges` row stays the ledger of record and Phase A is
+byte-for-byte unchanged, but the `PurgeQueue` implementation becomes
+`KafkaPurgeQueue`. Each claim first relays every unrelayed PENDING row
+(`relayed_at IS NULL`, still `FOR UPDATE SKIP LOCKED`) to the purge topic as
+a `DocumentPurgeCommand` (`repo/proto/.../document_purge.proto`) keyed by
+node_id through the protomolt serde (validate-on-write), stamps `relayed_at`
+after the broker ack, then claims the batch by polling its member of the
+`repo-purger` consumer group. Settling is unchanged (the conditional DB
+transitions above), and each settle commits the consumer offset at the
+highest *contiguous* settled offset per partition, so a crash before settling
+redelivers the command and a duplicate on the topic (a crash between the ack
+and the `relayed_at` stamp) settles to one winner. Below the attempts ceiling
+`markFailed` republishes the command instead of just returning the row to
+PENDING (the retry rides the tail of the topic; if the republication itself
+fails, the row goes back on the unrelayed scan); at 10 attempts the FAILED
+row is the DLQ, no extra topic. A row whose command fails
+serialization/validation goes straight to FAILED (it can never be relayed),
+and a topic record that does not decode is logged and settled past. Neither
+may wedge the group. Requires `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS`;
+the topic defaults to `document-purges` (`DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC`).
+
 The **sweeper** (`PurgeSweeper.sweepOnce`) periodically rescans for rows
 stuck in `PENDING_PURGE` with no PENDING purge record (crashed Phase A, or
 pre-lifecycle tombstones) and enqueues a record for each (snapshot from the
@@ -197,6 +219,12 @@ Semantics and operational notes:
   boot produce no events. If consumers need history, replay from storage,
   not from the topic.
 
+Eventing is orthogonal to the purge-queue selection (`DOCUMENT_PLATFORM_PURGE_QUEUE`)
+in the lifecycle section: the outbox publishes lifecycle EVENTS for
+downstream consumers, while the optional Kafka purge queue distributes purge
+WORK to the purger fleet. The two share only the bootstrap servers (and the
+schema registry URL, when set).
+
 ## Building and testing
 
 From the repository root:
@@ -227,6 +255,10 @@ for the ledger, LocalStack for S3, the full stack booted through
   LocalStack, Redpanda): save/delete commit points write the outbox
   atomically, the relay publishes, and a `ProtoMoltProtobufDeserializer`
   consumer reads and revalidates the events.
+- `KafkaPurgeQueueIT` - the Kafka-backed purge queue (Postgres + Redpanda):
+  rolled-back enqueues never relay, the relay/claim/settle round trip, crash
+  redelivery through the consumer group, duplicate deliveries settling to one
+  winner, the republication ladder to FAILED, poison frames settled past.
 - `UploadHttpServerIT` — the streaming upload route over a real HTTP server:
   multi-MB streaming, byte-exact round trips, dedupe, the 411/400/404
   contract, checksum-mismatch rejection.
@@ -270,6 +302,8 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS` | `3600000` | Min-age guard for the periodic reconcile (in-flight-upload protection) |
 | `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; unset = eventing off (no outbox writes, no relay, no producer) |
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the relay publishes to |
+| `DOCUMENT_PLATFORM_PURGE_QUEUE` | `jdbc` | Purge-queue selection: `jdbc` (the purger claims rows straight from `document_purges`) or `kafka` (each PENDING row is relayed to the purge topic and claimed through the `repo-purger` consumer group; the row stays the ledger of record). `kafka` requires `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` |
+| `DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC` | `document-purges` | The purge-commands topic (Kafka purge queue only) |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | _(none)_ | Confluent-compatible schema registry for the relay's serde; unset = registry-free (frames stamp schema id 0, which only protomolt consumers resolve) |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | _(none)_ | Standalone default account: at boot the service idempotently ensures this account's `intake` and `pipeline` drives exist; unset = no seeding. Permanent namespace once used — never change it against an existing store (see below) |
 
