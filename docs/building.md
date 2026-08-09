@@ -20,6 +20,18 @@ cd protomolt
 runs the in-build protovalidate conformance gate (which fails the build on
 any drift from the expected 100% pass rate).
 
+The catalog inventory is generated from the built-in, standalone MCP, and full
+catalog constructors. Refresh the checked-in machine-readable document after
+changing action registration:
+
+```shell
+./gradlew :system-tests:generateActionInventory
+```
+
+The system-test inventory check compares that document with the running
+catalogs and requires the catalog documentation to link it, so stale names or
+manual count claims fail the build.
+
 To consume the artifacts locally:
 
 ```shell

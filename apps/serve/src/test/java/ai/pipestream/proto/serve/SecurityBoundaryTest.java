@@ -75,6 +75,7 @@ class SecurityBoundaryTest {
         java.util.Arrays.fill(huge, (byte) ' ');
         HttpRequest oversized = HttpRequest.newBuilder(URI.create(base + "/mcp"))
                 .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
                 .header("api_token", TOKEN)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(huge))
                 .build();
@@ -99,6 +100,7 @@ class SecurityBoundaryTest {
         HttpResponse<String> response = http.send(HttpRequest.newBuilder(
                         URI.create(base + "/mcp"))
                 .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
                 .header("api_token", TOKEN)
                 .POST(HttpRequest.BodyPublishers.ofString("[]"))
                 .build(), HttpResponse.BodyHandlers.ofString());

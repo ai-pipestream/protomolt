@@ -13,8 +13,8 @@
  * {@link ai.pipestream.proto.openapi.ProtoOpenApiGenerator} produces;
  * {@link SwaggerUiHandler} serves Swagger UI against that document; and
  * {@link McpHttpHandler} carries JSON-RPC messages for
- * {@link ai.pipestream.proto.mcp.McpServer} over one stateless endpoint, so an MCP client
- * connects with a URL alone.
+ * {@link ai.pipestream.proto.mcp.McpServer} over bounded per-client sessions, with the negotiated
+ * session and protocol headers required on subsequent requests.
  *
  * <p>This package composes existing modules rather than adding verbs: the catalog comes from
  * {@link ai.pipestream.proto.grpc.service.ProtoMoltCatalog}, and each surface reuses the module

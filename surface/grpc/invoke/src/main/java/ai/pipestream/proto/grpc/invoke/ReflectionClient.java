@@ -1,5 +1,6 @@
 package ai.pipestream.proto.grpc.invoke;
 
+import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -97,6 +98,20 @@ public final class ReflectionClient {
             }
             return new Result(services, descriptorSet);
         }
+    }
+
+    /**
+     * Policy-aware overload for callers that already own a channel. Target and channel-slot
+     * validation belongs to the factory that created the channel; this overload additionally
+     * enforces the host's reflection deadline at the protocol boundary.
+     */
+    public static Result discover(Channel channel, long timeoutMs, OutboundChannelPolicy policy)
+            throws ReflectionException {
+        if (policy == null) {
+            throw new IllegalArgumentException("channel policy must not be null");
+        }
+        policy.validateDeadline(timeoutMs);
+        return discover(channel, timeoutMs);
     }
 
     private static long addFiles(List<FileDescriptorProto> candidates,

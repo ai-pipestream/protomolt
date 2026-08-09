@@ -95,9 +95,23 @@ public final class ReflectAction implements ProtoAction {
 
         ObjectNode result = context.objectMapper().createObjectNode();
         boolean tls = input.path("tls").asBoolean(false);
-        ManagedChannel channel = channelFactory.open(target, tls);
         try {
-            ReflectionClient.Result discovered = ReflectionClient.discover(channel, deadlineMs);
+            channelFactory.validateTarget(target, tls);
+            channelFactory.validateDeadline(deadlineMs);
+        } catch (IllegalArgumentException e) {
+            throw invalidInput(e.getMessage(), e.getMessage().contains("deadline")
+                    ? "/deadlineMs" : "/target");
+        }
+        ManagedChannel channel;
+        try {
+            channel = channelFactory.open(target, tls);
+        } catch (IllegalArgumentException e) {
+            throw invalidInput(e.getMessage(), "/target");
+        }
+        try {
+            ReflectionClient.Result discovered = channelFactory.policy() == null
+                    ? ReflectionClient.discover(channel, deadlineMs)
+                    : ReflectionClient.discover(channel, deadlineMs, channelFactory.policy());
             result.put("ok", true);
             ArrayNode services = result.putArray("services");
             discovered.services().forEach(services::add);

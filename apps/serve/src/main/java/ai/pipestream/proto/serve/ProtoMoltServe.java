@@ -8,6 +8,7 @@ import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
+import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import ai.pipestream.proto.jobs.service.ChainJobsConfig;
 import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
 import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
@@ -34,6 +35,9 @@ import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
 
 import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * The one-process ProtoMolt server: {@code ProtoMoltService} over gRPC (reflection enabled),
@@ -56,11 +60,20 @@ public final class ProtoMoltServe implements AutoCloseable {
      *
      * @param jobs chain-jobs configuration; null disables the jobs worker (the jobs
      *        verbs stay in the catalog and answer {@code unavailable})
+     * @param outboundPolicy one process-wide policy shared by catalog actions and the jobs worker;
+     *        null selects the permissive defaults
      */
     public record Options(String host, int grpcPort, int httpPort,
                           Path registryGit, int registryPort, String apiToken, boolean demo,
                           Path gatherCache, JobsOptions jobs,
-                          java.util.List<String> inferenceModels, Path serviceWorkspace) {
+                          java.util.List<String> inferenceModels, Path serviceWorkspace,
+                          OutboundChannelPolicy outboundPolicy) {
+
+        public Options {
+            if (outboundPolicy == null) {
+                outboundPolicy = OutboundChannelPolicy.defaults();
+            }
+        }
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
             this(host, grpcPort, httpPort, registryGit, registryPort, null, false, null);
@@ -96,6 +109,15 @@ public final class ProtoMoltServe implements AutoCloseable {
                     gatherCache, jobs, inferenceModels, null);
         }
 
+        /** Binary/source-compatible constructor retaining the pre-policy options surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, null);
+        }
+
         public static Options defaults() {
             return new Options("0.0.0.0", 9090, 8080, null, 8081, null, false, null);
         }
@@ -123,6 +145,13 @@ public final class ProtoMoltServe implements AutoCloseable {
             String serviceWorkspaceEnv = System.getenv("PROTOMOLT_SERVICE_WORKSPACE");
             Path serviceWorkspace = serviceWorkspaceEnv == null || serviceWorkspaceEnv.isBlank()
                     ? null : Path.of(serviceWorkspaceEnv);
+            String allowedSchemes = System.getenv("PROTOMOLT_GRPC_ALLOWED_SCHEMES");
+            String allowedHosts = System.getenv("PROTOMOLT_GRPC_ALLOWED_HOSTS");
+            String allowedPorts = System.getenv("PROTOMOLT_GRPC_ALLOWED_PORTS");
+            boolean allowPlaintext = envBoolean("PROTOMOLT_GRPC_ALLOW_PLAINTEXT", true);
+            boolean allowTls = envBoolean("PROTOMOLT_GRPC_ALLOW_TLS", true);
+            long maxDeadlineMs = envLong("PROTOMOLT_GRPC_MAX_DEADLINE_MS", 60_000L);
+            int maxActiveChannels = envInt("PROTOMOLT_GRPC_MAX_ACTIVE_CHANNELS", 64);
             String inferenceModelsEnv = System.getenv("PROTOMOLT_INFERENCE_MODELS");
             if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
                 for (String spec : inferenceModelsEnv.split(";")) {
@@ -151,6 +180,23 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--inference-model" -> inferenceModels.add(requireValue(args, ++i));
                     case "--service-workspace" ->
                             serviceWorkspace = Path.of(requireValue(args, ++i));
+                    case "--grpc-allowed-schemes" ->
+                            allowedSchemes = requireValue(args, ++i);
+                    case "--grpc-allowed-hosts" ->
+                            allowedHosts = requireValue(args, ++i);
+                    case "--grpc-allowed-ports" ->
+                            allowedPorts = requireValue(args, ++i);
+                    case "--grpc-allow-plaintext" ->
+                            allowPlaintext = parseBoolean(requireValue(args, ++i),
+                                    "--grpc-allow-plaintext");
+                    case "--grpc-allow-tls" ->
+                            allowTls = parseBoolean(requireValue(args, ++i), "--grpc-allow-tls");
+                    case "--grpc-max-deadline-ms" ->
+                            maxDeadlineMs = parseLong(requireValue(args, ++i),
+                                    "--grpc-max-deadline-ms");
+                    case "--grpc-max-active-channels" ->
+                            maxActiveChannels = parseInt(requireValue(args, ++i),
+                                    "--grpc-max-active-channels");
                     case "--demo" -> demo = true;
                     case "--help", "-h" -> {
                         System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
@@ -162,8 +208,13 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--jobs-workers <n>] [--jobs-target-concurrency <n>]] "
                                 + "[--inference-model <id|provider|endpoint[|backend[|k:v,...]]> ...] "
                                 + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
-                                + "[--service-workspace <dir>] "
-                                + "(or PROTOMOLT_SERVICE_WORKSPACE)");
+                                + "[--service-workspace <dir>] (or PROTOMOLT_SERVICE_WORKSPACE) "
+                                + "[--grpc-allowed-schemes <csv>] [--grpc-allowed-hosts <csv>] "
+                                + "[--grpc-allowed-ports <csv>] "
+                                + "[--grpc-allow-plaintext <true|false>] "
+                                + "[--grpc-allow-tls <true|false>] "
+                                + "[--grpc-max-deadline-ms <n>] "
+                                + "[--grpc-max-active-channels <n>]");
                         System.exit(0);
                     }
                     default -> {
@@ -189,14 +240,106 @@ public final class ProtoMoltServe implements AutoCloseable {
                         + "the job row is the truth; the broker is propagation");
                 System.exit(2);
             }
+            Set<String> schemeSet = allowedSchemes == null
+                    ? null : parseCsv(allowedSchemes, "grpc allowed schemes");
+            Set<String> hostSet = allowedHosts == null
+                    ? null : parseCsv(allowedHosts, "grpc allowed hosts");
+            Set<Integer> portSet = allowedPorts == null
+                    ? null : parsePorts(allowedPorts);
+            OutboundChannelPolicy outboundPolicy = outboundPolicy(schemeSet, hostSet, portSet,
+                    allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
-                    serviceWorkspace);
+                    serviceWorkspace, outboundPolicy);
         }
 
         private static int envInt(String name, int fallback) {
             String value = System.getenv(name);
-            return value == null || value.isBlank() ? fallback : Integer.parseInt(value);
+            return value == null || value.isBlank() ? fallback : parseInt(value, name);
+        }
+
+        private static long envLong(String name, long fallback) {
+            String value = System.getenv(name);
+            return value == null || value.isBlank() ? fallback : parseLong(value, name);
+        }
+
+        private static boolean envBoolean(String name, boolean fallback) {
+            String value = System.getenv(name);
+            return value == null || value.isBlank() ? fallback : parseBoolean(value, name);
+        }
+
+        private static int parseInt(String value, String name) {
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(name + " must be an integer: " + value, e);
+            }
+        }
+
+        private static long parseLong(String value, String name) {
+            try {
+                return Long.parseLong(value);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(name + " must be an integer: " + value, e);
+            }
+        }
+
+        private static boolean parseBoolean(String value, String name) {
+            if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+                return Boolean.parseBoolean(value);
+            }
+            throw new IllegalArgumentException(name + " must be true or false: " + value);
+        }
+
+        private static Set<String> parseCsv(String value, String name) {
+            Set<String> values = new LinkedHashSet<>();
+            if (value != null && !value.isBlank()) {
+                for (String item : value.split(",", -1)) {
+                    if (item.isBlank()) {
+                        throw new IllegalArgumentException(name + " contains an empty value");
+                    }
+                    values.add(item.trim());
+                }
+            }
+            return Set.copyOf(values);
+        }
+
+        private static Set<Integer> parsePorts(String value) {
+            Set<Integer> ports = new LinkedHashSet<>();
+            for (String item : value.split(",", -1)) {
+                if (item.isBlank()) {
+                    throw new IllegalArgumentException("grpc allowed ports contains an empty value");
+                }
+                ports.add(parseInt(item.trim(), "grpc allowed port"));
+            }
+            return Set.copyOf(ports);
+        }
+
+        private static OutboundChannelPolicy outboundPolicy(Set<String> schemes,
+                                                            Set<String> hosts,
+                                                            Set<Integer> ports,
+                                                            boolean allowPlaintext,
+                                                            boolean allowTls,
+                                                            long maxDeadlineMs,
+                                                            int maxActiveChannels) {
+            if (maxDeadlineMs <= 0) {
+                throw new IllegalArgumentException("grpc max deadline must be positive");
+            }
+            OutboundChannelPolicy.Builder builder = OutboundChannelPolicy.builder()
+                    .allowPlaintext(allowPlaintext)
+                    .allowTls(allowTls)
+                    .maxDeadline(Duration.ofMillis(maxDeadlineMs))
+                    .maxActiveChannels(maxActiveChannels);
+            if (schemes != null) {
+                builder.allowedSchemes(schemes);
+            }
+            if (hosts != null) {
+                builder.allowedHosts(hosts);
+            }
+            if (ports != null) {
+                builder.allowedPorts(ports);
+            }
+            return builder.build();
         }
 
         private static String requireValue(String[] args, int i) {
@@ -270,6 +413,7 @@ public final class ProtoMoltServe implements AutoCloseable {
 
     private final ProtoMoltGrpcServer grpc;
     private final JdkProtoRestServer http;
+    private final McpHttpHandler mcp;
     private final GitSchemaRegistryStore registryStore;
     private final SchemaRegistryServer registry;
     private final int httpPort;
@@ -278,12 +422,14 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final ChainJobWorker jobsWorker;
     private final ChainJobEventRelay jobsRelay;
 
-    private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http, int httpPort,
+    private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
+                           McpHttpHandler mcp, int httpPort,
                            GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
                            int registryPort, ChainJobDatabase jobsDatabase,
                            ChainJobWorker jobsWorker, ChainJobEventRelay jobsRelay) {
         this.grpc = grpc;
         this.http = http;
+        this.mcp = mcp;
         this.httpPort = httpPort;
         this.registryStore = registryStore;
         this.registry = registry;
@@ -305,6 +451,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         ChainJobWorker jobsWorker = null;
         ChainJobEventRelay jobsRelay = null;
         ServiceProfileRepository serviceProfiles = null;
+        OutboundChannelPolicy outboundPolicy = options.outboundPolicy();
         try {
             Path registryGit = options.registryGit();
             if (registryGit == null && options.demo()) {
@@ -345,7 +492,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                         "serve-" + ManagementFactory.getRuntimeMXBean().getName(),
                         jobs.workers(), null, null, 0, 0, jobs.targetConcurrency(),
                         requestTopic, null, jobs.kafkaBootstrap(), null);
-                jobsWorker = new ChainJobWorker(jobStore, context, chains, new ChainRunner(),
+                jobsWorker = new ChainJobWorker(jobStore, context, chains,
+                        new ChainRunner(outboundPolicy),
                         jobsConfig);
                 if (jobs.kafkaBootstrap() != null) {
                     jobsRelay = new ChainJobEventRelay(jobStore,
@@ -357,13 +505,15 @@ public final class ProtoMoltServe implements AutoCloseable {
                 // the jobs verbs serve the live job rows.
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         chains, jobStore, jobsConfig.maxAttemptsDefault(),
-                        inferenceEngines(options.inferenceModels()), serviceProfiles);
+                        inferenceEngines(options.inferenceModels()), serviceProfiles,
+                        outboundPolicy);
                 return startWithJobsCatalog(options, context, catalog, store, chains,
                         serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
             }
             // The catalog sees the store so run-chain resolves stored chain names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                    chains, null, 0, inferenceEngines(options.inferenceModels()), serviceProfiles);
+                    chains, null, 0, inferenceEngines(options.inferenceModels()), serviceProfiles,
+                    outboundPolicy);
             return startWithJobsCatalog(options, context, catalog, store, chains,
                     serviceProfiles, null, null, null);
         } catch (RuntimeException e) {
@@ -395,6 +545,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                                                        ChainJobEventRelay jobsRelay) {
         ProtoMoltGrpcServer grpc = null;
         JdkProtoRestServer http = null;
+        McpHttpHandler mcpHandler = null;
         SchemaRegistryServer registry = null;
         try {
             if (options.demo()) {
@@ -453,11 +604,12 @@ public final class ProtoMoltServe implements AutoCloseable {
                     "protomolt", version != null ? version : "dev");
             int boundRegistryPort = registryPort;
             int[] selfPort = {-1};
+            mcpHandler = new McpHttpHandler(mcp, options.apiToken());
             http = new JdkProtoRestServer(config, gateway,
                     new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
                             "/", config.restPathPrefix()))
                     .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
-                    .withContext("/mcp", new McpHttpHandler(mcp, options.apiToken()));
+                    .withContext("/mcp", mcpHandler);
             if (options.apiToken() == null) {
                 http.withContext("/console", new ConsoleHandler())
                         .withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
@@ -480,9 +632,10 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
             int httpPort = http.start();
             selfPort[0] = httpPort;
-            return new ProtoMoltServe(grpc, http, httpPort, store, registry, registryPort,
+            return new ProtoMoltServe(grpc, http, mcpHandler, httpPort, store, registry, registryPort,
                     jobsDatabase, jobsWorker, jobsRelay);
         } catch (RuntimeException e) {
+            closeQuietly(mcpHandler);
             if (registry != null) {
                 registry.close();
             }
@@ -555,6 +708,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         if (registry != null) {
             registry.close();
         }
+        mcp.close();
         closeQuietly(registryStore);
         http.close();
         grpc.close();

@@ -128,9 +128,10 @@ print(result.ok, list(result.files))   # True ['tutorial/v1/greeting.proto']
 ```
 
 Validate messages against the demo schema's declared rules, diff schema
-versions, render JSON Schema: all thirty-five server verbs speak the same
-envelopes over gRPC and REST, with the host-independent subset available over
-standalone MCP.
+versions, and render JSON Schema: the server verbs speak the same envelopes
+over gRPC and REST, with the host-independent subset available over standalone
+MCP. See the [generated action inventory](../generated/action-inventory.json)
+for the exact surface name sets.
 
 ## One honesty note on service stubs
 

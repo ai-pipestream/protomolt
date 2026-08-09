@@ -303,9 +303,10 @@ features.
    (blobs, trees, commit, atomic ref advance) instead of working-tree writes,
    with fault-injection tests at each boundary and documented crash-recovery
    expectations.
-6. **MCP protocol conformance.** A connection/session state machine
-   (initialize, initialized, cancellation, shutdown), fixtures per protocol
-   revision, and regular runs against the official MCP inspector.
+6. **MCP protocol conformance.** The connection/session state machine now covers
+   initialize, initialized, cancellation, and transport/session termination,
+   with fixtures for each supported protocol revision. Add regular runs against
+   the official MCP inspector.
 7. **API lifecycle.** Stability annotations (stable / evolving / experimental /
    internal), package docs on stable entry points, a published compatibility
    policy for Java APIs, protobuf options, stored registry formats, REST

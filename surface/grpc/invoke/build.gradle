@@ -2,6 +2,7 @@ description = 'Dynamic gRPC invocation from descriptors: call any unary or serve
 
 dependencies {
     api project(':protomolt-actions')
+    api project(':protomolt-grpc-channel-policy')
     api libs.grpc.api
     api libs.protobuf.java
 

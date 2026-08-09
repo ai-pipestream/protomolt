@@ -46,8 +46,9 @@ answer `unavailable` with the configuration remedy.
 The same server is also reachable over MCP's streamable HTTP transport, with
 no local install: [`protomolt-serve`](grpc-service.md) mounts it at
 `/mcp` next to the gRPC and REST surfaces, so one running process makes
-every agent on the network gRPC-aware. That mount carries the full
-thirty-five-verb catalog, ten tools more than the standalone binary:
+every agent on the network gRPC-aware. That mount carries the full catalog;
+the generated [action inventory](generated/action-inventory.json) records its
+relationship to the standalone binary:
 
 ```shell
 claude mcp add --transport http protomolt http://host:8080/mcp
@@ -56,17 +57,30 @@ claude mcp add --transport http protomolt http://host:8080/mcp \
   --header "api_token: <secret>"
 ```
 
-The server core does not allocate a server-side session ID: initialize once,
-then POST one JSON-RPC message per request (`202` for notifications).
-Server-initiated streams are not used, and browser requests from non-local
-origins are refused (the specification's DNS-rebinding guard). Registry
-resources ride along when the launcher mounts a registry.
+Each HTTP `initialize` request creates a bounded server-side session and returns
+an `Mcp-Session-Id` response header. Send that header and the negotiated
+`MCP-Protocol-Version` header on every subsequent request. Send
+`notifications/initialized` before operating; `notifications/cancelled` can
+cancel an in-flight tool request. `DELETE` closes a session. Server-initiated
+streams are not used, and browser requests from non-local origins are refused
+(the specification's DNS-rebinding guard). Registry resources ride along when
+the launcher mounts a registry. POST requests must use `Content-Type:
+application/json` and advertise both `application/json` and
+`text/event-stream` in `Accept`.
+
+The stdio transport uses the same lifecycle but keeps its session inside the
+child process. Closing stdin closes the session; tool requests already read
+from stdin are allowed a bounded completion window, while cancellation stops
+their response and interrupts the action where possible. Each session admits
+at most 64 in-flight tool calls. There is no custom `shutdown` or `exit`
+JSON-RPC method.
 
 ## Tools
 
-The standalone binary registers twenty-five tools: the seventeen built-in
-[actions](actions.md), `reflect`, `grpc-invoke`, `generate-stubs`, `gather-git`,
-and the four service-workspace tools. It prints the count to stderr at startup.
+The standalone binary registers the built-in [actions](actions.md), the
+host-independent gRPC/codegen tools, and the service-workspace tools. It prints
+the generated catalog size to stderr at startup; see the [action inventory](generated/action-inventory.json)
+for the exact names.
 
 | Tool | Does |
 |---|---|
@@ -98,7 +112,7 @@ and the four service-workspace tools. It prints the count to stderr at startup.
 
 Chains, jobs, inference, and `emit-okf` are not in the standalone binary's
 catalog because they require host-side wiring. `protomolt-serve` mounts the
-full thirty-five-verb catalog over HTTP.
+full catalog over HTTP.
 
 Wherever a tool takes a schema it accepts exactly one of `{"type": "fully.qualified.Name"}`
 (resolved from the registry), `{"sources": {...}}` (inline `.proto`, compiled

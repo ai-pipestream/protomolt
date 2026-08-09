@@ -1,6 +1,8 @@
 description = 'Unpublished end-to-end system tests exercising the toolkit across module boundaries'
 
 dependencies {
+    testImplementation project(':protomolt-grpc-service')
+    testImplementation project(':protomolt-mcp')
     testImplementation project(':protomolt-descriptors')
     testImplementation project(':protomolt-proto-sources')
     testImplementation project(':protomolt-gather')
@@ -16,4 +18,14 @@ dependencies {
     testImplementation project(':protomolt-index-opensearch')
     testImplementation libs.jackson.databind
     testImplementation libs.jgit
+}
+
+// The checked-in action inventory is generated from the actual full and standalone
+// catalog constructors. Run this task whenever an action registration changes; the
+// system test makes a stale generated file fail the build.
+tasks.register('generateActionInventory', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.pipestream.proto.mcp.CatalogInventoryGenerator'
+    args rootProject.file('docs/generated/action-inventory.json').absolutePath
 }
