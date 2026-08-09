@@ -2,8 +2,10 @@
 
 ## Status
 
-Accepted direction. Delivery is incremental, with the service workspace and
-agent-facing MCP workflow first.
+Accepted direction. The first implementation slice now provides the durable
+service workspace, reflected-schema artifacts, agent-facing MCP workflow, and
+typed service lifecycle actions. Recipe evidence and promotion remain staged
+work below.
 
 ## Objective
 
@@ -227,7 +229,12 @@ against the original source.
 
 ## Immediate implementation slice
 
-Phase 1 begins with MCP instructions and service-profile contracts. This gives
-agents a stable workflow and gives every later recipe a safe connection model.
-The first slice intentionally does not attempt the pipeline executor or project
-generator before those identities and policies exist.
+The delivered first slice includes MCP instructions, service-profile contracts,
+bounded reflection, durable profile and descriptor storage, service registration
+and inspection tools, MCP service resources, and restart recovery tests. It
+intentionally does not attempt the pipeline executor or project generator before
+those identities and policies exist.
+
+The remaining Phase 1 work is the fuller MCP session/cancellation lifecycle, a
+host-configurable outbound channel and credential policy, and generated catalog
+documentation. Those foundations precede Phase 2 recipe and run-evidence work.

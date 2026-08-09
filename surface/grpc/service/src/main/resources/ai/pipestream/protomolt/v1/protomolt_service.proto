@@ -110,6 +110,19 @@ service ProtoMoltService {
   // lane for services that publish their contract instead of reflecting.
   rpc GatherGit(GatherGitRequest) returns (GatherGitResponse);
 
+  // Registers a stable service profile, reflects its selected endpoint, and
+  // stores the descriptor set outside the response as a content-addressed artifact.
+  rpc ServiceRegister(ServiceRegisterRequest) returns (google.protobuf.Struct);
+
+  // Lists registered service identities, endpoint names, and descriptor fingerprints.
+  rpc ServiceList(ServiceListRequest) returns (google.protobuf.Struct);
+
+  // Describes one registered profile and its reflected service/method contracts.
+  rpc ServiceInspect(ServiceInspectRequest) returns (google.protobuf.Struct);
+
+  // Re-reflects a registered endpoint and advances its descriptor fingerprint.
+  rpc ServiceRefresh(ServiceRefreshRequest) returns (google.protobuf.Struct);
+
   // Renders a schema as an Open Knowledge Format (OKF v0.1) bundle: markdown
   // concept documents with YAML frontmatter for every message, enum, and
   // service, cross-linked into the knowledge graph agents and catalogs read.
@@ -167,6 +180,38 @@ message SchemaSource {
 
   // Base64-encoded serialized google.protobuf.FileDescriptorSet.
   string descriptor_set_base64 = 4;
+}
+
+// A service profile in the canonical proto3 JSON form of
+// ai.pipestream.proto.grpc.profile.v1.ServiceProfile. Struct keeps this
+// descriptor-native service self-contained while the profile remains its own
+// published protobuf standard.
+message ServiceRegisterRequest {
+  // Caller-authored profile; reflection replaces its schemaSource value.
+  google.protobuf.Struct profile = 1;
+  // Endpoint name to reflect; empty selects the first endpoint.
+  string endpoint = 2;
+  // Reflection deadline in milliseconds; zero selects the action default.
+  int32 deadline_ms = 3;
+}
+
+// The service-list action has no input fields.
+message ServiceListRequest {}
+
+// Identifies one stored service profile to inspect.
+message ServiceInspectRequest {
+  // Stable profile name.
+  string name = 1;
+}
+
+// Selects a registered endpoint to reflect again.
+message ServiceRefreshRequest {
+  // Stable profile name.
+  string name = 1;
+  // Endpoint name to reflect; empty selects the first endpoint.
+  string endpoint = 2;
+  // Reflection deadline in milliseconds; zero selects the action default.
+  int32 deadline_ms = 3;
 }
 
 // The input of compile: the inline .proto sources to compile.

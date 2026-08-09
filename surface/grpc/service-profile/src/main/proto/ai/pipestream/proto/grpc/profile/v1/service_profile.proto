@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.grpc.profile.v1;
+
+import "google/protobuf/duration.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.grpc.profile.v1";
+
+// A stable logical identity and the environment-specific connection details for one gRPC
+// service. Credentials and key material are resolved by the host; this contract carries only
+// opaque references to them.
+message ServiceProfile {
+  // Stable service identity used by recipes and repository paths.
+  string name = 1;
+  // Named connection choices for this service, such as "local" or "production".
+  repeated ServiceEndpoint endpoints = 2;
+  // Where the service descriptor was obtained and how its bytes are identified.
+  SchemaSource schema_source = 3;
+  // Optional readiness probe used before invoking methods.
+  HealthProbe health_probe = 4;
+  // Operational policy keyed by fully-qualified gRPC method name.
+  repeated MethodPolicy method_policies = 5;
+  // Human-readable description; it has no connection or authorization semantics.
+  string description = 6;
+}
+
+// One named network endpoint for a service profile.
+message ServiceEndpoint {
+  // Stable endpoint name within the profile.
+  string name = 1;
+  // DNS name or IP address. A URI is not accepted here; transport is explicit below.
+  string host = 2;
+  // TCP port in the range 1..65535.
+  uint32 port = 3;
+  // Plaintext or TLS transport selection.
+  Transport transport = 4;
+  // Opaque host-resolved reference to call credentials, never credential material.
+  string credential_ref = 5;
+  // Opaque host-resolved reference to a custom trust bundle, when needed.
+  string trust_ref = 6;
+  // Opaque host-resolved reference to a client certificate/key pair, when needed.
+  string client_certificate_ref = 7;
+}
+
+// Outbound transport mode for a service endpoint.
+enum Transport {
+  // Invalid until an endpoint selects a transport explicitly.
+  TRANSPORT_UNSPECIFIED = 0;
+  // Unencrypted transport, suitable only for a trusted network or local testing.
+  TRANSPORT_PLAINTEXT = 1;
+  // TLS transport with trust and client-certificate references resolved by the host.
+  TRANSPORT_TLS = 2;
+}
+
+// The source and identity of the descriptor set used to inspect the service.
+message SchemaSource {
+  // How the descriptor was obtained.
+  SourceKind kind = 1;
+  // Opaque source reference, such as a reflection target or registry subject.
+  string source_ref = 2;
+  // Lowercase SHA-256 fingerprint of the descriptor-set bytes.
+  string descriptor_fingerprint = 3;
+  // Repository reference for the companion descriptor artifact.
+  string descriptor_artifact_ref = 4;
+}
+
+// Descriptor acquisition mechanism.
+enum SourceKind {
+  // Invalid until a source is selected explicitly.
+  SOURCE_KIND_UNSPECIFIED = 0;
+  // Obtained from gRPC server reflection.
+  SOURCE_KIND_REFLECTION = 1;
+  // Obtained from a schema or descriptor registry.
+  SOURCE_KIND_REGISTRY = 2;
+  // Loaded from an already stored descriptor artifact.
+  SOURCE_KIND_ARTIFACT = 3;
+}
+
+// Readiness probe configuration. The probe request is intentionally limited to the standard
+// health-check shape so no arbitrary secret-bearing request fixture is embedded in a profile.
+message HealthProbe {
+  // Fully-qualified health method, normally grpc.health.v1.Health/Check.
+  string method = 1;
+  // Service name supplied to the health-check request; empty means the whole server.
+  string service = 2;
+  // Per-probe deadline.
+  google.protobuf.Duration timeout = 3;
+  // Whether callers should perform this probe before invoking a method.
+  bool enabled = 4;
+}
+
+// Operational policy for one fully-qualified gRPC method.
+message MethodPolicy {
+  // Fully-qualified method in Service/Method form.
+  string method = 1;
+  // Allowed operational classifications. A method can be both mutating and idempotent.
+  repeated Operation operation = 2;
+  // Per-attempt deadline; zero means the host default.
+  google.protobuf.Duration deadline = 3;
+  // Maximum attempts including the first call; zero means one attempt.
+  uint32 max_attempts = 4;
+  // Whether live probing requires an explicit approval by the caller.
+  bool approval_required = 5;
+}
+
+// A method's operational classification.
+enum Operation {
+  // Invalid until at least one classification is selected.
+  OPERATION_UNSPECIFIED = 0;
+  // Does not mutate service state.
+  OPERATION_READ_ONLY = 1;
+  // May mutate service state.
+  OPERATION_MUTATING = 2;
+  // Safe to retry when the host's retry policy permits it.
+  OPERATION_IDEMPOTENT = 3;
+  // Requires explicit approval before live execution.
+  OPERATION_APPROVAL_REQUIRED = 4;
+}
+
+// A descriptor-set artifact stored separately from a service profile. Profiles carry only its
+// fingerprint and repository reference, so large schemas never travel through agent context.
+message DescriptorArtifact {
+  // Lowercase SHA-256 fingerprint of descriptor_set.
+  string fingerprint = 1;
+  // Serialized google.protobuf.FileDescriptorSet bytes.
+  bytes descriptor_set = 2;
+}

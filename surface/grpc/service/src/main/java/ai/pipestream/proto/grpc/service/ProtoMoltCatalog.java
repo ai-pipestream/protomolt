@@ -11,6 +11,8 @@ import ai.pipestream.proto.emit.okf.EmitOkfAction;
 import ai.pipestream.proto.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
+import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
+import ai.pipestream.proto.grpc.workspace.ServiceWorkspaceActions;
 import ai.pipestream.proto.inference.service.actions.DescribeModelAction;
 import ai.pipestream.proto.inference.service.actions.GenerateAction;
 import ai.pipestream.proto.inference.service.actions.ListModelsAction;
@@ -24,18 +26,20 @@ import ai.pipestream.proto.jobs.service.store.ChainJobStore;
 import java.nio.file.Path;
 
 /**
- * The full thirty-one-verb catalog: the seventeen built-in actions from
+ * The full thirty-five-verb catalog: the seventeen built-in actions from
  * {@link ActionCatalog#defaults(ActionContext)} plus the gRPC verbs ({@code reflect},
  * {@code grpc-invoke}), {@code generate-stubs}, {@code gather-git}, the chain verbs
  * ({@code run-chain}, {@code check-chain}), {@code emit-okf}, the chain-jobs verbs
  * ({@code submit-chain}, {@code get-job}, {@code list-jobs}, {@code complete-step}),
- * and the inference verbs ({@code inference-generate}, {@code inference-list-models},
+ * the service-workspace verbs ({@code service-register}, {@code service-list},
+ * {@code service-inspect}, {@code service-refresh}), and the inference verbs
+ * ({@code inference-generate}, {@code inference-list-models},
  * {@code inference-describe-model}) — exactly the RPCs of {@code ProtoMoltService}.
  *
- * <p>The MCP server exposes a subset: {@code protomolt-mcp} registers twenty-one, leaving out the
- * three that need server-side wiring ({@code run-chain}, {@code check-chain},
- * {@code emit-okf}), while the {@code /mcp} mount inside {@code protomolt-serve} carries all
- * thirty-one. The jobs verbs are always registered; without a store they answer
+ * <p>The MCP server exposes a subset: {@code protomolt-mcp} registers twenty-five, leaving out
+ * chains, jobs, inference, and {@code emit-okf}, which need server-side wiring. The {@code /mcp}
+ * mount inside {@code protomolt-serve} carries all thirty-five. The jobs and service-workspace
+ * verbs are always registered; without a store they answer
  * {@code unavailable} with the operator-facing remedy instead of vanishing from the catalog.
  * The inference verbs behave the same way without an {@link InferenceEngines}.
  */
@@ -94,7 +98,20 @@ public final class ProtoMoltCatalog {
     public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
                                      ChainRepository chains, ChainJobStore jobs,
                                      int maxAttemptsDefault, InferenceEngines inference) {
-        return ActionCatalog.defaults(context)
+        return full(context, gatherCacheRoot, chains, jobs, maxAttemptsDefault, inference, null);
+    }
+
+    /**
+     * The complete catalog including a durable service workspace when configured.
+     *
+     * @param serviceProfiles profile and descriptor-artifact storage; null keeps the four
+     *        discoverable workspace verbs unavailable until a host configures storage
+     */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     ChainRepository chains, ChainJobStore jobs,
+                                     int maxAttemptsDefault, InferenceEngines inference,
+                                     ServiceProfileRepository serviceProfiles) {
+        ActionCatalog catalog = ActionCatalog.defaults(context)
                 .register(new GrpcInvokeAction())
                 .register(new ReflectAction())
                 .register(new GenerateStubsAction())
@@ -109,5 +126,6 @@ public final class ProtoMoltCatalog {
                 .register(new GenerateAction(inference))
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
+        return ServiceWorkspaceActions.register(catalog, serviceProfiles);
     }
 }

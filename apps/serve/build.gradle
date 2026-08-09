@@ -10,6 +10,7 @@ dependencies {
     implementation project(':protomolt-json')
     implementation project(':protomolt-mcp')
     implementation project(':protomolt-chain')
+    implementation project(':protomolt-grpc-service-profile')
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')

@@ -107,8 +107,8 @@ claude mcp add protomolt -- \
   --registry-git /srv/schemas.git
 ```
 
-The agent now has twenty-two tools and can browse your registry — including the
-KServe schema you just published — as resources.
+The agent now has twenty-five tools and can browse your registry, including the
+KServe schema you just published, as resources.
 
 ## 5. Introspect the server and its models
 
