@@ -13,6 +13,7 @@ import org.apache.parquet.hadoop.example.GroupReadSupport;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.io.InputFile;
 import org.apache.parquet.io.LocalInputFile;
+import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.MessageType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -220,6 +221,19 @@ class ParquetEmitterTest {
             assertThat(second.getLong("number", 0)).isEqualTo(7L);
             assertThat(second.getFieldRepetitionCount("text")).isZero();
         }
+    }
+
+    /**
+     * Enum columns carry the value name as plain UTF-8 text with the string annotation, not
+     * the enum logical annotation: readers like pyarrow do not surface ENUM at all and would
+     * hand the column back as opaque binary.
+     */
+    @Test
+    void enumColumnsArePlainUtf8Strings() throws Exception {
+        Descriptor type = file().findMessageTypeByName("Reading");
+        MessageType schema = ProtoParquetSchemas.schema(type);
+        assertThat(schema.getType("unit").getLogicalTypeAnnotation())
+                .isEqualTo(LogicalTypeAnnotation.stringType());
     }
 
     @Test

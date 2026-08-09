@@ -24,7 +24,7 @@ import java.util.Set;
  * absence); scalars that track presence ({@code optional}-keyword, oneof members, proto2
  * declarations) and singular messages are {@code optional};
  * repeated fields are three-level {@code LIST} groups; maps are annotated {@code MAP}
- * groups; enums are strings carrying the enum annotation; unsigned 32-bit values widen to
+ * groups; enums are plain UTF-8 strings holding the value name; unsigned 32-bit values widen to
  * {@code int64} so no value ever changes sign. Two well-known types get lake-native
  * treatment: {@code google.protobuf.Timestamp} becomes a microsecond UTC timestamp column,
  * and the JSON family ({@code Struct}, {@code Value}, {@code ListValue}) becomes a JSON
@@ -197,9 +197,11 @@ public final class ProtoParquetSchemas {
                     .as(LogicalTypeAnnotation.stringType()).named(name);
             case BYTES -> Types.primitive(
                     PrimitiveType.PrimitiveTypeName.BINARY, repetition).named(name);
+            // The enum name is written as UTF-8 text; a plain string annotation keeps every
+            // reader on the value (pyarrow and several engines do not surface ENUM at all).
             case ENUM -> Types.primitive(
                     PrimitiveType.PrimitiveTypeName.BINARY, repetition)
-                    .as(LogicalTypeAnnotation.enumType()).named(name);
+                    .as(LogicalTypeAnnotation.stringType()).named(name);
             case MESSAGE, GROUP -> throw new IllegalArgumentException(
                     "Not a primitive field: " + field.getFullName());
         };
