@@ -28,6 +28,7 @@ message ProjectionPaths {
 // Provenance for one target field: where its value comes from when a source
 // message is projected. Fields without this option are left unset.
 message FieldProjection {
+  // The provenance kind: candidate paths, a CEL expression, or a literal.
   oneof provenance {
     // Candidate source paths; the first that resolves to a present value wins.
     ProjectionPaths paths = 1;

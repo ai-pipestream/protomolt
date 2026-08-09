@@ -42,9 +42,14 @@ import java.util.concurrent.TimeUnit;
  *   {@link ParquetChangeSink}): every change a sync emits also batches into
  *   Parquet part files on an S3-compatible store through
  *   {@link ParquetChangeSink}</li>
+ *   <li>{@code CONFLUENCE_PROJECTED_PARQUET_S3_BUCKET} (plus the optional
+ *   {@code CONFLUENCE_PROJECTED_PARQUET_S3_*} variables documented on
+ *   {@link ProjectedParquetChangeSink}): every change a sync emits also
+ *   projects into a flat content row and batches into Parquet part files
+ *   through {@link ProjectedParquetChangeSink}</li>
  * </ul>
  *
- * <p>All three sinks may be active at once; sync output fans out to the caller and
+ * <p>All four sinks may be active at once; sync output fans out to the caller and
  * every configured sink through a {@link CompositeChangeSink}.</p>
  */
 public final class ConfluenceProxyServer {
@@ -88,11 +93,20 @@ public final class ConfluenceProxyServer {
             closables.add(parquet.get());
             parquetEnabled = true;
         }
+        boolean projectedParquetEnabled = false;
+        java.util.Optional<ProjectedParquetChangeSink> projectedParquet =
+                ProjectedParquetChangeSink.fromEnvironment();
+        if (projectedParquet.isPresent()) {
+            sinks.add(projectedParquet.get());
+            closables.add(projectedParquet.get());
+            projectedParquetEnabled = true;
+        }
         ChangeSink downstream = sinks.isEmpty() ? null
                 : sinks.size() == 1 ? sinks.get(0) : new CompositeChangeSink(sinks);
         LOG.log(System.Logger.Level.INFO,
-                "confluence-proxy sinks active: kafka={0} repo={1} parquet={2}",
-                config.kafkaEnabled(), config.repoEnabled(), parquetEnabled);
+                "confluence-proxy sinks active: kafka={0} repo={1} parquet={2} projected-parquet={3}",
+                config.kafkaEnabled(), config.repoEnabled(), parquetEnabled,
+                projectedParquetEnabled);
         ConfluenceGrpcService service = new ConfluenceGrpcService(config,
                 new ConfluenceClient(config),
                 parseLong(System.getenv(ENV_ATTACHMENT_MAX_BYTES),

@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.acquire.confluence.v1;
+
+import "ai/pipestream/proto/acquire/confluence/v1/events.proto";
+import "ai/pipestream/proto/projection/v1/projection.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+
+// ============================================================================
+// CONTENT ROW - the projected analytics row.
+//
+// One flat row per ConfluenceChange, built by the projection engine
+// (ai.pipestream.proto.projection.v1) and exported as Parquet by
+// ProjectedParquetChangeSink. The page and blog post arms of the entity
+// oneof share one row: every content column lists the page path first and
+// the blog post path as the fallback candidate, so whichever arm the change
+// carries fills the same columns (the projection join semantics doing their
+// job).
+//
+// Presence semantics on a tombstone (identity-only DELETE) row: the
+// path-driven columns are declared `optional`, so a column the projection
+// leaves unset stays null in the Parquet file. The CEL-derived columns
+// (content_type, status, label_names, body_length) cannot express absence -
+// a CEL conditional must produce a value of one type - so they carry their
+// zero value ('' / empty / 0) when the change has nothing for them.
+// ============================================================================
+
+// A curated flat analytics row derived from one ConfluenceChange. This is a
+// derived dataset alongside the raw change archive, not a mirror of it.
+message ConfluenceContentRow {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.acquire.confluence.v1.ConfluenceChange"
+  };
+
+  // Unique id of the change record this row was projected from.
+  string change_id = 1 [
+    (ai.pipestream.proto.projection.v1.from) = { paths: { path: "change_id" } },
+    (ai.pipestream.proto.validate.v1.field) = { required: true }
+  ];
+  // The kind of change, kept as the envelope's enum: an UPSERT row carries
+  // the content columns, a DELETE row is a tombstone (identity columns only).
+  ChangeOperation operation = 2 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "operation" }
+  }];
+  // Confluence id of the page or blog post; absent when the change carries
+  // no page/blog arm (e.g. an identity-only DELETE).
+  optional string content_id = 3 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "entity.page.id" path: "entity.blog_post.id" }
+  }];
+  // Which entity arm filled the row: "page" or "blog_post"; empty when the
+  // change carries neither.
+  string content_type = 4 [(ai.pipestream.proto.projection.v1.from) = {
+    cel: "has(source.entity.page) ? 'page' : (has(source.entity.blog_post) ? 'blog_post' : '')"
+  }];
+  // Id of the space the content is in.
+  optional string space_id = 5 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "entity.page.space_id" path: "entity.blog_post.space_id" }
+  }];
+  // Title of the content.
+  optional string title = 6 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "entity.page.title" path: "entity.blog_post.title" }
+  }];
+  // The content status as a lowercase name. The page and blog post status
+  // enums number their values differently (CEL sees enums as ints), so the
+  // expression maps both enums to one shared vocabulary: current, draft,
+  // archived (pages only), historical, trashed, deleted; empty when the
+  // change carries no page/blog arm.
+  string status = 7 [(ai.pipestream.proto.projection.v1.from) = {
+    cel: "has(source.entity.page) ? ("
+         "source.entity.page.status == 1 ? 'current' : "
+         "source.entity.page.status == 2 ? 'draft' : "
+         "source.entity.page.status == 3 ? 'archived' : "
+         "source.entity.page.status == 4 ? 'historical' : "
+         "source.entity.page.status == 5 ? 'trashed' : "
+         "source.entity.page.status == 6 ? 'deleted' : '') : "
+         "(has(source.entity.blog_post) ? ("
+         "source.entity.blog_post.status == 1 ? 'current' : "
+         "source.entity.blog_post.status == 2 ? 'draft' : "
+         "source.entity.blog_post.status == 3 ? 'historical' : "
+         "source.entity.blog_post.status == 4 ? 'trashed' : "
+         "source.entity.blog_post.status == 5 ? 'deleted' : '') : '')"
+  }];
+  // Account id of the user who created the content.
+  optional string author_id = 8 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "entity.page.author_id" path: "entity.blog_post.author_id" }
+  }];
+  // When the content was created.
+  google.protobuf.Timestamp created_at = 9 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "entity.page.created_at" path: "entity.blog_post.created_at" }
+  }];
+  // Human-facing URL of the content.
+  optional string web_url = 10 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "entity.page.web_url" path: "entity.blog_post.web_url" }
+  }];
+  // The current version number of the content; absent when the change carries
+  // no version (proto3 implicit presence: a version number of 0 counts as
+  // absent).
+  optional int32 version_number = 11 [(ai.pipestream.proto.projection.v1.from) = {
+    paths: { path: "entity.page.version.number" path: "entity.blog_post.version.number" }
+  }];
+  // Names of the labels on the content, flattened for analytics joins.
+  repeated string label_names = 12 [(ai.pipestream.proto.projection.v1.from) = {
+    cel: "has(source.entity.page) ? source.entity.page.labels.map(l, l.name) : "
+         "(has(source.entity.blog_post) ? source.entity.blog_post.labels.map(l, l.name) : [])"
+  }];
+  // Length of the storage-format body in characters; 0 when the change
+  // carries no storage body. The has() guards keep an absent body from
+  // erroring the evaluation.
+  int32 body_length = 13 [(ai.pipestream.proto.projection.v1.from) = {
+    cel: "has(source.entity.page) && has(source.entity.page.body) "
+         "&& has(source.entity.page.body.storage) "
+         "? size(source.entity.page.body.storage.value) : "
+         "(has(source.entity.blog_post) && has(source.entity.blog_post.body) "
+         "&& has(source.entity.blog_post.body.storage) "
+         "? size(source.entity.blog_post.body.storage.value) : 0)"
+  }];
+}

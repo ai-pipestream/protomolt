@@ -12,6 +12,10 @@ import ai.pipestream.proto.acquire.confluence.v1.ConfluenceSnapshot;
  * repo service as Documents, activated by {@code CONFLUENCE_REPO_TARGET}),
  * {@link ParquetChangeSink} (batches changes into Parquet part files on an
  * S3-compatible store, activated by {@code CONFLUENCE_PARQUET_S3_BUCKET}),
+ * {@link ProjectedParquetChangeSink} (projects each change into a flat
+ * content row and batches the rows into Parquet part files on an
+ * S3-compatible store, activated by
+ * {@code CONFLUENCE_PROJECTED_PARQUET_S3_BUCKET}),
  * {@link CompositeChangeSink} (fan-out when several are active), plus
  * {@link LoggingChangeSink} and {@link InMemoryChangeSink} for tests. The
  * Lucene projection of the Kafka feed is {@link ConfluenceLuceneProjector},
