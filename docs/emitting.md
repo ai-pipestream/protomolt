@@ -155,6 +155,17 @@ can name files but never steer the sink to another store. The Confluence connect
 `<prefix>/<entityType>/<runId>-part-<NNNNN>.parquet` once
 `CONFLUENCE_PARQUET_S3_BUCKET` is set.
 
+Alongside that raw archive, `ProjectedParquetChangeSink` (activated by
+`CONFLUENCE_PROJECTED_PARQUET_S3_BUCKET`, same `CONFLUENCE_PROJECTED_PARQUET_S3_*`
+option family) writes a derived dataset: every change is projected through the
+`MessageProjection` engine into one flat `ConfluenceContentRow` (change id, operation,
+content id and type, space, title, unified status, author, created_at, web URL,
+version number, label names, storage-body length), where the page and blog post arms
+of the entity oneof fill the same columns via the projection's candidate paths. Rows
+land at `<prefix>/content/<runId>-part-<NNNNN>.parquet` (default prefix
+`confluence-content-rows`), and DELETE changes appear as tombstone rows with only the
+identity and operation columns set.
+
 There is intentionally no `emit-parquet` verb: Parquet output is message
 data, and this surface keeps message data out of server-side destination
 arguments. Use the library API (or `S3ParquetSink` above) where

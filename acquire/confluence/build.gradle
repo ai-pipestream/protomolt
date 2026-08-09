@@ -33,6 +33,10 @@ dependencies {
     // ParquetChangeSink: batches changes into Parquet part files on S3.
     implementation project(':protomolt-emit-parquet-s3')
 
+    // ProjectedParquetChangeSink: the MessageProjection engine builds the flat
+    // ConfluenceContentRow from each change.
+    implementation project(':protomolt-projection')
+
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
 
@@ -49,9 +53,14 @@ dependencies {
     testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
 
+    // ProjectedParquetChangeSinkIT runs against a LocalStack S3 container.
+    testImplementation libs.testcontainers.localstack
+
     // Extract the indexing-hints and validation .proto for protoc imports.
     protobuf project(':protomolt-index-spi')
     protobuf project(':protomolt-protobuf-validation')
+    // content_row.proto imports the projection extension options.
+    protobuf project(':protomolt-projection')
 }
 
 protobuf {
