@@ -176,8 +176,9 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
   `blob` (BlobStore port + S3 adapter, virtual-thread part fan-out),
   `ledger` (ledger + JDBC/Postgres impl via Hibernate/HikariCP, Flyway),
   `lifecycle` (the two-phase delete: purge queue, purger, sweeper,
-  reconciler, coherence probe — the queue is the JDBC `document_purges`
-  table, not Kafka).
+  reconciler, coherence probe; the queue's ledger of record is the
+  `document_purges` table, with JDBC claiming by default and an optional
+  Kafka adapter behind the same `PurgeQueue` SPI).
 - `repo/service` (`protomolt-repo-service`) — the gRPC service set,
   transport-agnostic: `RepoServices.build(config)` wires the whole stack
   (ledger → S3 → part storage → service impls) and serves it either
@@ -203,7 +204,10 @@ receipts; HTTP raw-upload resource (replaced by `DocumentStream` gRPC).
    behavioral suites.
 2. Lifecycle: purge queue, reconciler, coherence probe. **(Landed — the
    `document_purges` queue (V3) replaces the Kafka event, the JDBC
-   `PurgeQueue` is the SPI; see repo/README.md § The purge lifecycle.)**
+   `PurgeQueue` is the SPI; the Kafka adapter landed behind the same SPI
+   (`KafkaPurgeQueue`, V5 `relayed_at`: the row stays the ledger of record,
+   the topic only distributes claims); see repo/README.md § The purge
+   lifecycle.)**
 3. DocumentStream upload; replay stream; drive API. Kafka eventing:
    **(Landed: transactional outbox (`document_events_outbox`, V4) drained
    by a virtual-thread relay to the `document-events` topic through the

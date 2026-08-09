@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.repo.v1;
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.repo.v1";
+
+// ============================================================================
+// DOCUMENT PURGE COMMANDS - the Kafka claim-distribution contract of the
+// two-phase delete.
+//
+// With DOCUMENT_PLATFORM_PURGE_QUEUE=kafka, Phase A still lands one
+// document_purges row IN THE SAME TRANSACTION as the tombstone (the row stays
+// the ledger of record); the KafkaPurgeQueue then relays each PENDING row as
+// one DocumentPurgeCommand to the document-purges topic, keyed by node_id so
+// one document's commands are partition-ordered, and purgers claim work by
+// consuming their group instead of scanning the table. Settling still goes
+// through the DB: every terminal transition is conditional on PENDING, so the
+// at-least-once delivery below settles to one winner.
+//
+// Delivery is at-least-once: the relay publishes first and stamps
+// relayed_at after the broker ack, so a crash mid-flight republishes on the
+// next claim. A command carries everything a purger needs to drain (the
+// object-key snapshot included); the protomolt serde validates on write, so a
+// malformed command never reaches the topic.
+// ============================================================================
+
+// One purge request of the two-phase delete: the payload of the
+// document-purges topic, one per document_purges row (plus redeliveries).
+message DocumentPurgeCommand {
+  // The purge record id (document_purges.purge_id). Settling (PURGED / VOID /
+  // FAILED) is a conditional DB transition keyed by this id, so duplicate
+  // deliveries of the same command dedupe to one winner.
+  string purge_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    }
+  ];
+  // The deterministic id of the documents row being purged; also the Kafka
+  // record key, so one document's commands are partition-ordered.
+  string node_id = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    }
+  ];
+  // Identifier of the account that owns the row being purged.
+  string account_id = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Name of the drive whose bucket holds the objects to delete.
+  string drive_name = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // When the delete was requested (the purge record's requested_at; the
+  // staleness guard compares the row's updated_at against it).
+  google.protobuf.Timestamp requested_at = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The snapshot of every object key to delete, captured at tombstone time.
+  // A purger never recomputes keys: a body re-staged after the request is
+  // protected by the staleness guard, never deleted under new keys.
+  repeated string object_keys = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {items: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
+}
