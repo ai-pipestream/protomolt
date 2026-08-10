@@ -3,8 +3,12 @@ package ai.pipestream.proto.inference.openai;
 import ai.pipestream.proto.inference.v1.ChatTurn;
 import ai.pipestream.proto.inference.v1.GenerateRequest;
 import ai.pipestream.proto.inference.v1.GenerateResponse;
+import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.Role;
+import ai.pipestream.proto.inference.v1.StructuredOutputConstraint;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +24,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class OpenAiCompatProviderTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private HttpServer server;
     private final AtomicReference<String> lastBody = new AtomicReference<>();
@@ -67,5 +73,37 @@ class OpenAiCompatProviderTest {
         assertThat(response.getProvider()).isEqualTo("openai");
         assertThat(response.getUsage().getPromptTokens()).isEqualTo(42);
         assertThat(lastBody.get()).contains("\"model\":\"gpt-oss:20b\"");
+    }
+
+    @Test
+    void speaksV1WithTheSameStrictStructuredOutputEnvelope() throws Exception {
+        ModelEntry model = ModelEntry.newBuilder()
+                .setId("gpt-oss-20b-plaintiff")
+                .setProvider("openai")
+                .setEndpoint("http://127.0.0.1:" + server.getAddress().getPort())
+                .setBackendModel("gpt-oss:20b")
+                .setCapabilities(ModelCapabilities.newBuilder().setStructuredOutput(true))
+                .putLabels("credentialRef", "env:OPENAI_TOKEN")
+                .build();
+        StructuredOutputConstraint constraint = StructuredOutputConstraint.newBuilder()
+                .setName("court_Verdict")
+                .setJsonSchema("{\"type\":\"object\",\"additionalProperties\":false}")
+                .build();
+
+        provider.generate(model, GenerateRequest.newBuilder()
+                .setModel(model.getId())
+                .addMessages(ChatTurn.newBuilder()
+                        .setRole(Role.ROLE_USER).setContent("verdict?"))
+                .setStructuredOutput(constraint)
+                .build());
+
+        JsonNode body = MAPPER.readTree(lastBody.get());
+        assertThat(body.at("/response_format/type").asText()).isEqualTo("json_schema");
+        assertThat(body.at("/response_format/json_schema/name").asText())
+                .isEqualTo("court_Verdict");
+        assertThat(body.at("/response_format/json_schema/strict").asBoolean()).isTrue();
+        assertThat(body.at("/response_format/json_schema/schema"))
+                .isEqualTo(MAPPER.readTree(constraint.getJsonSchema()));
+        assertThat(lastBody.get()).doesNotContain("credentialRef", "OPENAI_TOKEN");
     }
 }

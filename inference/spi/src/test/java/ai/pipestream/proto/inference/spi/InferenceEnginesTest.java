@@ -6,8 +6,10 @@ import ai.pipestream.proto.inference.v1.GenerateRequest;
 import ai.pipestream.proto.inference.v1.GenerateResponse;
 import ai.pipestream.proto.inference.v1.GenerateStreamRequest;
 import ai.pipestream.proto.inference.v1.ListModelsRequest;
+import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.Role;
+import ai.pipestream.proto.inference.v1.StructuredOutputConstraint;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -84,6 +86,37 @@ class InferenceEnginesTest {
         assertThatThrownBy(() -> engines.generate(request("ghost")))
                 .isInstanceOf(UnknownModelException.class)
                 .hasMessageContaining("ghost");
+    }
+
+    @Test
+    void structuredOutputRequiresCatalogCapabilityBeforeDelegation() {
+        engines.register(entry("judge", "fake"));
+        GenerateRequest structured = GenerateRequest.newBuilder(request("judge"))
+                .setStructuredOutput(StructuredOutputConstraint.newBuilder()
+                        .setName("example_Form")
+                        .setJsonSchema("{\"type\":\"object\"}"))
+                .build();
+
+        assertThatThrownBy(() -> engines.generate(structured))
+                .isInstanceOf(InferenceException.class)
+                .hasMessageContaining("structured-output capability");
+        assertThat(fake.lastRequest).isNull();
+    }
+
+    @Test
+    void capableModelDelegatesStructuredOutputConstraintUnchanged() {
+        engines.register(ModelEntry.newBuilder(entry("judge", "fake"))
+                .setCapabilities(ModelCapabilities.newBuilder().setStructuredOutput(true))
+                .build());
+        StructuredOutputConstraint constraint = StructuredOutputConstraint.newBuilder()
+                .setName("example_Form")
+                .setJsonSchema("{\"type\":\"object\"}")
+                .build();
+
+        engines.generate(GenerateRequest.newBuilder(request("judge"))
+                .setStructuredOutput(constraint).build());
+
+        assertThat(fake.lastRequest.getStructuredOutput()).isEqualTo(constraint);
     }
 
     @Test

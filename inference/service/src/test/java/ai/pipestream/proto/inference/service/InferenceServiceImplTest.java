@@ -16,6 +16,7 @@ import ai.pipestream.proto.inference.v1.InferenceServiceGrpc;
 import ai.pipestream.proto.inference.v1.ListModelsRequest;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.Role;
+import ai.pipestream.proto.inference.v1.StructuredOutputConstraint;
 import ai.pipestream.proto.inference.v1.Usage;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
@@ -124,6 +125,21 @@ class InferenceServiceImplTest {
         assertThatThrownBy(() -> blocking.generate(empty))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
+    }
+
+    @Test
+    void malformedStructuredOutputConstraintIsInvalidArgument() {
+        GenerateRequest malformed = GenerateRequest.newBuilder(request("judge", "verdict?"))
+                .setStructuredOutput(StructuredOutputConstraint.newBuilder()
+                        .setName("not.a.provider.safe.name")
+                        .setJsonSchema("{}"))
+                .build();
+
+        assertThatThrownBy(() -> blocking.generate(malformed))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription()).contains("structured_output.name");
+                });
     }
 
     @Test

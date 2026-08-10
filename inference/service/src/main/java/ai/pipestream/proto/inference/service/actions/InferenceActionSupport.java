@@ -75,6 +75,7 @@ final class InferenceActionSupport {
         caps.put("maxOutputTokens", capabilities.getMaxOutputTokens());
         caps.put("streaming", capabilities.getStreaming());
         caps.put("thinking", capabilities.getThinking());
+        caps.put("structuredOutput", capabilities.getStructuredOutput());
         capabilities.getModalitiesList().forEach(caps.putArray("modalities")::add);
         if (!entry.getLabelsMap().isEmpty()) {
             ObjectNode labels = node.putObject("labels");

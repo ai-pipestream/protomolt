@@ -63,7 +63,8 @@ class InferenceActionsTest {
         engines.register(ModelEntry.newBuilder()
                 .setId("judge").setProvider("stub").setEndpoint("stub://local")
                 .setCapabilities(ModelCapabilities.newBuilder()
-                        .setMaxContextTokens(262144).setStreaming(true).setThinking(true).build())
+                        .setMaxContextTokens(262144).setStreaming(true).setThinking(true)
+                        .setStructuredOutput(true).build())
                 .putLabels("machine", "krick-1")
                 .build());
         return engines;
@@ -155,6 +156,7 @@ class InferenceActionsTest {
         JsonNode entry = out.get("models").get(0);
         assertThat(entry.get("id").asText()).isEqualTo("judge");
         assertThat(entry.at("/capabilities/maxContextTokens").asLong()).isEqualTo(262144);
+        assertThat(entry.at("/capabilities/structuredOutput").asBoolean()).isTrue();
         assertThat(entry.at("/labels/machine").asText()).isEqualTo("krick-1");
         assertThat(out.get("catalogGeneration").asLong()).isEqualTo(1);
     }

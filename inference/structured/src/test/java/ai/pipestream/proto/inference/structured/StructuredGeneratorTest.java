@@ -94,6 +94,12 @@ class StructuredGeneratorTest {
 
         assertThat(response.getPromptFingerprint()).matches("[0-9a-f]{64}");
         assertThat(response.getSchemaFingerprint()).matches("[0-9a-f]{64}");
+        assertThat(provider.lastRequest().hasStructuredOutput()).isTrue();
+        assertThat(provider.lastRequest().getStructuredOutput().getName())
+                .matches("[A-Za-z0-9_-]{1,64}")
+                .doesNotContain(".");
+        assertThat(provider.lastRequest().getStructuredOutput().getJsonSchema())
+                .contains("\"$schema\"");
     }
 
     @Test
@@ -236,6 +242,7 @@ class StructuredGeneratorTest {
 
         private final Queue<Object> script = new ArrayDeque<>();
         private final AtomicInteger invocations = new AtomicInteger();
+        private GenerateRequest lastRequest;
 
         void script(String... responses) {
             script.addAll(List.of(responses));
@@ -249,6 +256,10 @@ class StructuredGeneratorTest {
             return invocations.get();
         }
 
+        GenerateRequest lastRequest() {
+            return lastRequest;
+        }
+
         @Override
         public String id() {
             return "scripted";
@@ -257,6 +268,7 @@ class StructuredGeneratorTest {
         @Override
         public GenerateResponse generate(ModelEntry model, GenerateRequest request) {
             invocations.incrementAndGet();
+            lastRequest = request;
             Object next = script.poll();
             if (next == null) {
                 throw new InferenceException("scripted provider ran out of responses");

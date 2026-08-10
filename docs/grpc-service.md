@@ -89,6 +89,20 @@ one host-configured target, transport, deadline, and channel-concurrency
 boundary. See [Outbound gRPC channel policy](grpc-channel-policy.md) for its
 launcher flags, environment variables, defaults, and embedding API.
 
+Inference catalog entries use this repeatable form:
+
+```text
+--inference-model id|provider|endpoint[|backend[|label:value,...[|capability,...]]]
+```
+
+The capability tokens are `streaming`, `thinking`, and `structured-output`.
+For example, an OpenAI-compatible model that accepts strict JSON Schema can be
+registered as
+`judge|openai|https://models.example.test|backend-name||structured-output`.
+`PROTOMOLT_INFERENCE_MODELS` accepts the same entries separated by semicolons.
+The catalog specification accepts no credential material; credentials remain
+host-owned and must never be placed in model labels.
+
 `--demo` seeds a sample order-management schema (validation rules, indexing
 hints, metadata, a service) into a temp-directory registry and registers its
 types, so `{"type": "demo.shop.v1.Order"}` resolves on every verb the moment

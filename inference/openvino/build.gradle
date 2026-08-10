@@ -3,6 +3,10 @@ description = 'The OpenVINO provider: executes catalog models against any OVMS-s
 dependencies {
     api project(':protomolt-inference-spi')
 
+    // Shapes the coordinator's JSON Schema into the exact OpenAI-compatible
+    // response_format envelope at the wire edge.
+    implementation project(':protomolt-protobuf-prompt')
+
     // The OpenAI wire format at the provider edge; JSON never crosses the
     // provider boundary (protobuf in, protobuf out).
     implementation libs.jackson.databind
