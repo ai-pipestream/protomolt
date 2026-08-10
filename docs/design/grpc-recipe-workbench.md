@@ -2,10 +2,10 @@
 
 ## Status
 
-Phase 1 and the Phase 2 component packages are implemented. The current integration
-exposes the recipe workbench through MCP, typed gRPC, REST, and OpenAPI, with durable
-artifact and run-evidence storage mounted by the host. Phase 3 structured inference
-is the next delivery phase.
+Phase 1 and Phase 2 are implemented. The current integration exposes the recipe
+workbench through MCP, typed gRPC, REST, and OpenAPI, with durable artifact and
+run-evidence storage mounted by the host. Phase 3 structured inference is the
+next delivery phase.
 
 ## Objective
 
@@ -255,8 +255,37 @@ The delivered Phase 1 foundation includes MCP instructions and lifecycle,
 service-profile contracts, bounded reflection, durable profile and descriptor
 storage, service registration and inspection tools, paginated MCP resources,
 restart recovery tests, a host-configurable outbound channel policy, and a
-generated catalog inventory. Phase 2 adds MCP actions that suggest mappings,
-compile existing chains, record sensitivity-redacted live fixtures, replay
-them offline, and promote immutable versions into the git registry. Its
-acceptance test drives two live gRPC services through streamable HTTP MCP and
-recovers the promoted recipe from registry storage afterward.
+generated catalog inventory.
+
+Phase 2 delivers the full record-replay-promote loop:
+
+- `FileSystemArtifactRepository` (surface/grpc/recipe): content-addressed
+  artifact storage. Content lives at `<root>/<sha256>` with a reference proto
+  sidecar, writes are atomic (temp file plus move), duplicate content shares one
+  identity, and `find` re-hashes content and re-validates the stored reference
+  so tampering fails loudly. A 16 MiB bound (`RecipeValidation.MAX_ARTIFACT_BYTES`)
+  rejects oversized artifacts.
+- `ChainRecipeCompiler` (transform/chain): compiles a resolved `ChainDefinition`
+  into the durable `GrpcRecipe` contract. Each distinct service FQN becomes one
+  `ServiceDependency`, endpoints are sanitized into portable aliases, and the
+  descriptor fingerprint is the sha256 of a canonically sorted
+  `FileDescriptorSet`, so compilation is deterministic.
+- `RecipeReplay` (transform/chain): offline verification of recorded runs. It
+  reuses `ScopedProtoMapper`, `MessageScope`, and `CelProtoMapper` so replay
+  mapping semantics are identical to the live `ChainRunner`, re-evaluates step
+  gates, and reports verdicts as data (`ReplayResult`/`StepReplay`) rather than
+  throwing. Altered request, response, or descriptor evidence fails clearly.
+- Registry promotion (`GitSchemaRegistryStore`): recipes are stored as binary
+  `recipes/<name>/<version>.pb` objects. Promotion is immutable (an identical
+  re-save is a no-op, a divergent one is rejected), validated on both write and
+  read, and exposed through the `RegistryRecipeRepository` adapter.
+- `MappingSuggester` (transform/shapes): descriptor-grounded mapping
+  candidates over name-normalized fields, one nesting level deep, requiring
+  exact type, cardinality, and message-type agreement. Maps, `Struct`, and
+  `Any` are never suggested, and every candidate is gated through the same
+  `RuleChecker` the compiler uses, so a suggestion can never bypass validation.
+- MCP integration (#92): workbench actions for suggesting mappings, compiling
+  chains, recording sensitivity-redacted live fixtures, replaying them offline,
+  and promoting immutable versions into the git registry. The acceptance test
+  drives two live gRPC services through streamable HTTP MCP and recovers the
+  promoted recipe from registry storage after a restart.
