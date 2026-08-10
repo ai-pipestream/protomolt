@@ -1,5 +1,7 @@
 package ai.pipestream.proto.registry;
 
+import ai.pipestream.proto.grpc.recipe.RecipeValidation;
+import ai.pipestream.proto.grpc.recipe.v1.VersionedRecipe;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -17,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -40,6 +43,7 @@ import java.util.stream.Stream;
  * subjects/&lt;url-encoded-subject&gt;/v&lt;N&gt;.proto  schema text
  * subjects/&lt;url-encoded-subject&gt;/v&lt;N&gt;.json   metadata: references, globalId, contentHash
  * subjects/&lt;url-encoded-subject&gt;/config.json per-subject compatibility mode, when set
+ * recipes/&lt;url-encoded-name&gt;/&lt;url-encoded-version&gt;.pb  immutable promoted recipe
  * </pre>
  *
  * <h2>Concurrency</h2>
@@ -57,6 +61,7 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
 
     private static final String SUBJECTS_DIR = "subjects";
     private static final String CHAINS_DIR = "chains";
+    private static final String RECIPE_DIR = "recipes";
     private static final String REGISTRY_FILE = "registry.json";
     private static final String LOCK_FILE = "registry.lock";
     private static final String CONFIG_FILE = "config.json";
@@ -260,6 +265,118 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to list chains", e);
         }
+    }
+
+    // ---------------------------------------------------------------- promoted recipes
+
+    /**
+     * Stores one immutable promoted recipe version, one commit per version under
+     * {@code recipes/<name>/<version>.pb} (serialized {@link VersionedRecipe}; binary, never
+     * JSON). The candidate is fully validated first: malformed identities, fingerprints, or a
+     * content fingerprint that does not match the recipe bytes are rejected before anything
+     * touches the repository.
+     *
+     * <p>Promotion is immutable: saving a version that already exists is a no-op when the
+     * stored bytes are identical (idempotent re-promotion) and refused otherwise.</p>
+     *
+     * @throws IllegalArgumentException when the recipe violates the contract or the version
+     *         already exists with different content
+     */
+    public void putRecipe(VersionedRecipe recipe) throws RegistryStoreException {
+        Objects.requireNonNull(recipe, "recipe");
+        RecipeValidation.validate(recipe);
+        locked(() -> {
+            String path = recipePath(recipe.getRecipe().getName(), recipe.getVersion());
+            Path target = repoDir.resolve(path);
+            byte[] bytes = recipe.toByteArray();
+            if (Files.isRegularFile(target)) {
+                if (Arrays.equals(Files.readAllBytes(target), bytes)) {
+                    return null; // idempotent re-promotion of identical content
+                }
+                throw new IllegalArgumentException("recipe " + recipe.getRecipe().getName()
+                        + " version " + recipe.getVersion()
+                        + " is immutable: the stored content differs");
+            }
+            Files.createDirectories(target.getParent());
+            Files.write(target, bytes);
+            commit(List.of(path), "Promote recipe " + recipe.getRecipe().getName()
+                    + " " + recipe.getVersion());
+            return null;
+        });
+    }
+
+    /** One exact promoted recipe version, when present; stored bytes are re-validated. */
+    public Optional<VersionedRecipe> recipe(String name, String version)
+            throws RegistryStoreException {
+        RecipeValidation.validateName(name, "recipe.name");
+        RecipeValidation.validateName(version, "versioned_recipe.version");
+        Path path = repoDir.resolve(recipePath(name, version));
+        if (!Files.isRegularFile(path)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(readRecipe(path));
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to read recipe " + name, e);
+        }
+    }
+
+    /** All promoted versions of one recipe, ascending by version name. */
+    public List<VersionedRecipe> recipeVersions(String name) throws RegistryStoreException {
+        RecipeValidation.validateName(name, "recipe.name");
+        Path dir = repoDir.resolve(RECIPE_DIR).resolve(encode(name));
+        if (!Files.isDirectory(dir)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(dir)) {
+            List<VersionedRecipe> versions = new ArrayList<>();
+            for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
+                if (file.getFileName().toString().endsWith(".pb")) {
+                    versions.add(readRecipe(file));
+                }
+            }
+            return List.copyOf(versions);
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to list recipe versions for " + name, e);
+        }
+    }
+
+    /** Every recipe holding at least one promoted version, sorted. */
+    public List<String> recipeNames() throws RegistryStoreException {
+        Path dir = repoDir.resolve(RECIPE_DIR);
+        if (!Files.isDirectory(dir)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(dir)) {
+            return files.filter(Files::isDirectory)
+                    .map(path -> decode(path.getFileName().toString()))
+                    .sorted()
+                    .toList();
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to list recipes", e);
+        }
+    }
+
+    private static VersionedRecipe readRecipe(Path path) throws IOException {
+        VersionedRecipe recipe = VersionedRecipe.parseFrom(Files.readAllBytes(path));
+        // Stored bytes answer to the same contract as fresh promotions: a corrupted or
+        // hand-edited file fails loudly here instead of serving an invalid recipe.
+        RecipeValidation.validate(recipe);
+        return recipe;
+    }
+
+    /**
+     * The repo-relative {@code recipes/<encoded>/<encoded>.pb} path, checked to stay inside
+     * {@link #RECIPE_DIR} — the same second line of defense as {@link #subjectDir}.
+     */
+    private String recipePath(String name, String version) {
+        String relative = RECIPE_DIR + "/" + encode(name) + "/" + encode(version) + ".pb";
+        Path resolved = repoDir.resolve(relative).normalize();
+        if (!resolved.startsWith(repoDir.resolve(RECIPE_DIR).normalize())) {
+            throw new IllegalArgumentException(
+                    "recipe identity does not name a file under " + RECIPE_DIR);
+        }
+        return relative;
     }
 
     private static void requireChainName(String name) {
