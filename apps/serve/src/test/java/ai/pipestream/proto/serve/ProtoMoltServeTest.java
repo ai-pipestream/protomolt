@@ -148,4 +148,28 @@ class ProtoMoltServeTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("UP");
     }
+
+    @Test
+    void parsesOutboundGrpcPolicyOptionsBeforeStartingTheServer() {
+        ProtoMoltServe.Options options = ProtoMoltServe.Options.parse(new String[]{
+                "--grpc-allowed-schemes", "dns",
+                "--grpc-allowed-hosts", "*.example.com",
+                "--grpc-allowed-ports", "443",
+                "--grpc-allow-plaintext", "false",
+                "--grpc-allow-tls", "true",
+                "--grpc-max-deadline-ms", "5000",
+                "--grpc-max-active-channels", "3"});
+
+        assertThat(options.outboundPolicy().validateTarget("api.example.com:443", true)
+                .scheme()).isEqualTo("dns");
+        options.outboundPolicy().validateDeadline(5_000);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                options.outboundPolicy().validateTarget("api.example.com:443", false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("plaintext");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                options.outboundPolicy().validateTarget("other.example.net:443", true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("host");
+    }
 }

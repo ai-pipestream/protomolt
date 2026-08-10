@@ -3,6 +3,7 @@ package ai.pipestream.proto.chain;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.cel.CelMappingRule;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
+import ai.pipestream.proto.grpc.policy.OutboundChannelPolicyException;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -224,6 +225,23 @@ class ChainTest {
         } finally {
             fail.set(false);
         }
+    }
+
+    @Test
+    void channelPolicyCapacityFailuresBecomeRetryableChainFailures() {
+        ChainRunner rejecting = new ChainRunner(step -> {
+            throw new OutboundChannelPolicyException("outbound channel concurrency limit is exhausted");
+        });
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        rejecting.run(definition(null, null), text("hi", false)))
+                .isInstanceOf(ChainRunner.ChainExecutionException.class)
+                .satisfies(error -> {
+                    ChainRunner.ChainExecutionException failure =
+                            (ChainRunner.ChainExecutionException) error;
+                    assertThat(failure.kind()).isEqualTo(ChainRunner.FailureKind.GRPC);
+                    assertThat(failure.grpcCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                });
     }
 
     @Test

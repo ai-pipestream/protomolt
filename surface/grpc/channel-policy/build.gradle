@@ -1,0 +1,7 @@
+description = 'Validated, host-configurable outbound gRPC channel policy'
+
+dependencies {
+    api libs.grpc.api
+
+    testImplementation libs.grpc.inprocess
+}

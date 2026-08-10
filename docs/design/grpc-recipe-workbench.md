@@ -2,10 +2,10 @@
 
 ## Status
 
-Accepted direction. The first implementation slice now provides the durable
-service workspace, reflected-schema artifacts, agent-facing MCP workflow, and
-typed service lifecycle actions. Recipe evidence and promotion remain staged
-work below.
+Accepted direction. Phase 1 now provides the durable service workspace,
+reflected-schema artifacts, agent-facing MCP workflow, typed service lifecycle
+actions, shared outbound channel policy, and generated catalog inventory.
+Recipe evidence and promotion remain staged work below.
 
 ## Objective
 
@@ -99,9 +99,9 @@ loading every schema or all generated source. Tools publish read-only,
 idempotent, mutating, and approval-required metadata where the negotiated MCP
 revision supports it.
 
-The protocol implementation also needs a real lifecycle: initialize,
-initialized, cancellation, shutdown, negotiated capabilities, pagination, and
-conformance fixtures for each supported revision.
+The protocol implementation has a real lifecycle: initialize, initialized,
+cancellation, transport or session termination, negotiated capabilities,
+pagination, and conformance fixtures for each supported revision.
 
 ## Structured inference
 
@@ -229,12 +229,9 @@ against the original source.
 
 ## Immediate implementation slice
 
-The delivered first slice includes MCP instructions, service-profile contracts,
-bounded reflection, durable profile and descriptor storage, service registration
-and inspection tools, MCP service resources, and restart recovery tests. It
-intentionally does not attempt the pipeline executor or project generator before
-those identities and policies exist.
-
-The remaining Phase 1 work is the fuller MCP session/cancellation lifecycle, a
-host-configurable outbound channel and credential policy, and generated catalog
-documentation. Those foundations precede Phase 2 recipe and run-evidence work.
+The delivered Phase 1 foundation includes MCP instructions and lifecycle,
+service-profile contracts, bounded reflection, durable profile and descriptor
+storage, service registration and inspection tools, paginated MCP resources,
+restart recovery tests, a host-configurable outbound channel policy, and a
+generated catalog inventory. Phase 2 begins with recipe contracts, probe run
+evidence, artifact storage, replay, and promotion.

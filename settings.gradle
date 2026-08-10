@@ -210,6 +210,9 @@ project(':protomolt-serde-micrometer').projectDir = file('sink/kafka/serde-micro
 include 'protomolt-grpc-invoke'
 project(':protomolt-grpc-invoke').projectDir = file('surface/grpc/invoke')
 
+include 'protomolt-grpc-channel-policy'
+project(':protomolt-grpc-channel-policy').projectDir = file('surface/grpc/channel-policy')
+
 include 'protomolt-grpc-service'
 project(':protomolt-grpc-service').projectDir = file('surface/grpc/service')
 

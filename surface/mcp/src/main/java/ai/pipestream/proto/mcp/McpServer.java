@@ -22,15 +22,25 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 /**
  * A Model Context Protocol server over an {@link ActionCatalog}: every action becomes an MCP
  * tool (the catalog's manifest already carries the name, tool-use description, and JSON Schema
- * input MCP requires), and a {@link RegistryResources} optionally exposes a schema registry's
+ * input MCP requires), and a {@link McpResources} optionally exposes a schema registry's
  * subjects as MCP resources.
  *
  * <p>The transport is the protocol's stdio framing: one JSON-RPC 2.0 message per line, requests
- * answered in order, notifications consumed silently. {@link #handle(JsonNode)} is the pure
+ * answered as requests complete, notifications consumed silently. {@link #handle(JsonNode)} is the pure
  * message-in/message-out core, so tests and alternative transports (an HTTP mount, a framework
  * adapter) can drive the server without streams. Nothing here is framework-aware; Spring and
  * Quarkus MCP hosts can register the same catalog through their own programmatic APIs.</p>
@@ -57,6 +67,8 @@ public final class McpServer {
 
     private static final List<String> SUPPORTED_VERSIONS =
             List.of("2025-06-18", "2025-03-26", "2024-11-05");
+    private static final int RESOURCE_PAGE_SIZE = 100;
+    private static final int MAX_IN_FLIGHT_PER_SESSION = 64;
 
     private final ActionCatalog catalog;
     private final McpResources resources;
@@ -64,6 +76,10 @@ public final class McpServer {
     private final String serverVersion;
     private final String instructions;
     private final ObjectMapper mapper = new ObjectMapper();
+
+    public static boolean supportsProtocolVersion(String version) {
+        return version != null && SUPPORTED_VERSIONS.contains(version);
+    }
 
     /**
      * @param catalog   tools; every catalog action is exposed
@@ -111,20 +127,35 @@ public final class McpServer {
     public void run(InputStream in, OutputStream out) throws IOException {
         BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
-        String line;
-        while ((line = reader.readLine()) != null) {
-            if (line.isBlank()) {
-                continue;
+        Object writeLock = new Object();
+        try (Session session = openSession()) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                JsonNode message;
+                try {
+                    message = mapper.readTree(line);
+                } catch (JsonProcessingException e) {
+                    synchronized (writeLock) {
+                        write(writer, JsonRpc.error(mapper, null, JsonRpc.PARSE_ERROR, "Parse error"));
+                    }
+                    continue;
+                }
+                session.dispatch(message, response -> response.ifPresent(value -> {
+                    synchronized (writeLock) {
+                        write(writer, value);
+                    }
+                }));
             }
-            JsonNode message;
-            try {
-                message = mapper.readTree(line);
-            } catch (JsonProcessingException e) {
-                write(writer, JsonRpc.error(mapper, null, JsonRpc.PARSE_ERROR, "Parse error"));
-                continue;
-            }
-            handle(message).ifPresent(response -> write(writer, response));
+            session.awaitInFlight(30_000);
         }
+    }
+
+    /** Opens an isolated MCP lifecycle for a stdio connection. HTTP mounts should not retain it. */
+    public Session openSession() {
+        return new Session();
     }
 
     /**
@@ -155,7 +186,7 @@ public final class McpServer {
                 case "ping" -> Optional.of(JsonRpc.result(mapper, id, mapper.createObjectNode()));
                 case "tools/list" -> Optional.of(JsonRpc.result(mapper, id, listTools()));
                 case "tools/call" -> Optional.of(JsonRpc.result(mapper, id, callTool(params)));
-                case "resources/list" -> Optional.of(JsonRpc.result(mapper, id, listResources()));
+                case "resources/list" -> Optional.of(JsonRpc.result(mapper, id, listResources(params)));
                 case "resources/read" -> readResource(params)
                         .map(contents -> JsonRpc.result(mapper, id, contents))
                         .or(() -> Optional.of(JsonRpc.error(mapper, id, JsonRpc.RESOURCE_NOT_FOUND,
@@ -176,14 +207,19 @@ public final class McpServer {
     }
 
     private ObjectNode initialize(JsonNode params) {
+        if (params == null || !params.isObject()) {
+            throw new IllegalArgumentException("initialize params must be an object");
+        }
         String requested = params.path("protocolVersion").asText(PROTOCOL_VERSION);
         ObjectNode result = mapper.createObjectNode();
         result.put("protocolVersion",
-                SUPPORTED_VERSIONS.contains(requested) ? requested : PROTOCOL_VERSION);
+                supportsProtocolVersion(requested) ? requested : PROTOCOL_VERSION);
         ObjectNode capabilities = result.putObject("capabilities");
-        capabilities.putObject("tools");
+        capabilities.putObject("tools").put("listChanged", false);
         if (resources != null) {
-            capabilities.putObject("resources");
+            capabilities.putObject("resources")
+                    .put("subscribe", false)
+                    .put("listChanged", false);
         }
         ObjectNode serverInfo = result.putObject("serverInfo");
         serverInfo.put("name", serverName);
@@ -235,12 +271,225 @@ public final class McpServer {
         return result;
     }
 
-    private ObjectNode listResources() {
+    private ObjectNode listResources(JsonNode params) {
+        if (params == null || !params.isObject()) {
+            throw new IllegalArgumentException("resources/list params must be an object");
+        }
+        JsonNode cursor = params.get("cursor");
+        String cursorValue = null;
+        if (cursor != null && !cursor.isNull()) {
+            if (!cursor.isTextual() || cursor.asText().isBlank()) {
+                throw new IllegalArgumentException("resources/list cursor must be a non-empty string");
+            }
+            cursorValue = cursor.asText();
+        }
+        if (resources == null && cursorValue != null) {
+            throw new IllegalArgumentException("resource cursor is invalid");
+        }
+        McpResources.Page page = resources == null
+                ? new McpResources.Page(mapper.createArrayNode(), null)
+                : resources.page(mapper, cursorValue, RESOURCE_PAGE_SIZE);
         ObjectNode result = mapper.createObjectNode();
-        result.set("resources", resources == null
-                ? JsonNodeFactory.instance.arrayNode()
-                : resources.list(mapper));
+        result.set("resources", page.resources());
+        if (page.nextCursor() != null) {
+            result.put("nextCursor", page.nextCursor());
+        }
         return result;
+    }
+
+    /** Per-connection MCP lifecycle used by stdio and the streamable HTTP adapter. */
+    public final class Session implements AutoCloseable {
+
+        public enum State {
+            NEW, INITIALIZED, READY, CLOSED
+        }
+
+        private volatile State state = State.NEW;
+        private volatile String negotiatedProtocolVersion;
+        private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        private final ConcurrentMap<String, FutureTask<Optional<ObjectNode>>> inFlight =
+                new ConcurrentHashMap<>();
+        private final java.util.concurrent.Semaphore inFlightSlots =
+                new java.util.concurrent.Semaphore(MAX_IN_FLIGHT_PER_SESSION);
+
+        public State state() {
+            return state;
+        }
+
+        public String negotiatedProtocolVersion() {
+            return negotiatedProtocolVersion;
+        }
+
+        public Optional<ObjectNode> handle(JsonNode message) {
+            if (message == null || !message.isObject()) {
+                return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST,
+                        "Invalid request"));
+            }
+            if (!message.has("method")) {
+                return McpServer.this.handle(message);
+            }
+            String method = message.get("method").asText();
+            if (JsonRpc.isNotification(message)) {
+                handleNotification(method, message.path("params"));
+                return Optional.empty();
+            }
+            JsonNode id = message.get("id");
+            if ("initialize".equals(method)) {
+                if (state != State.NEW) {
+                    return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_REQUEST,
+                            "initialize must be the first request"));
+                }
+                ObjectNode result;
+                try {
+                    result = initialize(message.has("params")
+                            ? message.get("params") : mapper.createObjectNode());
+                } catch (IllegalArgumentException e) {
+                    return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_PARAMS,
+                            e.getMessage()));
+                }
+                negotiatedProtocolVersion = result.path("protocolVersion").asText(PROTOCOL_VERSION);
+                state = State.INITIALIZED;
+                return Optional.of(JsonRpc.result(mapper, id, result));
+            }
+            if (state == State.NEW) {
+                return Optional.of(lifecycleError(id, "initialize is required before " + method));
+            }
+            if (state == State.INITIALIZED) {
+                return Optional.of(lifecycleError(id,
+                        "notifications/initialized is required before " + method));
+            }
+            if (state == State.CLOSED) {
+                return Optional.of(lifecycleError(id, "MCP session is closed"));
+            }
+            return McpServer.this.handle(message);
+        }
+
+        private void handleNotification(String method, JsonNode params) {
+            switch (method) {
+                case "notifications/initialized" -> {
+                    if (state == State.INITIALIZED) {
+                        state = State.READY;
+                    }
+                }
+                case "notifications/cancelled" -> {
+                    JsonNode requestId = params == null ? null : params.get("requestId");
+                    if (requestId != null && !requestId.isNull()) {
+                        Future<?> future = inFlight.remove(idKey(requestId));
+                        if (future != null) {
+                            future.cancel(true);
+                        }
+                    }
+                }
+                default -> {
+                    // Unknown notifications are intentionally consumed without a response.
+                }
+            }
+        }
+
+        private ObjectNode lifecycleError(JsonNode id, String message) {
+            return JsonRpc.error(mapper, id, JsonRpc.INVALID_REQUEST, message);
+        }
+
+        public boolean isToolCallReady(JsonNode message) {
+            return message != null && message.isObject() && message.has("method")
+                    && "tools/call".equals(message.get("method").asText())
+                    && !JsonRpc.isNotification(message) && state == State.READY;
+        }
+
+        /** Runs a ready tool request without blocking the reader or its transport. */
+        public Future<Optional<ObjectNode>> submit(JsonNode message) {
+            return submit(message, null);
+        }
+
+        /** Runs a ready tool request and invokes the completion callback unless cancelled. */
+        public Future<Optional<ObjectNode>> submit(JsonNode message,
+                                                   Consumer<Optional<ObjectNode>> completion) {
+            if (!isToolCallReady(message)) {
+                throw new IllegalArgumentException("tool request is not valid in this session state");
+            }
+            if (!inFlightSlots.tryAcquire()) {
+                throw new java.util.concurrent.RejectedExecutionException(
+                        "MCP session in-flight tool limit is exhausted");
+            }
+            String key = idKey(message.get("id"));
+            FutureTask<Optional<ObjectNode>> task = new FutureTask<>(() -> {
+                Optional<ObjectNode> response = McpServer.this.handle(message);
+                if (completion != null && inFlight.containsKey(key)
+                        && !Thread.currentThread().isInterrupted()) {
+                    completion.accept(response);
+                }
+                return response;
+            }) {
+                @Override
+                protected void done() {
+                    inFlight.remove(key, this);
+                    inFlightSlots.release();
+                }
+            };
+            if (inFlight.putIfAbsent(key, task) != null) {
+                inFlightSlots.release();
+                throw new IllegalArgumentException("duplicate request id in this session");
+            }
+            try {
+                executor.execute(task);
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                inFlight.remove(key, task);
+                task.cancel(false);
+                throw new IllegalArgumentException("MCP session is closed");
+            }
+            return task;
+        }
+
+        /** Dispatches a stream message, asynchronously tracking ready tool calls. */
+        public void dispatch(JsonNode message, Consumer<Optional<ObjectNode>> completion) {
+            if (isToolCallReady(message)) {
+                try {
+                    submit(message, completion);
+                } catch (java.util.concurrent.RejectedExecutionException e) {
+                    completion.accept(Optional.of(JsonRpc.error(mapper, message.get("id"),
+                            -32000, e.getMessage())));
+                }
+            } else {
+                completion.accept(handle(message));
+            }
+        }
+
+        /** Gives already-received stdio requests a bounded chance to publish their responses. */
+        public void awaitInFlight(long timeoutMillis) {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+            for (FutureTask<Optional<ObjectNode>> task : inFlight.values()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return;
+                }
+                try {
+                    task.get(remaining, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (TimeoutException e) {
+                    return;
+                } catch (java.util.concurrent.ExecutionException | CancellationException ignored) {
+                    // The completion callback already handled the wire response.
+                }
+            }
+        }
+
+        private void cancelInFlight() {
+            inFlight.values().forEach(future -> future.cancel(true));
+            inFlight.clear();
+        }
+
+        private String idKey(JsonNode id) {
+            return id == null ? "null" : id.toString();
+        }
+
+        @Override
+        public void close() {
+            state = State.CLOSED;
+            cancelInFlight();
+            executor.shutdownNow();
+        }
     }
 
     private Optional<ObjectNode> readResource(JsonNode params) {

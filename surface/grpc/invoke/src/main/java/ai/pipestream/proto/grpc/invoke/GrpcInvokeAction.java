@@ -121,7 +121,12 @@ public final class GrpcInvokeAction implements StreamingAction {
         ObjectNode result = context.objectMapper().createObjectNode();
         result.put("method", plan.method().getFullName());
         result.put("methodType", DynamicGrpcCalls.methodType(plan.method()).name());
-        ManagedChannel channel = channelFactory.open(plan.target(), plan.tls());
+        ManagedChannel channel;
+        try {
+            channel = channelFactory.open(plan.target(), plan.tls());
+        } catch (IllegalArgumentException e) {
+            throw invalidInput(e.getMessage(), "/target");
+        }
         try {
             List<DynamicMessage> responses = DynamicGrpcCalls.call(
                     channel, plan.method(), plan.request(), plan.options(), plan.headers(),
@@ -165,7 +170,12 @@ public final class GrpcInvokeAction implements StreamingAction {
     public void executeStreaming(ObjectNode input, ActionContext context, StreamEmitter emitter)
             throws ActionException {
         CallPlan plan = prepare(input, context);
-        ManagedChannel channel = channelFactory.open(plan.target(), plan.tls());
+        ManagedChannel channel;
+        try {
+            channel = channelFactory.open(plan.target(), plan.tls());
+        } catch (IllegalArgumentException e) {
+            throw invalidInput(e.getMessage(), "/target");
+        }
         try {
             if (!plan.method().isServerStreaming()) {
                 List<DynamicMessage> responses = DynamicGrpcCalls.call(
@@ -236,6 +246,14 @@ public final class GrpcInvokeAction implements StreamingAction {
         }
         int deadlineMs = optionalInt(input, "deadlineMs", DEFAULT_DEADLINE_MS);
         int maxResponses = optionalInt(input, "maxResponses", DEFAULT_MAX_RESPONSES);
+
+        try {
+            channelFactory.validateTarget(target, input.path("tls").asBoolean(false));
+            channelFactory.validateDeadline(deadlineMs);
+        } catch (IllegalArgumentException e) {
+            throw invalidInput(e.getMessage(), e.getMessage().contains("deadline")
+                    ? "/deadlineMs" : "/target");
+        }
 
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptors.MethodDescriptor method = findMethod(schema.files(), methodName);

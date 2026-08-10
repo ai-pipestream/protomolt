@@ -1,9 +1,10 @@
 # The command line
 
 `protomolt-cli` is the [action catalog](actions.md) on the command line. It
-adds no verbs of its own: it builds the same thirty-five-verb catalog as the
-gRPC service and dispatches to it with one JSON document in and one JSON
-document out. Verbs whose jobs, inference, or service-workspace backends are
+adds no verbs of its own: it builds the same full catalog as the gRPC service
+and dispatches to it with one JSON document in and one JSON document out. The
+[generated action inventory](generated/action-inventory.json) records the exact
+surface names. Verbs whose jobs, inference, or service-workspace backends are
 not configured remain discoverable and answer `unavailable`. The standalone
 [MCP server](mcp.md) exposes a smaller host-independent subset.
 

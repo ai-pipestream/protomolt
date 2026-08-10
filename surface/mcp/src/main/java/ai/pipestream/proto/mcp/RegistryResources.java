@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -49,6 +50,32 @@ public final class RegistryResources implements McpResources {
             entry.put("mimeType", "application/json");
         }
         return resources;
+    }
+
+    @Override
+    public Page page(ObjectMapper mapper, String cursor, int pageSize) {
+        if (pageSize <= 0) {
+            throw new IllegalArgumentException("page size must be positive");
+        }
+        int offset = parseOffset(cursor);
+        List<String> subjects = store.subjects();
+        int total = subjects.size() + 1; // the registry root is the first resource
+        if (offset > total) {
+            throw new IllegalArgumentException("resource cursor is invalid");
+        }
+        int end = Math.min(offset + pageSize, total);
+        ArrayNode page = mapper.createArrayNode();
+        for (int i = offset; i < end; i++) {
+            if (i == 0) {
+                resource(page, ROOT, "subjects",
+                        "All subjects in the schema registry, with the global compatibility mode");
+            } else {
+                String subject = subjects.get(i - 1);
+                resource(page, subjectUri(subject), subject,
+                        "Version index and latest schema for subject " + subject);
+            }
+        }
+        return new Page(page, end < total ? Integer.toString(end) : null);
     }
 
     /** The contents of one resource, or empty when the URI is not served. */
@@ -132,6 +159,29 @@ public final class RegistryResources implements McpResources {
 
     private static String subjectUri(String subject) {
         return ROOT + "/" + URLEncoder.encode(subject, StandardCharsets.UTF_8);
+    }
+
+    private static int parseOffset(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return 0;
+        }
+        try {
+            int offset = Integer.parseInt(cursor);
+            if (offset < 0) {
+                throw new NumberFormatException();
+            }
+            return offset;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("resource cursor is invalid");
+        }
+    }
+
+    private static void resource(ArrayNode resources, String uri, String name, String description) {
+        ObjectNode entry = resources.addObject();
+        entry.put("uri", uri);
+        entry.put("name", name);
+        entry.put("description", description);
+        entry.put("mimeType", "application/json");
     }
 
     private static String decode(String encoded) {

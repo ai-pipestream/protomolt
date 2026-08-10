@@ -1,7 +1,12 @@
 package ai.pipestream.proto.serve;
 
+import ai.pipestream.proto.actions.ActionCatalog;
+import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.mcp.McpServer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -10,6 +15,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,14 +47,44 @@ class McpHttpTest {
     }
 
     private static HttpResponse<String> post(String body, String... headers) throws Exception {
-        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(endpoint))
+        return send(http, endpoint, body, headers);
+    }
+
+    private static HttpResponse<String> send(HttpClient client, String url, String body,
+                                             String... headers) throws Exception {
+        return client.send(request(url, body, headers), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static HttpRequest request(String url, String body, String... headers) {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url))
                 .header("content-type", "application/json")
                 .header("accept", "application/json, text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(body));
         for (int i = 0; i < headers.length; i += 2) {
             request.header(headers[i], headers[i + 1]);
         }
-        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+        return request.build();
+    }
+
+    private static HttpSession initializeSession() throws Exception {
+        HttpResponse<String> response = post("""
+                {"jsonrpc":"2.0","id":100,"method":"initialize","params":{
+                  "protocolVersion":"2025-06-18","capabilities":{},
+                  "clientInfo":{"name":"test","version":"0"}}}
+                """);
+        assertThat(response.statusCode()).isEqualTo(200);
+        String id = response.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        String version = MAPPER.readTree(response.body()).path("result")
+                .path("protocolVersion").asText();
+        return new HttpSession(id, version);
+    }
+
+    private static HttpResponse<String> post(HttpSession session, String body) throws Exception {
+        return post(body, "Mcp-Session-Id", session.id(),
+                "MCP-Protocol-Version", session.version());
+    }
+
+    private record HttpSession(String id, String version) {
     }
 
     @Test
@@ -66,8 +105,24 @@ class McpHttpTest {
     }
 
     @Test
-    void toolsListServesTheThirtyFiveVerbs() throws Exception {
+    void malformedInitializeParamsReturnAJsonRpcError() throws Exception {
         HttpResponse<String> response = post("""
+                {"jsonrpc":"2.0","id":6,"method":"initialize","params":[]}
+                """);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(MAPPER.readTree(response.body()).path("error").path("code").asInt())
+                .isEqualTo(-32602);
+        assertThat(response.headers().firstValue("Mcp-Session-Id")).isEmpty();
+    }
+
+    @Test
+    void toolsListServesTheThirtyFiveVerbs() throws Exception {
+        HttpSession session = initializeSession();
+        assertThat(post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+        HttpResponse<String> response = post(session, """
                 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
                 """);
         assertThat(response.statusCode()).isEqualTo(200);
@@ -82,7 +137,12 @@ class McpHttpTest {
 
     @Test
     void toolsCallExecutesAnAction() throws Exception {
-        HttpResponse<String> response = post("""
+        HttpSession session = initializeSession();
+        HttpResponse<String> initialized = post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """);
+        assertThat(initialized.statusCode()).isEqualTo(202);
+        HttpResponse<String> response = post(session, """
                 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
                   "name":"compile","arguments":{"sources":{"t.proto":
                     "syntax = \\"proto3\\"; message T { int32 n = 1; }"}}}}
@@ -95,7 +155,8 @@ class McpHttpTest {
 
     @Test
     void notificationsAreAcceptedWithNoBody() throws Exception {
-        HttpResponse<String> response = post("""
+        HttpSession session = initializeSession();
+        HttpResponse<String> response = post(session, """
                 {"jsonrpc":"2.0","method":"notifications/initialized"}
                 """);
         assertThat(response.statusCode()).isEqualTo(202);
@@ -103,16 +164,179 @@ class McpHttpTest {
     }
 
     @Test
+    void concurrentCancellationSuppressesTheHttpToolResponse() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new ProtoAction() {
+            @Override
+            public String name() {
+                return "wait-http";
+            }
+
+            @Override
+            public String description() {
+                return "Waits until cancelled.";
+            }
+
+            @Override
+            public com.fasterxml.jackson.databind.node.ObjectNode inputSchema() {
+                return MAPPER.createObjectNode().put("type", "object");
+            }
+
+            @Override
+            public com.fasterxml.jackson.databind.node.ObjectNode execute(
+                    com.fasterxml.jackson.databind.node.ObjectNode input, ActionContext context) {
+                started.countDown();
+                try {
+                    Thread.sleep(60_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return context.objectMapper().createObjectNode().put("completed", true);
+            }
+        });
+        McpServer mcpServer = new McpServer(catalog, null, "test", "0");
+        McpHttpHandler handler = new McpHttpHandler(mcpServer);
+        HttpServer local = HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        ExecutorService executor = Executors.newCachedThreadPool();
+        local.setExecutor(executor);
+        local.createContext("/mcp", handler);
+        local.start();
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            String url = "http://127.0.0.1:" + local.getAddress().getPort() + "/mcp";
+            HttpResponse<String> init = send(client, url, """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":
+                     {"protocolVersion":"2025-06-18","capabilities":{},
+                      "clientInfo":{"name":"cancel-test","version":"0"}}}
+                    """);
+            String session = init.headers().firstValue("Mcp-Session-Id").orElseThrow();
+            String version = MAPPER.readTree(init.body()).path("result")
+                    .path("protocolVersion").asText();
+            String[] sessionHeaders = {"Mcp-Session-Id", session,
+                    "MCP-Protocol-Version", version};
+            assertThat(send(client, url,
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
+                    sessionHeaders).statusCode()).isEqualTo(202);
+            var tool = client.sendAsync(request(url, """
+                    {"jsonrpc":"2.0","id":7,"method":"tools/call","params":
+                     {"name":"wait-http","arguments":{}}}
+                    """, sessionHeaders), HttpResponse.BodyHandlers.ofString());
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            HttpResponse<String> cancelled = send(client, url, """
+                    {"jsonrpc":"2.0","method":"notifications/cancelled",
+                     "params":{"requestId":7}}
+                    """, sessionHeaders);
+            assertThat(cancelled.statusCode()).isEqualTo(202);
+            assertThat(tool.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(202);
+        } finally {
+            handler.close();
+            local.stop(0);
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void lifecycleRequiresSessionHeadersAndInitializedNotification() throws Exception {
+        HttpSession session = initializeSession();
+        HttpResponse<String> missing = post("""
+                {"jsonrpc":"2.0","id":20,"method":"ping"}
+                """);
+        assertThat(missing.statusCode()).isEqualTo(404);
+
+        HttpResponse<String> beforeInitialized = post(session, """
+                {"jsonrpc":"2.0","id":21,"method":"ping"}
+                """);
+        assertThat(MAPPER.readTree(beforeInitialized.body()).path("error").path("code").asInt())
+                .isEqualTo(-32600);
+
+        HttpResponse<String> initialized = post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """);
+        assertThat(initialized.statusCode()).isEqualTo(202);
+        HttpResponse<String> ping = post(session, """
+                {"jsonrpc":"2.0","id":22,"method":"ping"}
+                """);
+        assertThat(ping.statusCode()).isEqualTo(200);
+        assertThat(MAPPER.readTree(ping.body()).path("result").isObject()).isTrue();
+
+        HttpResponse<String> wrongVersion = post("""
+                {"jsonrpc":"2.0","id":23,"method":"ping"}
+                """, "Mcp-Session-Id", session.id(),
+                "MCP-Protocol-Version", "2024-11-05");
+        assertThat(wrongVersion.statusCode()).isEqualTo(400);
+    }
+
+    @Test
+    void resourcesListRejectsACursorWhenNoRegistryIsMounted() throws Exception {
+        HttpSession session = initializeSession();
+        assertThat(post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+        HttpResponse<String> response = post(session, """
+                {"jsonrpc":"2.0","id":22,"method":"resources/list",
+                 "params":{"cursor":"not-a-cursor"}}
+                """);
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(MAPPER.readTree(response.body()).path("error").path("code").asInt())
+                .isEqualTo(-32602);
+    }
+
+    @Test
+    void streamableHttpRequiresJsonContentAndBothAcceptedMediaTypes() throws Exception {
+        HttpRequest wrongContent = HttpRequest.newBuilder(URI.create(endpoint))
+                .header("content-type", "text/plain")
+                .header("accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        assertThat(http.send(wrongContent, HttpResponse.BodyHandlers.ofString()).statusCode())
+                .isEqualTo(415);
+
+        HttpRequest incompleteAccept = HttpRequest.newBuilder(URI.create(endpoint))
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        assertThat(http.send(incompleteAccept, HttpResponse.BodyHandlers.ofString()).statusCode())
+                .isEqualTo(406);
+    }
+
+    @Test
+    void deleteRequiresTheNegotiatedVersionAndClosesTheSession() throws Exception {
+        HttpSession session = initializeSession();
+        HttpRequest wrongVersion = HttpRequest.newBuilder(URI.create(endpoint))
+                .header("Mcp-Session-Id", session.id())
+                .header("MCP-Protocol-Version", "2024-11-05")
+                .DELETE()
+                .build();
+        assertThat(http.send(wrongVersion, HttpResponse.BodyHandlers.ofString()).statusCode())
+                .isEqualTo(400);
+
+        HttpRequest delete = HttpRequest.newBuilder(URI.create(endpoint))
+                .header("Mcp-Session-Id", session.id())
+                .header("MCP-Protocol-Version", session.version())
+                .DELETE()
+                .build();
+        assertThat(http.send(delete, HttpResponse.BodyHandlers.ofString()).statusCode())
+                .isEqualTo(204);
+        assertThat(post(session, """
+                {"jsonrpc":"2.0","id":24,"method":"ping"}
+                """).statusCode()).isEqualTo(404);
+    }
+
+    @Test
     void batchesAnswerInKind() throws Exception {
-        HttpResponse<String> response = post("""
+        HttpSession session = initializeSession();
+        HttpResponse<String> initialized = post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """);
+        assertThat(initialized.statusCode()).isEqualTo(202);
+        HttpResponse<String> response = post(session, """
                 [{"jsonrpc":"2.0","id":10,"method":"ping"},
                  {"jsonrpc":"2.0","method":"notifications/initialized"},
                  {"jsonrpc":"2.0","id":11,"method":"ping"}]
                 """);
         assertThat(response.statusCode()).isEqualTo(200);
-        JsonNode body = MAPPER.readTree(response.body());
-        assertThat(body.isArray()).isTrue();
-        assertThat(body.size()).isEqualTo(2);
+        assertThat(MAPPER.readTree(response.body())).hasSize(2);
     }
 
     @Test
@@ -129,7 +353,7 @@ class McpHttpTest {
                 HttpRequest.newBuilder(URI.create(endpoint)).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(405);
-        assertThat(response.headers().firstValue("allow").orElse("")).isEqualTo("POST");
+        assertThat(response.headers().firstValue("allow").orElse("")).isEqualTo("POST, DELETE");
     }
 
     @Test
@@ -140,7 +364,8 @@ class McpHttpTest {
         assertThat(evil.statusCode()).isEqualTo(403);
 
         HttpResponse<String> local = post("""
-                {"jsonrpc":"2.0","id":5,"method":"ping"}
+                {"jsonrpc":"2.0","id":5,"method":"initialize","params":
+                 {"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}
                 """, "origin", "http://localhost:3000");
         assertThat(local.statusCode()).isEqualTo(200);
     }

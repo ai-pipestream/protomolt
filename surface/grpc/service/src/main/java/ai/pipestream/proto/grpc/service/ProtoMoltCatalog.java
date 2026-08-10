@@ -10,7 +10,9 @@ import ai.pipestream.proto.codegen.GenerateStubsAction;
 import ai.pipestream.proto.emit.okf.EmitOkfAction;
 import ai.pipestream.proto.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
+import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
+import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.workspace.ServiceWorkspaceActions;
 import ai.pipestream.proto.inference.service.actions.DescribeModelAction;
@@ -26,7 +28,7 @@ import ai.pipestream.proto.jobs.service.store.ChainJobStore;
 import java.nio.file.Path;
 
 /**
- * The full thirty-five-verb catalog: the seventeen built-in actions from
+ * The full catalog: the built-in actions from
  * {@link ActionCatalog#defaults(ActionContext)} plus the gRPC verbs ({@code reflect},
  * {@code grpc-invoke}), {@code generate-stubs}, {@code gather-git}, the chain verbs
  * ({@code run-chain}, {@code check-chain}), {@code emit-okf}, the chain-jobs verbs
@@ -36,9 +38,9 @@ import java.nio.file.Path;
  * ({@code inference-generate}, {@code inference-list-models},
  * {@code inference-describe-model}) — exactly the RPCs of {@code ProtoMoltService}.
  *
- * <p>The MCP server exposes a subset: {@code protomolt-mcp} registers twenty-five, leaving out
+ * <p>The MCP server exposes a host-independent subset, leaving out
  * chains, jobs, inference, and {@code emit-okf}, which need server-side wiring. The {@code /mcp}
- * mount inside {@code protomolt-serve} carries all thirty-five. The jobs and service-workspace
+ * mount inside {@code protomolt-serve} carries the full catalog. The jobs and service-workspace
  * verbs are always registered; without a store they answer
  * {@code unavailable} with the operator-facing remedy instead of vanishing from the catalog.
  * The inference verbs behave the same way without an {@link InferenceEngines}.
@@ -111,12 +113,32 @@ public final class ProtoMoltCatalog {
                                      ChainRepository chains, ChainJobStore jobs,
                                      int maxAttemptsDefault, InferenceEngines inference,
                                      ServiceProfileRepository serviceProfiles) {
+        return full(context, gatherCacheRoot, chains, jobs, maxAttemptsDefault, inference,
+                serviceProfiles, null);
+    }
+
+    /**
+     * The complete catalog with one host-owned policy shared by all outbound gRPC actions.
+     *
+     * @param serviceProfiles profile and descriptor-artifact storage; null keeps the four
+     *        discoverable workspace verbs unavailable until a host configures storage
+     * @param outboundPolicy host-owned target, transport, deadline, and channel-budget policy;
+     *        null uses {@link OutboundChannelPolicy#defaults()}
+     */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     ChainRepository chains, ChainJobStore jobs,
+                                     int maxAttemptsDefault, InferenceEngines inference,
+                                     ServiceProfileRepository serviceProfiles,
+                                     OutboundChannelPolicy outboundPolicy) {
+        OutboundChannelPolicy policy = outboundPolicy == null
+                ? OutboundChannelPolicy.defaults() : outboundPolicy;
+        ChannelFactory channels = ChannelFactory.standard(policy);
         ActionCatalog catalog = ActionCatalog.defaults(context)
-                .register(new GrpcInvokeAction())
-                .register(new ReflectAction())
+                .register(new GrpcInvokeAction(channels))
+                .register(new ReflectAction(channels))
                 .register(new GenerateStubsAction())
                 .register(new GatherGitAction(gatherCacheRoot))
-                .register(new RunChainAction(new ChainRunner(), chains))
+                .register(new RunChainAction(new ChainRunner(policy), chains))
                 .register(new CheckChainAction())
                 .register(new EmitOkfAction())
                 .register(new SubmitChainAction(jobs, chains, maxAttemptsDefault))
@@ -126,6 +148,6 @@ public final class ProtoMoltCatalog {
                 .register(new GenerateAction(inference))
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
-        return ServiceWorkspaceActions.register(catalog, serviceProfiles);
+        return ServiceWorkspaceActions.register(catalog, serviceProfiles, channels);
     }
 }

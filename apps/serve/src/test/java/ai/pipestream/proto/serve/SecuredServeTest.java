@@ -56,6 +56,7 @@ class SecuredServeTest {
             throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(base + path))
                 .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(body));
         for (int i = 0; i < headers.length; i += 2) {
             request.header(headers[i], headers[i + 1]);
@@ -84,11 +85,41 @@ class SecuredServeTest {
     @Test
     void mcpRefusesWithoutTheTokenAndAcceptsBothForms() throws Exception {
         String ping = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
+        String initialize = """
+                {"jsonrpc":"2.0","id":99,"method":"initialize","params":
+                 {"protocolVersion":"2025-06-18","capabilities":{},
+                  "clientInfo":{"name":"security-test","version":"0"}}}
+                """;
         assertThat(post("/mcp", ping).statusCode()).isEqualTo(401);
-        assertThat(post("/mcp", ping, "api_token", TOKEN).statusCode()).isEqualTo(200);
-        assertThat(post("/mcp", ping, "authorization", "Bearer " + TOKEN).statusCode())
-                .isEqualTo(200);
+        HttpResponse<String> apiInitialize = post("/mcp", initialize, "api_token", TOKEN);
+        assertThat(apiInitialize.statusCode()).isEqualTo(200);
+        assertThat(mcpAfterInitialize(ping, apiInitialize, "api_token", TOKEN)
+                .statusCode()).isEqualTo(200);
+        HttpResponse<String> bearerInitialize = post("/mcp", initialize,
+                "authorization", "Bearer " + TOKEN);
+        assertThat(bearerInitialize.statusCode()).isEqualTo(200);
+        assertThat(mcpAfterInitialize(ping, bearerInitialize,
+                "authorization", "Bearer " + TOKEN).statusCode()).isEqualTo(200);
         assertThat(post("/mcp", ping, "api_token", "wrong").statusCode()).isEqualTo(401);
+    }
+
+    private static HttpResponse<String> mcpAfterInitialize(String body,
+                                                            HttpResponse<String> initialize,
+                                                            String... auth) throws Exception {
+        String session = initialize.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        String version = MAPPER.readTree(initialize.body()).path("result")
+                .path("protocolVersion").asText();
+        String initialized = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}";
+        post("/mcp", initialized, concat(auth, "Mcp-Session-Id", session,
+                "MCP-Protocol-Version", version));
+        return post("/mcp", body, concat(auth, "Mcp-Session-Id", session,
+                "MCP-Protocol-Version", version));
+    }
+
+    private static String[] concat(String[] first, String... second) {
+        String[] result = java.util.Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, result, first.length, second.length);
+        return result;
     }
 
     @Test
