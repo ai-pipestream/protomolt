@@ -8,8 +8,12 @@ import ai.pipestream.proto.inference.v1.GenerateRequest;
 import ai.pipestream.proto.inference.v1.GenerateResponse;
 import ai.pipestream.proto.inference.v1.GenerateStreamRequest;
 import ai.pipestream.proto.inference.v1.GenerateStreamResponse;
+import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.Role;
+import ai.pipestream.proto.inference.v1.StructuredOutputConstraint;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OpenVinoProviderTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private HttpServer server;
     private final AtomicReference<String> lastBody = new AtomicReference<>();
@@ -96,6 +102,72 @@ class OpenVinoProviderTest {
                 .contains("\"temperature\":0.2")
                 .doesNotContain("top_p")
                 .doesNotContain("max_tokens");
+    }
+
+    @Test
+    void unarySendsExactStrictResponseFormatWithoutCatalogMetadata() throws Exception {
+        responseBody = """
+                {"choices":[{"message":{"content":"{\\"verdict\\":\\"VALID\\"}"},
+                              "finish_reason":"stop"}],
+                 "usage":{"prompt_tokens":10,"completion_tokens":4}}
+                """;
+        ModelEntry structuredModel = ModelEntry.newBuilder(model())
+                .setCapabilities(ModelCapabilities.newBuilder().setStructuredOutput(true))
+                .putLabels("credentialRef", "env:OVMS_TOKEN")
+                .build();
+        StructuredOutputConstraint constraint = StructuredOutputConstraint.newBuilder()
+                .setName("court_Verdict")
+                .setJsonSchema("""
+                        {"type":"object","properties":{"verdict":{"type":"string"}},
+                         "required":["verdict"],"additionalProperties":false}
+                        """)
+                .build();
+
+        provider.generate(structuredModel, GenerateRequest.newBuilder(request("judge"))
+                .setStructuredOutput(constraint).build());
+
+        JsonNode body = MAPPER.readTree(lastBody.get());
+        JsonNode responseFormat = body.path("response_format");
+        assertThat(responseFormat.path("type").asText()).isEqualTo("json_schema");
+        assertThat(responseFormat.path("json_schema").path("name").asText())
+                .isEqualTo("court_Verdict");
+        assertThat(responseFormat.path("json_schema").path("strict").asBoolean()).isTrue();
+        assertThat(responseFormat.path("json_schema").path("schema"))
+                .isEqualTo(MAPPER.readTree(constraint.getJsonSchema()));
+        assertThat(lastBody.get()).doesNotContain("credentialRef", "OVMS_TOKEN")
+                .doesNotContain(structuredModel.getEndpoint());
+    }
+
+    @Test
+    void structuredOutputRejectsIncapableModelBeforeHttp() {
+        GenerateRequest structured = GenerateRequest.newBuilder(request("judge"))
+                .setStructuredOutput(StructuredOutputConstraint.newBuilder()
+                        .setName("court_Verdict")
+                        .setJsonSchema("{\"type\":\"object\"}"))
+                .build();
+
+        assertThatThrownBy(() -> provider.generate(model(), structured))
+                .isInstanceOf(InferenceException.class)
+                .hasMessageContaining("structured-output capability");
+        assertThat(lastBody.get()).isNull();
+    }
+
+    @Test
+    void structuredOutputRejectsMalformedSchemaBeforeHttpWithoutEchoingIt() {
+        ModelEntry structuredModel = ModelEntry.newBuilder(model())
+                .setCapabilities(ModelCapabilities.newBuilder().setStructuredOutput(true))
+                .build();
+        GenerateRequest structured = GenerateRequest.newBuilder(request("judge"))
+                .setStructuredOutput(StructuredOutputConstraint.newBuilder()
+                        .setName("court_Verdict")
+                        .setJsonSchema("{SECRET_NOT_JSON"))
+                .build();
+
+        assertThatThrownBy(() -> provider.generate(structuredModel, structured))
+                .isInstanceOf(InferenceException.class)
+                .hasMessageContaining("constraint")
+                .hasMessageNotContaining("SECRET_NOT_JSON");
+        assertThat(lastBody.get()).isNull();
     }
 
     @Test

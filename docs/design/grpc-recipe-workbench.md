@@ -227,15 +227,15 @@ those capabilities behind one descriptor-grounded operation.
 | Work package | Status | Ownership boundary | Acceptance evidence |
 | --- | --- | --- | --- |
 | Structured generation contract and coordinator | **LANDED: #95** | Add the typed request, result, and per-attempt provenance contracts plus one bounded coordinator. Resolve the target descriptor, render the prompt and response schema, call `InferenceEngines`, parse strict protobuf JSON, validate, and retry only from rendered validation feedback. Do not change provider HTTP transports, recipe steps, or deployment. | A scripted provider returns invalid JSON or an invalid message on its first attempt and a valid message on its second. The coordinator stops at a validated `DynamicMessage`, records both attempts and token/model/schema provenance, rejects an unknown type or incompatible model before invocation, and never exceeds a validated maximum of three attempts. Tests use an in-process fake provider and require no container or GPU. |
-| Provider structured-output transport | **WAITING ON CORE CONTRACT** | Advertise structured-output capability in the model catalog and pass the coordinator's JSON Schema through compatible OpenAI-style providers. Keep credentials host-resolved and reuse the existing transport policy. | Wire tests prove the exact response-format envelope, capability rejection is deterministic, and credentials never enter requests, results, or logs. |
-| Recipe step and evidence integration | **WAITING ON CORE CONTRACT** | Add structured inference as a recipe step and persist bounded, redacted prompt, response, validation, and attempt evidence through the existing artifact and run-evidence repositories. | Offline replay verifies the selected model, prompt/schema fingerprints, typed output, validation result, and attempt history without calling a provider. |
-| Live structured-inference acceptance | **WAITING ON PROVIDER WIRING** | Exercise one explicitly configured compatible model through MCP and typed gRPC. This package owns test configuration only, not model deployment. | A live opt-in test performs one repair, returns a valid protobuf message, and proves that secrets and sensitive fields are absent from stored evidence. |
+| Provider structured-output transport | **LANDED: #96** | Carry the coordinator's named, validated JSON Schema through `GenerateRequest`, advertise structured-output capability in catalog surfaces and launcher configuration, and emit the strict OpenAI-compatible response-format envelope from the shared OpenAI/OpenVINO transport. | Exact `/v1` and `/v3` wire tests prove the schema envelope, the catalog and transport reject incapable models before HTTP, malformed schemas fail without being echoed, and model labels or credential references never enter provider bodies. |
+| Recipe step and evidence integration | **NEXT AGENT** | Add structured inference as a recipe step and persist bounded, redacted prompt, response, validation, and attempt evidence through the existing artifact and run-evidence repositories. | Offline replay verifies the selected model, prompt/schema fingerprints, typed output, validation result, and attempt history without calling a provider. |
+| Live structured-inference acceptance | **WAITING ON RECIPE INTEGRATION** | Exercise one explicitly configured compatible model through MCP and typed gRPC. This package owns test configuration only, not model deployment. | A live opt-in test performs one repair, returns a valid protobuf message, and proves that secrets and sensitive fields are absent from stored evidence. |
 
-The next agent should take only the first row and branch from `main` after this
-roadmap change lands. Any new persisted field must carry validation and
-sensitivity metadata. Add index annotations only when the field is actually
-part of a searchable index contract; operational request and provenance fields
-must not be mislabeled as indexed data.
+The next agent should take only the row marked `NEXT AGENT` and branch from
+`main` after the preceding package lands. Any new persisted field must carry
+validation and sensitivity metadata. Add index annotations only when the field
+is actually part of a searchable index contract; operational request and
+provenance fields must not be mislabeled as indexed data.
 
 ### Phase 4: pipeline and application promotion
 

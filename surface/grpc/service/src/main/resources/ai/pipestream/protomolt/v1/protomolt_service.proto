@@ -1337,6 +1337,8 @@ message InferenceModelCapabilities {
   bool thinking = 4;
   // Input modalities beyond text; empty = text only.
   repeated string modalities = 5;
+  // Whether the model accepts a strict JSON-Schema response format.
+  bool structured_output = 6;
 }
 
 // One inference catalog model registration.

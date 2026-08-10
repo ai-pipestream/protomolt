@@ -19,6 +19,7 @@ import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
 import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
 import ai.pipestream.proto.inference.spi.InferenceCatalog;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
+import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
 import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
@@ -227,7 +228,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--jobs-jdbc <url> --jobs-user <u> [--jobs-password <p>] "
                                 + "[--jobs-kafka <bootstrap>] [--jobs-request-topic <name>] "
                                 + "[--jobs-workers <n>] [--jobs-target-concurrency <n>]] "
-                                + "[--inference-model <id|provider|endpoint[|backend[|k:v,...]]> ...] "
+                                + "[--inference-model <id|provider|endpoint"
+                                + "[|backend[|k:v,...[|capability,...]]]> ...] "
                                 + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
                                 + "[--service-workspace <dir>] (or PROTOMOLT_SERVICE_WORKSPACE) "
                                 + "[--recipe-workspace <dir>] (or PROTOMOLT_RECIPE_WORKSPACE) "
@@ -375,12 +377,14 @@ public final class ProtoMoltServe implements AutoCloseable {
 
     /**
      * Builds the inference facade from {@code --inference-model} specs
-     * ({@code id|provider|endpoint[|backend[|k:v,...]]}). Empty specs mean inference is
-     * not configured (null; the verbs answer {@code unavailable}). A bad spec or an
-     * unknown provider fails startup loud — a model the server cannot execute must
-     * never sit in the catalog looking runnable.
+     * ({@code id|provider|endpoint[|backend[|labels[|capabilities]]]}). Supported
+     * capability tokens are {@code streaming}, {@code thinking}, and
+     * {@code structured-output}. Empty specs mean inference is not configured (null;
+     * the verbs answer {@code unavailable}). A bad spec or an unknown provider fails
+     * startup loud — a model the server cannot execute must never sit in the catalog
+     * looking runnable.
      */
-    private static InferenceEngines inferenceEngines(java.util.List<String> specs) {
+    static InferenceEngines inferenceEngines(java.util.List<String> specs) {
         if (specs.isEmpty()) {
             return null;
         }
@@ -388,10 +392,10 @@ public final class ProtoMoltServe implements AutoCloseable {
         InferenceEngines engines = new InferenceEngines(catalog);
         for (String spec : specs) {
             String[] parts = spec.split("\\|", -1);
-            if (parts.length < 3 || parts.length > 5
+            if (parts.length < 3 || parts.length > 6
                     || parts[0].isBlank() || parts[1].isBlank() || parts[2].isBlank()) {
                 throw new IllegalArgumentException("bad --inference-model spec '" + spec
-                        + "' (want id|provider|endpoint[|backend[|k:v,...]])");
+                        + "' (want id|provider|endpoint[|backend[|labels[|capabilities]]])");
             }
             ModelEntry.Builder entry = ModelEntry.newBuilder()
                     .setId(parts[0].trim())
@@ -400,7 +404,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (parts.length >= 4 && !parts[3].isBlank()) {
                 entry.setBackendModel(parts[3].trim());
             }
-            if (parts.length == 5 && !parts[4].isBlank()) {
+            if (parts.length >= 5 && !parts[4].isBlank()) {
                 for (String label : parts[4].split(",")) {
                     String[] kv = label.split(":", 2);
                     if (kv.length != 2 || kv[0].isBlank()) {
@@ -409,6 +413,19 @@ public final class ProtoMoltServe implements AutoCloseable {
                     }
                     entry.putLabels(kv[0].trim(), kv[1].trim());
                 }
+            }
+            if (parts.length == 6 && !parts[5].isBlank()) {
+                ModelCapabilities.Builder capabilities = ModelCapabilities.newBuilder();
+                for (String capability : parts[5].split(",")) {
+                    switch (capability.trim()) {
+                        case "streaming" -> capabilities.setStreaming(true);
+                        case "thinking" -> capabilities.setThinking(true);
+                        case "structured-output" -> capabilities.setStructuredOutput(true);
+                        default -> throw new IllegalArgumentException("unknown capability '"
+                                + capability + "' in --inference-model spec '" + spec + "'");
+                    }
+                }
+                entry.setCapabilities(capabilities);
             }
             engines.register(entry.build());
         }

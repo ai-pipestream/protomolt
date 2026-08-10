@@ -1,6 +1,9 @@
 package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.grpc.invoke.ReflectionClient;
+import ai.pipestream.proto.inference.spi.InferenceEngines;
+import ai.pipestream.proto.inference.v1.DescribeModelRequest;
+import ai.pipestream.proto.inference.v1.ModelEntry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.ManagedChannel;
@@ -172,5 +175,27 @@ class ProtoMoltServeTest {
                 options.outboundPolicy().validateTarget("other.example.net:443", true))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("host");
+    }
+
+    @Test
+    void inferenceModelSpecAdvertisesStructuredOutputCapability() {
+        InferenceEngines engines = ProtoMoltServe.inferenceEngines(java.util.List.of(
+                "judge|openai|https://models.example.test|backend|machine:krick|"
+                        + "streaming,structured-output"));
+
+        ModelEntry entry = engines.describe(DescribeModelRequest.newBuilder()
+                .setModel("judge").build()).getEntry();
+        assertThat(entry.getCapabilities().getStreaming()).isTrue();
+        assertThat(entry.getCapabilities().getStructuredOutput()).isTrue();
+        assertThat(entry.getLabelsMap()).containsEntry("machine", "krick");
+    }
+
+    @Test
+    void inferenceModelSpecRejectsUnknownCapability() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                ProtoMoltServe.inferenceEngines(java.util.List.of(
+                        "judge|openai|https://models.example.test|||telepathy")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("telepathy");
     }
 }

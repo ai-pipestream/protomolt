@@ -13,6 +13,7 @@ import ai.pipestream.proto.inference.v1.GenerateStructuredResponse;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.Role;
 import ai.pipestream.proto.inference.v1.StructuredAttempt;
+import ai.pipestream.proto.inference.v1.StructuredOutputConstraint;
 import ai.pipestream.proto.inference.v1.Usage;
 import ai.pipestream.proto.prompt.PromptPacket;
 import ai.pipestream.proto.prompt.PromptRenderer;
@@ -131,6 +132,10 @@ public final class StructuredGenerator {
         }
 
         PromptPacket packet = renderPacket(descriptor, request);
+        StructuredOutputConstraint constraint = StructuredOutputConstraint.newBuilder()
+                .setName(schemaName(targetType))
+                .setJsonSchema(packet.getResponseJsonSchema())
+                .build();
 
         int maxAttempts = request.getMaxAttempts() == 0
                 ? MAX_ATTEMPTS
@@ -145,7 +150,8 @@ public final class StructuredGenerator {
         Usage.Builder totalUsage = Usage.newBuilder();
 
         for (int attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber++) {
-            GenerateResponse response = invoke(request, conversation, attempts, attemptNumber);
+            GenerateResponse response = invoke(request, constraint, conversation, attempts,
+                    attemptNumber);
             String text = response.getText();
             accumulate(totalUsage, response.getUsage());
             boolean lastAttempt = attemptNumber == maxAttempts;
@@ -220,7 +226,8 @@ public final class StructuredGenerator {
                 descriptor.getFile().getFullName());
     }
 
-    private GenerateResponse invoke(GenerateStructuredRequest request, List<ChatTurn> conversation,
+    private GenerateResponse invoke(GenerateStructuredRequest request,
+            StructuredOutputConstraint constraint, List<ChatTurn> conversation,
             List<StructuredAttempt> attempts, int attemptNumber) {
         GenerateRequest generateRequest = GenerateRequest.newBuilder()
                 .setModel(request.getModel())
@@ -228,6 +235,7 @@ public final class StructuredGenerator {
                 .setTemperature(request.getTemperature())
                 .setTopP(request.getTopP())
                 .setMaxOutputTokens(request.getMaxOutputTokens())
+                .setStructuredOutput(constraint)
                 .build();
         try {
             return engines.generate(generateRequest);
@@ -295,6 +303,15 @@ public final class StructuredGenerator {
                     .append(violation.ruleId()).append(": ").append(violation.message());
         }
         return sb.toString();
+    }
+
+    /** Produces an OpenAI-compatible schema name while retaining deterministic identity. */
+    private static String schemaName(String targetType) {
+        String normalized = targetType.replaceAll("[^A-Za-z0-9_-]", "_");
+        if (normalized.length() <= 64) {
+            return normalized;
+        }
+        return normalized.substring(0, 55) + "_" + sha256Hex(targetType).substring(0, 8);
     }
 
     private static String sha256Hex(String text) {

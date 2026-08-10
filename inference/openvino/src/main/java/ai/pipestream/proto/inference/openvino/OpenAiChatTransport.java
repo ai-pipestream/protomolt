@@ -10,7 +10,9 @@ import ai.pipestream.proto.inference.v1.GenerateStreamRequest;
 import ai.pipestream.proto.inference.v1.GenerateStreamResponse;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.Role;
+import ai.pipestream.proto.inference.v1.StructuredOutputConstraint;
 import ai.pipestream.proto.inference.v1.Usage;
+import ai.pipestream.proto.prompt.ResponseFormatShaper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -76,7 +78,8 @@ public final class OpenAiChatTransport {
      */
     public GenerateResponse generate(ModelEntry model, GenerateRequest request) {
         ObjectNode body = chatBody(model, request.getMessagesList(), request.getTemperature(),
-                request.getTopP(), request.getMaxOutputTokens(), false);
+                request.getTopP(), request.getMaxOutputTokens(), false,
+                request.hasStructuredOutput() ? request.getStructuredOutput() : null);
         JsonNode response = post(model, body, false);
         JsonNode choice = firstChoice(model, response);
         return GenerateResponse.newBuilder()
@@ -97,7 +100,7 @@ public final class OpenAiChatTransport {
      */
     public void generateStream(ModelEntry model, GenerateStreamRequest request, ChunkObserver observer) {
         ObjectNode body = chatBody(model, request.getMessagesList(), request.getTemperature(),
-                request.getTopP(), request.getMaxOutputTokens(), true);
+                request.getTopP(), request.getMaxOutputTokens(), true, null);
         HttpRequest httpRequest = HttpRequest.newBuilder(chatUri(model))
                 .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
@@ -178,7 +181,8 @@ public final class OpenAiChatTransport {
 
     /** Builds the OpenAI chat body, omitting unset knobs so backend defaults apply. */
     private ObjectNode chatBody(ModelEntry model, List<ChatTurn> messages, double temperature,
-                                double topP, int maxOutputTokens, boolean stream) {
+                                double topP, int maxOutputTokens, boolean stream,
+                                StructuredOutputConstraint structuredOutput) {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("model", model.getBackendModel().isEmpty() ? model.getId() : model.getBackendModel());
         ArrayNode turns = body.putArray("messages");
@@ -196,12 +200,37 @@ public final class OpenAiChatTransport {
         if (maxOutputTokens > 0) {
             body.put("max_tokens", maxOutputTokens);
         }
+        if (structuredOutput != null) {
+            addStructuredOutput(model, body, structuredOutput);
+        }
         if (stream) {
             body.put("stream", true);
             ObjectNode streamOptions = body.putObject("stream_options");
             streamOptions.put("include_usage", true);
         }
         return body;
+    }
+
+    /** Adds the strict response-format envelope after capability and schema checks. */
+    private static void addStructuredOutput(ModelEntry model, ObjectNode body,
+                                            StructuredOutputConstraint constraint) {
+        if (!model.getCapabilities().getStructuredOutput()) {
+            throw new InferenceException("model '" + model.getId()
+                    + "' does not declare the structured-output capability");
+        }
+        String envelope;
+        try {
+            envelope = ResponseFormatShaper.jsonSchemaEnvelope(
+                    constraint.getName(), constraint.getJsonSchema(), true);
+        } catch (IllegalArgumentException e) {
+            throw new InferenceException("structured-output constraint for model '"
+                    + model.getId() + "' is invalid: " + e.getMessage(), e);
+        }
+        try {
+            body.set("response_format", MAPPER.readTree(envelope));
+        } catch (IOException e) {
+            throw new IllegalStateException("response-format shaper emitted invalid JSON", e);
+        }
     }
 
     private JsonNode post(ModelEntry model, ObjectNode body, boolean stream) {

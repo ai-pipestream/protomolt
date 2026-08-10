@@ -85,6 +85,11 @@ public final class InferenceEngines {
      */
     public GenerateResponse generate(GenerateRequest request) {
         ModelEntry model = catalog.get(request.getModel());
+        if (request.hasStructuredOutput()
+                && !model.getCapabilities().getStructuredOutput()) {
+            throw new InferenceException("model '" + model.getId()
+                    + "' does not declare the structured-output capability");
+        }
         return provider(model.getProvider()).generate(model, request);
     }
 

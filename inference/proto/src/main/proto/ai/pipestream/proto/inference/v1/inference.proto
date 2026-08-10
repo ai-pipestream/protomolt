@@ -79,6 +79,40 @@ message ChatTurn {
   ];
 }
 
+// A strict JSON-Schema constraint for one structured generation. The schema
+// is decoder configuration, not response data; compatible providers translate
+// it to their wire-level response-format envelope.
+message StructuredOutputConstraint {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "A named JSON Schema that constrains one structured generation."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Provider-safe schema identity. Coordinators derive this deterministically
+  // from the target protobuf type.
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {
+        max_len: 64
+        pattern: "^[A-Za-z0-9_-]+$"
+      }
+    }
+  ];
+
+  // Draft 2020-12 JSON Schema rendered from the target protobuf descriptor.
+  string json_schema = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 1048576}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      sensitivity: "internal"
+    }
+  ];
+}
+
 // The request of generate and generate-stream: a catalog model id, a
 // conversation, and sampling controls.
 message GenerateRequest {
@@ -128,6 +162,10 @@ message GenerateRequest {
   // Requests the model's deliberation mode when the model has one (the
   // provider ignores it for models without a thinking mode).
   bool enable_thinking = 6;
+
+  // Optional strict structured-output constraint. The selected catalog model
+  // must declare structured_output before a provider can be invoked.
+  StructuredOutputConstraint structured_output = 7;
 }
 
 // The request of generate-stream: identical shape to generate's request,
