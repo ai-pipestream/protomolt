@@ -15,6 +15,7 @@ import ai.pipestream.proto.shapes.MessageScope;
 import ai.pipestream.proto.shapes.ScopedProtoMapper;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
+import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -78,6 +79,29 @@ public final class ChainRunner {
                                              GenerateStructuredResponse structuredResponse,
                                              Instant startedAt, Instant completedAt) {
         }
+
+        /**
+         * Called after a typed edge produced its value and before the step executes:
+         * {@code produced} is the mapped, pre-projection message (the fan-out items
+         * holder); {@code validationPassed} is the verdict of the edge's declared
+         * validation (true when the edge declares none); {@code itemCount} is the
+         * fan-out cardinality, 0 without fan-out. A {@code false} verdict means the
+         * step was rejected before any invocation.
+         */
+        default void edgeEvaluated(ChainDefinition.Step step, DynamicMessage produced,
+                                   boolean validationPassed, int sourceCount,
+                                   int itemCount) {
+        }
+
+        /**
+         * Called once per fan-out branch, in stable index order after the fan-out
+         * settles. {@code response} is the branch output, null on failure;
+         * {@code failureSummary} is the bounded failure detail, null on success.
+         */
+        default void branchCompleted(ChainDefinition.Step step, String branchId,
+                                     int branchIndex, Message response,
+                                     String failureSummary) {
+        }
     }
 
     private static final ExecutionObserver NO_OBSERVER = new ExecutionObserver() {
@@ -137,6 +161,9 @@ public final class ChainRunner {
         GRPC,
         /** A structured-generation step failed in the coordinator or a provider. */
         STRUCTURED,
+        /** A typed edge could not map, project, or bound the step input. Not
+         *  retryable (deterministic). */
+        EDGE,
         /** The response failed its declared validation rules. A verdict, not an error. */
         VALIDATION,
         /** The chain (segment) deadline was exhausted. Retryable: resume continues. */
@@ -329,20 +356,21 @@ public final class ChainRunner {
                     continue;
                 }
                 if (step.external()) {
+                    if (step.edge() != null) {
+                        throw new ChainExecutionException(step.name(), FailureKind.CHAIN,
+                                null, "external-completion steps do not carry edges; "
+                                        + "the completion lane owns their request", null);
+                    }
                     return new Segment.Parked(step.name(), List.copyOf(checkpoints));
                 }
-                if (step.structured() != null) {
-                    Message generated = runStructured(step, values, outcomes, checkpoints,
-                            onCheckpoint, observer, deadlineNanos);
-                    last = generated;
-                    index++;
-                    continue;
-                }
-                CelEvaluator evaluator = evaluator(values, step.method().getInputType());
-                if (step.when() != null && !step.when().isBlank()) {
+                if (step.structured() == null && step.when() != null
+                        && !step.when().isBlank()) {
+                    CelEvaluator gateEvaluator = evaluator(values,
+                            step.method().getInputType());
                     boolean go;
                     try {
-                        go = evaluator.evaluateBooleanOrFail(step.when(), Map.copyOf(values));
+                        go = gateEvaluator.evaluateBooleanOrFail(step.when(),
+                                Map.copyOf(values));
                     } catch (Exception e) {
                         throw new ChainExecutionException(step.name(), FailureKind.GATE, null,
                                 "gate failed: " + e.getMessage(), e);
@@ -353,7 +381,7 @@ public final class ChainRunner {
                         // mapping see deterministic empty values - the same scope the
                         // verifier checked - instead of an undeclared reference.
                         values.put(step.name(), DynamicMessage
-                                .getDefaultInstance(step.method().getOutputType()));
+                                .getDefaultInstance(outputTypeOf(step)));
                         outcomes.add(new StepOutcome(step.name(), true));
                         Instant skippedAt = Instant.now();
                         observer.stepCompleted(step, null, null, true, skippedAt, skippedAt);
@@ -363,7 +391,21 @@ public final class ChainRunner {
                         continue;
                     }
                 }
-                DynamicMessage request = buildMessage(mapper, evaluator, values,
+                if (step.edge() != null) {
+                    last = runEdgeStep(step, values, mapper, registry, open, outcomes,
+                            checkpoints, onCheckpoint, observer, deadlineNanos);
+                    index++;
+                    continue;
+                }
+                if (step.structured() != null) {
+                    Message generated = runStructured(step, values, outcomes, checkpoints,
+                            onCheckpoint, observer, deadlineNanos);
+                    last = generated;
+                    index++;
+                    continue;
+                }
+                DynamicMessage request = buildMessage(mapper,
+                        evaluator(values, step.method().getInputType()), values,
                         step.method().getInputType(), step.rules(), step.celRules(),
                         step.name());
                 long remainingMs = TimeUnit.NANOSECONDS.toMillis(
@@ -449,13 +491,39 @@ public final class ChainRunner {
                                   Consumer<Checkpoint> onCheckpoint,
                                   ExecutionObserver observer, long deadlineNanos)
             throws ChainExecutionException {
-        GenerateStructuredRequest request = GenerateStructuredRequest.newBuilder()
-                .setTargetType(step.structured().targetType().getFullName())
-                .setModel(step.structured().model())
-                .setMaxAttempts(step.structured().maxAttempts())
-                .build();
+        GenerateStructuredRequest request = structuredRequest(step, null);
         Instant stepStarted = Instant.now();
         observer.structuredStepStarted(step, request, stepStarted);
+        GenerateStructuredResponse generated = invokeCoordinator(step, request,
+                deadlineNanos);
+        Message output = unpackStructured(step, generated);
+        values.put(step.name(), output);
+        outcomes.add(new StepOutcome(step.name(), false));
+        observer.structuredStepCompleted(step, request, output, generated, stepStarted,
+                Instant.now());
+        record(checkpoints, new Checkpoint(step.name(), false, output), onCheckpoint,
+                step.name());
+        return output;
+    }
+
+    /** The step's structured-generation request, with grounding when supplied. */
+    private static GenerateStructuredRequest structuredRequest(ChainDefinition.Step step,
+                                                               Any grounding) {
+        GenerateStructuredRequest.Builder request = GenerateStructuredRequest.newBuilder()
+                .setTargetType(step.structured().targetType().getFullName())
+                .setModel(step.structured().model())
+                .setMaxAttempts(step.structured().maxAttempts());
+        if (grounding != null) {
+            request.setGrounding(grounding);
+        }
+        return request.build();
+    }
+
+    /** Runs the coordinator for one structured request, failing the chain on rejection. */
+    private GenerateStructuredResponse invokeCoordinator(ChainDefinition.Step step,
+                                                         GenerateStructuredRequest request,
+                                                         long deadlineNanos)
+            throws ChainExecutionException {
         if (generator == null) {
             throw new ChainExecutionException(step.name(), FailureKind.STRUCTURED, null,
                     "structured step '" + step.name() + "' needs a StructuredGenerator; "
@@ -466,34 +534,458 @@ public final class ChainRunner {
             throw new ChainExecutionException(step.name(), FailureKind.DEADLINE, null,
                     "chain deadline exhausted before the step ran", null);
         }
-        GenerateStructuredResponse generated;
         try {
-            generated = generator.generate(request, step.structured().targetType());
+            return generator.generate(request, step.structured().targetType());
         } catch (StructuredGenerationException e) {
             throw new ChainExecutionException(step.name(), FailureKind.STRUCTURED, null,
                     "structured generation failed: " + e.getMessage(), e);
         }
-        Message output;
+    }
+
+    /** The coordinator's packed output as the step's typed message. */
+    private static Message unpackStructured(ChainDefinition.Step step,
+                                            GenerateStructuredResponse generated)
+            throws ChainExecutionException {
         try {
-            output = DynamicMessage.parseFrom(step.structured().targetType(),
+            return DynamicMessage.parseFrom(step.structured().targetType(),
                     generated.getMessage().getValue());
         } catch (InvalidProtocolBufferException e) {
             throw new ChainExecutionException(step.name(), FailureKind.CHAIN, null,
                     "the coordinator's packed output does not parse as the step's "
                             + "target type", e);
         }
-        values.put(step.name(), output);
-        outcomes.add(new StepOutcome(step.name(), false));
-        observer.structuredStepCompleted(step, request, output, generated, stepStarted,
-                Instant.now());
-        record(checkpoints, new Checkpoint(step.name(), false, output), onCheckpoint,
-                step.name());
-        return output;
     }
 
-    /** The type a step's response binds under its name, gRPC or structured. */
+    /**
+     * Executes one edge-carrying step: map the edge's declared sources into the
+     * produced type, then either deliver the (projected, validated) value to one
+     * invocation or fan out over its items. The produced message and the verdict are
+     * reported to the observer before anything executes, so a pre-invocation
+     * rejection still leaves complete evidence.
+     *
+     * @return the message bound into the scope under the step's name
+     */
+    private Message runEdgeStep(ChainDefinition.Step step, Map<String, Message> values,
+                                ScopedProtoMapper mapper, DescriptorRegistry registry,
+                                Map<String, ManagedChannel> open,
+                                List<StepOutcome> outcomes, List<Checkpoint> checkpoints,
+                                Consumer<Checkpoint> onCheckpoint,
+                                ExecutionObserver observer, long deadlineNanos)
+            throws ChainExecutionException {
+        ChainDefinition.EdgeSpec edge = step.edge();
+        Map<String, Message> restricted = new LinkedHashMap<>();
+        for (String source : edge.sources()) {
+            Message value = values.get(source);
+            if (value == null) {
+                throw new ChainExecutionException(step.name(), FailureKind.EDGE, null,
+                        "edge source '" + source + "' is not 'input' or a prior step",
+                        null);
+            }
+            restricted.put(source, value);
+        }
+        DynamicMessage produced = buildMessage(mapper,
+                evaluator(restricted, edge.produceType()), restricted, edge.produceType(),
+                edge.rules(), edge.celRules(), step.name());
+        if (step.fanOut() != null) {
+            return runFanOut(step, produced, restricted.size(), values, registry, open,
+                    outcomes, checkpoints, onCheckpoint, observer, deadlineNanos);
+        }
+
+        Message delivered = produced;
+        if (edge.projectTo() != null) {
+            delivered = projectValue(step, edge.projectTo(), produced, registry);
+        }
+        if (edge.validate()) {
+            ValidationResult result = ProtoValidator
+                    .forMessageType(delivered.getDescriptorForType()).validate(delivered);
+            if (!result.valid()) {
+                observer.edgeEvaluated(step, produced, false, restricted.size(), 0);
+                throw new ChainExecutionException(step.name(), FailureKind.VALIDATION, null,
+                        "edge value failed validation before the step executed: "
+                                + summary(result), null);
+            }
+        }
+        observer.edgeEvaluated(step, produced, true, restricted.size(), 0);
+
+        if (step.structured() != null) {
+            GenerateStructuredRequest request = structuredRequest(step, Any.pack(delivered));
+            Instant stepStarted = Instant.now();
+            observer.structuredStepStarted(step, request, stepStarted);
+            GenerateStructuredResponse generated = invokeCoordinator(step, request,
+                    deadlineNanos);
+            Message output = unpackStructured(step, generated);
+            values.put(step.name(), output);
+            outcomes.add(new StepOutcome(step.name(), false));
+            observer.structuredStepCompleted(step, request, output, generated, stepStarted,
+                    Instant.now());
+            record(checkpoints, new Checkpoint(step.name(), false, output), onCheckpoint,
+                    step.name());
+            return output;
+        }
+
+        long callMs = remainingMs(step, deadlineNanos);
+        ManagedChannel channel = openChannel(step, open, callMs);
+        DynamicMessage request = (DynamicMessage) delivered;
+        Instant stepStarted = Instant.now();
+        observer.stepStarted(step, request, stepStarted);
+        DynamicMessage response = call(step, channel, request, callMs);
+        validateResponse(step, response);
+        values.put(step.name(), response);
+        outcomes.add(new StepOutcome(step.name(), false));
+        observer.stepCompleted(step, request, response, false, stepStarted, Instant.now());
+        record(checkpoints, new Checkpoint(step.name(), false, response), onCheckpoint,
+                step.name());
+        return response;
+    }
+
+    /**
+     * Executes one fanned-out step: every item of the produced message's items field
+     * runs one branch on a virtual thread, bounded by the semaphore; outcomes land in
+     * index-addressed slots, so evidence and the collect are deterministic regardless
+     * of completion order. FAIL_FAST cancels remaining branches at the first failure
+     * and fails the step; CONTINUE collects the survivors.
+     *
+     * @return the collected message bound into the scope under the step's name
+     */
+    private Message runFanOut(ChainDefinition.Step step, DynamicMessage produced,
+                              int sourceCount, Map<String, Message> values,
+                              DescriptorRegistry registry,
+                              Map<String, ManagedChannel> open,
+                              List<StepOutcome> outcomes, List<Checkpoint> checkpoints,
+                              Consumer<Checkpoint> onCheckpoint,
+                              ExecutionObserver observer, long deadlineNanos)
+            throws ChainExecutionException {
+        ChainDefinition.EdgeSpec edge = step.edge();
+        ChainDefinition.FanOutSpec fanOut = step.fanOut();
+        List<Message> items;
+        try {
+            items = EdgeFlow.items(produced, fanOut.items());
+        } catch (IllegalArgumentException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.EDGE, null,
+                    "fan-out items path rejected: " + e.getMessage(), e);
+        }
+        if (items.size() > fanOut.maxItems()) {
+            throw new ChainExecutionException(step.name(), FailureKind.EDGE, null,
+                    "fan-out produced " + items.size() + " items, over the max_items "
+                            + "cap of " + fanOut.maxItems(), null);
+        }
+
+        // Project and validate every item up front, before any invocation: an invalid
+        // item is a failed branch that never executes, and the all-items verdict is
+        // the step's deterministic validation evidence.
+        BranchOutcome[] slots = new BranchOutcome[items.size()];
+        Message[] branchValues = new Message[items.size()];
+        boolean allValid = true;
+        for (int i = 0; i < items.size(); i++) {
+            Message value = items.get(i);
+            if (edge.projectTo() != null) {
+                try {
+                    value = projectValue(step, edge.projectTo(), value, registry);
+                } catch (ChainExecutionException e) {
+                    slots[i] = new BranchOutcome(null, e.getMessage(), FailureKind.EDGE,
+                            null);
+                    allValid = false;
+                    continue;
+                }
+            }
+            if (edge.validate()) {
+                ValidationResult result = ProtoValidator
+                        .forMessageType(value.getDescriptorForType()).validate(value);
+                if (!result.valid()) {
+                    slots[i] = new BranchOutcome(null,
+                            "branch value failed validation: " + summary(result),
+                            FailureKind.VALIDATION, null);
+                    allValid = false;
+                    continue;
+                }
+            }
+            branchValues[i] = value;
+        }
+        observer.edgeEvaluated(step, produced, allValid, sourceCount, items.size());
+
+        // gRPC branches share one channel, opened before any task starts: the channel
+        // map is confined to this thread.
+        ManagedChannel channel = null;
+        long callMs = -1;
+        if (step.structured() == null) {
+            callMs = remainingMs(step, deadlineNanos);
+            channel = openChannel(step, open, callMs);
+        }
+        final long branchCallMs = callMs;
+        Instant stepStarted = Instant.now();
+        if (step.structured() == null) {
+            observer.stepStarted(step, produced, stepStarted);
+        }
+
+        java.util.concurrent.Semaphore permits =
+                new java.util.concurrent.Semaphore(fanOut.maxConcurrency());
+        java.util.concurrent.atomic.AtomicBoolean abandoned =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        try (var executor = java.util.concurrent.Executors
+                .newVirtualThreadPerTaskExecutor()) {
+            List<java.util.concurrent.Future<?>> futures = new ArrayList<>(items.size());
+            for (int i = 0; i < items.size(); i++) {
+                int index = i;
+                if (slots[index] != null) {
+                    // The item never reached an invocation: rejected up front. Under
+                    // FAIL_FAST every later branch is abandoned.
+                    if (fanOut.failurePolicy()
+                            == ChainDefinition.BranchFailurePolicy.FAIL_FAST) {
+                        break;
+                    }
+                    continue;
+                }
+                ManagedChannel branchChannel = channel;
+                futures.add(executor.submit(() -> {
+                    if (abandoned.get()) {
+                        return;
+                    }
+                    try {
+                        permits.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    try {
+                        if (abandoned.get()) {
+                            return;
+                        }
+                        slots[index] = executeBranch(step, branchValues[index], index,
+                                branchChannel, branchCallMs, deadlineNanos);
+                    } catch (BranchFailure failure) {
+                        slots[index] = failure.outcome();
+                        if (fanOut.failurePolicy()
+                                == ChainDefinition.BranchFailurePolicy.FAIL_FAST) {
+                            abandoned.set(true);
+                        }
+                    } finally {
+                        permits.release();
+                    }
+                }));
+            }
+            for (java.util.concurrent.Future<?> future : futures) {
+                try {
+                    if (abandoned.get()) {
+                        future.cancel(true);
+                    } else {
+                        future.get();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new ChainExecutionException(step.name(), FailureKind.CHAIN, null,
+                            "interrupted while fanning out", e);
+                } catch (java.util.concurrent.ExecutionException
+                         | java.util.concurrent.CancellationException e) {
+                    // Branch bodies record their own outcomes; a cancelled branch was
+                    // abandoned and keeps its null slot.
+                }
+            }
+        }
+
+        List<Message> outputs = new ArrayList<>(items.size());
+        BranchOutcome firstFailure = null;
+        int firstFailureIndex = -1;
+        for (int i = 0; i < slots.length; i++) {
+            String branchId = step.name() + "#" + i;
+            BranchOutcome outcome = slots[i];
+            if (outcome == null) {
+                observer.branchCompleted(step, branchId, i, null,
+                        "abandoned after the first branch failure");
+                continue;
+            }
+            observer.branchCompleted(step, branchId, i, outcome.response(),
+                    outcome.summary());
+            if (outcome.response() != null) {
+                outputs.add(outcome.response());
+            } else if (firstFailure == null) {
+                firstFailure = outcome;
+                firstFailureIndex = i;
+            }
+        }
+        if (firstFailure != null && fanOut.failurePolicy()
+                == ChainDefinition.BranchFailurePolicy.FAIL_FAST) {
+            throw new ChainExecutionException(step.name(), firstFailure.kind(),
+                    firstFailure.grpcCode(),
+                    "branch '" + step.name() + "#" + firstFailureIndex + "' failed: "
+                            + firstFailure.summary(), null);
+        }
+
+        DynamicMessage collected;
+        try {
+            collected = EdgeFlow.collect(fanOut.collectType(), fanOut.collectInto(),
+                    outputs);
+        } catch (IllegalArgumentException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.EDGE, null,
+                    "fan-out collect rejected: " + e.getMessage(), e);
+        }
+        values.put(step.name(), collected);
+        outcomes.add(new StepOutcome(step.name(), false));
+        observer.stepCompleted(step, produced, collected, false, stepStarted,
+                Instant.now());
+        record(checkpoints, new Checkpoint(step.name(), false, collected), onCheckpoint,
+                step.name());
+        return collected;
+    }
+
+    /** The verdict of one fan-out branch; exactly one of response/summary is null. */
+    private record BranchOutcome(Message response, String summary, FailureKind kind,
+                                 io.grpc.Status.Code grpcCode) {
+
+        static BranchOutcome success(Message response) {
+            return new BranchOutcome(response, null, null, null);
+        }
+    }
+
+    /** A branch failure carrying its recorded outcome. */
+    private static final class BranchFailure extends Exception {
+        private final BranchOutcome outcome;
+
+        BranchFailure(BranchOutcome outcome) {
+            super(outcome.summary());
+            this.outcome = outcome;
+        }
+
+        BranchOutcome outcome() {
+            return outcome;
+        }
+    }
+
+    /**
+     * Executes one fan-out branch on its prepared (projected, validated) value. Every
+     * failure is a {@link BranchFailure}; the failure policy decides what it does to
+     * the step.
+     */
+    private BranchOutcome executeBranch(ChainDefinition.Step step, Message value,
+                                        int index, ManagedChannel channel, long callMs,
+                                        long deadlineNanos) throws BranchFailure {
+        if (step.structured() != null) {
+            GenerateStructuredRequest request = structuredRequest(step, Any.pack(value));
+            GenerateStructuredResponse generated;
+            try {
+                generated = invokeCoordinator(step, request, deadlineNanos);
+            } catch (ChainExecutionException e) {
+                throw new BranchFailure(new BranchOutcome(null,
+                        e.kind() == FailureKind.STRUCTURED
+                                ? "structured generation failed at branch '"
+                                        + step.name() + "#" + index + "'"
+                                : e.getMessage(),
+                        e.kind(), e.grpcCode()));
+            }
+            try {
+                return BranchOutcome.success(unpackStructured(step, generated));
+            } catch (ChainExecutionException e) {
+                throw new BranchFailure(new BranchOutcome(null, e.getMessage(),
+                        FailureKind.CHAIN, null));
+            }
+        }
+        DynamicMessage response;
+        try {
+            response = call(step, channel, (DynamicMessage) value, callMs);
+        } catch (ChainExecutionException e) {
+            throw new BranchFailure(new BranchOutcome(null, e.getMessage(), e.kind(),
+                    e.grpcCode()));
+        }
+        if (step.validate()) {
+            ValidationResult result = ProtoValidator
+                    .forMessageType(step.method().getOutputType()).validate(response);
+            if (!result.valid()) {
+                throw new BranchFailure(new BranchOutcome(null,
+                        "branch response failed validation: " + summary(result),
+                        FailureKind.VALIDATION, null));
+            }
+        }
+        return BranchOutcome.success(response);
+    }
+
+    /** Projects one edge value to its consumer-visible form. */
+    private static Message projectValue(ChainDefinition.Step step,
+                                        com.google.protobuf.Descriptors.Descriptor projectTo,
+                                        Message value, DescriptorRegistry registry)
+            throws ChainExecutionException {
+        try {
+            return ai.pipestream.proto.projection.MessageProjection
+                    .forTarget(projectTo, registry)
+                    .orElseThrow(() -> new ai.pipestream.proto.projection
+                            .ProjectionException("projection target "
+                            + projectTo.getFullName() + " declares no projection sources"))
+                    .project(value);
+        } catch (ai.pipestream.proto.projection.ProjectionException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.EDGE, null,
+                    "edge projection failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** The per-call budget: the step's own deadline nested in the remaining chain budget. */
+    private static long remainingMs(ChainDefinition.Step step, long deadlineNanos)
+            throws ChainExecutionException {
+        long remainingMs = TimeUnit.NANOSECONDS.toMillis(
+                deadlineNanos - System.nanoTime());
+        if (remainingMs <= 0) {
+            throw new ChainExecutionException(step.name(), FailureKind.DEADLINE, null,
+                    "chain deadline exhausted before the step ran", null);
+        }
+        return step.deadlineMs() > 0
+                ? Math.min(step.deadlineMs(), remainingMs)
+                : remainingMs;
+    }
+
+    /** Opens (or reuses) the step's channel after the outbound policy accepts the call. */
+    private ManagedChannel openChannel(ChainDefinition.Step step,
+                                       Map<String, ManagedChannel> open, long callMs)
+            throws ChainExecutionException {
+        try {
+            channels.validateTarget(step);
+            channels.validateDeadline(callMs);
+        } catch (IllegalArgumentException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.CHAIN, null,
+                    "outbound channel policy rejected step: " + e.getMessage(), e);
+        }
+        try {
+            return open.computeIfAbsent(step.target() + (step.tls() ? "+tls" : ""),
+                    key -> channels.open(step));
+        } catch (OutboundChannelPolicyException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.GRPC,
+                    io.grpc.Status.Code.RESOURCE_EXHAUSTED,
+                    "outbound channel policy rejected step: " + e.getMessage(), e);
+        }
+    }
+
+    /** One unary call with the step's budget. */
+    private static DynamicMessage call(ChainDefinition.Step step, ManagedChannel channel,
+                                       DynamicMessage request, long callMs)
+            throws ChainExecutionException {
+        try {
+            return DynamicGrpcCalls.call(channel, step.method(), request,
+                    CallOptions.DEFAULT.withDeadlineAfter(callMs, TimeUnit.MILLISECONDS),
+                    new Metadata(), 1).get(0);
+        } catch (StatusRuntimeException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.GRPC,
+                    e.getStatus().getCode(),
+                    "gRPC " + e.getStatus().getCode() + " from " + step.target()
+                            + ": " + e.getStatus().getDescription(), e);
+        }
+    }
+
+    /** Runs the response's declared validation rules when the step asks for them. */
+    private static void validateResponse(ChainDefinition.Step step, DynamicMessage response)
+            throws ChainExecutionException {
+        if (step.validate()) {
+            ValidationResult result = ProtoValidator
+                    .forMessageType(step.method().getOutputType())
+                    .validate(response);
+            if (!result.valid()) {
+                throw new ChainExecutionException(step.name(), FailureKind.VALIDATION,
+                        null, "response failed validation: " + summary(result), null);
+            }
+        }
+    }
+
+    /** The type a step's response binds under its name, gRPC, structured, or collected. */
     private static com.google.protobuf.Descriptors.Descriptor outputTypeOf(
             ChainDefinition.Step step) {
+        if (step.fanOut() != null) {
+            return step.fanOut().collectType();
+        }
         return step.structured() != null
                 ? step.structured().targetType()
                 : step.method().getOutputType();

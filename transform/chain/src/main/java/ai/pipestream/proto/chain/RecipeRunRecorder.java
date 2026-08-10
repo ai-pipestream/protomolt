@@ -4,7 +4,10 @@ import ai.pipestream.proto.grpc.recipe.ArtifactRepository;
 import ai.pipestream.proto.grpc.recipe.RecipeValidation;
 import ai.pipestream.proto.grpc.recipe.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.recipe.v1.ArtifactReference;
+import ai.pipestream.proto.grpc.recipe.v1.BranchEvidence;
+import ai.pipestream.proto.grpc.recipe.v1.EdgeEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.GrpcRecipe;
+import ai.pipestream.proto.grpc.recipe.v1.RecipeStep;
 import ai.pipestream.proto.grpc.recipe.v1.RunEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.RunStatus;
 import ai.pipestream.proto.grpc.recipe.v1.StepEvidence;
@@ -91,7 +94,7 @@ public final class RecipeRunRecorder {
                 .setCompletedAt(timestamp(completed))
                 .setOutputArtifact(save(output));
         for (Trace trace : traces) {
-            evidence.addSteps(stepEvidence(trace));
+            evidence.addSteps(stepEvidence(trace, recipe));
         }
         RunEvidence built = evidence.build();
         RecipeValidation.validate(built);
@@ -108,9 +111,32 @@ public final class RecipeRunRecorder {
                 .setCompletedAt(timestamp(completed))
                 .setFailureSummary(evidenceSummary(failure));
         for (Trace trace : observer.completed) {
-            evidence.addSteps(stepEvidence(trace));
+            evidence.addSteps(stepEvidence(trace, recipe));
         }
-        if (observer.pending != null) {
+        if (observer.pendingEdge != null) {
+            // A failed edge step: the masked produced message is the request fixture,
+            // and the edge evidence carries the verdict, the counts, and every branch
+            // outcome recorded before the failure - including abandoned branches.
+            EdgeTrace edge = observer.pendingEdge;
+            Trace pending = observer.pending;
+            StepEvidence.Builder step = StepEvidence.newBuilder()
+                    .setStepName(edge.step().name())
+                    .setMethod(method(edge.step()))
+                    .setStatus(StepStatus.STEP_STATUS_FAILED)
+                    .setStartedAt(timestamp(pending != null ? pending.started() : completed))
+                    .setCompletedAt(timestamp(completed))
+                    .setRequestArtifact(save(edge.produced()))
+                    .setGrpcStatusCode(failure.grpcCode() == null
+                            ? io.grpc.Status.Code.UNKNOWN.value()
+                            : failure.grpcCode().value())
+                    .setSummary(evidenceSummary(failure))
+                    .setEdge(edgeEvidence(edge, recipe));
+            if (edge.step().structured() != null && edge.step().fanOut() == null) {
+                step.setStructured(failedStructuredEvidence(edge.step(),
+                        failureAttempts(failure)));
+            }
+            evidence.addSteps(step);
+        } else if (observer.pending != null) {
             Trace pending = observer.pending;
             StepEvidence.Builder step = StepEvidence.newBuilder()
                     .setStepName(pending.step().name())
@@ -173,7 +199,7 @@ public final class RecipeRunRecorder {
         return evidence;
     }
 
-    private StepEvidence stepEvidence(Trace trace) throws IOException {
+    private StepEvidence stepEvidence(Trace trace, GrpcRecipe recipe) throws IOException {
         StepEvidence.Builder step = StepEvidence.newBuilder()
                 .setStepName(trace.step().name())
                 .setMethod(method(trace.step()))
@@ -183,13 +209,53 @@ public final class RecipeRunRecorder {
                 .setCompletedAt(timestamp(trace.completed()))
                 .setGrpcStatusCode(io.grpc.Status.Code.OK.value());
         if (!trace.skipped()) {
-            step.setRequestArtifact(save(trace.request()));
+            // An edge step's request fixture is the edge-produced message (the fan-out
+            // items holder), never the projected or per-branch form; everything else
+            // records what was invoked.
+            step.setRequestArtifact(save(trace.edge() != null
+                    ? trace.edge().produced() : trace.request()));
             step.setResponseArtifact(save(trace.response()));
         }
         if (trace.structured() != null) {
             step.setStructured(structuredEvidence(trace.structured()));
         }
+        if (trace.edge() != null) {
+            step.setEdge(edgeEvidence(trace.edge(), recipe));
+        }
         return step.build();
+    }
+
+    /**
+     * The bounded evidence of one typed edge: the fingerprint binds it to the recipe's
+     * exact edge spec; the verdict, counts, and per-branch outcomes are scalars and
+     * masked artifact references - produced and projected values live only in the
+     * artifacts.
+     */
+    private EdgeEvidence edgeEvidence(EdgeTrace trace, GrpcRecipe recipe) throws IOException {
+        RecipeStep recipeStep = recipe.getStepsList().stream()
+                .filter(s -> s.getName().equals(trace.step().name()))
+                .findFirst()
+                .orElseThrow(() -> new IOException("the compiled recipe has no step '"
+                        + trace.step().name() + "'"));
+        EdgeEvidence.Builder evidence = EdgeEvidence.newBuilder()
+                .setEdgeFingerprint(RecipeValidation.edgeFingerprint(recipeStep))
+                .setValidationPassed(trace.validationPassed())
+                .setSourceCount(trace.sourceCount())
+                .setItemCount(trace.itemCount());
+        for (BranchRecord branch : trace.branches()) {
+            BranchEvidence.Builder branchEvidence = BranchEvidence.newBuilder()
+                    .setBranchId(branch.branchId())
+                    .setStatus(branch.response() != null
+                            ? StepStatus.STEP_STATUS_SUCCEEDED
+                            : StepStatus.STEP_STATUS_FAILED);
+            if (branch.response() != null) {
+                branchEvidence.setResponseArtifact(save(branch.response()));
+            } else {
+                branchEvidence.setSummary(bounded(branch.summary()));
+            }
+            evidence.addBranches(branchEvidence.build());
+        }
+        return evidence.build();
     }
 
     /**
@@ -303,17 +369,32 @@ public final class RecipeRunRecorder {
     private record Trace(ChainDefinition.Step step, Message request,
                          Message response, boolean skipped,
                          Instant started, Instant completed,
-                         GenerateStructuredResponse structured) {
+                         GenerateStructuredResponse structured, EdgeTrace edge) {
+    }
+
+    /**
+     * One step's recorded edge evaluation: the produced (pre-projection) message, the
+     * validation verdict, the declared source count, the fan-out cardinality, and the
+     * per-branch outcomes in index order.
+     */
+    private record EdgeTrace(ChainDefinition.Step step, DynamicMessage produced,
+                             boolean validationPassed, int sourceCount, int itemCount,
+                             List<BranchRecord> branches) {
+    }
+
+    /** One recorded branch outcome; {@code response} is null on failure. */
+    private record BranchRecord(String branchId, Message response, String summary) {
     }
 
     private static final class RecordingObserver implements ChainRunner.ExecutionObserver {
         private final List<Trace> completed = new ArrayList<>();
         private Trace pending;
+        private EdgeTrace pendingEdge;
 
         @Override
         public void stepStarted(ChainDefinition.Step step, DynamicMessage request,
                                 Instant startedAt) {
-            pending = new Trace(step, request, null, false, startedAt, null, null);
+            pending = new Trace(step, request, null, false, startedAt, null, null, null);
         }
 
         @Override
@@ -321,15 +402,14 @@ public final class RecipeRunRecorder {
                                   DynamicMessage response, boolean skipped,
                                   Instant startedAt, Instant completedAt) {
             completed.add(new Trace(step, request, response, skipped, startedAt,
-                    completedAt, null));
-            pending = null;
+                    completedAt, null, takeEdge(step)));
         }
 
         @Override
         public void structuredStepStarted(ChainDefinition.Step step,
                                           GenerateStructuredRequest request,
                                           Instant startedAt) {
-            pending = new Trace(step, request, null, false, startedAt, null, null);
+            pending = new Trace(step, request, null, false, startedAt, null, null, null);
         }
 
         @Override
@@ -339,8 +419,37 @@ public final class RecipeRunRecorder {
                                             GenerateStructuredResponse structuredResponse,
                                             Instant startedAt, Instant completedAt) {
             completed.add(new Trace(step, request, output, false, startedAt, completedAt,
-                    structuredResponse));
+                    structuredResponse, takeEdge(step)));
+        }
+
+        @Override
+        public void edgeEvaluated(ChainDefinition.Step step, DynamicMessage produced,
+                                  boolean validationPassed, int sourceCount,
+                                  int itemCount) {
+            pendingEdge = new EdgeTrace(step, produced, validationPassed, sourceCount,
+                    itemCount, new ArrayList<>());
+        }
+
+        @Override
+        public void branchCompleted(ChainDefinition.Step step, String branchId,
+                                    int branchIndex, Message response,
+                                    String failureSummary) {
+            if (pendingEdge != null && pendingEdge.step().name().equals(step.name())) {
+                pendingEdge.branches().add(
+                        new BranchRecord(branchId, response, failureSummary));
+            }
+        }
+
+        /** The step's recorded edge evaluation, snapshot so later steps cannot mutate it. */
+        private EdgeTrace takeEdge(ChainDefinition.Step step) {
             pending = null;
+            if (pendingEdge == null || !pendingEdge.step().name().equals(step.name())) {
+                return null;
+            }
+            EdgeTrace edge = pendingEdge;
+            pendingEdge = null;
+            return new EdgeTrace(edge.step(), edge.produced(), edge.validationPassed(),
+                    edge.sourceCount(), edge.itemCount(), List.copyOf(edge.branches()));
         }
     }
 }
