@@ -7,6 +7,10 @@ description = 'Descriptor-grounded gRPC recipe, artifact, and run-evidence contr
 dependencies {
     api libs.protobuf.java
     api project(':protomolt-grpc-service-profile')
+    // Persisted recipe/evidence fields carry the house validation and
+    // sensitivity metadata options.
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
     // The recipe contract names inference.v1 Usage, AttemptOutcome, and
     // FinishReason in the structured-generation evidence.
     api project(':protomolt-inference-proto')

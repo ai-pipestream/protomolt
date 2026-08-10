@@ -17,6 +17,8 @@ import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec;
 import ai.pipestream.proto.grpc.recipe.v1.VersionedRecipe;
 import ai.pipestream.proto.inference.v1.AttemptOutcome;
+import ai.pipestream.proto.inference.v1.FinishReason;
+import ai.pipestream.proto.inference.v1.Usage;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
 
@@ -36,6 +38,8 @@ public final class RecipeValidation {
     private static final int MAX_RULES = 1_024;
     /** Maximum catalog model id length on a structured-generation step. */
     public static final int MAX_MODEL_LENGTH = 256;
+    private static final int MAX_PROVIDER_LENGTH = 128;
+    private static final int MAX_MODEL_VERSION_LENGTH = 512;
     /** Hard attempt ceiling of the structured-generation coordinator. */
     public static final int MAX_STRUCTURED_ATTEMPTS = 3;
     /** Maximum diagnostic or provenance text retained in one recipe record. */
@@ -255,11 +259,19 @@ public final class RecipeValidation {
 
     private static void validateStructuredEvidence(StructuredGenerationEvidence evidence,
                                                    StepStatus status) {
+        require(status != StepStatus.STEP_STATUS_SKIPPED,
+                "structured_evidence cannot be attached to a skipped step");
         validateType(evidence.getTargetType(), "structured_evidence.target_type");
         require(!evidence.getModel().isBlank()
                         && evidence.getModel().length() <= MAX_MODEL_LENGTH,
                 "structured_evidence.model must be non-blank and at most "
                         + MAX_MODEL_LENGTH + " characters");
+        require(evidence.getProvider().length() <= MAX_PROVIDER_LENGTH,
+                "structured_evidence.provider must be at most "
+                        + MAX_PROVIDER_LENGTH + " characters");
+        require(evidence.getModelVersion().length() <= MAX_MODEL_VERSION_LENGTH,
+                "structured_evidence.model_version must be at most "
+                        + MAX_MODEL_VERSION_LENGTH + " characters");
         validateFingerprint(evidence.getPromptFingerprint(),
                 "structured_evidence.prompt_fingerprint");
         validateFingerprint(evidence.getSchemaFingerprint(),
@@ -269,6 +281,12 @@ public final class RecipeValidation {
         require(evidence.getAttemptsCount() <= MAX_STRUCTURED_ATTEMPTS,
                 "structured_evidence.attempts exceeds the maximum of "
                         + MAX_STRUCTURED_ATTEMPTS);
+        require(evidence.getAttemptsCount() > 0
+                        || status == StepStatus.STEP_STATUS_FAILED
+                        || status == StepStatus.STEP_STATUS_CANCELLED,
+                "empty structured_evidence.attempts is allowed only on a failed "
+                        + "or cancelled pre-invocation step");
+        validateUsage(evidence.getTotalUsage(), "structured_evidence.total_usage");
         long promptTokens = 0;
         long completionTokens = 0;
         for (int i = 0; i < evidence.getAttemptsCount(); i++) {
@@ -277,15 +295,37 @@ public final class RecipeValidation {
                     "structured_evidence.attempts must be sequentially numbered "
                             + "from 1; entry " + i + " claims attempt "
                             + attempt.getAttempt());
-            require(attempt.getOutcome() != AttemptOutcome.ATTEMPT_OUTCOME_UNSPECIFIED,
+            AttemptOutcome outcome = attempt.getOutcome();
+            require(outcome != AttemptOutcome.ATTEMPT_OUTCOME_UNSPECIFIED
+                            && outcome != AttemptOutcome.UNRECOGNIZED,
                     "structured_evidence.attempts outcomes must be defined");
-            promptTokens += attempt.getUsage().getPromptTokens();
-            completionTokens += attempt.getUsage().getCompletionTokens();
+            require(attempt.getFinishReason() != FinishReason.UNRECOGNIZED,
+                    "structured_evidence.attempts finish reasons must be defined values");
+            validateUsage(attempt.getUsage(),
+                    "structured_evidence.attempts[" + i + "].usage");
+            require(i == evidence.getAttemptsCount() - 1
+                            || outcome != AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED,
+                    "only the last structured_evidence attempt may be SUCCEEDED");
+            require(status == StepStatus.STEP_STATUS_SUCCEEDED
+                            || outcome != AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED,
+                    "a failed or cancelled structured step cannot record a "
+                            + "SUCCEEDED attempt");
+            try {
+                promptTokens = Math.addExact(promptTokens,
+                        attempt.getUsage().getPromptTokens());
+                completionTokens = Math.addExact(completionTokens,
+                        attempt.getUsage().getCompletionTokens());
+            } catch (ArithmeticException overflow) {
+                throw new IllegalArgumentException(
+                        "structured_evidence attempt usage sum overflows int64", overflow);
+            }
         }
         require(evidence.getTotalUsage().getPromptTokens() == promptTokens
                         && evidence.getTotalUsage().getCompletionTokens() == completionTokens,
                 "structured_evidence.total_usage must equal the sum of per-attempt usage");
         if (status == StepStatus.STEP_STATUS_SUCCEEDED) {
+            require(!evidence.getProvider().isBlank(),
+                    "a succeeded structured step records a provider");
             require(evidence.getAttemptsCount() > 0,
                     "a succeeded structured step records at least one attempt");
             require(evidence.getAttempts(evidence.getAttemptsCount() - 1).getOutcome()
@@ -293,7 +333,17 @@ public final class RecipeValidation {
                     "a succeeded structured step's last attempt must be SUCCEEDED");
             require(evidence.getValidationPassed(),
                     "a succeeded structured step records validation_passed true");
+        } else {
+            require(!evidence.getValidationPassed(),
+                    "a failed or cancelled structured step records validation_passed false");
         }
+    }
+
+    private static void validateUsage(Usage usage, String field) {
+        require(usage.getPromptTokens() >= 0,
+                field + ".prompt_tokens must not be negative");
+        require(usage.getCompletionTokens() >= 0,
+                field + ".completion_tokens must not be negative");
     }
 
     private static void validateCelRules(Iterable<CelMappingRule> rules, String field) {

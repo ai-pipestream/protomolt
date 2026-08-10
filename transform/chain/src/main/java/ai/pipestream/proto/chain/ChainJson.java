@@ -61,6 +61,45 @@ public final class ChainJson {
             if (name == null) {
                 throw new ChainParseException("", "each step needs a 'name'");
             }
+            JsonNode structuredNode = step.get("structured");
+            if (structuredNode != null) {
+                if (!(structuredNode instanceof ObjectNode structured)) {
+                    throw new ChainParseException(name,
+                            "'structured' must be an object");
+                }
+                if (step.has("target") || step.has("method") || step.has("tls")) {
+                    throw new ChainParseException(name,
+                            "a structured step must not declare target, method, or tls");
+                }
+                String targetTypeName = text(structured, "targetType");
+                String model = text(structured, "model");
+                if (targetTypeName == null || model == null) {
+                    throw new ChainParseException(name,
+                            "a structured step needs 'targetType' and 'model'");
+                }
+                JsonNode attemptsNode = structured.get("maxAttempts");
+                if (attemptsNode != null && (!attemptsNode.isIntegralNumber()
+                        || !attemptsNode.canConvertToInt())) {
+                    throw new ChainParseException(name,
+                            "structured.maxAttempts must be a 32-bit integer");
+                }
+                Descriptor targetType;
+                try {
+                    targetType = schema.message(targetTypeName,
+                            "/chain/steps/" + name + "/structured/targetType");
+                } catch (ActionException e) {
+                    throw new ChainParseException(name, e.getMessage());
+                }
+                steps.add(new ChainDefinition.Step(name,
+                        ChainDefinition.Step.STRUCTURED_DEPENDENCY, false, null,
+                        text(step, "when"), strings(step.get("rules")),
+                        celRules(step.get("celRules"), name),
+                        step.path("validate").asBoolean(false),
+                        step.path("deadlineMs").asLong(0), text(step, "completion"),
+                        new ChainDefinition.StructuredSpec(targetType, model,
+                                attemptsNode == null ? 0 : attemptsNode.intValue())));
+                continue;
+            }
             String target = text(step, "target");
             String method = text(step, "method");
             if (target == null || method == null) {

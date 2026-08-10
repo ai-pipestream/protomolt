@@ -45,13 +45,14 @@ class StructuredGeneratorTest {
     private static final String VALID_FORM_JSON = "{\"name\": \"Ada Lovelace\", \"age\": 36}";
 
     private ScriptedProvider provider;
+    private InferenceEngines engines;
     private StructuredGenerator generator;
 
     @BeforeEach
     void setUp() {
         provider = new ScriptedProvider();
         InferenceCatalog catalog = new InferenceCatalog();
-        InferenceEngines engines = new InferenceEngines(catalog, List.of(provider));
+        engines = new InferenceEngines(catalog, List.of(provider));
         engines.register(entry(STRUCTURED_MODEL, true));
         engines.register(entry(TEXT_ONLY_MODEL, false));
 
@@ -59,6 +60,29 @@ class StructuredGeneratorTest {
         descriptors.register(TestForm.getDescriptor());
 
         generator = new StructuredGenerator(engines, descriptors);
+    }
+
+    @Test
+    void explicitlyResolvedDescriptorDoesNotNeedTheSharedRegistry() {
+        provider.script(VALID_FORM_JSON);
+        StructuredGenerator actionScoped = new StructuredGenerator(
+                engines, new DescriptorRegistry());
+
+        GenerateStructuredResponse response = actionScoped.generate(
+                request(STRUCTURED_MODEL).build(), TestForm.getDescriptor());
+
+        assertThat(response.getTargetType()).isEqualTo(TARGET_TYPE);
+        assertThat(provider.invocations()).isEqualTo(1);
+    }
+
+    @Test
+    void explicitlyResolvedDescriptorMustMatchTheRequest() {
+        assertThatThrownBy(() -> generator.generate(
+                request(STRUCTURED_MODEL).setTargetType("example.v1.Other").build(),
+                TestForm.getDescriptor()))
+                .isInstanceOf(StructuredGenerationException.class)
+                .hasMessageContaining("does not match request target");
+        assertThat(provider.invocations()).isZero();
     }
 
     @Test

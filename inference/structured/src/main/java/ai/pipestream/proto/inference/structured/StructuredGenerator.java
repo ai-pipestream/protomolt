@@ -107,17 +107,9 @@ public final class StructuredGenerator {
      *     exhaustion of the attempt budget
      */
     public GenerateStructuredResponse generate(GenerateStructuredRequest request) {
-        Objects.requireNonNull(request, "request");
+        validateRequest(request);
         String model = request.getModel();
         String targetType = request.getTargetType();
-
-        ValidationResult requestResult = validator.validate(request);
-        if (!requestResult.valid()) {
-            throw new StructuredGenerationException(
-                    "invalid structured-generation request: " + formatViolations(requestResult),
-                    model, targetType, List.of());
-        }
-
         Descriptor descriptor = descriptors.findDescriptorByFullName(targetType);
         if (descriptor == null) {
             throw new StructuredGenerationException(
@@ -125,6 +117,48 @@ public final class StructuredGenerator {
                             + "': not registered in the descriptor registry",
                     model, targetType, List.of());
         }
+        return generateResolved(request, descriptor);
+    }
+
+    /**
+     * Fills an explicitly resolved target descriptor. Chain and recipe callers use
+     * this overload because inline schemas are deliberately scoped to one action and
+     * are not installed into the host's shared descriptor registry.
+     *
+     * @param request the validated structured-generation request
+     * @param descriptor the exact target descriptor resolved with the chain
+     * @return the validated, packed form with attempt history and provenance
+     * @throws StructuredGenerationException when the request target and descriptor
+     *     disagree, or generation otherwise fails
+     */
+    public GenerateStructuredResponse generate(GenerateStructuredRequest request,
+                                                Descriptor descriptor) {
+        validateRequest(request);
+        Objects.requireNonNull(descriptor, "descriptor");
+        if (!request.getTargetType().equals(descriptor.getFullName())) {
+            throw new StructuredGenerationException(
+                    "resolved target descriptor '" + descriptor.getFullName()
+                            + "' does not match request target '"
+                            + request.getTargetType() + "'",
+                    request.getModel(), request.getTargetType(), List.of());
+        }
+        return generateResolved(request, descriptor);
+    }
+
+    private void validateRequest(GenerateStructuredRequest request) {
+        Objects.requireNonNull(request, "request");
+        ValidationResult requestResult = validator.validate(request);
+        if (!requestResult.valid()) {
+            throw new StructuredGenerationException(
+                    "invalid structured-generation request: " + formatViolations(requestResult),
+                    request.getModel(), request.getTargetType(), List.of());
+        }
+    }
+
+    private GenerateStructuredResponse generateResolved(GenerateStructuredRequest request,
+                                                         Descriptor descriptor) {
+        String model = request.getModel();
+        String targetType = request.getTargetType();
 
         ModelEntry entry = describeModel(request);
         if (!entry.getCapabilities().getStructuredOutput()) {

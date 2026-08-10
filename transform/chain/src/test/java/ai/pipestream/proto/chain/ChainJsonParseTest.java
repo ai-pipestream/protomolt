@@ -85,6 +85,70 @@ class ChainJsonParseTest {
     }
 
     @Test
+    void aStructuredStepParsesFromTheAgentFacingJsonShape() throws Exception {
+        ObjectNode chain = chain();
+        ObjectNode step = firstStep(chain);
+        step.remove("target");
+        step.remove("method");
+        step.remove("rules");
+        step.putObject("structured")
+                .put("targetType", "chain.test.Embedding")
+                .put("model", "structured-model")
+                .put("maxAttempts", 2);
+
+        ChainDefinition parsed = ChainJson.parse(chain, context);
+
+        assertThat(parsed.steps().getFirst().method()).isNull();
+        assertThat(parsed.steps().getFirst().structured().targetType().getFullName())
+                .isEqualTo("chain.test.Embedding");
+        assertThat(parsed.steps().getFirst().structured().model())
+                .isEqualTo("structured-model");
+        assertThat(parsed.steps().getFirst().structured().maxAttempts()).isEqualTo(2);
+        assertThat(new ChainVerifier().verify(parsed)).isEmpty();
+    }
+
+    @Test
+    void malformedOrMixedStructuredStepsAreAttributedToTheStep() {
+        ObjectNode mixed = chain();
+        firstStep(mixed).putObject("structured")
+                .put("targetType", "chain.test.Embedding")
+                .put("model", "structured-model");
+        assertThat(failure(mixed).step).isEqualTo("tokenize");
+        assertThat(failure(mixed).getMessage())
+                .contains("must not declare target, method, or tls");
+
+        ObjectNode missingModel = chain();
+        ObjectNode step = firstStep(missingModel);
+        step.remove("target");
+        step.remove("method");
+        step.putObject("structured").put("targetType", "chain.test.Embedding");
+        assertThat(failure(missingModel).getMessage())
+                .contains("needs 'targetType' and 'model'");
+
+        ObjectNode nonIntegralAttempts = chain();
+        ObjectNode structuredStep = firstStep(nonIntegralAttempts);
+        structuredStep.remove("target");
+        structuredStep.remove("method");
+        structuredStep.putObject("structured")
+                .put("targetType", "chain.test.Embedding")
+                .put("model", "structured-model")
+                .put("maxAttempts", "three");
+        assertThat(failure(nonIntegralAttempts).getMessage())
+                .contains("maxAttempts must be a 32-bit integer");
+
+        ObjectNode overflowingAttempts = chain();
+        ObjectNode overflowingStep = firstStep(overflowingAttempts);
+        overflowingStep.remove("target");
+        overflowingStep.remove("method");
+        overflowingStep.putObject("structured")
+                .put("targetType", "chain.test.Embedding")
+                .put("model", "structured-model")
+                .put("maxAttempts", 4_294_967_296L);
+        assertThat(failure(overflowingAttempts).getMessage())
+                .contains("maxAttempts must be a 32-bit integer");
+    }
+
+    @Test
     void anUnresolvableSchemaIsAChainLevelFailure() {
         ObjectNode chain = chain();
         chain.putObject("schema");

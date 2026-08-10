@@ -105,6 +105,15 @@ class ChainDefinitionTest {
     }
 
     @Test
+    void theOriginalGrpcStepConstructorRemainsCompatible() {
+        ChainDefinition.Step existing = new ChainDefinition.Step("s", "t", false,
+                tokenize(), null, List.of(), List.of(), false, 0, "");
+
+        assertThat(existing.method()).isEqualTo(tokenize());
+        assertThat(existing.structured()).isNull();
+    }
+
+    @Test
     void aNullCompletionMeansInvokeAndOnlyExternalParks() {
         ChainDefinition.Step invoke = ChainDefinition.Step.grpc("s", "t", false, tokenize(),
                 null, List.of(), List.of(), false, 0, null);
