@@ -22,8 +22,9 @@ import java.util.Set;
  * name (lowercased, underscores stripped, so snake and camel spellings meet) is equal, either
  * directly on a source or one message level down. Type agreement is required before a
  * candidate is even offered to the checker: identical field types, identical repeated shape,
- * and identical message type for message fields. Map fields and {@code Struct}/{@code Any}
- * wildcards are never suggested — a suggestion must stay verifiable.</p>
+ * and identical message type for message fields. Map fields and the dynamic
+ * {@code Struct}/{@code Value}/{@code Any} well-known types are never suggested — a
+ * suggestion must stay verifiable.</p>
  */
 public final class MappingSuggester {
 
@@ -54,6 +55,9 @@ public final class MappingSuggester {
     public static Suggestions suggest(Map<String, Descriptor> sources, Descriptor target) {
         Objects.requireNonNull(sources, "sources");
         Objects.requireNonNull(target, "target");
+        if (isWildcard(target)) {
+            return new Suggestions(target.getFullName(), List.of());
+        }
         List<Candidate> candidates = new ArrayList<>();
         for (FieldDescriptor field : target.getFields()) {
             candidates.addAll(candidatesFor(sources, field));
@@ -82,6 +86,9 @@ public final class MappingSuggester {
         List<Candidate> candidates = new ArrayList<>();
         String wanted = normalize(target.getName());
         for (Map.Entry<String, Descriptor> source : sources.entrySet()) {
+            if (isWildcard(source.getValue())) {
+                continue;
+            }
             String scope = source.getKey();
             for (FieldDescriptor field : source.getValue().getFields()) {
                 if (normalize(field.getName()).equals(wanted) && compatible(field, target)) {
@@ -103,6 +110,7 @@ public final class MappingSuggester {
                                           Set<String> visiting) {
         if (holder.isRepeated() || holder.isMapField()
                 || holder.getJavaType() != FieldDescriptor.JavaType.MESSAGE
+                || isWildcard(holder.getMessageType())
                 || !visiting.add(holder.getMessageType().getFullName())) {
             return List.of();
         }
@@ -119,8 +127,9 @@ public final class MappingSuggester {
 
     /**
      * Conservative type agreement: identical field type and repeated shape, and for message
-     * fields the identical message type. Wildcard targets ({@code Struct}, {@code Any}) and
-     * map fields are excluded — absorbing anything is the opposite of a grounded suggestion.
+     * fields the identical message type. Dynamic well-known types ({@code Struct},
+     * {@code Value}, {@code Any}) and map fields are excluded — absorbing anything is the
+     * opposite of a grounded suggestion.
      */
     private static boolean compatible(FieldDescriptor source, FieldDescriptor target) {
         if (source.isMapField() || target.isMapField()
@@ -129,13 +138,25 @@ public final class MappingSuggester {
             return false;
         }
         if (source.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-            String type = target.getMessageType().getFullName();
-            if (type.equals("google.protobuf.Struct") || type.equals("google.protobuf.Any")) {
+            if (isWildcard(source.getMessageType()) || isWildcard(target.getMessageType())) {
                 return false;
             }
-            return source.getMessageType().getFullName().equals(type);
+            return source.getMessageType().getFullName()
+                    .equals(target.getMessageType().getFullName());
+        }
+        if (source.getJavaType() == FieldDescriptor.JavaType.ENUM) {
+            return source.getEnumType().getFullName()
+                    .equals(target.getEnumType().getFullName());
         }
         return true;
+    }
+
+    /** Dynamic well-known types do not have statically verifiable field paths. */
+    private static boolean isWildcard(Descriptor descriptor) {
+        return switch (descriptor.getFullName()) {
+            case "google.protobuf.Struct", "google.protobuf.Value", "google.protobuf.Any" -> true;
+            default -> false;
+        };
     }
 
     /** Exact spelling beats a normalized spelling beats a nested find. */

@@ -4,6 +4,8 @@ import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Any;
+import com.google.protobuf.Value;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +24,10 @@ class MappingSuggesterTest {
     private static final String PROTO = """
             syntax = "proto3";
             package suggest.test;
+            import "google/protobuf/any.proto";
+            import "google/protobuf/struct.proto";
+            enum OrderState { ORDER_STATE_UNSPECIFIED = 0; ORDER_STATE_READY = 1; }
+            enum TicketState { TICKET_STATE_UNSPECIFIED = 0; TICKET_STATE_READY = 1; }
             message Order {
               string id = 1;
               int64 qty = 2;
@@ -29,6 +35,7 @@ class MappingSuggesterTest {
               Address ship_to = 4;
               map<string, string> attrs = 5;
               int32 priority = 6;
+              OrderState state = 7;
             }
             message Address {
               string city = 1;
@@ -48,12 +55,23 @@ class MappingSuggesterTest {
               string attrs = 7;
               int64 priority = 8;
               bool priority_flag = 9;
+              TicketState state = 10;
+            }
+            message WildcardHolder {
+              google.protobuf.Any envelope = 1;
+              google.protobuf.Value dynamic = 2;
+            }
+            message WildcardTarget {
+              string type_url = 1;
+              string string_value = 2;
             }
             """;
 
     private static Descriptor order;
     private static Descriptor customer;
     private static Descriptor ticket;
+    private static Descriptor wildcardHolder;
+    private static Descriptor wildcardTarget;
 
     @BeforeAll
     static void compile() throws Exception {
@@ -63,6 +81,8 @@ class MappingSuggesterTest {
         order = file.findMessageTypeByName("Order");
         customer = file.findMessageTypeByName("Customer");
         ticket = file.findMessageTypeByName("Ticket");
+        wildcardHolder = file.findMessageTypeByName("WildcardHolder");
+        wildcardTarget = file.findMessageTypeByName("WildcardTarget");
     }
 
     private static Map<String, Descriptor> sources() {
@@ -155,5 +175,23 @@ class MappingSuggesterTest {
         assertThat(suggestions.rules()).isNotEmpty();
         assertThat(new RuleChecker().checkScoped(sources(), ticket,
                 suggestions.rules(), List.of(), List.of())).isEmpty();
+    }
+
+    @Test
+    void differentEnumTypesAreNeverSuggested() {
+        MappingSuggester.Suggestions suggestions =
+                MappingSuggester.suggest(Map.of("order", order), ticket);
+
+        assertThat(forField(suggestions, "state")).isEmpty();
+    }
+
+    @Test
+    void wildcardRootsAndNestedHoldersAreNeverSuggested() {
+        assertThat(MappingSuggester.suggest(
+                Map.of("wild", wildcardHolder), wildcardTarget).candidates()).isEmpty();
+        assertThat(MappingSuggester.suggest(
+                Map.of("any", Any.getDescriptor()), wildcardTarget).candidates()).isEmpty();
+        assertThat(MappingSuggester.suggest(
+                Map.of("target", wildcardTarget), Value.getDescriptor()).candidates()).isEmpty();
     }
 }
