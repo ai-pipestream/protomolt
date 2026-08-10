@@ -166,9 +166,11 @@ public final class RunChainAction implements ProtoAction {
         chain.put("type", "object");
         chain.put("description", "The chain definition: a schema declaring every step's "
                 + "service, an inputType, and serial steps whose requests are mapped from "
-                + "'input' plus prior steps' responses (by step name). Steps: {name, "
+                + "'input' plus prior steps' responses (by step name). gRPC steps: {name, "
                 + "target, method, tls?, when? (bool CEL gate), rules?, celRules?, "
-                + "validate?, deadlineMs?}. Optional output: {type, rules, celRules}; "
+                + "validate?, deadlineMs?}. Structured steps: {name, structured: "
+                + "{targetType, model, maxAttempts?}}. Optional output: "
+                + "{type, rules, celRules}; "
                 + "without it the last response returns.");
         return chain;
     }

@@ -13,9 +13,15 @@ import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec;
 import ai.pipestream.proto.inference.v1.AttemptOutcome;
 import ai.pipestream.proto.inference.v1.FinishReason;
 import ai.pipestream.proto.inference.v1.Usage;
+import ai.pipestream.proto.meta.DescriptorMetadata;
+import ai.pipestream.proto.validate.ProtoValidator;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Duration;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -280,5 +286,65 @@ class StructuredRecipeValidationTest {
                         .build())
                 .build();
         assertThatCode(() -> RecipeValidation.validate(failedStep)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void persistedStructuredFieldsCarryValidationAndSensitivityMetadata() {
+        for (Descriptor descriptor : List.of(
+                StructuredGenerationSpec.getDescriptor(),
+                StructuredGenerationEvidence.getDescriptor(),
+                StructuredAttemptEvidence.getDescriptor())) {
+            assertThat(DescriptorMetadata.message(descriptor)).isPresent()
+                    .get().extracting(meta -> meta.getSensitivity())
+                    .isEqualTo("internal");
+            assertThat(descriptor.getFields()).allSatisfy(field ->
+                    assertThat(DescriptorMetadata.field(field)).isPresent()
+                            .get().extracting(meta -> meta.getSensitivity())
+                            .isEqualTo("internal"));
+        }
+
+        var invalid = ProtoValidator.create().validate(StructuredGenerationSpec.newBuilder()
+                .setTargetType("not a type")
+                .setModel("m".repeat(257))
+                .setMaxAttempts(4)
+                .build());
+        assertThat(invalid.valid()).isFalse();
+        assertThat(invalid.violations()).extracting(v -> v.path())
+                .contains("target_type", "model", "max_attempts");
+    }
+
+    @Test
+    void rejectsNegativeOverflowingAndImpossibleAttemptEvidence() {
+        GrpcRecipe recipe = structuredRecipe().build();
+
+        assertThatThrownBy(() -> RecipeValidation.validate(runEvidence(recipe,
+                evidence().setAttempts(0, attempt(1,
+                        AttemptOutcome.ATTEMPT_OUTCOME_PARSE_FAILED, -1, 5))
+                        .setTotalUsage(Usage.newBuilder()
+                                .setPromptTokens(-1).setCompletionTokens(10))
+                        .build()).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be negative");
+
+        assertThatThrownBy(() -> RecipeValidation.validate(runEvidence(recipe,
+                evidence()
+                        .setAttempts(0, attempt(1,
+                                AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED, 10, 5))
+                        .build()).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("only the last");
+
+        StructuredAttemptEvidence huge = attempt(1,
+                AttemptOutcome.ATTEMPT_OUTCOME_PARSE_FAILED, Long.MAX_VALUE, 5);
+        assertThatThrownBy(() -> RecipeValidation.validate(runEvidence(recipe,
+                evidence()
+                        .setAttempts(0, huge)
+                        .setAttempts(1, attempt(2,
+                                AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED, 1, 5))
+                        .setTotalUsage(Usage.newBuilder()
+                                .setPromptTokens(Long.MAX_VALUE).setCompletionTokens(10))
+                        .build()).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("overflows int64");
     }
 }

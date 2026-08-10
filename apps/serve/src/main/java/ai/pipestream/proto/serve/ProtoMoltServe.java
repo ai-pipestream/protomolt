@@ -19,6 +19,7 @@ import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
 import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
 import ai.pipestream.proto.inference.spi.InferenceCatalog;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
+import ai.pipestream.proto.inference.structured.StructuredGenerator;
 import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
@@ -385,7 +386,7 @@ public final class ProtoMoltServe implements AutoCloseable {
      * looking runnable.
      */
     static InferenceEngines inferenceEngines(java.util.List<String> specs) {
-        if (specs.isEmpty()) {
+        if (specs == null || specs.isEmpty()) {
             return null;
         }
         InferenceCatalog catalog = new InferenceCatalog();
@@ -494,6 +495,9 @@ public final class ProtoMoltServe implements AutoCloseable {
         RunEvidenceRepository runEvidence = null;
         OutboundChannelPolicy outboundPolicy = options.outboundPolicy();
         try {
+            InferenceEngines inference = inferenceEngines(options.inferenceModels());
+            StructuredGenerator structured = inference == null
+                    ? null : new StructuredGenerator(inference, context.registry());
             Path registryGit = options.registryGit();
             if (registryGit == null && options.demo()) {
                 // Demo mode always has a registry; an unnamed one lives in a temp directory.
@@ -555,7 +559,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                         jobs.workers(), null, null, 0, 0, jobs.targetConcurrency(),
                         requestTopic, null, jobs.kafkaBootstrap(), null);
                 jobsWorker = new ChainJobWorker(jobStore, context, chains,
-                        new ChainRunner(outboundPolicy),
+                        new ChainRunner(outboundPolicy, structured),
                         jobsConfig);
                 if (jobs.kafkaBootstrap() != null) {
                     jobsRelay = new ChainJobEventRelay(jobStore,
@@ -567,14 +571,14 @@ public final class ProtoMoltServe implements AutoCloseable {
                 // the jobs verbs serve the live job rows.
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         chains, jobStore, jobsConfig.maxAttemptsDefault(),
-                        inferenceEngines(options.inferenceModels()), serviceProfiles,
+                        inference, serviceProfiles,
                         outboundPolicy, artifacts, runEvidence, recipes);
                 return startWithJobsCatalog(options, context, catalog, store, chains,
                         serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
             }
             // The catalog sees the store so run-chain resolves stored chain names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                    chains, null, 0, inferenceEngines(options.inferenceModels()), serviceProfiles,
+                    chains, null, 0, inference, serviceProfiles,
                     outboundPolicy, artifacts, runEvidence, recipes);
             return startWithJobsCatalog(options, context, catalog, store, chains,
                     serviceProfiles, null, null, null);

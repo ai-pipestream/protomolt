@@ -4,6 +4,8 @@ package ai.pipestream.proto.grpc.recipe.v1;
 
 import "ai/pipestream/proto/inference/v1/inference.proto";
 import "ai/pipestream/proto/inference/v1/structured.proto";
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -68,19 +70,41 @@ message RecipeStep {
   // (the coordinator always validates its typed output). The step still
   // names a declared dependency, which anchors the descriptor set the
   // target type resolves against; replay fingerprint-checks that anchor.
-  StructuredGenerationSpec structured = 10;
+  StructuredGenerationSpec structured = 10 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
 // A structured-generation recipe step: fill one message type with one model.
 message StructuredGenerationSpec {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "A structured-generation recipe step: target protobuf type, catalog model, and bounded attempts."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
   // Fully qualified message type the step fills; must resolve in the
   // dependency's descriptor set.
-  string target_type = 1;
+  string target_type = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Catalog model id; must declare the structured-output capability.
   // Bounded to 256 characters by RecipeValidation.
-  string model = 2;
+  string model = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 256}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Attempt cap; 0 applies the coordinator default. Never exceeds 3.
-  int32 max_attempts = 3;
+  int32 max_attempts = 3 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 0
+      lte: 3
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // A CEL mapping rule with an explicit destination field path.
@@ -195,50 +219,110 @@ message StepEvidence {
   // the SHA-256 fingerprint of the response JSON Schema, and the response
   // evidence is the sensitivity-masked typed message in the step's response
   // artifact. An empty method is allowed exactly when this is present.
-  StructuredGenerationEvidence structured = 10;
+  StructuredGenerationEvidence structured = 10 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
 // Bounded structured-generation provenance for one recipe step. Every field
 // is a scalar, an enum, a fingerprint, or token accounting: no model output
 // text and no feedback text is ever recorded here.
 message StructuredGenerationEvidence {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Bounded structured-generation provenance without raw model output or retry feedback."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
   // The message type that was filled; echoes the step's specification.
-  string target_type = 1;
+  string target_type = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // The catalog model id that produced the final attempt.
-  string model = 2;
+  string model = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 256}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // The SPI provider that executed the final attempt.
-  string provider = 3;
+  string provider = 3 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 128,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // The provider-reported model version or digest; empty when the provider
   // does not report one.
-  string model_version = 4;
+  string model_version = 4 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 512,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Lowercase SHA-256 hex of the rendered instructions the model was
   // briefed with. The instructions themselves are never persisted.
-  string prompt_fingerprint = 5;
+  string prompt_fingerprint = 5 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Lowercase SHA-256 hex of the response JSON Schema the model was
   // constrained with. The schema itself is never persisted.
-  string schema_fingerprint = 6;
+  string schema_fingerprint = 6 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Whether the final typed output re-validated clean against the target
   // type's declared rules.
-  bool validation_passed = 7;
+  bool validation_passed = 7 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // Token accounting summed across all attempts.
-  ai.pipestream.proto.inference.v1.Usage total_usage = 8;
+  ai.pipestream.proto.inference.v1.Usage total_usage = 8 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Every recorded attempt, oldest first; 1 to 3 entries on a succeeded
   // step, empty only when the step failed before the first model
   // invocation. Attempts carry scalars only - never response text.
-  repeated StructuredAttemptEvidence attempts = 9;
+  repeated StructuredAttemptEvidence attempts = 9 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 3,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // The scalar provenance of one generation attempt. The raw model output and
 // the retry feedback of the attempt are never persisted.
 message StructuredAttemptEvidence {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Scalar provenance for one structured-generation attempt."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
   // The 1-based attempt number; attempts are sequential.
-  int32 attempt = 1;
+  int32 attempt = 1 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 3
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // How the attempt ended.
-  ai.pipestream.proto.inference.v1.AttemptOutcome outcome = 2;
+  ai.pipestream.proto.inference.v1.AttemptOutcome outcome = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Token accounting of this attempt.
-  ai.pipestream.proto.inference.v1.Usage usage = 3;
+  ai.pipestream.proto.inference.v1.Usage usage = 3 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // Why the model stopped generating on this attempt.
-  ai.pipestream.proto.inference.v1.FinishReason finish_reason = 4;
+  ai.pipestream.proto.inference.v1.FinishReason finish_reason = 4 [
+    (ai.pipestream.proto.validate.v1.field).enum.defined_only = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // Recipe run state.

@@ -106,7 +106,7 @@ public final class RecipeRunRecorder {
         RunEvidence.Builder evidence = base(runId, recipeVersion, recipe, input, started)
                 .setStatus(RunStatus.RUN_STATUS_FAILED)
                 .setCompletedAt(timestamp(completed))
-                .setFailureSummary(bounded(failure.getMessage()));
+                .setFailureSummary(evidenceSummary(failure));
         for (Trace trace : observer.completed) {
             evidence.addSteps(stepEvidence(trace));
         }
@@ -122,7 +122,7 @@ public final class RecipeRunRecorder {
                     .setGrpcStatusCode(failure.grpcCode() == null
                             ? io.grpc.Status.Code.UNKNOWN.value()
                             : failure.grpcCode().value())
-                    .setSummary(bounded(failure.getMessage()));
+                    .setSummary(evidenceSummary(failure));
             if (pending.step().structured() != null) {
                 step.setStructured(failedStructuredEvidence(pending.step(),
                         failureAttempts(failure)));
@@ -141,7 +141,7 @@ public final class RecipeRunRecorder {
                     .setGrpcStatusCode(failure.grpcCode() == null
                             ? io.grpc.Status.Code.UNKNOWN.value()
                             : failure.grpcCode().value())
-                    .setSummary(bounded(failure.getMessage()));
+                    .setSummary(evidenceSummary(failure));
             if (failedStep != null && failedStep.structured() != null) {
                 step.setMethod("");
                 step.setStructured(failedStructuredEvidence(failedStep, List.of()));
@@ -286,6 +286,18 @@ public final class RecipeRunRecorder {
         String value = message == null ? "execution failed" : message;
         return value.length() <= RecipeValidation.MAX_TEXT_LENGTH
                 ? value : value.substring(0, RecipeValidation.MAX_TEXT_LENGTH);
+    }
+
+    /**
+     * Provider exceptions may contain response bodies, headers, or credential-bearing
+     * diagnostics. Persist only a stable structured-step summary; the in-memory
+     * exception still carries the operational detail to the immediate caller.
+     */
+    private static String evidenceSummary(ChainRunner.ChainExecutionException failure) {
+        if (failure.kind() == ChainRunner.FailureKind.STRUCTURED) {
+            return bounded("structured generation failed at step '" + failure.step() + "'");
+        }
+        return bounded(failure.getMessage());
     }
 
     private record Trace(ChainDefinition.Step step, Message request,

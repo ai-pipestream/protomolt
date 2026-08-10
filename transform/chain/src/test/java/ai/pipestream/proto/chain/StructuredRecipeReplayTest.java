@@ -140,8 +140,9 @@ class StructuredRecipeReplayTest {
                 .setEndpoint("in-process://scripted")
                 .setCapabilities(ModelCapabilities.newBuilder().setStructuredOutput(true))
                 .build());
+        // Chain execution supplies its exact resolved descriptor. Deliberately leave
+        // the generator registry empty to prove inline/action-scoped schemas work.
         DescriptorRegistry descriptors = new DescriptorRegistry();
-        descriptors.register(form);
         generator = new StructuredGenerator(engines, descriptors);
     }
 
@@ -439,6 +440,26 @@ class StructuredRecipeReplayTest {
     }
 
     @Test
+    void providerDiagnosticsNeverEnterPersistedFailureEvidence(@TempDir Path dir)
+            throws Exception {
+        String secret = "provider-secret-response-body";
+        provider.fail(secret);
+        ArtifactRepository artifacts = new FileSystemArtifactRepository(dir.resolve("a"));
+        RunEvidenceRepository runs = new FileSystemRunEvidenceRepository(dir.resolve("r"));
+
+        assertThatThrownBy(() -> new RecipeRunRecorder(runner(), artifacts, runs)
+                .record("run-secret", null, structuredChain(), ticket("anything")))
+                .isInstanceOf(ChainRunner.ChainExecutionException.class)
+                .hasMessageContaining(secret);
+
+        RunEvidence evidence = runs.find("run-secret").orElseThrow();
+        assertThat(evidence.getFailureSummary()).doesNotContain(secret);
+        assertThat(evidence.getSteps(0).getSummary()).doesNotContain(secret);
+        assertThat(new String(evidence.toByteArray(), StandardCharsets.ISO_8859_1))
+                .doesNotContain(secret);
+    }
+
+    @Test
     void theVerifierRejectsGrpcConcernsOnStructuredSteps() {
         assertThat(new ChainVerifier().verify(structuredChain())).isEmpty();
         assertThat(new ChainVerifier().verify(mixedChain())).isEmpty();
@@ -473,6 +494,7 @@ class StructuredRecipeReplayTest {
 
         private final Queue<String> script = new ArrayDeque<>();
         private final AtomicInteger invocations = new AtomicInteger();
+        private String failure;
 
         void script(String... responses) {
             script.addAll(List.of(responses));
@@ -480,6 +502,10 @@ class StructuredRecipeReplayTest {
 
         int invocations() {
             return invocations.get();
+        }
+
+        void fail(String message) {
+            failure = message;
         }
 
         @Override
@@ -490,6 +516,9 @@ class StructuredRecipeReplayTest {
         @Override
         public GenerateResponse generate(ModelEntry model, GenerateRequest request) {
             invocations.incrementAndGet();
+            if (failure != null) {
+                throw new InferenceException(failure);
+            }
             String next = script.poll();
             if (next == null) {
                 throw new InferenceException("scripted provider ran out of responses");

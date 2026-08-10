@@ -83,6 +83,18 @@ public record ChainDefinition(String name, List<FileDescriptor> files, Descripto
         }
 
         /**
+         * Source- and binary-compatible constructor for the original gRPC-only step
+         * shape. New callers may prefer {@link #grpc}, but existing integrations do
+         * not need to change merely because structured steps were added.
+         */
+        public Step(String name, String target, boolean tls, MethodDescriptor method,
+                    String when, List<String> rules, List<CelMappingRule> celRules,
+                    boolean validate, long deadlineMs, String completion) {
+            this(name, target, tls, method, when, rules, celRules, validate, deadlineMs,
+                    completion, null);
+        }
+
+        /**
          * A gRPC step: one unary call whose request is mapped from the chain scope.
          * This is the canonical-constructor shape with {@code structured} null.
          */

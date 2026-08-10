@@ -188,6 +188,11 @@ public final class ChainRunner {
         this(policyFactory(Objects.requireNonNull(policy, "channel policy")));
     }
 
+    /** Creates a policy-backed runner that can execute structured steps. */
+    public ChainRunner(OutboundChannelPolicy policy, StructuredGenerator generator) {
+        this(policyFactory(Objects.requireNonNull(policy, "channel policy")), generator);
+    }
+
     private static ChannelFactory policyFactory(OutboundChannelPolicy policy) {
         return new ChannelFactory() {
             @Override
@@ -463,7 +468,7 @@ public final class ChainRunner {
         }
         GenerateStructuredResponse generated;
         try {
-            generated = generator.generate(request);
+            generated = generator.generate(request, step.structured().targetType());
         } catch (StructuredGenerationException e) {
             throw new ChainExecutionException(step.name(), FailureKind.STRUCTURED, null,
                     "structured generation failed: " + e.getMessage(), e);

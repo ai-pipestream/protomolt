@@ -23,6 +23,7 @@ import ai.pipestream.proto.inference.service.actions.DescribeModelAction;
 import ai.pipestream.proto.inference.service.actions.GenerateAction;
 import ai.pipestream.proto.inference.service.actions.ListModelsAction;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
+import ai.pipestream.proto.inference.structured.StructuredGenerator;
 import ai.pipestream.proto.jobs.service.actions.CompleteStepAction;
 import ai.pipestream.proto.jobs.service.actions.GetJobAction;
 import ai.pipestream.proto.jobs.service.actions.ListJobsAction;
@@ -153,12 +154,15 @@ public final class ProtoMoltCatalog {
         OutboundChannelPolicy policy = outboundPolicy == null
                 ? OutboundChannelPolicy.defaults() : outboundPolicy;
         ChannelFactory channels = ChannelFactory.standard(policy);
+        StructuredGenerator structured = inference == null
+                ? null : new StructuredGenerator(inference, context.registry());
+        ChainRunner runner = new ChainRunner(policy, structured);
         ActionCatalog catalog = ActionCatalog.defaults(context)
                 .register(new GrpcInvokeAction(channels))
                 .register(new ReflectAction(channels))
                 .register(new GenerateStubsAction())
                 .register(new GatherGitAction(gatherCacheRoot))
-                .register(new RunChainAction(new ChainRunner(policy), chains))
+                .register(new RunChainAction(runner, chains))
                 .register(new CheckChainAction())
                 .register(new EmitOkfAction())
                 .register(new SubmitChainAction(jobs, chains, maxAttemptsDefault))
@@ -169,7 +173,7 @@ public final class ProtoMoltCatalog {
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
         ServiceWorkspaceActions.register(catalog, serviceProfiles, channels);
-        return RecipeWorkbenchActions.register(catalog, new ChainRunner(policy), artifacts,
+        return RecipeWorkbenchActions.register(catalog, runner, artifacts,
                 runEvidence, recipes);
     }
 }
