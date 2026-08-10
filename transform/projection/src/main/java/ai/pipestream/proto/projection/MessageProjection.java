@@ -9,11 +9,14 @@ import ai.pipestream.proto.helpers.TypeConverter;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
+import com.google.protobuf.DescriptorProtos.FieldOptions;
+import com.google.protobuf.DescriptorProtos.MessageOptions;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.ExtensionRegistry;
 import com.google.protobuf.FieldMask;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Value;
 
@@ -54,11 +57,51 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link #sourceMask(Descriptor)} names what a source type must supply
  * (read pruning).</p>
  *
- * <p>Instances are immutable and thread-safe. Requires descriptors parsed with
- * {@link #registerExtensions(ExtensionRegistry)} when they come from a runtime
- * descriptor set rather than generated classes.</p>
+ * <p>Instances are immutable and thread-safe. Descriptors linked without the
+ * projection extensions registered carry the options only as unknown fields;
+ * they are re-read against a knowing registry, so runtime descriptor sets work
+ * without any setup.</p>
  */
 public final class MessageProjection {
+
+    /**
+     * The extension registry used to re-read projection options off descriptors
+     * linked without one: those carry the annotation only as an unknown field,
+     * and a projection that cannot see its sources would silently build nothing.
+     */
+    private static final ExtensionRegistry EXTENSIONS = extensionRegistry();
+
+    private static ExtensionRegistry extensionRegistry() {
+        ExtensionRegistry registry = ExtensionRegistry.newInstance();
+        registerExtensions(registry);
+        return registry;
+    }
+
+    /** The message options of {@code target} with projection extensions resolved. */
+    private static MessageOptions messageOptions(Descriptor target) {
+        MessageOptions options = target.getOptions();
+        if (options.hasExtension(ProjectionProto.sources)) {
+            return options;
+        }
+        try {
+            return MessageOptions.parseFrom(options.toByteString(), EXTENSIONS);
+        } catch (InvalidProtocolBufferException e) {
+            return options;
+        }
+    }
+
+    /** The field options of {@code field} with projection extensions resolved. */
+    private static FieldOptions fieldOptions(FieldDescriptor field) {
+        FieldOptions options = field.getOptions();
+        if (options.hasExtension(ProjectionProto.from)) {
+            return options;
+        }
+        try {
+            return FieldOptions.parseFrom(options.toByteString(), EXTENSIONS);
+        } catch (InvalidProtocolBufferException e) {
+            return options;
+        }
+    }
 
     private final Descriptor targetType;
     private final List<String> declaredSources;
@@ -117,7 +160,7 @@ public final class MessageProjection {
             Descriptor target, SourceResolver sources, ProtoFieldMapper fieldMapper) {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(sources, "sources");
-        var messageOptions = target.getOptions();
+        var messageOptions = messageOptions(target);
         if (!messageOptions.hasExtension(ProjectionProto.sources)) {
             return Optional.empty();
         }
@@ -129,7 +172,7 @@ public final class MessageProjection {
 
         List<Rule> rules = new ArrayList<>();
         for (FieldDescriptor field : target.getFields()) {
-            var fieldOptions = field.getOptions();
+            var fieldOptions = fieldOptions(field);
             if (!fieldOptions.hasExtension(ProjectionProto.from)) {
                 continue;
             }
