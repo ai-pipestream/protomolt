@@ -3,6 +3,8 @@ description = 'Schema registry core: subject/version store SPI and the git-backe
 dependencies {
     api project(':protomolt-proto-sources')
     api project(':protomolt-compat')
+    // Versioned recipe promotion is stored alongside subjects in the same git repository.
+    api project(':protomolt-grpc-recipe')
 
     implementation libs.jgit
     implementation libs.jackson.databind
