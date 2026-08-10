@@ -97,6 +97,16 @@ public final class ActionCatalog {
         return List.copyOf(actions.keySet());
     }
 
+    /**
+     * Returns an independent catalog with the same context, action references, and registration
+     * order. Subsequent registration or replacement on either catalog does not mutate the other.
+     */
+    public synchronized ActionCatalog fork() {
+        ActionCatalog fork = new ActionCatalog(context);
+        fork.actions.putAll(actions);
+        return fork;
+    }
+
     /** The tool manifest: {@code [{name, description, inputSchema}, ...]}. */
     public synchronized ArrayNode list() {
         ArrayNode manifest = context.objectMapper().createArrayNode();
