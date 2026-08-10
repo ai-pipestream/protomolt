@@ -169,8 +169,17 @@ public final class RunChainAction implements ProtoAction {
                 + "'input' plus prior steps' responses (by step name). gRPC steps: {name, "
                 + "target, method, tls?, when? (bool CEL gate), rules?, celRules?, "
                 + "validate?, deadlineMs?}. Structured steps: {name, structured: "
-                + "{targetType, model, maxAttempts?}}. Optional output: "
-                + "{type, rules, celRules}; "
+                + "{targetType, model, maxAttempts?}}. A step may carry a typed edge "
+                + "instead of top-level rules: {edge: {sources, produceType, rules?, "
+                + "celRules?, projectTo?, validate?}} maps the named scope entries into "
+                + "produceType, optionally projects it to a projection-annotated "
+                + "consumer form and validates it before the step runs; on a structured "
+                + "step the value becomes the generation's grounding. An edge step may "
+                + "fan out: {fanOut: {items, maxItems, maxConcurrency, failurePolicy "
+                + "(FAIL_FAST|CONTINUE), collectType, collectInto}} runs one branch per "
+                + "item of the produced message's repeated field and collects the branch "
+                + "outputs, in index order, into collectType.collectInto. Optional "
+                + "output: {type, rules, celRules}; "
                 + "without it the last response returns.");
         return chain;
     }

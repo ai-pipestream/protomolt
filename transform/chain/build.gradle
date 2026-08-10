@@ -10,6 +10,8 @@ dependencies {
     api project(':protomolt-grpc-recipe')
     // Structured-generation steps execute through this coordinator.
     api project(':protomolt-inference-structured')
+    // Typed edges project their produced values with this compiled projection.
+    api project(':protomolt-projection')
 
     implementation project(':protomolt-json')
     implementation project(':protomolt-protobuf-validation')
