@@ -7,6 +7,7 @@ import ai.pipestream.proto.grpc.recipe.v1.RecipeOutput;
 import ai.pipestream.proto.grpc.recipe.v1.RecipeStep;
 import ai.pipestream.proto.grpc.recipe.v1.ServiceDependency;
 import ai.pipestream.proto.grpc.recipe.v1.StepCompletion;
+import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Duration;
@@ -49,10 +50,33 @@ public final class ChainRecipeCompiler {
         String fingerprint = descriptorFingerprint(chain.files());
 
         // One dependency per distinct service, in first-use order: steps keep referencing
-        // their own service even when several services share one target.
+        // their own service even when several services share one target. Structured
+        // steps share one deterministic dependency anchor whose fingerprint is the same
+        // chain file set - the target type's file is part of it, so compile and replay
+        // fingerprint over the very descriptors the coordinator filled.
         Map<String, ServiceDependency> dependencies = new LinkedHashMap<>();
         List<RecipeStep> steps = new ArrayList<>(chain.steps().size());
         for (ChainDefinition.Step step : chain.steps()) {
+            if (step.structured() != null) {
+                dependencies.computeIfAbsent(ChainDefinition.Step.STRUCTURED_DEPENDENCY,
+                        name -> ServiceDependency.newBuilder()
+                                .setAlias(name)
+                                .setServiceProfile(name)
+                                .setEndpoint("local")
+                                .setDescriptorFingerprint(fingerprint)
+                                .build());
+                steps.add(RecipeStep.newBuilder()
+                        .setName(step.name())
+                        .setDependency(ChainDefinition.Step.STRUCTURED_DEPENDENCY)
+                        .setStructured(StructuredGenerationSpec.newBuilder()
+                                .setTargetType(step.structured().targetType().getFullName())
+                                .setModel(step.structured().model())
+                                .setMaxAttempts(step.structured().maxAttempts())
+                                .build())
+                        .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                        .build());
+                continue;
+            }
             String service = step.method().getService().getFullName();
             dependencies.computeIfAbsent(service, name -> ServiceDependency.newBuilder()
                     .setAlias(name)

@@ -18,6 +18,10 @@ import java.util.regex.Pattern;
  * that scope because the runner binds a skipped step's name to its output type's default
  * instance — the static scope and the runtime value map always agree. A chain that
  * verifies cannot fail on a type error at run time — only on live-service behavior.
+ * Structured-generation steps check statically instead: the spec must be bare (no
+ * gate, rules, deadline, validation flag, or completion mode), the model id non-blank,
+ * the attempt cap within the coordinator's bound, and the target type's file reachable
+ * from the chain's files so compile and replay fingerprint over it.
  */
 public final class ChainVerifier {
 
@@ -42,6 +46,11 @@ public final class ChainVerifier {
             }
             if (scope.containsKey(step.name())) {
                 findings.add(new Finding(step.name(), "chain", "duplicate step name"));
+                continue;
+            }
+            if (step.structured() != null) {
+                verifyStructured(chain, step, findings);
+                scope.put(step.name(), step.structured().targetType());
                 continue;
             }
             if (step.method().isClientStreaming() || step.method().isServerStreaming()) {
@@ -75,5 +84,65 @@ public final class ChainVerifier {
             }
         }
         return findings;
+    }
+
+    /**
+     * A structured step has no gRPC method: it must be a bare generation spec whose
+     * target type the chain's file set can fingerprint and replay can resolve. Gates,
+     * mapping rules, deadlines, validation flags, and completion modes all belong to
+     * the gRPC lane and are rejected here.
+     */
+    private static void verifyStructured(ChainDefinition chain, ChainDefinition.Step step,
+                                         List<Finding> findings) {
+        ChainDefinition.StructuredSpec spec = step.structured();
+        if (spec.model().isBlank()) {
+            findings.add(new Finding(step.name(), "structured",
+                    "structured step model must not be blank"));
+        }
+        if (spec.maxAttempts() < 0 || spec.maxAttempts() > 3) {
+            findings.add(new Finding(step.name(), "structured",
+                    "structured step maxAttempts must be between 0 and 3; got "
+                            + spec.maxAttempts()));
+        }
+        if (step.when() != null && !step.when().isBlank()) {
+            findings.add(new Finding(step.name(), "structured",
+                    "structured steps do not support when gates"));
+        }
+        if (!step.rules().isEmpty() || !step.celRules().isEmpty()) {
+            findings.add(new Finding(step.name(), "structured",
+                    "structured steps declare no mapping rules; the coordinator fills "
+                            + "the target type directly"));
+        }
+        if (step.validate()) {
+            findings.add(new Finding(step.name(), "structured",
+                    "validate is meaningless on a structured step; the coordinator "
+                            + "always validates its output"));
+        }
+        if (step.deadlineMs() != 0) {
+            findings.add(new Finding(step.name(), "structured",
+                    "structured steps do not support per-step deadlines"));
+        }
+        if (!step.completion().isEmpty()) {
+            findings.add(new Finding(step.name(), "structured",
+                    "structured steps do not support completion modes"));
+        }
+        if (!reachable(chain.files(), spec.targetType().getFile())) {
+            findings.add(new Finding(step.name(), "structured",
+                    "target type " + spec.targetType().getFullName() + "'s file "
+                            + spec.targetType().getFile().getFullName()
+                            + " is not reachable from the chain's files; compile and "
+                            + "replay fingerprint over the chain's file set"));
+        }
+    }
+
+    /** True when {@code file} is one of {@code files} or a transitive import of one. */
+    private static boolean reachable(List<com.google.protobuf.Descriptors.FileDescriptor> files,
+                                     com.google.protobuf.Descriptors.FileDescriptor file) {
+        for (com.google.protobuf.Descriptors.FileDescriptor candidate : files) {
+            if (candidate.equals(file) || reachable(candidate.getDependencies(), file)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

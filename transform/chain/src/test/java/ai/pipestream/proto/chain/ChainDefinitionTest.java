@@ -46,7 +46,7 @@ class ChainDefinitionTest {
     }
 
     private static ChainDefinition.Step step(String name) {
-        return new ChainDefinition.Step(name, "in-process", false, tokenize(),
+        return ChainDefinition.Step.grpc(name, "in-process", false, tokenize(),
                 null, List.of(), List.of(), false, 0, "");
     }
 
@@ -93,30 +93,30 @@ class ChainDefinitionTest {
 
     @Test
     void aStepRequiresNameTargetAndMethod() {
-        assertThatNullPointerException().isThrownBy(() -> new ChainDefinition.Step(
+        assertThatNullPointerException().isThrownBy(() -> ChainDefinition.Step.grpc(
                 null, "t", false, tokenize(), null, List.of(), List.of(), false, 0, ""))
                 .withMessage("name");
-        assertThatNullPointerException().isThrownBy(() -> new ChainDefinition.Step(
+        assertThatNullPointerException().isThrownBy(() -> ChainDefinition.Step.grpc(
                 "s", null, false, tokenize(), null, List.of(), List.of(), false, 0, ""))
                 .withMessage("target");
-        assertThatNullPointerException().isThrownBy(() -> new ChainDefinition.Step(
+        assertThatNullPointerException().isThrownBy(() -> ChainDefinition.Step.grpc(
                 "s", "t", false, null, null, List.of(), List.of(), false, 0, ""))
                 .withMessage("method");
     }
 
     @Test
     void aNullCompletionMeansInvokeAndOnlyExternalParks() {
-        ChainDefinition.Step invoke = new ChainDefinition.Step("s", "t", false, tokenize(),
+        ChainDefinition.Step invoke = ChainDefinition.Step.grpc("s", "t", false, tokenize(),
                 null, List.of(), List.of(), false, 0, null);
         assertThat(invoke.completion()).isEmpty();
         assertThat(invoke.external()).isFalse();
 
-        ChainDefinition.Step external = new ChainDefinition.Step("s", "t", false, tokenize(),
+        ChainDefinition.Step external = ChainDefinition.Step.grpc("s", "t", false, tokenize(),
                 null, List.of(), List.of(), false, 0, "external");
         assertThat(external.external()).isTrue();
 
         // Anything else is not external; the verifier rejects it before a run.
-        ChainDefinition.Step bogus = new ChainDefinition.Step("s", "t", false, tokenize(),
+        ChainDefinition.Step bogus = ChainDefinition.Step.grpc("s", "t", false, tokenize(),
                 null, List.of(), List.of(), false, 0, "later");
         assertThat(bogus.external()).isFalse();
     }
@@ -126,7 +126,7 @@ class ChainDefinitionTest {
         List<String> rules = new ArrayList<>(List.of("text = input.text"));
         List<CelMappingRule> celRules = new ArrayList<>(
                 List.of(new CelMappingRule(null, "input.text", "text")));
-        ChainDefinition.Step step = new ChainDefinition.Step("s", "t", false, tokenize(),
+        ChainDefinition.Step step = ChainDefinition.Step.grpc("s", "t", false, tokenize(),
                 null, rules, celRules, false, 0, "");
 
         rules.clear();

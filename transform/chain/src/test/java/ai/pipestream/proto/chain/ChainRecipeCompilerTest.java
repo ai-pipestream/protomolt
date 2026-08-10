@@ -59,14 +59,14 @@ class ChainRecipeCompilerTest {
 
     private static ChainDefinition chain(String name) {
         return new ChainDefinition(name, List.of(file), text, 45_000, List.of(
-                new ChainDefinition.Step("tokenize", "localhost:9090", false,
+                ChainDefinition.Step.grpc("tokenize", "localhost:9090", false,
                         ChainDefinition.resolveMethod(List.of(file),
                                 "chain.def.Tokenizer/Tokenize"),
                         "input.text.size() > 0", List.of("text=input.text"),
                         List.of(new CelMappingRule(null, "input.text", "text",
                                 List.of("text=input.text"))),
                         true, 5_000, ""),
-                new ChainDefinition.Step("embed", "localhost:9090", false,
+                ChainDefinition.Step.grpc("embed", "localhost:9090", false,
                         ChainDefinition.resolveMethod(List.of(file),
                                 "chain.def.Embedder/Embed"),
                         null, List.of(), List.of(), false, 0, "external")),

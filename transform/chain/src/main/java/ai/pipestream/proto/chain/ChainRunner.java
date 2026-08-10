@@ -7,12 +7,17 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicyException;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
+import ai.pipestream.proto.inference.structured.StructuredGenerationException;
+import ai.pipestream.proto.inference.structured.StructuredGenerator;
+import ai.pipestream.proto.inference.v1.GenerateStructuredRequest;
+import ai.pipestream.proto.inference.v1.GenerateStructuredResponse;
 import ai.pipestream.proto.shapes.MessageScope;
 import ai.pipestream.proto.shapes.ScopedProtoMapper;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
@@ -52,6 +57,26 @@ public final class ChainRunner {
         default void stepCompleted(ChainDefinition.Step step, DynamicMessage request,
                                    DynamicMessage response, boolean skipped,
                                    Instant startedAt, Instant completedAt) {
+        }
+
+        /** Called immediately before the structured-generation coordinator runs. */
+        default void structuredStepStarted(ChainDefinition.Step step,
+                                           GenerateStructuredRequest request,
+                                           Instant startedAt) {
+        }
+
+        /**
+         * Called for a successful structured-generation step. {@code output} is the
+         * unpacked, validated typed message bound into the chain scope;
+         * {@code structuredResponse} is the coordinator's full envelope (attempt
+         * history, fingerprints, provider provenance) so a recorder can persist
+         * attempt evidence. The envelope's raw attempt texts must never be persisted.
+         */
+        default void structuredStepCompleted(ChainDefinition.Step step,
+                                             GenerateStructuredRequest request,
+                                             Message output,
+                                             GenerateStructuredResponse structuredResponse,
+                                             Instant startedAt, Instant completedAt) {
         }
     }
 
@@ -110,6 +135,8 @@ public final class ChainRunner {
         MAPPING,
         /** The step's gRPC call returned a status; retryable per the exception's grpcCode. */
         GRPC,
+        /** A structured-generation step failed in the coordinator or a provider. */
+        STRUCTURED,
         /** The response failed its declared validation rules. A verdict, not an error. */
         VALIDATION,
         /** The chain (segment) deadline was exhausted. Retryable: resume continues. */
@@ -150,6 +177,7 @@ public final class ChainRunner {
     }
 
     private final ChannelFactory channels;
+    private final StructuredGenerator generator;
 
     public ChainRunner() {
         this(OutboundChannelPolicy.defaults());
@@ -186,7 +214,17 @@ public final class ChainRunner {
     }
 
     public ChainRunner(ChannelFactory channels) {
+        this(channels, null);
+    }
+
+    /**
+     * Creates a runner that can also execute structured-generation steps through
+     * {@code generator}. A structured step on a runner built without a generator
+     * fails fast, naming the step.
+     */
+    public ChainRunner(ChannelFactory channels, StructuredGenerator generator) {
         this.channels = channels;
+        this.generator = generator;
     }
 
     /**
@@ -277,7 +315,7 @@ public final class ChainRunner {
                                         + "under the job", null);
                     }
                     Message replayed = done.skipped()
-                            ? DynamicMessage.getDefaultInstance(step.method().getOutputType())
+                            ? DynamicMessage.getDefaultInstance(outputTypeOf(step))
                             : done.response();
                     values.put(step.name(), replayed);
                     outcomes.add(new StepOutcome(step.name(), done.skipped()));
@@ -287,6 +325,13 @@ public final class ChainRunner {
                 }
                 if (step.external()) {
                     return new Segment.Parked(step.name(), List.copyOf(checkpoints));
+                }
+                if (step.structured() != null) {
+                    Message generated = runStructured(step, values, outcomes, checkpoints,
+                            onCheckpoint, observer, deadlineNanos);
+                    last = generated;
+                    index++;
+                    continue;
                 }
                 CelEvaluator evaluator = evaluator(values, step.method().getInputType());
                 if (step.when() != null && !step.when().isBlank()) {
@@ -384,6 +429,69 @@ public final class ChainRunner {
                 channel.shutdown();
             }
         }
+    }
+
+    /**
+     * Executes one structured-generation step: the coordinator fills the step's target
+     * type with the step's model, and the unpacked, validated message binds into the
+     * scope exactly like a gRPC step's response. A coordinator failure fails the chain
+     * with the step named, like a gRPC failure.
+     *
+     * @return the unpacked typed output, bound as the step's scope response
+     */
+    private Message runStructured(ChainDefinition.Step step, Map<String, Message> values,
+                                  List<StepOutcome> outcomes, List<Checkpoint> checkpoints,
+                                  Consumer<Checkpoint> onCheckpoint,
+                                  ExecutionObserver observer, long deadlineNanos)
+            throws ChainExecutionException {
+        GenerateStructuredRequest request = GenerateStructuredRequest.newBuilder()
+                .setTargetType(step.structured().targetType().getFullName())
+                .setModel(step.structured().model())
+                .setMaxAttempts(step.structured().maxAttempts())
+                .build();
+        Instant stepStarted = Instant.now();
+        observer.structuredStepStarted(step, request, stepStarted);
+        if (generator == null) {
+            throw new ChainExecutionException(step.name(), FailureKind.STRUCTURED, null,
+                    "structured step '" + step.name() + "' needs a StructuredGenerator; "
+                            + "this runner was built without one", null);
+        }
+        long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
+        if (remainingMs <= 0) {
+            throw new ChainExecutionException(step.name(), FailureKind.DEADLINE, null,
+                    "chain deadline exhausted before the step ran", null);
+        }
+        GenerateStructuredResponse generated;
+        try {
+            generated = generator.generate(request);
+        } catch (StructuredGenerationException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.STRUCTURED, null,
+                    "structured generation failed: " + e.getMessage(), e);
+        }
+        Message output;
+        try {
+            output = DynamicMessage.parseFrom(step.structured().targetType(),
+                    generated.getMessage().getValue());
+        } catch (InvalidProtocolBufferException e) {
+            throw new ChainExecutionException(step.name(), FailureKind.CHAIN, null,
+                    "the coordinator's packed output does not parse as the step's "
+                            + "target type", e);
+        }
+        values.put(step.name(), output);
+        outcomes.add(new StepOutcome(step.name(), false));
+        observer.structuredStepCompleted(step, request, output, generated, stepStarted,
+                Instant.now());
+        record(checkpoints, new Checkpoint(step.name(), false, output), onCheckpoint,
+                step.name());
+        return output;
+    }
+
+    /** The type a step's response binds under its name, gRPC or structured. */
+    private static com.google.protobuf.Descriptors.Descriptor outputTypeOf(
+            ChainDefinition.Step step) {
+        return step.structured() != null
+                ? step.structured().targetType()
+                : step.method().getOutputType();
     }
 
     /** Appends a checkpoint and notifies the observer; an observer failure fails the segment. */

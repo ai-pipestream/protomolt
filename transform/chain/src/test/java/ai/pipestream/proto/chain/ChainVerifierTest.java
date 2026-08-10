@@ -39,7 +39,7 @@ class ChainVerifierTest {
     }
 
     private static ChainDefinition.Step step(String name, String method) {
-        return new ChainDefinition.Step(name, "in-process", false,
+        return ChainDefinition.Step.grpc(name, "in-process", false,
                 ChainDefinition.resolveMethod(List.of(file), method), null,
                 List.of("text = input.text"), List.of(), false, 0, "");
     }
@@ -113,7 +113,7 @@ class ChainVerifierTest {
     void aNonUnaryStepStillContributesItsOutputToTheScope() {
         List<ChainVerifier.Finding> findings = new ChainVerifier().verify(chain(
                 step("tokenize", "chain.verify.Tokenizer/TokenizeStream"),
-                new ChainDefinition.Step("count", "in-process", false,
+                ChainDefinition.Step.grpc("count", "in-process", false,
                         ChainDefinition.resolveMethod(List.of(file),
                                 "chain.verify.Tokenizer/Tokenize"),
                         null, List.of("text = tokenize.missing"), List.of(), false, 0, "")));

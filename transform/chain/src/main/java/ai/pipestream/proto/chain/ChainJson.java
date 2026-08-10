@@ -72,7 +72,7 @@ public final class ChainJson {
             } catch (IllegalArgumentException e) {
                 throw new ChainParseException(name, e.getMessage());
             }
-            steps.add(new ChainDefinition.Step(name, target,
+            steps.add(ChainDefinition.Step.grpc(name, target,
                     step.path("tls").asBoolean(false), resolved, text(step, "when"),
                     strings(step.get("rules")), celRules(step.get("celRules"), name),
                     step.path("validate").asBoolean(false),
