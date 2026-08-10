@@ -24,7 +24,8 @@ stdio loop, the tests, and any future transport drive it the same way.
 ```shell
 ./gradlew :protomolt-mcp:installDist
 surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp \
-  [--registry-git <path>] [--service-workspace <path>]
+  [--registry-git <path>] [--service-workspace <path>] \
+  [--recipe-workspace <path>]
 ```
 
 Register it with an MCP client, for example Claude Code:
@@ -33,13 +34,24 @@ Register it with an MCP client, for example Claude Code:
 claude mcp add protomolt -- \
   /path/to/protomolt-mcp/bin/protomolt-mcp \
   --registry-git /srv/schemas.git \
-  --service-workspace /srv/protomolt-services
+  --service-workspace /srv/protomolt-services \
+  --recipe-workspace /srv/protomolt-recipes
 ```
 
 `--registry-git` adds git-backed schema resources. `--service-workspace` adds
 durable service profiles, reflected descriptor storage, and service/method
 resources. The four service tools remain discoverable without the latter but
 answer `unavailable` with the configuration remedy.
+
+`--recipe-workspace` stores content-addressed redacted fixtures and immutable
+run evidence. Recipe tools remain discoverable without storage: compilation
+and mapping suggestions still work, while record and replay answer
+`unavailable` with the remedy. `promote-recipe` requires `--registry-git`.
+
+The recipe workflow advertised during initialization is: inspect or reflect
+the services, use `suggest-mappings` where useful, verify and
+`compile-recipe`, then `record-recipe-run`, `replay-recipe`, and finally
+`promote-recipe`.
 
 ### Streamable HTTP
 

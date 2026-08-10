@@ -2,8 +2,8 @@ package ai.pipestream.proto.chain;
 
 import ai.pipestream.proto.cel.CelEnvironmentFactory;
 import ai.pipestream.proto.cel.CelEvaluator;
-import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.cel.CelProtoMapper;
+import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicyException;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
@@ -20,6 +20,7 @@ import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
 import io.grpc.StatusRuntimeException;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,6 +39,24 @@ import java.util.function.Consumer;
  * invocation, by design.
  */
 public final class ChainRunner {
+
+    /** Receives bounded in-memory step fixtures while a run is executing. */
+    public interface ExecutionObserver {
+
+        /** Called after request mapping and immediately before the live gRPC call. */
+        default void stepStarted(ChainDefinition.Step step, DynamicMessage request,
+                                 Instant startedAt) {
+        }
+
+        /** Called for a successful or gate-skipped step. Skipped steps have null fixtures. */
+        default void stepCompleted(ChainDefinition.Step step, DynamicMessage request,
+                                   DynamicMessage response, boolean skipped,
+                                   Instant startedAt, Instant completedAt) {
+        }
+    }
+
+    private static final ExecutionObserver NO_OBSERVER = new ExecutionObserver() {
+    };
 
     /** Opens the channel a step calls through; a test seam and a TLS/policy hook. */
     public interface ChannelFactory {
@@ -177,7 +196,13 @@ public final class ChainRunner {
      */
     public Result run(ChainDefinition chain, DynamicMessage input)
             throws ChainExecutionException {
-        Segment segment = runSegment(chain, input, List.of());
+        return run(chain, input, NO_OBSERVER);
+    }
+
+    /** Runs a chain while reporting the exact request and response fixtures per step. */
+    public Result run(ChainDefinition chain, DynamicMessage input, ExecutionObserver observer)
+            throws ChainExecutionException {
+        Segment segment = runSegment(chain, input, List.of(), checkpoint -> { }, observer);
         if (segment instanceof Segment.Completed completed) {
             return completed.result();
         }
@@ -195,7 +220,7 @@ public final class ChainRunner {
      */
     public Segment runSegment(ChainDefinition chain, DynamicMessage input,
                               List<Checkpoint> prior) throws ChainExecutionException {
-        return runSegment(chain, input, prior, checkpoint -> { });
+        return runSegment(chain, input, prior, checkpoint -> { }, NO_OBSERVER);
     }
 
     /**
@@ -216,6 +241,15 @@ public final class ChainRunner {
     public Segment runSegment(ChainDefinition chain, DynamicMessage input,
                               List<Checkpoint> prior, Consumer<Checkpoint> onCheckpoint)
             throws ChainExecutionException {
+        return runSegment(chain, input, prior, onCheckpoint, NO_OBSERVER);
+    }
+
+    /** Executes a segment with both durable-checkpoint and evidence observers. */
+    public Segment runSegment(ChainDefinition chain, DynamicMessage input,
+                              List<Checkpoint> prior, Consumer<Checkpoint> onCheckpoint,
+                              ExecutionObserver observer)
+            throws ChainExecutionException {
+        Objects.requireNonNull(observer, "observer");
         long deadlineNanos = System.nanoTime()
                 + TimeUnit.MILLISECONDS.toNanos(chain.deadlineMs());
         DescriptorRegistry registry = DescriptorRegistry.create();
@@ -271,6 +305,8 @@ public final class ChainRunner {
                         values.put(step.name(), DynamicMessage
                                 .getDefaultInstance(step.method().getOutputType()));
                         outcomes.add(new StepOutcome(step.name(), true));
+                        Instant skippedAt = Instant.now();
+                        observer.stepCompleted(step, null, null, true, skippedAt, skippedAt);
                         record(checkpoints, new Checkpoint(step.name(), true, null),
                                 onCheckpoint, step.name());
                         index++;
@@ -307,6 +343,8 @@ public final class ChainRunner {
                             "outbound channel policy rejected step: " + e.getMessage(), e);
                 }
                 DynamicMessage response;
+                Instant stepStarted = Instant.now();
+                observer.stepStarted(step, request, stepStarted);
                 try {
                     response = DynamicGrpcCalls.call(channel, step.method(), request,
                             CallOptions.DEFAULT.withDeadlineAfter(callMs, TimeUnit.MILLISECONDS),
@@ -328,6 +366,7 @@ public final class ChainRunner {
                 }
                 values.put(step.name(), response);
                 outcomes.add(new StepOutcome(step.name(), false));
+                observer.stepCompleted(step, request, response, false, stepStarted, Instant.now());
                 record(checkpoints, new Checkpoint(step.name(), false, response),
                         onCheckpoint, step.name());
                 last = response;

@@ -6,6 +6,7 @@ import ai.pipestream.proto.chain.ChainRepository;
 import ai.pipestream.proto.chain.ChainRunner;
 import ai.pipestream.proto.chain.CheckChainAction;
 import ai.pipestream.proto.chain.RunChainAction;
+import ai.pipestream.proto.chain.RecipeWorkbenchActions;
 import ai.pipestream.proto.codegen.GenerateStubsAction;
 import ai.pipestream.proto.emit.okf.EmitOkfAction;
 import ai.pipestream.proto.gather.git.GatherGitAction;
@@ -14,6 +15,9 @@ import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
+import ai.pipestream.proto.grpc.recipe.ArtifactRepository;
+import ai.pipestream.proto.grpc.recipe.RecipeRepository;
+import ai.pipestream.proto.grpc.recipe.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workspace.ServiceWorkspaceActions;
 import ai.pipestream.proto.inference.service.actions.DescribeModelAction;
 import ai.pipestream.proto.inference.service.actions.GenerateAction;
@@ -34,14 +38,17 @@ import java.nio.file.Path;
  * ({@code run-chain}, {@code check-chain}), {@code emit-okf}, the chain-jobs verbs
  * ({@code submit-chain}, {@code get-job}, {@code list-jobs}, {@code complete-step}),
  * the service-workspace verbs ({@code service-register}, {@code service-list},
- * {@code service-inspect}, {@code service-refresh}), and the inference verbs
+ * {@code service-inspect}, {@code service-refresh}), the recipe-workbench verbs
+ * ({@code suggest-mappings}, {@code compile-recipe}, {@code record-recipe-run},
+ * {@code replay-recipe}, {@code promote-recipe}), and the inference verbs
  * ({@code inference-generate}, {@code inference-list-models},
  * {@code inference-describe-model}) — exactly the RPCs of {@code ProtoMoltService}.
  *
  * <p>The MCP server exposes a host-independent subset, leaving out
- * chains, jobs, inference, and {@code emit-okf}, which need server-side wiring. The {@code /mcp}
- * mount inside {@code protomolt-serve} carries the full catalog. The jobs and service-workspace
- * verbs are always registered; without a store they answer
+ * general chain execution, jobs, inference, and {@code emit-okf}, which need server-side wiring.
+ * It does expose the recipe workbench for inline draft chains. The {@code /mcp} mount inside
+ * {@code protomolt-serve} carries the full catalog. Jobs, service-workspace, and recipe-workbench
+ * verbs are always registered; without their stores they answer
  * {@code unavailable} with the operator-facing remedy instead of vanishing from the catalog.
  * The inference verbs behave the same way without an {@link InferenceEngines}.
  */
@@ -130,6 +137,19 @@ public final class ProtoMoltCatalog {
                                      int maxAttemptsDefault, InferenceEngines inference,
                                      ServiceProfileRepository serviceProfiles,
                                      OutboundChannelPolicy outboundPolicy) {
+        return full(context, gatherCacheRoot, chains, jobs, maxAttemptsDefault, inference,
+                serviceProfiles, outboundPolicy, null, null, null);
+    }
+
+    /** The complete catalog with the durable recipe-workbench repositories when configured. */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     ChainRepository chains, ChainJobStore jobs,
+                                     int maxAttemptsDefault, InferenceEngines inference,
+                                     ServiceProfileRepository serviceProfiles,
+                                     OutboundChannelPolicy outboundPolicy,
+                                     ArtifactRepository artifacts,
+                                     RunEvidenceRepository runEvidence,
+                                     RecipeRepository recipes) {
         OutboundChannelPolicy policy = outboundPolicy == null
                 ? OutboundChannelPolicy.defaults() : outboundPolicy;
         ChannelFactory channels = ChannelFactory.standard(policy);
@@ -148,6 +168,8 @@ public final class ProtoMoltCatalog {
                 .register(new GenerateAction(inference))
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
-        return ServiceWorkspaceActions.register(catalog, serviceProfiles, channels);
+        ServiceWorkspaceActions.register(catalog, serviceProfiles, channels);
+        return RecipeWorkbenchActions.register(catalog, new ChainRunner(policy), artifacts,
+                runEvidence, recipes);
     }
 }

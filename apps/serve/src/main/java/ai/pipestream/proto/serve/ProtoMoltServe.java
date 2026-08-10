@@ -8,6 +8,11 @@ import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
+import ai.pipestream.proto.grpc.recipe.ArtifactRepository;
+import ai.pipestream.proto.grpc.recipe.FileSystemArtifactRepository;
+import ai.pipestream.proto.grpc.recipe.FileSystemRunEvidenceRepository;
+import ai.pipestream.proto.grpc.recipe.RecipeRepository;
+import ai.pipestream.proto.grpc.recipe.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import ai.pipestream.proto.jobs.service.ChainJobsConfig;
 import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
@@ -24,6 +29,7 @@ import ai.pipestream.proto.mcp.RegistryResources;
 import ai.pipestream.proto.mcp.ServiceProfileResources;
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
+import ai.pipestream.proto.registry.RegistryRecipeRepository;
 import ai.pipestream.proto.registry.server.SchemaRegistryServer;
 import ai.pipestream.proto.registry.server.SchemaRegistryServerConfig;
 import ai.pipestream.proto.rest.ApiTokenRequirement;
@@ -49,6 +55,7 @@ import java.util.Set;
  * protomolt-serve [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080]
  *                 [--registry-git /srv/schemas.git [--registry-port 8081]]
  *                 [--service-workspace /srv/protomolt-services]
+ *                 [--recipe-workspace /srv/protomolt-recipes]
  * </pre>
  */
 public final class ProtoMoltServe implements AutoCloseable {
@@ -67,7 +74,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                           Path registryGit, int registryPort, String apiToken, boolean demo,
                           Path gatherCache, JobsOptions jobs,
                           java.util.List<String> inferenceModels, Path serviceWorkspace,
-                          OutboundChannelPolicy outboundPolicy) {
+                          OutboundChannelPolicy outboundPolicy, Path recipeWorkspace) {
 
         public Options {
             if (outboundPolicy == null) {
@@ -115,7 +122,16 @@ public final class ProtoMoltServe implements AutoCloseable {
                        JobsOptions jobs, java.util.List<String> inferenceModels,
                        Path serviceWorkspace) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
-                    gatherCache, jobs, inferenceModels, serviceWorkspace, null);
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, null, null);
+        }
+
+        /** Binary/source-compatible constructor retaining the pre-workbench options surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace, OutboundChannelPolicy outboundPolicy) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy, null);
         }
 
         public static Options defaults() {
@@ -145,6 +161,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             String serviceWorkspaceEnv = System.getenv("PROTOMOLT_SERVICE_WORKSPACE");
             Path serviceWorkspace = serviceWorkspaceEnv == null || serviceWorkspaceEnv.isBlank()
                     ? null : Path.of(serviceWorkspaceEnv);
+            String recipeWorkspaceEnv = System.getenv("PROTOMOLT_RECIPE_WORKSPACE");
+            Path recipeWorkspace = recipeWorkspaceEnv == null || recipeWorkspaceEnv.isBlank()
+                    ? null : Path.of(recipeWorkspaceEnv);
             String allowedSchemes = System.getenv("PROTOMOLT_GRPC_ALLOWED_SCHEMES");
             String allowedHosts = System.getenv("PROTOMOLT_GRPC_ALLOWED_HOSTS");
             String allowedPorts = System.getenv("PROTOMOLT_GRPC_ALLOWED_PORTS");
@@ -180,6 +199,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--inference-model" -> inferenceModels.add(requireValue(args, ++i));
                     case "--service-workspace" ->
                             serviceWorkspace = Path.of(requireValue(args, ++i));
+                    case "--recipe-workspace" ->
+                            recipeWorkspace = Path.of(requireValue(args, ++i));
                     case "--grpc-allowed-schemes" ->
                             allowedSchemes = requireValue(args, ++i);
                     case "--grpc-allowed-hosts" ->
@@ -209,6 +230,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--inference-model <id|provider|endpoint[|backend[|k:v,...]]> ...] "
                                 + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
                                 + "[--service-workspace <dir>] (or PROTOMOLT_SERVICE_WORKSPACE) "
+                                + "[--recipe-workspace <dir>] (or PROTOMOLT_RECIPE_WORKSPACE) "
                                 + "[--grpc-allowed-schemes <csv>] [--grpc-allowed-hosts <csv>] "
                                 + "[--grpc-allowed-ports <csv>] "
                                 + "[--grpc-allow-plaintext <true|false>] "
@@ -250,7 +272,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
-                    serviceWorkspace, outboundPolicy);
+                    serviceWorkspace, outboundPolicy, recipeWorkspace);
         }
 
         private static int envInt(String name, int fallback) {
@@ -451,6 +473,8 @@ public final class ProtoMoltServe implements AutoCloseable {
         ChainJobWorker jobsWorker = null;
         ChainJobEventRelay jobsRelay = null;
         ServiceProfileRepository serviceProfiles = null;
+        ArtifactRepository artifacts = null;
+        RunEvidenceRepository runEvidence = null;
         OutboundChannelPolicy outboundPolicy = options.outboundPolicy();
         try {
             Path registryGit = options.registryGit();
@@ -468,6 +492,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                         .build();
             }
             ChainRepository chains = store == null ? null : chainRepository(store);
+            RecipeRepository recipes = store == null ? null : new RegistryRecipeRepository(store);
             if (options.serviceWorkspace() != null) {
                 try {
                     serviceProfiles = new FileSystemServiceProfileRepository(
@@ -475,6 +500,26 @@ public final class ProtoMoltServe implements AutoCloseable {
                 } catch (java.io.IOException e) {
                     throw new IllegalStateException("Failed to open service workspace at "
                             + options.serviceWorkspace(), e);
+                }
+            }
+            Path recipeWorkspace = options.recipeWorkspace();
+            if (recipeWorkspace == null && options.demo()) {
+                try {
+                    recipeWorkspace = java.nio.file.Files
+                            .createTempDirectory("protomolt-demo-recipes");
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException("Failed to create the demo recipe workspace", e);
+                }
+            }
+            if (recipeWorkspace != null) {
+                try {
+                    artifacts = new FileSystemArtifactRepository(
+                            recipeWorkspace.resolve("artifacts"));
+                    runEvidence = new FileSystemRunEvidenceRepository(
+                            recipeWorkspace.resolve("runs"));
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException("Failed to open recipe workspace at "
+                            + recipeWorkspace, e);
                 }
             }
 
@@ -506,14 +551,14 @@ public final class ProtoMoltServe implements AutoCloseable {
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         chains, jobStore, jobsConfig.maxAttemptsDefault(),
                         inferenceEngines(options.inferenceModels()), serviceProfiles,
-                        outboundPolicy);
+                        outboundPolicy, artifacts, runEvidence, recipes);
                 return startWithJobsCatalog(options, context, catalog, store, chains,
                         serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
             }
             // The catalog sees the store so run-chain resolves stored chain names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                     chains, null, 0, inferenceEngines(options.inferenceModels()), serviceProfiles,
-                    outboundPolicy);
+                    outboundPolicy, artifacts, runEvidence, recipes);
             return startWithJobsCatalog(options, context, catalog, store, chains,
                     serviceProfiles, null, null, null);
         } catch (RuntimeException e) {

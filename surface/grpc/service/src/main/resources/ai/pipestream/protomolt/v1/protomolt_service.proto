@@ -93,6 +93,21 @@ service ProtoMoltService {
   // mapping and CEL expression type-checks at each step's scope.
   rpc CheckChain(CheckChainRequest) returns (CheckChainResponse);
 
+  // Compiles a checked chain into the durable descriptor-grounded recipe contract.
+  rpc CompileRecipe(CompileRecipeRequest) returns (CompileRecipeResponse);
+
+  // Suggests conservative, statically verifiable mappings onto a target type.
+  rpc SuggestMappings(SuggestMappingsRequest) returns (SuggestMappingsResponse);
+
+  // Executes a live chain and records redacted content-addressed fixtures.
+  rpc RecordRecipeRun(RecordRecipeRunRequest) returns (RecordRecipeRunResponse);
+
+  // Replays recorded fixtures offline and reports any drift.
+  rpc ReplayRecipe(ReplayRecipeRequest) returns (ReplayRecipeResponse);
+
+  // Promotes recipe content as an immutable version in the git registry.
+  rpc PromoteRecipe(PromoteRecipeRequest) returns (PromoteRecipeResponse);
+
   // Fetches a live gRPC server's schema over server reflection, given only
   // its address. Servers without reflection return ok=false.
   rpc Reflect(ReflectRequest) returns (ReflectResponse);
@@ -951,6 +966,87 @@ message CheckChainResponse {
   bool ok = 1;
   // One entry per problem; empty when 'ok' is true.
   repeated ChainFinding findings = 2;
+}
+
+// A checked chain to compile into a recipe.
+message CompileRecipeRequest {
+  ChainDefinition chain = 1;
+}
+
+// Deterministic recipe content and its SHA-256 identity.
+message CompileRecipeResponse {
+  google.protobuf.Struct recipe = 1;
+  string recipe_fingerprint = 2;
+}
+
+// Descriptor-grounded mapping suggestion input.
+message SuggestMappingsRequest {
+  repeated ShapeSource sources = 1;
+  JoinTarget target = 2;
+}
+
+// One proposed target=source.path mapping.
+message MappingCandidate {
+  string target_path = 1;
+  string source_path = 2;
+  string rule = 3;
+  string basis = 4;
+}
+
+// Ordered conservative mapping candidates.
+message SuggestMappingsResponse {
+  string target_type = 1;
+  repeated MappingCandidate candidates = 2;
+}
+
+// A live draft-recipe probe to record for offline replay.
+message RecordRecipeRunRequest {
+  ChainDefinition chain = 1;
+  google.protobuf.Struct input = 2;
+  string run_id = 3;
+  string recipe_version = 4;
+}
+
+// The persisted run evidence; failed executions still return their evidence.
+message RecordRecipeRunResponse {
+  bool ok = 1;
+  string failed_step = 2;
+  string failure_kind = 3;
+  google.protobuf.Struct evidence = 4;
+}
+
+// Exact recipe, evidence identity, and descriptor set for offline replay.
+message ReplayRecipeRequest {
+  google.protobuf.Struct recipe = 1;
+  string run_id = 2;
+  SchemaSource schema = 3;
+}
+
+// One step's offline replay verdict.
+message RecipeStepReplay {
+  string step_name = 1;
+  string recorded_status = 2;
+  bool ok = 3;
+  string detail = 4;
+}
+
+// Whole-run offline replay verdict.
+message ReplayRecipeResponse {
+  bool ok = 1;
+  string failure = 2;
+  repeated RecipeStepReplay steps = 3;
+}
+
+// Recipe content to promote under one immutable version.
+message PromoteRecipeRequest {
+  google.protobuf.Struct recipe = 1;
+  string version = 2;
+}
+
+// The immutable promotion envelope stored in the registry.
+message PromoteRecipeResponse {
+  bool promoted = 1;
+  google.protobuf.Struct versioned_recipe = 2;
 }
 
 // The input of submit-chain: an inline chain or the name of a stored one,
