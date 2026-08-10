@@ -10,6 +10,10 @@ import ai.pipestream.proto.grpc.recipe.v1.GrpcRecipe;
 import ai.pipestream.proto.grpc.recipe.v1.RunEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.StepEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.StepStatus;
+import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationEvidence;
+import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec;
+import ai.pipestream.proto.inference.v1.GenerateStructuredRequest;
+import ai.pipestream.proto.meta.SensitivityMasker;
 import ai.pipestream.proto.shapes.MessageScope;
 import ai.pipestream.proto.shapes.ScopedProtoMapper;
 import ai.pipestream.proto.validate.ProtoValidator;
@@ -26,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Offline replay of a recorded recipe run: given the recipe, its {@link RunEvidence}, the
@@ -132,6 +137,15 @@ public final class RecipeReplay {
                         "recorded method " + recorded.getMethod()
                                 + " differs from the recipe's " + step.getMethod());
             }
+            if (step.hasStructured()) {
+                ReplayResult structured = replayStructured(recipe, evidence, i, step,
+                        recorded, schema, artifacts, scope, steps);
+                if (structured != null) {
+                    return structured;
+                }
+                last = scope.get(step.getName());
+                continue;
+            }
             MethodDescriptor method = ChainDefinition.resolveMethod(schema, step.getMethod());
 
             if (recorded.getStatus() == StepStatus.STEP_STATUS_SKIPPED) {
@@ -223,6 +237,110 @@ public final class RecipeReplay {
             }
         }
         return ReplayResult.ok(steps);
+    }
+
+    /**
+     * Offline verification of one structured-generation step: no provider, no network,
+     * no inference engines. The recorded evidence must carry the spec's identity, the
+     * prompt and schema fingerprints must match a fresh persona-free rendering from the
+     * replay schema, the request artifact must equal the request the spec produces
+     * (after the same redaction pass the recorder applies), and the recorded typed
+     * output must re-validate to the recorded verdict. The verified output binds into
+     * the scope exactly like a gRPC step response, so downstream steps and the output
+     * projection replay unchanged.
+     *
+     * @return null when the step verified; the terminal result otherwise
+     */
+    private static ReplayResult replayStructured(GrpcRecipe recipe, RunEvidence evidence,
+                                                 int index,
+                                                 ai.pipestream.proto.grpc.recipe.v1.RecipeStep step,
+                                                 StepEvidence recorded,
+                                                 List<FileDescriptor> schema,
+                                                 ArtifactRepository artifacts,
+                                                 Map<String, Message> scope,
+                                                 List<StepReplay> steps) throws IOException {
+        String name = step.getName();
+        if (!recorded.hasStructured()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "structured step records no structured-generation evidence");
+        }
+        StructuredGenerationEvidence provenance = recorded.getStructured();
+        StructuredGenerationSpec spec = step.getStructured();
+        if (!provenance.getTargetType().equals(spec.getTargetType())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded target type " + provenance.getTargetType()
+                            + " differs from the recipe's " + spec.getTargetType());
+        }
+        if (!provenance.getModel().equals(spec.getModel())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded model " + provenance.getModel()
+                            + " differs from the recipe's " + spec.getModel());
+        }
+        if (recorded.getStatus() == StepStatus.STEP_STATUS_SKIPPED) {
+            return fail(steps, name, recorded.getStatus(),
+                    "structured steps declare no gate; a skipped record is a forgery");
+        }
+        Descriptor target = findMessage(schema, spec.getTargetType());
+        if (target == null) {
+            return fail(steps, name, recorded.getStatus(),
+                    "target type " + spec.getTargetType() + " not in the replay schema");
+        }
+        if (!StructuredProvenance.promptFingerprint(target)
+                .equals(provenance.getPromptFingerprint())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded prompt fingerprint does not match the replay schema's "
+                            + "rendering of " + spec.getTargetType());
+        }
+        if (!StructuredProvenance.schemaFingerprint(target)
+                .equals(provenance.getSchemaFingerprint())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded schema fingerprint does not match the replay schema's "
+                            + "rendering of " + spec.getTargetType());
+        }
+        if (recorded.getStatus() != StepStatus.STEP_STATUS_SUCCEEDED) {
+            // A failed structured step ends the run; nothing after it can be replayed.
+            steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
+            return terminalTail(recipe, evidence, index, steps);
+        }
+        if (!recorded.hasRequestArtifact()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "a live structured step records no request artifact");
+        }
+        Message expectedRequest = maskStructuredRequest(GenerateStructuredRequest
+                .newBuilder()
+                .setTargetType(spec.getTargetType())
+                .setModel(spec.getModel())
+                .setMaxAttempts(spec.getMaxAttempts())
+                .build());
+        Message request = parse(artifacts, recorded.getRequestArtifact(),
+                GenerateStructuredRequest.getDescriptor(), "request of step " + name);
+        if (!request.equals(expectedRequest)) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded request differs from what the step's structured "
+                            + "specification produces");
+        }
+        if (!recorded.hasResponseArtifact()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "succeeded structured step records no response artifact");
+        }
+        Message response = parse(artifacts, recorded.getResponseArtifact(), target,
+                "response of step " + name);
+        boolean valid = ProtoValidator.forMessageType(target).validate(response).valid();
+        if (valid != provenance.getValidationPassed()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded validation outcome " + provenance.getValidationPassed()
+                            + " but the recorded response re-validates to " + valid);
+        }
+        scope.put(name, response);
+        steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
+        return null;
+    }
+
+    /** The recorder's redaction pass, applied to the spec-derived request. */
+    private static Message maskStructuredRequest(GenerateStructuredRequest request) {
+        SensitivityMasker.MaskResult masked = SensitivityMasker.mask(request,
+                Set.of("pii", "secret"), SensitivityMasker.Strategy.REMOVE);
+        return masked.message();
     }
 
     /** A skipped step must have a gate, and the gate must evaluate false on the scope. */

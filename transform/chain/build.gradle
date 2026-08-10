@@ -8,10 +8,15 @@ dependencies {
     api project(':protomolt-actions')
     // ChainRecipeCompiler emits the durable recipe contract from this module.
     api project(':protomolt-grpc-recipe')
+    // Structured-generation steps execute through this coordinator.
+    api project(':protomolt-inference-structured')
 
     implementation project(':protomolt-json')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
+    // Prompt/schema fingerprints of a structured step are recomputed with the
+    // same persona-free renderer the coordinator uses.
+    implementation project(':protomolt-protobuf-prompt')
     implementation libs.protobuf.java.util
 
     testImplementation platform(libs.junit.bom)

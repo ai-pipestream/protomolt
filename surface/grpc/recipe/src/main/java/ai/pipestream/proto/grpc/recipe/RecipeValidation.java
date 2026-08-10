@@ -12,7 +12,11 @@ import ai.pipestream.proto.grpc.recipe.v1.ServiceDependency;
 import ai.pipestream.proto.grpc.recipe.v1.StepCompletion;
 import ai.pipestream.proto.grpc.recipe.v1.StepEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.StepStatus;
+import ai.pipestream.proto.grpc.recipe.v1.StructuredAttemptEvidence;
+import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationEvidence;
+import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec;
 import ai.pipestream.proto.grpc.recipe.v1.VersionedRecipe;
+import ai.pipestream.proto.inference.v1.AttemptOutcome;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
 
@@ -30,6 +34,10 @@ public final class RecipeValidation {
     private static final int MAX_DEPENDENCIES = 64;
     private static final int MAX_STEPS = 256;
     private static final int MAX_RULES = 1_024;
+    /** Maximum catalog model id length on a structured-generation step. */
+    public static final int MAX_MODEL_LENGTH = 256;
+    /** Hard attempt ceiling of the structured-generation coordinator. */
+    public static final int MAX_STRUCTURED_ATTEMPTS = 3;
     /** Maximum diagnostic or provenance text retained in one recipe record. */
     public static final int MAX_TEXT_LENGTH = 16_384;
 
@@ -76,11 +84,28 @@ public final class RecipeValidation {
             validateName(step.getDependency(), "step.dependency");
             require(dependencyAliases.contains(step.getDependency()),
                     "step dependency is not declared: " + step.getDependency());
-            validateMethod(step.getMethod(), "step.method");
-            validateText(step.getWhen(), "step.when");
-            validateRules(step.getRulesCount(), step.getRulesList(), "step.rules");
-            validateCelRules(step.getCelRulesList(), "step.cel_rules");
-            validateDuration(step.getDeadline(), "step.deadline");
+            if (step.hasStructured()) {
+                validateStructuredSpec(step.getStructured());
+                require(step.getMethod().isEmpty(),
+                        "step.method must be empty when step.structured is set");
+                require(step.getWhen().isBlank(),
+                        "structured steps do not support step.when gates");
+                require(step.getRulesCount() == 0 && step.getCelRulesCount() == 0,
+                        "structured steps declare no mapping rules; the coordinator "
+                                + "fills the target type directly");
+                require(!step.getValidateResponse(),
+                        "step.validate_response is meaningless on a structured step; "
+                                + "the coordinator always validates its output");
+                require(step.getDeadline().getSeconds() == 0
+                                && step.getDeadline().getNanos() == 0,
+                        "structured steps do not support step.deadline");
+            } else {
+                validateMethod(step.getMethod(), "step.method");
+                validateText(step.getWhen(), "step.when");
+                validateRules(step.getRulesCount(), step.getRulesList(), "step.rules");
+                validateCelRules(step.getCelRulesList(), "step.cel_rules");
+                validateDuration(step.getDeadline(), "step.deadline");
+            }
             require(step.getCompletion() == StepCompletion.STEP_COMPLETION_LIVE
                             || step.getCompletion() == StepCompletion.STEP_COMPLETION_EXTERNAL,
                     "step.completion must be live or external");
@@ -190,12 +215,18 @@ public final class RecipeValidation {
 
     private static void validate(StepEvidence step) {
         validateName(step.getStepName(), "step_evidence.step_name");
-        validateMethod(step.getMethod(), "step_evidence.method");
         require(step.getStatus() == StepStatus.STEP_STATUS_SUCCEEDED
                         || step.getStatus() == StepStatus.STEP_STATUS_FAILED
                         || step.getStatus() == StepStatus.STEP_STATUS_SKIPPED
                         || step.getStatus() == StepStatus.STEP_STATUS_CANCELLED,
                 "step_evidence.status must be terminal");
+        if (step.hasStructured()) {
+            require(step.getMethod().isEmpty(),
+                    "step_evidence.method must be empty when structured evidence is present");
+            validateStructuredEvidence(step.getStructured(), step.getStatus());
+        } else {
+            validateMethod(step.getMethod(), "step_evidence.method");
+        }
         validateTimestamp(step.getStartedAt(), "step_evidence.started_at", true);
         validateTimestamp(step.getCompletedAt(), "step_evidence.completed_at", true);
         validateOrder(step.getStartedAt(), step.getCompletedAt(), "step_evidence");
@@ -208,6 +239,61 @@ public final class RecipeValidation {
         require(step.getGrpcStatusCode() >= 0 && step.getGrpcStatusCode() <= 16,
                 "step_evidence.grpc_status_code must be between 0 and 16");
         validateText(step.getSummary(), "step_evidence.summary");
+    }
+
+    private static void validateStructuredSpec(StructuredGenerationSpec spec) {
+        validateType(spec.getTargetType(), "step.structured.target_type");
+        require(!spec.getModel().isBlank()
+                        && spec.getModel().length() <= MAX_MODEL_LENGTH,
+                "step.structured.model must be non-blank and at most "
+                        + MAX_MODEL_LENGTH + " characters");
+        require(spec.getMaxAttempts() >= 0
+                        && spec.getMaxAttempts() <= MAX_STRUCTURED_ATTEMPTS,
+                "step.structured.max_attempts must be between 0 and "
+                        + MAX_STRUCTURED_ATTEMPTS);
+    }
+
+    private static void validateStructuredEvidence(StructuredGenerationEvidence evidence,
+                                                   StepStatus status) {
+        validateType(evidence.getTargetType(), "structured_evidence.target_type");
+        require(!evidence.getModel().isBlank()
+                        && evidence.getModel().length() <= MAX_MODEL_LENGTH,
+                "structured_evidence.model must be non-blank and at most "
+                        + MAX_MODEL_LENGTH + " characters");
+        validateFingerprint(evidence.getPromptFingerprint(),
+                "structured_evidence.prompt_fingerprint");
+        validateFingerprint(evidence.getSchemaFingerprint(),
+                "structured_evidence.schema_fingerprint");
+        // Empty attempt history is allowed only on a step that failed before the
+        // first model invocation (no generator configured, preflight rejection).
+        require(evidence.getAttemptsCount() <= MAX_STRUCTURED_ATTEMPTS,
+                "structured_evidence.attempts exceeds the maximum of "
+                        + MAX_STRUCTURED_ATTEMPTS);
+        long promptTokens = 0;
+        long completionTokens = 0;
+        for (int i = 0; i < evidence.getAttemptsCount(); i++) {
+            StructuredAttemptEvidence attempt = evidence.getAttempts(i);
+            require(attempt.getAttempt() == i + 1,
+                    "structured_evidence.attempts must be sequentially numbered "
+                            + "from 1; entry " + i + " claims attempt "
+                            + attempt.getAttempt());
+            require(attempt.getOutcome() != AttemptOutcome.ATTEMPT_OUTCOME_UNSPECIFIED,
+                    "structured_evidence.attempts outcomes must be defined");
+            promptTokens += attempt.getUsage().getPromptTokens();
+            completionTokens += attempt.getUsage().getCompletionTokens();
+        }
+        require(evidence.getTotalUsage().getPromptTokens() == promptTokens
+                        && evidence.getTotalUsage().getCompletionTokens() == completionTokens,
+                "structured_evidence.total_usage must equal the sum of per-attempt usage");
+        if (status == StepStatus.STEP_STATUS_SUCCEEDED) {
+            require(evidence.getAttemptsCount() > 0,
+                    "a succeeded structured step records at least one attempt");
+            require(evidence.getAttempts(evidence.getAttemptsCount() - 1).getOutcome()
+                            == AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED,
+                    "a succeeded structured step's last attempt must be SUCCEEDED");
+            require(evidence.getValidationPassed(),
+                    "a succeeded structured step records validation_passed true");
+        }
     }
 
     private static void validateCelRules(Iterable<CelMappingRule> rules, String field) {

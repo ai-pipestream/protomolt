@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ai.pipestream.proto.grpc.recipe.v1;
 
+import "ai/pipestream/proto/inference/v1/inference.proto";
+import "ai/pipestream/proto/inference/v1/structured.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -44,7 +46,8 @@ message RecipeStep {
   string name = 1;
   // Alias of a declared service dependency.
   string dependency = 2;
-  // Fully-qualified gRPC method in Service/Method form.
+  // Fully-qualified gRPC method in Service/Method form. Empty exactly when
+  // structured is set: a structured step has no gRPC method.
   string method = 3;
   // Optional boolean CEL gate evaluated against the recipe scope.
   string when = 4;
@@ -58,6 +61,26 @@ message RecipeStep {
   google.protobuf.Duration deadline = 8;
   // How the response is obtained.
   StepCompletion completion = 9;
+  // Structured-generation specification. When set, this step fills one
+  // protobuf message with a catalog model through the structured-generation
+  // coordinator instead of invoking a gRPC method: method is empty, and
+  // rules, cel_rules, when, validate_response, and deadline must be unset
+  // (the coordinator always validates its typed output). The step still
+  // names a declared dependency, which anchors the descriptor set the
+  // target type resolves against; replay fingerprint-checks that anchor.
+  StructuredGenerationSpec structured = 10;
+}
+
+// A structured-generation recipe step: fill one message type with one model.
+message StructuredGenerationSpec {
+  // Fully qualified message type the step fills; must resolve in the
+  // dependency's descriptor set.
+  string target_type = 1;
+  // Catalog model id; must declare the structured-output capability.
+  // Bounded to 256 characters by RecipeValidation.
+  string model = 2;
+  // Attempt cap; 0 applies the coordinator default. Never exceeds 3.
+  int32 max_attempts = 3;
 }
 
 // A CEL mapping rule with an explicit destination field path.
@@ -164,6 +187,58 @@ message StepEvidence {
   int32 grpc_status_code = 8;
   // Bounded diagnostic summary.
   string summary = 9;
+  // Structured-generation provenance, present exactly when the recipe step
+  // carries a StructuredGenerationSpec. This is the bounded, redacted
+  // evidence contract for a structured step: the raw model output text and
+  // the rendered retry feedback are NEVER persisted; prompt evidence is the
+  // SHA-256 fingerprint of the rendered instructions, schema evidence is
+  // the SHA-256 fingerprint of the response JSON Schema, and the response
+  // evidence is the sensitivity-masked typed message in the step's response
+  // artifact. An empty method is allowed exactly when this is present.
+  StructuredGenerationEvidence structured = 10;
+}
+
+// Bounded structured-generation provenance for one recipe step. Every field
+// is a scalar, an enum, a fingerprint, or token accounting: no model output
+// text and no feedback text is ever recorded here.
+message StructuredGenerationEvidence {
+  // The message type that was filled; echoes the step's specification.
+  string target_type = 1;
+  // The catalog model id that produced the final attempt.
+  string model = 2;
+  // The SPI provider that executed the final attempt.
+  string provider = 3;
+  // The provider-reported model version or digest; empty when the provider
+  // does not report one.
+  string model_version = 4;
+  // Lowercase SHA-256 hex of the rendered instructions the model was
+  // briefed with. The instructions themselves are never persisted.
+  string prompt_fingerprint = 5;
+  // Lowercase SHA-256 hex of the response JSON Schema the model was
+  // constrained with. The schema itself is never persisted.
+  string schema_fingerprint = 6;
+  // Whether the final typed output re-validated clean against the target
+  // type's declared rules.
+  bool validation_passed = 7;
+  // Token accounting summed across all attempts.
+  ai.pipestream.proto.inference.v1.Usage total_usage = 8;
+  // Every recorded attempt, oldest first; 1 to 3 entries on a succeeded
+  // step, empty only when the step failed before the first model
+  // invocation. Attempts carry scalars only - never response text.
+  repeated StructuredAttemptEvidence attempts = 9;
+}
+
+// The scalar provenance of one generation attempt. The raw model output and
+// the retry feedback of the attempt are never persisted.
+message StructuredAttemptEvidence {
+  // The 1-based attempt number; attempts are sequential.
+  int32 attempt = 1;
+  // How the attempt ended.
+  ai.pipestream.proto.inference.v1.AttemptOutcome outcome = 2;
+  // Token accounting of this attempt.
+  ai.pipestream.proto.inference.v1.Usage usage = 3;
+  // Why the model stopped generating on this attempt.
+  ai.pipestream.proto.inference.v1.FinishReason finish_reason = 4;
 }
 
 // Recipe run state.

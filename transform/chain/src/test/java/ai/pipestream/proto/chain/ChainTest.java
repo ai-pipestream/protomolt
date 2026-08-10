@@ -121,10 +121,10 @@ class ChainTest {
         List<FileDescriptor> files = List.of(file);
         return new ChainDefinition("embed-text", files,
                 file.findMessageTypeByName("Text"), 10_000,
-                List.of(new ChainDefinition.Step("tokenize", "in-process", false,
+                List.of(ChainDefinition.Step.grpc("tokenize", "in-process", false,
                                 ChainDefinition.resolveMethod(files, "chain.test.Tokenizer/Tokenize"),
                                 null, List.of("text = input.text"), List.of(), false, 0, ""),
-                        new ChainDefinition.Step("embed", "in-process", false,
+                        ChainDefinition.Step.grpc("embed", "in-process", false,
                                 ChainDefinition.resolveMethod(files, "chain.test.Embedder/Embed"),
                                 when, List.of("ids = tokenize.ids"), List.of(), false, 0, "")),
                 output);
@@ -146,7 +146,7 @@ class ChainTest {
         List<FileDescriptor> files = List.of(file);
         ChainDefinition broken = new ChainDefinition("broken", files,
                 file.findMessageTypeByName("Text"), 0,
-                List.of(new ChainDefinition.Step("tokenize", "in-process", false,
+                List.of(ChainDefinition.Step.grpc("tokenize", "in-process", false,
                         ChainDefinition.resolveMethod(files, "chain.test.Tokenizer/Tokenize"),
                         "input.text", List.of("text = embed.model"), List.of(), false, 0, "")),
                 null);
