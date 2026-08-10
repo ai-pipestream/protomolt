@@ -199,7 +199,7 @@ for integration review.
 | Offline fixture replay | **LANDED: #90** | Replay verifier, fixture loader, deterministic result model, and tests; no live network invocation | A recorded passing run replays without a server and altered request, response, or descriptor evidence fails clearly |
 | Registry promotion adapter | **LANDED: #89** | Recipe version storage in `GitSchemaRegistryStore`, compatibility checks, and tests | Promotion is immutable, recoverable by version, and rejects unresolved artifacts or dependency fingerprints |
 | Structural mapping suggestions | **LANDED: #91** | Descriptor-grounded candidate generation and type-check tests; no provider-specific LLM integration yet | Suggestions identify their source and target fields, pass the same compiler type checker, and never bypass validation |
-| MCP integration and acceptance | **IN REVIEW: this PR** | Workbench actions, host-owned artifact/evidence wiring, typed RPCs, MCP guidance, and the live acceptance test | One MCP session suggests mappings, compiles a two-service chain, records redacted evidence, replays offline, promotes into git, and recovers the version after restart |
+| MCP integration and acceptance | **LANDED: #92** | Workbench actions, host-owned artifact/evidence wiring, typed RPCs, MCP guidance, and the live acceptance test | One MCP session suggests mappings, compiles a two-service chain, records redacted evidence, replays offline, promotes into git, and recovers the version after restart |
 
 Delegated pull requests must include tests and a short update to this table.
 They must not add credentials, release automation, or unbounded live calls.
