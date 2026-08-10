@@ -2,10 +2,10 @@
 
 ## Status
 
-Accepted direction. Phase 1 now provides the durable service workspace,
-reflected-schema artifacts, agent-facing MCP workflow, typed service lifecycle
-actions, shared outbound channel policy, and generated catalog inventory.
-Recipe evidence and promotion remain staged work below.
+Phase 1 and the Phase 2 component packages are implemented. The current integration
+exposes the recipe workbench through MCP, typed gRPC, REST, and OpenAPI, with durable
+artifact and run-evidence storage mounted by the host. Phase 3 structured inference
+is the next delivery phase.
 
 ## Objective
 
@@ -84,14 +84,15 @@ response and make the durable objects above available as resources. The first
 512 characters of the instructions are self-contained so clients that truncate
 guidance still receive the safe golden path.
 
-The initial workflow is:
+The implemented workflow is:
 
 1. `service-register` or `reflect` to establish a service contract;
 2. `service-inspect` to choose a method and understand its policy;
-3. `service-probe` to run a bounded request and capture evidence;
-4. `compose-recipe` to build candidate typed mappings;
-5. `verify-recipe` for static checks and optional live fixtures;
-6. `promote-recipe` to version the recipe and generate an application.
+3. `grpc-invoke` to probe a method with a bounded request;
+4. `suggest-mappings` and `check-chain` to compose a descriptor-grounded chain;
+5. `compile-recipe` and `record-recipe-run` to capture the checked recipe and live fixtures;
+6. `replay-recipe` to verify those fixtures offline; and
+7. `promote-recipe` to store an immutable recipe version in the git registry.
 
 MCP resources are organized around services, methods, recipes, runs, and
 artifacts. Resource templates allow a client to fetch one exact object without
@@ -197,7 +198,8 @@ for integration review.
 | Existing-chain compiler | **LANDED: #88** | Adapter from `ChainDefinition`/`ChainJson` to the published recipe contract and its tests | Existing chain fixtures compile deterministically and every method/type reference resolves against embedded descriptors |
 | Offline fixture replay | **LANDED: #90** | Replay verifier, fixture loader, deterministic result model, and tests; no live network invocation | A recorded passing run replays without a server and altered request, response, or descriptor evidence fails clearly |
 | Registry promotion adapter | **LANDED: #89** | Recipe version storage in `GitSchemaRegistryStore`, compatibility checks, and tests | Promotion is immutable, recoverable by version, and rejects unresolved artifacts or dependency fingerprints |
-| Structural mapping suggestions | **LANDED: this PR** | Descriptor-grounded candidate generation and type-check tests; no provider-specific LLM integration yet | Suggestions identify their source and target fields, pass the same compiler type checker, and never bypass validation |
+| Structural mapping suggestions | **LANDED: #91** | Descriptor-grounded candidate generation and type-check tests; no provider-specific LLM integration yet | Suggestions identify their source and target fields, pass the same compiler type checker, and never bypass validation |
+| MCP integration and acceptance | **LANDED: #92** | Workbench actions, host-owned artifact/evidence wiring, typed RPCs, MCP guidance, and the live acceptance test | One MCP session suggests mappings, compiles a two-service chain, records redacted evidence, replays offline, promotes into git, and recovers the version after restart |
 
 Delegated pull requests must include tests and a short update to this table.
 They must not add credentials, release automation, or unbounded live calls.
@@ -247,11 +249,14 @@ against the original source.
 - Promotion does not publish a release. Release workflows remain separate,
   deliberate operations.
 
-## Immediate implementation slice
+## Current implementation
 
 The delivered Phase 1 foundation includes MCP instructions and lifecycle,
 service-profile contracts, bounded reflection, durable profile and descriptor
 storage, service registration and inspection tools, paginated MCP resources,
 restart recovery tests, a host-configurable outbound channel policy, and a
-generated catalog inventory. Phase 2 begins with recipe contracts, probe run
-evidence, artifact storage, replay, and promotion.
+generated catalog inventory. Phase 2 adds MCP actions that suggest mappings,
+compile existing chains, record sensitivity-redacted live fixtures, replay
+them offline, and promote immutable versions into the git registry. Its
+acceptance test drives two live gRPC services through streamable HTTP MCP and
+recovers the promoted recipe from registry storage afterward.

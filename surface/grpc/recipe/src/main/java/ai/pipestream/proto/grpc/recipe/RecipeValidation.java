@@ -30,7 +30,8 @@ public final class RecipeValidation {
     private static final int MAX_DEPENDENCIES = 64;
     private static final int MAX_STEPS = 256;
     private static final int MAX_RULES = 1_024;
-    private static final int MAX_TEXT_LENGTH = 16_384;
+    /** Maximum diagnostic or provenance text retained in one recipe record. */
+    public static final int MAX_TEXT_LENGTH = 16_384;
 
     /** Maximum serialized recipe or promoted-recipe envelope size. */
     public static final int MAX_RECIPE_BYTES = 1024 * 1024;
@@ -157,9 +158,7 @@ public final class RecipeValidation {
         validateFingerprint(reference.getSha256(), "artifact.sha256");
         require(MEDIA_TYPE.matcher(reference.getMediaType()).matches(),
                 "artifact.media_type must be a bounded type/subtype");
-        require(reference.getSizeBytes() > 0,
-                "artifact.size_bytes must be positive");
-        require(reference.getSizeBytes() <= MAX_ARTIFACT_BYTES,
+        require(Long.compareUnsigned(reference.getSizeBytes(), MAX_ARTIFACT_BYTES) <= 0,
                 "artifact.size_bytes exceeds the maximum of " + MAX_ARTIFACT_BYTES);
     }
 

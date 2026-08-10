@@ -117,7 +117,7 @@ class McpHttpTest {
     }
 
     @Test
-    void toolsListServesTheThirtyFiveVerbs() throws Exception {
+    void toolsListServesTheFullCatalog() throws Exception {
         HttpSession session = initializeSession();
         assertThat(post(session, """
                 {"jsonrpc":"2.0","method":"notifications/initialized"}
@@ -127,12 +127,13 @@ class McpHttpTest {
                 """);
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode tools = MAPPER.readTree(response.body()).path("result").path("tools");
-        assertThat(tools.size()).isEqualTo(35);
+        assertThat(tools.size()).isEqualTo(40);
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
                 "generate-stubs", "join-messages", "synthesize-shape", "merge-schemas",
                 "check-rules", "run-chain", "check-chain", "infer-schema", "mask-message",
                 "submit-chain", "get-job", "list-jobs", "complete-step", "service-register",
-                "service-list", "service-inspect", "service-refresh");
+                "service-list", "service-inspect", "service-refresh", "suggest-mappings",
+                "compile-recipe", "record-recipe-run", "replay-recipe", "promote-recipe");
     }
 
     @Test

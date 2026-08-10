@@ -93,6 +93,21 @@ service ProtoMoltService {
   // mapping and CEL expression type-checks at each step's scope.
   rpc CheckChain(CheckChainRequest) returns (CheckChainResponse);
 
+  // Compiles a checked chain into the durable descriptor-grounded recipe contract.
+  rpc CompileRecipe(CompileRecipeRequest) returns (CompileRecipeResponse);
+
+  // Suggests conservative, statically verifiable mappings onto a target type.
+  rpc SuggestMappings(SuggestMappingsRequest) returns (SuggestMappingsResponse);
+
+  // Executes a live chain and records redacted content-addressed fixtures.
+  rpc RecordRecipeRun(RecordRecipeRunRequest) returns (RecordRecipeRunResponse);
+
+  // Replays recorded fixtures offline and reports any drift.
+  rpc ReplayRecipe(ReplayRecipeRequest) returns (ReplayRecipeResponse);
+
+  // Promotes recipe content as an immutable version in the git registry.
+  rpc PromoteRecipe(PromoteRecipeRequest) returns (PromoteRecipeResponse);
+
   // Fetches a live gRPC server's schema over server reflection, given only
   // its address. Servers without reflection return ok=false.
   rpc Reflect(ReflectRequest) returns (ReflectResponse);
@@ -951,6 +966,120 @@ message CheckChainResponse {
   bool ok = 1;
   // One entry per problem; empty when 'ok' is true.
   repeated ChainFinding findings = 2;
+}
+
+// A checked chain to compile into a recipe.
+message CompileRecipeRequest {
+  // Descriptor-grounded chain to check and compile.
+  ChainDefinition chain = 1;
+}
+
+// Deterministic recipe content and its SHA-256 identity.
+message CompileRecipeResponse {
+  // Compiled GrpcRecipe rendered as protobuf JSON.
+  google.protobuf.Struct recipe = 1;
+  // Lowercase SHA-256 fingerprint of the compiled recipe bytes.
+  string recipe_fingerprint = 2;
+}
+
+// Descriptor-grounded mapping suggestion input.
+message SuggestMappingsRequest {
+  // Named source message types available to mapping rules.
+  repeated ShapeSource sources = 1;
+  // Message type whose fields need source mappings.
+  JoinTarget target = 2;
+}
+
+// One proposed target=source.path mapping.
+message MappingCandidate {
+  // Target field path populated by this candidate.
+  string target_path = 1;
+  // Named source field path read by this candidate.
+  string source_path = 2;
+  // Chain mapping rule in target=source.path form.
+  string rule = 3;
+  // Deterministic reason this candidate was proposed.
+  string basis = 4;
+}
+
+// Ordered conservative mapping candidates.
+message SuggestMappingsResponse {
+  // Fully qualified target message type.
+  string target_type = 1;
+  // Statically verifiable candidates in deterministic rank order.
+  repeated MappingCandidate candidates = 2;
+}
+
+// A live draft-recipe probe to record for offline replay.
+message RecordRecipeRunRequest {
+  // Descriptor-grounded chain to execute.
+  ChainDefinition chain = 1;
+  // Chain input encoded as proto3 JSON.
+  google.protobuf.Struct input = 2;
+  // Client-selected path-safe run identity.
+  string run_id = 3;
+  // Promoted recipe version, or empty for a draft probe.
+  string recipe_version = 4;
+}
+
+// The persisted run evidence; failed executions still return their evidence.
+message RecordRecipeRunResponse {
+  // True when every chain step and output mapping succeeded.
+  bool ok = 1;
+  // Step name that failed, when ok is false.
+  string failed_step = 2;
+  // Chain execution failure category, when ok is false.
+  string failure_kind = 3;
+  // Persisted RunEvidence rendered as protobuf JSON.
+  google.protobuf.Struct evidence = 4;
+}
+
+// Exact recipe, evidence identity, and descriptor set for offline replay.
+message ReplayRecipeRequest {
+  // GrpcRecipe encoded as protobuf JSON.
+  google.protobuf.Struct recipe = 1;
+  // Stored run-evidence identity to replay.
+  string run_id = 2;
+  // Exact descriptor set used to decode and verify fixtures.
+  SchemaSource schema = 3;
+}
+
+// One step's offline replay verdict.
+message RecipeStepReplay {
+  // Recipe step whose evidence was checked.
+  string step_name = 1;
+  // RunEvidence StepStatus enum name.
+  string recorded_status = 2;
+  // True when the recorded step evidence matches the recipe and fixtures.
+  bool ok = 3;
+  // Bounded explanation of the replay verdict.
+  string detail = 4;
+}
+
+// Whole-run offline replay verdict.
+message ReplayRecipeResponse {
+  // True when the complete recorded run replays without drift.
+  bool ok = 1;
+  // Whole-run failure summary, or empty when replay succeeds.
+  string failure = 2;
+  // Ordered per-step replay verdicts.
+  repeated RecipeStepReplay steps = 3;
+}
+
+// Recipe content to promote under one immutable version.
+message PromoteRecipeRequest {
+  // GrpcRecipe encoded as protobuf JSON.
+  google.protobuf.Struct recipe = 1;
+  // Path-safe immutable version identity.
+  string version = 2;
+}
+
+// The immutable promotion envelope stored in the registry.
+message PromoteRecipeResponse {
+  // True when the version is present with the requested content.
+  bool promoted = 1;
+  // Stored VersionedRecipe rendered as protobuf JSON.
+  google.protobuf.Struct versioned_recipe = 2;
 }
 
 // The input of submit-chain: an inline chain or the name of a stored one,

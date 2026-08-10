@@ -26,6 +26,17 @@ class FileSystemArtifactRepositoryTest {
     }
 
     @Test
+    void storesTheEmptyEncodingOfADefaultProtobufMessage(@TempDir Path root) throws Exception {
+        FileSystemArtifactRepository repository = new FileSystemArtifactRepository(root);
+
+        ArtifactReference reference = repository.save(new byte[0],
+                "application/x-protobuf", true);
+
+        assertThat(reference.getSizeBytes()).isZero();
+        assertThat(repository.find(reference.getSha256()).orElseThrow().content()).isEmpty();
+    }
+
+    @Test
     void saveThenFindRoundTripsBytesAndReference(@TempDir Path root) throws Exception {
         FileSystemArtifactRepository repository = new FileSystemArtifactRepository(root);
 

@@ -61,6 +61,11 @@ that only needs the built-ins does not pull them in. Each implements the same
 | `gather-git` | `protomolt-gather-git` | Gather `.proto` sources from a git repository (branch, tag, or commit) and compile them; returns the source texts plus a descriptor set usable as a schema input |
 | `run-chain` | `protomolt-chain` | Execute a chain: serial unary gRPC calls, each request mapped from the chain input and prior steps' responses, with gates, per-step validation, and nested deadlines |
 | `check-chain` | `protomolt-chain` | Verify a chain without running it: methods resolve and are unary, step names are valid scope variables, gates are boolean CEL, and every mapping type-checks |
+| `compile-recipe` | `protomolt-chain` | Compile a checked chain into the deterministic descriptor-grounded recipe contract |
+| `suggest-mappings` | `protomolt-chain` | Propose conservative descriptor-compatible mapping candidates and pass each through the chain rule checker |
+| `record-recipe-run` | `protomolt-chain` | Execute a live chain and persist sensitivity-redacted, content-addressed fixtures plus immutable run evidence |
+| `replay-recipe` | `protomolt-chain` | Replay recorded fixtures offline and report recipe, schema, request, response, mapping, or ordering drift |
+| `promote-recipe` | `protomolt-chain` | Store validated recipe content as an immutable version in the mounted git registry |
 | `emit-okf` | `protomolt-emit-okf` | Render a schema as an Open Knowledge Format (OKF v0.1) bundle: linked markdown concept documents for every message, enum, and service, inline plus zipped |
 | `submit-chain` | `protomolt-jobs-service` | Submit a chain for durable asynchronous execution |
 | `get-job` | `protomolt-jobs-service` | Read one chain job and its step checkpoints |

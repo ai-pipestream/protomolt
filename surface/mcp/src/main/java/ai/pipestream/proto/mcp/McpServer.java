@@ -58,12 +58,12 @@ public final class McpServer {
      * initialization metadata still get the complete gRPC workflow.
      */
     public static final String DEFAULT_INSTRUCTIONS =
-            "ProtoMolt workflow: with a service workspace, call `service-register` once, then use "
-                    + "`service-inspect` and its MCP resources; refresh only when the schema changes. "
-                    + "For ad hoc targets, call `reflect`, choose the exact service, method, and request "
-                    + "fields from its schema, then call `grpc-invoke` with proto3 JSON. Check `ok` and "
-                    + "status before continuing. Use `generate-stubs` only when promoting a native "
-                    + "client. Never guess methods or payloads when descriptors can answer.";
+            "ProtoMolt workflow: call `service-register` once, then `service-inspect`; use `reflect` "
+                    + "for ad hoc targets. Choose exact methods and fields from descriptors, then use "
+                    + "`grpc-invoke`. To compose services, use `suggest-mappings`, `check-chain`, "
+                    + "`compile-recipe`, `record-recipe-run`, `replay-recipe`, then `promote-recipe`. "
+                    + "Use `generate-stubs` only for native clients. Check `ok` and status at every "
+                    + "step. Never guess a method or payload when a descriptor can answer.";
 
     private static final List<String> SUPPORTED_VERSIONS =
             List.of("2025-06-18", "2025-03-26", "2024-11-05");

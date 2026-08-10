@@ -64,7 +64,7 @@ serve/build/install/protomolt-serve/bin/protomolt-serve \
     [--host <addr>] [--grpc-port <n>] [--http-port <n>] \
     [--registry-git <path> [--registry-port <n>]] \
     [--api-token <secret>] [--gather-cache <dir>] \
-    [--service-workspace <dir>] [--demo]
+    [--service-workspace <dir>] [--recipe-workspace <dir>] [--demo]
 ```
 
 `--help` (or `-h`) prints the complete flag set, including the optional jobs
@@ -81,6 +81,7 @@ service-workspace flags are:
 | `--api-token` | `PROTOMOLT_API_TOKEN` | — | Shared secret guarding every operational surface |
 | `--gather-cache` | `PROTOMOLT_GATHER_CACHE` | the library default under the process owner's home | Directory for `gather-git`'s per-repo clone caches |
 | `--service-workspace` | `PROTOMOLT_SERVICE_WORKSPACE` | — | Directory for durable gRPC service profiles and content-addressed descriptor artifacts |
+| `--recipe-workspace` | `PROTOMOLT_RECIPE_WORKSPACE` | — | Directory for content-addressed redacted fixtures and immutable run evidence |
 | `--demo` | — | off | Seed the sample schema described below |
 
 Outbound reflection, invocation, service refresh, and chain execution share

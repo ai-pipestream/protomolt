@@ -55,6 +55,7 @@ class RecipeValidationTest {
     @Test
     void rejectsInvalidArtifactIdentityMediaTypeAndBounds() {
         ArtifactReference artifact = TestRecipes.artifact("{}", true);
+        RecipeValidation.validate(artifact.toBuilder().setSizeBytes(0).build());
         assertThatThrownBy(() -> RecipeValidation.validate(artifact.toBuilder()
                 .setSha256("not-a-hash").build()))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -65,6 +66,10 @@ class RecipeValidationTest {
                 .hasMessageContaining("type/subtype");
         assertThatThrownBy(() -> RecipeValidation.validate(artifact.toBuilder()
                 .setSizeBytes(RecipeValidation.MAX_ARTIFACT_BYTES + 1L).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maximum");
+        assertThatThrownBy(() -> RecipeValidation.validate(artifact.toBuilder()
+                .setSizeBytes(-1L).build()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("maximum");
     }
