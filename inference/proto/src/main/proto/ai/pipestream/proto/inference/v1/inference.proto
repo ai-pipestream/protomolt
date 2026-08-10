@@ -282,6 +282,10 @@ message ModelCapabilities {
 
   // Input modalities beyond text (e.g. "image", "audio"); empty = text only.
   repeated string modalities = 5;
+
+  // Whether the model accepts a JSON-Schema response-format constraint
+  // (structured output).
+  bool structured_output = 6;
 }
 
 // One model registration: the unit of "dynamically add a model". An entry
