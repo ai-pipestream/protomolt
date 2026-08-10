@@ -877,6 +877,45 @@ message ChainStep {
   // response — the human-in-the-loop lane. External steps are rejected by
   // synchronous run-chain; they only execute as jobs.
   string completion = 10;
+  // Structured-generation spec; when set the step fills 'structured.target_type'
+  // with the named catalog model and must not declare target, method, or tls.
+  StructuredStep structured = 11;
+  // Typed edge feeding this step, replacing the top-level rules/celRules:
+  // the named scope entries are mapped into 'produce_type', optionally
+  // projected and validated, and the delivered value becomes the step's
+  // request (or, on a structured step, the generation's grounding).
+  ChainEdge edge = 12;
+}
+
+// A structured-generation step: fills one message type with a catalog model
+// through the structured-output coordinator instead of invoking gRPC.
+message StructuredStep {
+  // Fully qualified message type the model fills.
+  string target_type = 1;
+  // Catalog model id; must declare the structured-output capability.
+  string model = 2;
+  // Attempt budget; 0 takes the coordinator default (3, hard-capped at 3).
+  int32 max_attempts = 3;
+}
+
+// A typed inter-step edge: map the named scope entries ('input' or prior step
+// names) into 'produce_type', optionally project the produced value to a
+// projection-annotated consumer form, and validate it before the step runs.
+message ChainEdge {
+  // Scope entries the edge reads: 'input' or prior step names.
+  repeated string sources = 1;
+  // Fully qualified type the edge rules build.
+  string produce_type = 2;
+  // Scoped rules building the produced message.
+  repeated string rules = 3;
+  // CEL rules applied after 'rules'.
+  repeated CelRule cel_rules = 4;
+  // Fully qualified projection-annotated consumer type the produced message is
+  // projected to before delivery; empty delivers the produced message itself.
+  string project_to = 5;
+  // Validate the delivered value against its declared rules before the step
+  // runs; a rejection fails the step before any invocation.
+  bool validate = 6;
 }
 
 // The chain's output mapping; without it the last step's response returns.

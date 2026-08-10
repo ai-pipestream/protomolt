@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package live.acceptance;
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "ai/pipestream/proto/projection/v1/projection.proto";
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+
+// The prior typed result the chain receives as its input: ordinary fields,
+// one field the grounding projection excludes, and one sensitivity-annotated
+// field. The live acceptance test carries sentinel values in the last two and
+// proves they never reach the provider request or the persisted evidence.
+message UpstreamResult {
+  // Document identity; projected into the grounding.
+  string doc_id = 1 [
+    (ai.pipestream.proto.validate.v1.field).string = {min_len: 3, max_len: 64},
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Document identity from the upstream result."
+      sensitivity: "public"
+    }
+  ];
+  // Document title; projected into the grounding.
+  string title = 2 [
+    (ai.pipestream.proto.validate.v1.field).string = {min_len: 3, max_len: 200},
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Document title from the upstream result."
+      sensitivity: "public"
+    }
+  ];
+  // Upstream working notes the consumer must never see: mapped through the
+  // edge but excluded from the grounding projection, and masked by the
+  // recorder before anything persists.
+  string internal_notes = 3 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 256,
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Upstream working notes; never consumer-visible."
+      sensitivity: "pii"
+    }
+  ];
+  // A credential-like value; masked by the recorder and never projected.
+  string secret_token = 4 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 256,
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Credential-like upstream value; never persisted in clear."
+      sensitivity: "secret"
+    }
+  ];
+}
+
+// The consumer-visible grounding: only the allowed fields of UpstreamResult,
+// declared as a projection so the exclusion lives in the schema, not in code.
+message CaseGrounding {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "live.acceptance.UpstreamResult"
+  };
+  string doc_id = 1 [
+    (ai.pipestream.proto.projection.v1.from) = {paths: {path: "doc_id"}},
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 3, max_len: 64}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Document identity the summary is grounded on."
+      sensitivity: "public"
+    }
+  ];
+  string title = 2 [
+    (ai.pipestream.proto.projection.v1.from) = {paths: {path: "title"}},
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 3, max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Document title the summary is grounded on."
+      sensitivity: "public"
+    }
+  ];
+}
+
+// The form the live model fills from the grounding.
+message CaseSummary {
+  string headline = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 3, max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "One-sentence headline naming the grounded document."
+      sensitivity: "public"
+    }
+  ];
+  int32 confidence = 2 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {gte: 0, lte: 100},
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Confidence that the headline fits the document, 0-100."
+      sensitivity: "public"
+    }
+  ];
+}
