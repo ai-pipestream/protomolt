@@ -885,6 +885,9 @@ message ChainStep {
   // projected and validated, and the delivered value becomes the step's
   // request (or, on a structured step, the generation's grounding).
   ChainEdge edge = 12;
+  // Optional bounded fan-out over a repeated message field produced by 'edge'.
+  // Branch outputs are collected deterministically into 'fan_out.collect_into'.
+  ChainFanOut fan_out = 13;
 }
 
 // A structured-generation step: fills one message type with a catalog model
@@ -916,6 +919,24 @@ message ChainEdge {
   // Validate the delivered value against its declared rules before the step
   // runs; a rejection fails the step before any invocation.
   bool validate = 6;
+}
+
+// Bounded fan-out for one typed edge. The chain verifier resolves every path
+// and type, applies the item and concurrency bounds, and accepts only the
+// FAIL_FAST or CONTINUE failure policies before execution.
+message ChainFanOut {
+  // Dotted path of the repeated message field whose elements become branches.
+  string items = 1;
+  // Maximum number of elements accepted; must be within the verifier's bound.
+  int32 max_items = 2;
+  // Maximum concurrently executing branches; must be within the verifier's bound.
+  int32 max_concurrency = 3;
+  // Branch failure policy: FAIL_FAST or CONTINUE.
+  string failure_policy = 4;
+  // Fully qualified message type receiving the collected branch outputs.
+  string collect_type = 5;
+  // Repeated field of 'collect_type' receiving outputs in branch-index order.
+  string collect_into = 6;
 }
 
 // The chain's output mapping; without it the last step's response returns.

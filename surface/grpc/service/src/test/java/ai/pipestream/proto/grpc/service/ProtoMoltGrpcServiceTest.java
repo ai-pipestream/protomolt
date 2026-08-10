@@ -46,6 +46,15 @@ class ProtoMoltGrpcServiceTest {
             }
             """;
 
+    private static final String TYPED_DATAFLOW_PROTO = """
+            syntax = "proto3";
+            package flow.v1;
+            message Item { string value = 1; }
+            message Batch { repeated Item items = 1; }
+            message Summary { string headline = 1; }
+            message Summaries { repeated Summary summaries = 1; }
+            """;
+
     private static Server server;
     private static ManagedChannel channel;
 
@@ -146,6 +155,42 @@ class ProtoMoltGrpcServiceTest {
                 """.formatted(MAPPER.writeValueAsString(ORDER_PROTO)));
         JsonNode types = result.path("types");
         assertThat(types.findValuesAsText("fullName")).contains("shop.v1.Order");
+    }
+
+    @Test
+    void structuredEdgeAndFanOutRoundTripThroughTheTypedSurface() throws Exception {
+        String source = MAPPER.writeValueAsString(TYPED_DATAFLOW_PROTO);
+        String step = """
+                {"name": "summarize",
+                 "structured": {"targetType": "flow.v1.Summary",
+                                  "model": "structured-model", "maxAttempts": 2},
+                 "edge": {"sources": ["input"], "produceType": "flow.v1.Batch",
+                           "rules": ["items = input.items"], "validate": true},
+                 "fanOut": {"items": "items", "maxItems": 8, "maxConcurrency": 2,
+                            "failurePolicy": "CONTINUE",
+                            "collectType": "flow.v1.Summaries",
+                            "collectInto": "summaries"}}
+                """;
+        JsonNode valid = call("CheckChain", """
+                {"chain": {"name": "typed-dataflow",
+                  "schema": {"sources": {"flow/v1/dataflow.proto": %s}},
+                  "inputType": "flow.v1.Batch", "steps": [%s]}}
+                """.formatted(source, step));
+
+        assertThat(valid.path("ok").asBoolean()).as(valid::toString).isTrue();
+
+        JsonNode invalid = call("CheckChain", """
+                {"chain": {"name": "typed-dataflow",
+                  "schema": {"sources": {"flow/v1/dataflow.proto": %s}},
+                  "inputType": "flow.v1.Batch", "steps": [%s]}}
+                """.formatted(source, step
+                        .replace("\"maxAttempts\": 2", "\"maxAttempts\": 4")
+                        .replace("\"maxConcurrency\": 2", "\"maxConcurrency\": 0")));
+
+        assertThat(invalid.path("ok").asBoolean()).isFalse();
+        assertThat(invalid.path("findings").findValuesAsText("error"))
+                .anyMatch(message -> message.contains("maxAttempts"))
+                .anyMatch(message -> message.contains("maxConcurrency"));
     }
 
     @Test
