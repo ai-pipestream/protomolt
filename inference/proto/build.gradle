@@ -16,6 +16,9 @@ dependencies {
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-metadata')
 
+    // structured.proto names prompt.v1.Persona in GenerateStructuredRequest.
+    api project(':protomolt-protobuf-prompt')
+
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
 }

@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.inference.structured.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.inference.structured.testdata";
+option java_outer_classname = "FormProto";
+
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// The form the structured-generator tests exercise: one required string and
+// one constrained number, so a scripted provider can produce responses that
+// parse but fail validation.
+message TestForm {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Test fixture form for structured generation."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The subject's full name.
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 200}
+    }
+  ];
+
+  // The subject's age in years.
+  int32 age = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 150}
+    }
+  ];
+}
