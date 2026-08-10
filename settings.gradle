@@ -222,6 +222,9 @@ project(':protomolt-grpc-service-profile').projectDir = file('surface/grpc/servi
 include 'protomolt-grpc-service-workspace'
 project(':protomolt-grpc-service-workspace').projectDir = file('surface/grpc/service-workspace')
 
+include 'protomolt-grpc-recipe'
+project(':protomolt-grpc-recipe').projectDir = file('surface/grpc/recipe')
+
 include 'protomolt-grpc-validation'
 project(':protomolt-grpc-validation').projectDir = file('surface/grpc/validation')
 
