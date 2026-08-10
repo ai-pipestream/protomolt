@@ -163,20 +163,39 @@ message GenerateStructuredResponse {
   };
 
   // The validated form, packed (Any.pack of the parsed message).
-  google.protobuf.Any message = 1;
+  google.protobuf.Any message = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true
+  ];
 
   // The message type that was filled; echoes the request.
-  string target_type = 2;
+  string target_type = 2 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$"
+  ];
 
   // The catalog model id that produced the final attempt.
-  string model = 3;
+  string model = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 256}
+    }
+  ];
 
   // The SPI provider that executed the final attempt (e.g. "openvino").
-  string provider = 4;
+  string provider = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 128}
+    }
+  ];
 
   // The provider-reported model version or digest of the final attempt;
   // empty when the provider does not report one.
-  string model_version = 5;
+  string model_version = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    }
+  ];
 
   // Every attempt, oldest first; the last always has outcome SUCCEEDED.
   repeated StructuredAttempt attempts = 6 [
@@ -191,14 +210,22 @@ message GenerateStructuredResponse {
   // SHA-256 hex of the rendered instructions the model was briefed with.
   string prompt_fingerprint = 8 [
     (ai.pipestream.proto.validate.v1.field) = {
-      string: {max_len: 64}
+      required: true
+      string: {
+        max_len: 64
+        pattern: "^[0-9a-f]{64}$"
+      }
     }
   ];
 
   // SHA-256 hex of the response JSON Schema the model was constrained with.
   string schema_fingerprint = 9 [
     (ai.pipestream.proto.validate.v1.field) = {
-      string: {max_len: 64}
+      required: true
+      string: {
+        max_len: 64
+        pattern: "^[0-9a-f]{64}$"
+      }
     }
   ];
 }

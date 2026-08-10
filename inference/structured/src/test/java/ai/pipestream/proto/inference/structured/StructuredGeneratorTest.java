@@ -18,6 +18,7 @@ import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.StructuredAttempt;
 import ai.pipestream.proto.inference.v1.Usage;
+import ai.pipestream.proto.validate.ProtoValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -216,6 +217,46 @@ class StructuredGeneratorTest {
         assertThat(provider.invocations()).isEqualTo(2);
     }
 
+    @Test
+    void successfulProvenanceUsesTheCatalogIdentityNotProviderClaims() {
+        provider.spoofProvenance("other-model", "other-provider");
+        provider.script(VALID_FORM_JSON);
+
+        GenerateStructuredResponse response = generator.generate(request(STRUCTURED_MODEL).build());
+
+        assertThat(response.getModel()).isEqualTo(STRUCTURED_MODEL);
+        assertThat(response.getProvider()).isEqualTo("scripted");
+    }
+
+    @Test
+    void responseContractRejectsInvalidPersistedProvenance() {
+        provider.script(VALID_FORM_JSON);
+        GenerateStructuredResponse response = generator.generate(request(STRUCTURED_MODEL).build());
+        ProtoValidator validator = ProtoValidator.create();
+
+        assertThat(validator.validate(response).valid()).isTrue();
+        assertThat(validator.validate(response.toBuilder()
+                .setPromptFingerprint("not-a-sha256").build()).valid()).isFalse();
+        assertThat(validator.validate(response.toBuilder()
+                .setTargetType("not a protobuf type").build()).valid()).isFalse();
+        assertThat(validator.validate(response.toBuilder()
+                .clearModel().build()).valid()).isFalse();
+        assertThat(validator.validate(response.toBuilder()
+                .clearProvider().build()).valid()).isFalse();
+    }
+
+    @Test
+    void oversizedProviderOutputFailsWithoutCreatingInvalidEvidence() {
+        provider.script(VALID_FORM_JSON + " ".repeat(1_048_577));
+
+        assertThatThrownBy(() -> generator.generate(request(STRUCTURED_MODEL).build()))
+                .isInstanceOfSatisfying(StructuredGenerationException.class, e -> {
+                    assertThat(e.getMessage()).contains("evidence limit");
+                    assertThat(e.getAttempts()).isEmpty();
+                });
+        assertThat(provider.invocations()).isEqualTo(1);
+    }
+
     private static GenerateStructuredRequest.Builder request(String model) {
         return GenerateStructuredRequest.newBuilder()
                 .setTargetType(TARGET_TYPE)
@@ -243,6 +284,8 @@ class StructuredGeneratorTest {
         private final Queue<Object> script = new ArrayDeque<>();
         private final AtomicInteger invocations = new AtomicInteger();
         private GenerateRequest lastRequest;
+        private String responseModel;
+        private String responseProvider;
 
         void script(String... responses) {
             script.addAll(List.of(responses));
@@ -250,6 +293,11 @@ class StructuredGeneratorTest {
 
         void fail(InferenceException failure) {
             script.add(failure);
+        }
+
+        void spoofProvenance(String model, String provider) {
+            responseModel = model;
+            responseProvider = provider;
         }
 
         int invocations() {
@@ -278,8 +326,8 @@ class StructuredGeneratorTest {
             }
             return GenerateResponse.newBuilder()
                     .setText((String) next)
-                    .setModel(model.getId())
-                    .setProvider(id())
+                    .setModel(responseModel == null ? model.getId() : responseModel)
+                    .setProvider(responseProvider == null ? id() : responseProvider)
                     .setModelVersion("scripted-v1")
                     .setFinishReason(FinishReason.FINISH_REASON_STOP)
                     .setUsage(Usage.newBuilder().setPromptTokens(10).setCompletionTokens(5))
