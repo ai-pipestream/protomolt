@@ -1,0 +1,16 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Descriptor-grounded gRPC recipe, artifact, and run-evidence contracts'
+
+dependencies {
+    api libs.protobuf.java
+    api project(':protomolt-grpc-service-profile')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

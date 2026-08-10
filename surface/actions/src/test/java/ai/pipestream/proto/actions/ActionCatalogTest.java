@@ -202,6 +202,22 @@ class ActionCatalogTest {
     }
 
     @Test
+    void forkPreservesManifestAndIsolatesExtensions() throws Exception {
+        ActionCatalog fork = catalog.fork();
+
+        assertThat(fork.names()).containsExactlyElementsOf(catalog.names());
+        assertThat(fork.list()).isEqualTo(catalog.list());
+
+        fork.register(noop("mcp-extension"));
+        assertThat(fork.get("mcp-extension")).isNotNull();
+        assertThat(catalog.names()).doesNotContain("mcp-extension");
+
+        catalog.register(noop("host-extension"));
+        assertThat(catalog.get("host-extension")).isNotNull();
+        assertThat(fork.names()).doesNotContain("host-extension");
+    }
+
+    @Test
     void registrationAndSnapshotsAreSafeUnderConcurrency() throws Exception {
         int additions = 100;
         try (var executor = Executors.newFixedThreadPool(12)) {
