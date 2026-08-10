@@ -46,7 +46,7 @@ final class PromoteRecipeAction implements ProtoAction {
         ObjectNode schema = RecipeActionJson.schema();
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("recipe").put("type", "object");
-        properties.putObject("version").put("type", "string");
+        RecipeActionJson.identitySchema(properties, "version");
         schema.putArray("required").add("recipe").add("version");
         schema.put("additionalProperties", false);
         return schema;
@@ -60,7 +60,7 @@ final class PromoteRecipeAction implements ProtoAction {
         }
         GrpcRecipe recipe = (GrpcRecipe) RecipeActionJson.parse(
                 RecipeActionJson.object(input, "recipe"), GrpcRecipe.newBuilder(), "/recipe");
-        String version = RecipeActionJson.text(input, "version");
+        String version = RecipeActionJson.identity(input, "version");
         Instant now = clock.instant();
         VersionedRecipe promoted = VersionedRecipe.newBuilder()
                 .setRecipe(recipe)

@@ -16,6 +16,9 @@ import java.util.Map;
 /** MCP/action surface for conservative descriptor-grounded mapping candidates. */
 final class SuggestMappingsAction implements ProtoAction {
 
+    private static final int MAX_SOURCES = 64;
+    private static final String SOURCE_NAME_PATTERN = "[A-Za-z_][A-Za-z0-9_]{0,127}";
+
     @Override
     public String name() {
         return "suggest-mappings";
@@ -32,11 +35,24 @@ final class SuggestMappingsAction implements ProtoAction {
     public ObjectNode inputSchema() {
         ObjectNode schema = RecipeActionJson.schema();
         ObjectNode properties = schema.putObject("properties");
-        properties.putObject("sources").put("type", "array")
+        ObjectNode sources = properties.putObject("sources").put("type", "array")
                 .put("description", "Named source descriptors: {name, schema, type?}.")
-                .putObject("items").put("type", "object");
-        properties.putObject("target").put("type", "object")
+                .put("minItems", 1).put("maxItems", MAX_SOURCES);
+        ObjectNode sourceItem = sources.putObject("items").put("type", "object");
+        ObjectNode sourceProperties = sourceItem.putObject("properties");
+        sourceProperties.putObject("name").put("type", "string")
+                .put("pattern", SOURCE_NAME_PATTERN).put("maxLength", 128);
+        sourceProperties.putObject("schema").put("type", "object");
+        sourceProperties.putObject("type").put("type", "string").put("minLength", 1);
+        sourceItem.putArray("required").add("name").add("schema");
+        sourceItem.put("additionalProperties", false);
+        ObjectNode target = properties.putObject("target").put("type", "object")
                 .put("description", "Target descriptor: {schema, type?}.");
+        ObjectNode targetProperties = target.putObject("properties");
+        targetProperties.putObject("schema").put("type", "object");
+        targetProperties.putObject("type").put("type", "string").put("minLength", 1);
+        target.putArray("required").add("schema");
+        target.put("additionalProperties", false);
         schema.putArray("required").add("sources").add("target");
         schema.put("additionalProperties", false);
         return schema;
@@ -48,6 +64,10 @@ final class SuggestMappingsAction implements ProtoAction {
         if (!(sourceNode instanceof ArrayNode array) || array.isEmpty()) {
             throw RecipeActionJson.invalid("'sources' must be a non-empty array", "/sources");
         }
+        if (array.size() > MAX_SOURCES) {
+            throw RecipeActionJson.invalid("'sources' must contain at most " + MAX_SOURCES
+                    + " entries", "/sources");
+        }
         Map<String, Descriptor> sources = new LinkedHashMap<>();
         for (int index = 0; index < array.size(); index++) {
             if (!(array.get(index) instanceof ObjectNode source)) {
@@ -55,7 +75,7 @@ final class SuggestMappingsAction implements ProtoAction {
                         "/sources/" + index);
             }
             String name = RecipeActionJson.text(source, "name");
-            if (!name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            if (!name.matches(SOURCE_NAME_PATTERN)) {
                 throw RecipeActionJson.invalid("source name must be a mapping-scope identifier",
                         "/sources/" + index + "/name");
             }

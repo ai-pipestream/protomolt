@@ -44,8 +44,8 @@ final class RecordRecipeRunAction implements ProtoAction {
         ObjectNode properties = schema.putObject("properties");
         properties.set("chain", RunChainAction.chainSchema());
         properties.putObject("input").put("type", "object");
-        properties.putObject("runId").put("type", "string");
-        properties.putObject("recipeVersion").put("type", "string");
+        RecipeActionJson.identitySchema(properties, "runId");
+        RecipeActionJson.identitySchema(properties, "recipeVersion");
         schema.putArray("required").add("chain").add("input").add("runId");
         schema.put("additionalProperties", false);
         return schema;
@@ -67,8 +67,8 @@ final class RecordRecipeRunAction implements ProtoAction {
             throw RecipeActionJson.invalid("Input is not valid proto3 JSON for "
                     + chain.inputType().getFullName() + ": " + e.getMessage(), "/input");
         }
-        String runId = RecipeActionJson.text(input, "runId");
-        String version = RecipeActionJson.optionalText(input, "recipeVersion");
+        String runId = RecipeActionJson.identity(input, "runId");
+        String version = RecipeActionJson.optionalIdentity(input, "recipeVersion");
         RecipeRunRecorder recorder = new RecipeRunRecorder(runner, artifacts, runs);
         RunEvidence evidence;
         try {

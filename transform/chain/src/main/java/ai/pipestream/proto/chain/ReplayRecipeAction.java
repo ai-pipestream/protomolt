@@ -41,7 +41,7 @@ final class ReplayRecipeAction implements ProtoAction {
         ObjectNode schema = RecipeActionJson.schema();
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("recipe").put("type", "object");
-        properties.putObject("runId").put("type", "string");
+        RecipeActionJson.identitySchema(properties, "runId");
         properties.putObject("schema").put("type", "object")
                 .put("description", "The exact descriptors used by the recorded run.");
         schema.putArray("required").add("recipe").add("runId").add("schema");
@@ -57,7 +57,7 @@ final class ReplayRecipeAction implements ProtoAction {
         }
         GrpcRecipe recipe = (GrpcRecipe) RecipeActionJson.parse(
                 RecipeActionJson.object(input, "recipe"), GrpcRecipe.newBuilder(), "/recipe");
-        String runId = RecipeActionJson.text(input, "runId");
+        String runId = RecipeActionJson.identity(input, "runId");
         RunEvidence evidence;
         RecipeReplay.ReplayResult result;
         try {

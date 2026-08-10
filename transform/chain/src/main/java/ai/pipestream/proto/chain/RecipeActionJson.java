@@ -2,6 +2,7 @@ package ai.pipestream.proto.chain;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.grpc.recipe.RecipeValidation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -10,6 +11,8 @@ import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
 
 final class RecipeActionJson {
+
+    private static final String IDENTITY_PATTERN = "[A-Za-z0-9][A-Za-z0-9._-]{0,127}";
 
     private RecipeActionJson() {
     }
@@ -46,6 +49,34 @@ final class RecipeActionJson {
             return node.asText();
         }
         throw invalid("'" + field + "' must be a non-empty string", "/" + field);
+    }
+
+    static String identity(ObjectNode input, String field) throws ActionException {
+        String value = text(input, field);
+        try {
+            RecipeValidation.validateName(value, field);
+            return value;
+        } catch (IllegalArgumentException e) {
+            throw invalid(e.getMessage(), "/" + field);
+        }
+    }
+
+    static String optionalIdentity(ObjectNode input, String field) throws ActionException {
+        String value = optionalText(input, field);
+        if (value == null) {
+            return null;
+        }
+        try {
+            RecipeValidation.validateName(value, field);
+            return value;
+        } catch (IllegalArgumentException e) {
+            throw invalid(e.getMessage(), "/" + field);
+        }
+    }
+
+    static ObjectNode identitySchema(ObjectNode properties, String field) {
+        return properties.putObject(field).put("type", "string")
+                .put("pattern", IDENTITY_PATTERN).put("maxLength", 128);
     }
 
     static <B extends Message.Builder> Message parse(ObjectNode node, B builder, String pointer)
