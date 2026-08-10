@@ -56,11 +56,16 @@ public record ChainDefinition(String name, List<FileDescriptor> files, Descripto
      *        {@code complete-step} supplies the response (the human-in-the-loop lane).
      *        External steps only execute as jobs; synchronous {@code run-chain} rejects
      *        them. Any other value fails verification.
+     * @param edge the typed edge feeding this step, or null when the request is mapped
+     *        by the top-level {@code rules}/{@code celRules}. An edge owns request
+     *        mapping: the top-level rule lists must be empty when it is set.
+     * @param fanOut the bounded fan-out over a repeated field of the edge's produced
+     *        message, or null for a single invocation. Requires {@code edge}.
      */
     public record Step(String name, String target, boolean tls, MethodDescriptor method,
                        String when, List<String> rules, List<CelMappingRule> celRules,
                        boolean validate, long deadlineMs, String completion,
-                       StructuredSpec structured) {
+                       StructuredSpec structured, EdgeSpec edge, FanOutSpec fanOut) {
 
         /** {@link #completion()} value marking a step as externally completed. */
         public static final String COMPLETION_EXTERNAL = "external";
@@ -77,9 +82,26 @@ public record ChainDefinition(String name, List<FileDescriptor> files, Descripto
                 throw new IllegalArgumentException(
                         "a step carries a method or a structured spec, never both");
             }
+            if (fanOut != null && edge == null) {
+                throw new IllegalArgumentException(
+                        "fan-out requires an edge; the items resolve against the "
+                                + "edge's produced message");
+            }
             rules = List.copyOf(rules);
             celRules = List.copyOf(celRules);
             completion = completion == null ? "" : completion;
+        }
+
+        /**
+         * Source- and binary-compatible constructor for the pre-edge step shape:
+         * no typed edge and no fan-out.
+         */
+        public Step(String name, String target, boolean tls, MethodDescriptor method,
+                    String when, List<String> rules, List<CelMappingRule> celRules,
+                    boolean validate, long deadlineMs, String completion,
+                    StructuredSpec structured) {
+            this(name, target, tls, method, when, rules, celRules, validate, deadlineMs,
+                    completion, structured, null, null);
         }
 
         /**
@@ -91,7 +113,7 @@ public record ChainDefinition(String name, List<FileDescriptor> files, Descripto
                     String when, List<String> rules, List<CelMappingRule> celRules,
                     boolean validate, long deadlineMs, String completion) {
             this(name, target, tls, method, when, rules, celRules, validate, deadlineMs,
-                    completion, null);
+                    completion, null, null, null);
         }
 
         /**
@@ -123,6 +145,75 @@ public record ChainDefinition(String name, List<FileDescriptor> files, Descripto
         /** True when the step parks the job and waits for {@code complete-step}. */
         public boolean external() {
             return COMPLETION_EXTERNAL.equals(completion);
+        }
+    }
+
+    /**
+     * The typed edge feeding a {@link Step}: which scope sources it reads, the message
+     * type it produces by mapping them with the existing scoped text and CEL rule
+     * dialects, and the projection and validation applied before the value reaches the
+     * step. The produced (or projected) value is the step input: for a gRPC step
+     * without fan-out it is the method request; for a structured step it packs as the
+     * generation's grounding; with fan-out each item of {@link FanOutSpec#items()}
+     * feeds one branch.
+     *
+     * @param sources the ordered scope names the edge reads: {@code "input"} or prior
+     *        step names; never empty
+     * @param produceType the message type the edge produces by mapping the joined scope
+     * @param rules scoped text mapping rules over the declared sources
+     * @param celRules typed CEL mapping rules over the declared sources
+     * @param projectTo a projection-annotated target type the produced (or per-branch
+     *        item) value is projected to before validation and delivery, or null
+     * @param validate whether the final value re-validates against its declared rules
+     *        before the step executes; rejection happens before any invocation
+     */
+    public record EdgeSpec(List<String> sources, Descriptor produceType, List<String> rules,
+                           List<CelMappingRule> celRules, Descriptor projectTo,
+                           boolean validate) {
+
+        public EdgeSpec {
+            sources = List.copyOf(sources);
+            if (sources.isEmpty()) {
+                throw new IllegalArgumentException("an edge reads at least one source");
+            }
+            Objects.requireNonNull(produceType, "produceType");
+            rules = List.copyOf(rules);
+            celRules = List.copyOf(celRules);
+        }
+    }
+
+    /** What one failed fan-out branch does to its step. */
+    public enum BranchFailurePolicy {
+        /** The first branch failure fails the step; remaining branches are abandoned. */
+        FAIL_FAST,
+        /** Failed branches are recorded; the collect succeeds with the survivors. */
+        CONTINUE
+    }
+
+    /**
+     * Bounded fan-out over a repeated field of the edge's produced message: each item
+     * executes one branch under a stable identity ({@code "<step>#<index>"}), bounded
+     * by the item and concurrency caps, and the branch outputs collect in index order
+     * into one repeated field of the collect type.
+     *
+     * @param items dotted path of the repeated message field inside the produced
+     *        message whose items each execute one branch
+     * @param maxItems the item cap; more items reject the step before execution
+     * @param maxConcurrency the in-flight branch cap
+     * @param failurePolicy what one failed branch does to the step
+     * @param collectType the message type the collected branch outputs form
+     * @param collectInto the repeated field of {@code collectType} the ordered branch
+     *        outputs land in; its element type must equal the branch output type
+     */
+    public record FanOutSpec(String items, int maxItems, int maxConcurrency,
+                             BranchFailurePolicy failurePolicy, Descriptor collectType,
+                             String collectInto) {
+
+        public FanOutSpec {
+            Objects.requireNonNull(items, "items");
+            Objects.requireNonNull(failurePolicy, "failurePolicy");
+            Objects.requireNonNull(collectType, "collectType");
+            Objects.requireNonNull(collectInto, "collectInto");
         }
     }
 

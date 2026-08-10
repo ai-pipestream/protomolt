@@ -65,7 +65,7 @@ public final class ChainRecipeCompiler {
                                 .setEndpoint("local")
                                 .setDescriptorFingerprint(fingerprint)
                                 .build());
-                steps.add(RecipeStep.newBuilder()
+                steps.add(withEdge(RecipeStep.newBuilder()
                         .setName(step.name())
                         .setDependency(ChainDefinition.Step.STRUCTURED_DEPENDENCY)
                         .setStructured(StructuredGenerationSpec.newBuilder()
@@ -73,7 +73,7 @@ public final class ChainRecipeCompiler {
                                 .setModel(step.structured().model())
                                 .setMaxAttempts(step.structured().maxAttempts())
                                 .build())
-                        .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                        .setCompletion(StepCompletion.STEP_COMPLETION_LIVE), step)
                         .build());
                 continue;
             }
@@ -126,7 +126,45 @@ public final class ChainRecipeCompiler {
         if (step.deadlineMs() > 0) {
             builder.setDeadline(millis(step.deadlineMs()));
         }
-        return builder.build();
+        return withEdge(builder, step).build();
+    }
+
+    /** Attaches the step's typed edge and fan-out, when declared, to the recipe step. */
+    private static RecipeStep.Builder withEdge(RecipeStep.Builder builder,
+                                               ChainDefinition.Step step) {
+        if (step.edge() == null) {
+            return builder;
+        }
+        ChainDefinition.EdgeSpec edge = step.edge();
+        ai.pipestream.proto.grpc.recipe.v1.TypedEdge.Builder edgeBuilder =
+                ai.pipestream.proto.grpc.recipe.v1.TypedEdge.newBuilder()
+                        .addAllSources(edge.sources())
+                        .setProduceType(edge.produceType().getFullName())
+                        .addAllRules(edge.rules())
+                        .addAllCelRules(edge.celRules().stream()
+                                .map(ChainRecipeCompiler::compileRule).toList())
+                        .setValidate(edge.validate());
+        if (edge.projectTo() != null) {
+            edgeBuilder.setProjectTo(edge.projectTo().getFullName());
+        }
+        builder.setEdge(edgeBuilder.build());
+        if (step.fanOut() != null) {
+            ChainDefinition.FanOutSpec fanOut = step.fanOut();
+            builder.setFanOut(ai.pipestream.proto.grpc.recipe.v1.FanOutSpec.newBuilder()
+                    .setItems(fanOut.items())
+                    .setMaxItems(fanOut.maxItems())
+                    .setMaxConcurrency(fanOut.maxConcurrency())
+                    .setFailurePolicy(fanOut.failurePolicy()
+                                    == ChainDefinition.BranchFailurePolicy.FAIL_FAST
+                            ? ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                                    .BRANCH_FAILURE_POLICY_FAIL_FAST
+                            : ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                                    .BRANCH_FAILURE_POLICY_CONTINUE)
+                    .setCollectType(fanOut.collectType().getFullName())
+                    .setCollectInto(fanOut.collectInto())
+                    .build());
+        }
+        return builder;
     }
 
     private static ai.pipestream.proto.grpc.recipe.v1.CelMappingRule compileRule(

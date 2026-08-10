@@ -18,6 +18,7 @@ import ai.pipestream.proto.shapes.MessageScope;
 import ai.pipestream.proto.shapes.ScopedProtoMapper;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
+import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
@@ -137,7 +138,7 @@ public final class RecipeReplay {
                         "recorded method " + recorded.getMethod()
                                 + " differs from the recipe's " + step.getMethod());
             }
-            if (step.hasStructured()) {
+            if (step.hasStructured() && !step.hasEdge()) {
                 ReplayResult structured = replayStructured(recipe, evidence, i, step,
                         recorded, schema, artifacts, scope, steps);
                 if (structured != null) {
@@ -146,16 +147,29 @@ public final class RecipeReplay {
                 last = scope.get(step.getName());
                 continue;
             }
-            MethodDescriptor method = ChainDefinition.resolveMethod(schema, step.getMethod());
+            MethodDescriptor method = step.hasStructured()
+                    ? null
+                    : ChainDefinition.resolveMethod(schema, step.getMethod());
 
             if (recorded.getStatus() == StepStatus.STEP_STATUS_SKIPPED) {
                 String detail = verifySkip(step, scope, method);
                 if (detail != null) {
                     return fail(steps, step.getName(), recorded.getStatus(), detail);
                 }
-                scope.put(step.getName(),
-                        DynamicMessage.getDefaultInstance(method.getOutputType()));
+                scope.put(step.getName(), DynamicMessage.getDefaultInstance(
+                        step.hasFanOut()
+                                ? collectType(schema, step)
+                                : method.getOutputType()));
                 steps.add(new StepReplay(step.getName(), recorded.getStatus(), true, ""));
+                continue;
+            }
+            if (step.hasEdge()) {
+                ReplayResult edge = replayEdge(recipe, evidence, i, step, recorded, schema,
+                        artifacts, scope, steps, mapper, registry);
+                if (edge != null) {
+                    return edge;
+                }
+                last = scope.get(step.getName());
                 continue;
             }
             if (recorded.getStatus() != StepStatus.STEP_STATUS_SUCCEEDED) {
@@ -341,6 +355,407 @@ public final class RecipeReplay {
         SensitivityMasker.MaskResult masked = SensitivityMasker.mask(request,
                 Set.of("pii", "secret"), SensitivityMasker.Strategy.REMOVE);
         return masked.message();
+    }
+
+    /** The recorder's redaction pass, applied to a re-derived edge value. */
+    private static Message mask(Message message) {
+        return SensitivityMasker.mask(message, Set.of("pii", "secret"),
+                SensitivityMasker.Strategy.REMOVE).message();
+    }
+
+    /**
+     * Offline verification of one edge-carrying step: no provider, no network, no
+     * inference engines. The edge fingerprint is recomputed from the recipe spec, the
+     * produced value is re-derived from the recorded scope with the same mapper and
+     * compared to the recorded request artifact, the projection and validation verdict
+     * are re-run and compared, and for fan-out the cardinality, branch identities, and
+     * collected message are rebuilt and compared. The verified output - the response
+     * or the collected message - binds into the scope under the step's name.
+     *
+     * @return null when the step verified; the terminal result otherwise
+     */
+    private static ReplayResult replayEdge(GrpcRecipe recipe, RunEvidence evidence,
+                                           int index,
+                                           ai.pipestream.proto.grpc.recipe.v1.RecipeStep step,
+                                           StepEvidence recorded,
+                                           List<FileDescriptor> schema,
+                                           ArtifactRepository artifacts,
+                                           Map<String, Message> scope,
+                                           List<StepReplay> steps,
+                                           ScopedProtoMapper mapper,
+                                           DescriptorRegistry registry) throws IOException {
+        String name = step.getName();
+        if (!recorded.hasEdge()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "step carries an edge but records no edge evidence");
+        }
+        ai.pipestream.proto.grpc.recipe.v1.EdgeEvidence edgeEvidence = recorded.getEdge();
+        if (!RecipeValidation.edgeFingerprint(step)
+                .equals(edgeEvidence.getEdgeFingerprint())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded edge fingerprint does not match the recipe's edge");
+        }
+        var edge = step.getEdge();
+        if (edgeEvidence.getSourceCount() != edge.getSourcesCount()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded source count " + edgeEvidence.getSourceCount()
+                            + " differs from the edge's declared "
+                            + edge.getSourcesCount());
+        }
+        Map<String, Message> restricted = new LinkedHashMap<>();
+        for (String source : edge.getSourcesList()) {
+            Message value = scope.get(source);
+            if (value == null) {
+                return fail(steps, name, recorded.getStatus(),
+                        "edge source '" + source + "' is not in the recorded scope");
+            }
+            restricted.put(source, value);
+        }
+        Descriptor produceType = findMessage(schema, edge.getProduceType());
+        if (produceType == null) {
+            return fail(steps, name, recorded.getStatus(),
+                    "produce type " + edge.getProduceType() + " not in the replay schema");
+        }
+        Message produced;
+        try {
+            produced = buildMessage(mapper, restricted, produceType, edge.getRulesList(),
+                    edge.getCelRulesList());
+        } catch (Exception e) {
+            return fail(steps, name, recorded.getStatus(),
+                    "edge mapping could not be re-derived: " + e.getMessage());
+        }
+        if (!recorded.hasRequestArtifact()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "an edge step records no request artifact");
+        }
+        Message recordedProduced = parse(artifacts, recorded.getRequestArtifact(),
+                produceType, "produced value of step " + name);
+        if (!recordedProduced.equals(mask(produced))) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded produced value differs from what the edge derives from "
+                            + "the recorded scope");
+        }
+
+        ai.pipestream.proto.projection.MessageProjection projection = null;
+        if (!edge.getProjectTo().isEmpty()) {
+            Descriptor projectTo = findMessage(schema, edge.getProjectTo());
+            if (projectTo == null) {
+                return fail(steps, name, recorded.getStatus(),
+                        "projection target " + edge.getProjectTo()
+                                + " not in the replay schema");
+            }
+            try {
+                projection = ai.pipestream.proto.projection.MessageProjection
+                        .forTarget(projectTo, registry).orElse(null);
+            } catch (ai.pipestream.proto.projection.ProjectionException e) {
+                return fail(steps, name, recorded.getStatus(),
+                        "projection target is broken: " + e.getMessage());
+            }
+            if (projection == null) {
+                return fail(steps, name, recorded.getStatus(),
+                        "projection target " + edge.getProjectTo()
+                                + " declares no projection sources");
+            }
+        }
+
+        if (step.hasFanOut()) {
+            return replayFanOut(recipe, evidence, index, step, recorded, schema,
+                    artifacts, scope, steps, produced, projection, edgeEvidence);
+        }
+
+        Message delivered = produced;
+        if (projection != null) {
+            try {
+                delivered = projection.project(produced);
+            } catch (ai.pipestream.proto.projection.ProjectionException e) {
+                return fail(steps, name, recorded.getStatus(),
+                        "edge projection could not be re-run: " + e.getMessage());
+            }
+        }
+        boolean valid = !edge.getValidate()
+                || ProtoValidator.forMessageType(delivered.getDescriptorForType())
+                        .validate(delivered).valid();
+        if (valid != edgeEvidence.getValidationPassed()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded edge verdict " + edgeEvidence.getValidationPassed()
+                            + " but the re-derived value validates to " + valid);
+        }
+        if (recorded.getStatus() != StepStatus.STEP_STATUS_SUCCEEDED) {
+            // A failed edge step ends the run; nothing after it can be replayed.
+            steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
+            return terminalTail(recipe, evidence, index, steps);
+        }
+        if (recorded.getGrpcStatusCode() != 0) {
+            return fail(steps, name, recorded.getStatus(),
+                    "succeeded step records gRPC status " + recorded.getGrpcStatusCode());
+        }
+        if (step.hasStructured()) {
+            return replayEdgeStructured(step, recorded, schema, artifacts, scope, steps,
+                    delivered);
+        }
+        if (!recorded.hasResponseArtifact()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "succeeded step records no response artifact");
+        }
+        MethodDescriptor method = ChainDefinition.resolveMethod(schema, step.getMethod());
+        Message response = parse(artifacts, recorded.getResponseArtifact(),
+                method.getOutputType(), "response of step " + name);
+        if (step.getValidateResponse()) {
+            ValidationResult result = ProtoValidator
+                    .forMessageType(method.getOutputType()).validate(response);
+            if (!result.valid()) {
+                return fail(steps, name, recorded.getStatus(),
+                        "recorded response fails validation: " + result.violations());
+            }
+        }
+        scope.put(name, response);
+        steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
+        return null;
+    }
+
+    /**
+     * The structured-generation checks of an edge step: the provenance identity and
+     * schema fingerprint as ever, but the prompt fingerprint is recomputed with the
+     * re-derived grounding rendered in, and the request artifact was already compared
+     * against the edge-produced value by the caller.
+     *
+     * @return null when the step verified; the terminal result otherwise
+     */
+    private static ReplayResult replayEdgeStructured(
+            ai.pipestream.proto.grpc.recipe.v1.RecipeStep step, StepEvidence recorded,
+            List<FileDescriptor> schema, ArtifactRepository artifacts,
+            Map<String, Message> scope, List<StepReplay> steps, Message delivered)
+            throws IOException {
+        String name = step.getName();
+        if (!recorded.hasStructured()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "structured step records no structured-generation evidence");
+        }
+        StructuredGenerationEvidence provenance = recorded.getStructured();
+        StructuredGenerationSpec spec = step.getStructured();
+        if (!provenance.getTargetType().equals(spec.getTargetType())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded target type " + provenance.getTargetType()
+                            + " differs from the recipe's " + spec.getTargetType());
+        }
+        if (!provenance.getModel().equals(spec.getModel())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded model " + provenance.getModel()
+                            + " differs from the recipe's " + spec.getModel());
+        }
+        Descriptor target = findMessage(schema, spec.getTargetType());
+        if (target == null) {
+            return fail(steps, name, recorded.getStatus(),
+                    "target type " + spec.getTargetType() + " not in the replay schema");
+        }
+        String promptFingerprint = StructuredProvenance.promptFingerprint(target,
+                Any.pack(delivered), typeRegistry(schema));
+        if (!promptFingerprint.equals(provenance.getPromptFingerprint())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded prompt fingerprint does not match the replay schema's "
+                            + "grounded rendering of " + spec.getTargetType());
+        }
+        if (!StructuredProvenance.schemaFingerprint(target)
+                .equals(provenance.getSchemaFingerprint())) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded schema fingerprint does not match the replay schema's "
+                            + "rendering of " + spec.getTargetType());
+        }
+        if (!recorded.hasResponseArtifact()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "succeeded structured step records no response artifact");
+        }
+        Message response = parse(artifacts, recorded.getResponseArtifact(), target,
+                "response of step " + name);
+        boolean valid = ProtoValidator.forMessageType(target).validate(response).valid();
+        if (valid != provenance.getValidationPassed()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded validation outcome " + provenance.getValidationPassed()
+                            + " but the recorded response re-validates to " + valid);
+        }
+        scope.put(name, response);
+        steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
+        return null;
+    }
+
+    /**
+     * Offline verification of one fanned-out edge step: the recorded item count must
+     * equal the re-derived items cardinality and the branch count; every branch id
+     * must be its stable identity; a branch whose item fails re-validation must be
+     * recorded FAILED; each recorded branch output re-parses and re-validates; and
+     * the collected message rebuilt from the successful outputs in index order must
+     * equal the recorded response artifact.
+     *
+     * @return null when the step verified; the terminal result otherwise
+     */
+    private static ReplayResult replayFanOut(
+            GrpcRecipe recipe, RunEvidence evidence, int index,
+            ai.pipestream.proto.grpc.recipe.v1.RecipeStep step, StepEvidence recorded,
+            List<FileDescriptor> schema, ArtifactRepository artifacts,
+            Map<String, Message> scope, List<StepReplay> steps, Message produced,
+            ai.pipestream.proto.projection.MessageProjection projection,
+            ai.pipestream.proto.grpc.recipe.v1.EdgeEvidence edgeEvidence)
+            throws IOException {
+        String name = step.getName();
+        var fanOut = step.getFanOut();
+        List<Message> items;
+        try {
+            items = EdgeFlow.items(produced, fanOut.getItems());
+        } catch (IllegalArgumentException e) {
+            return fail(steps, name, recorded.getStatus(),
+                    "fan-out items path rejected: " + e.getMessage());
+        }
+        if (edgeEvidence.getItemCount() != items.size()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded item count " + edgeEvidence.getItemCount()
+                            + " differs from the produced message's items cardinality "
+                            + items.size());
+        }
+        if (edgeEvidence.getBranchesCount() != items.size()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded branch count " + edgeEvidence.getBranchesCount()
+                            + " differs from the item count " + items.size());
+        }
+        Descriptor branchOutputType = step.hasStructured()
+                ? findMessage(schema, step.getStructured().getTargetType())
+                : ChainDefinition.resolveMethod(schema, step.getMethod()).getOutputType();
+        if (branchOutputType == null) {
+            return fail(steps, name, recorded.getStatus(),
+                    "branch output type not in the replay schema");
+        }
+        Descriptor collectType = findMessage(schema, fanOut.getCollectType());
+        if (collectType == null) {
+            return fail(steps, name, recorded.getStatus(),
+                    "collect type " + fanOut.getCollectType()
+                            + " not in the replay schema");
+        }
+        boolean allValid = true;
+        List<Message> outputs = new ArrayList<>(items.size());
+        for (int i = 0; i < items.size(); i++) {
+            var branch = edgeEvidence.getBranches(i);
+            if (!branch.getBranchId().equals(name + "#" + i)) {
+                return fail(steps, name, recorded.getStatus(),
+                        "recorded branch " + i + " is '" + branch.getBranchId()
+                                + "' but its stable identity is '" + name + "#" + i + "'");
+            }
+            // Re-run the per-item projection and validation: an item that fails here
+            // never executed, so its branch must be recorded FAILED.
+            Message value = items.get(i);
+            boolean itemValid = true;
+            if (projection != null) {
+                try {
+                    value = projection.project(value);
+                } catch (ai.pipestream.proto.projection.ProjectionException e) {
+                    itemValid = false;
+                }
+            }
+            if (itemValid && step.getEdge().getValidate()) {
+                itemValid = ProtoValidator.forMessageType(value.getDescriptorForType())
+                        .validate(value).valid();
+            }
+            if (!itemValid) {
+                allValid = false;
+            }
+            if (branch.getStatus() == StepStatus.STEP_STATUS_SUCCEEDED) {
+                if (!itemValid) {
+                    return fail(steps, name, recorded.getStatus(),
+                            "recorded branch '" + branch.getBranchId()
+                                    + "' succeeded but its item fails validation");
+                }
+                if (!branch.hasResponseArtifact()) {
+                    return fail(steps, name, recorded.getStatus(),
+                            "succeeded branch '" + branch.getBranchId()
+                                    + "' records no response artifact");
+                }
+                Message output = parse(artifacts, branch.getResponseArtifact(),
+                        branchOutputType, "response of branch " + branch.getBranchId());
+                if (step.hasStructured() || step.getValidateResponse()) {
+                    ValidationResult result = ProtoValidator
+                            .forMessageType(branchOutputType).validate(output);
+                    if (!result.valid()) {
+                        return fail(steps, name, recorded.getStatus(),
+                                "recorded branch '" + branch.getBranchId()
+                                        + "' response fails validation: "
+                                        + result.violations());
+                    }
+                }
+                outputs.add(output);
+            } else if (branch.hasResponseArtifact()) {
+                return fail(steps, name, recorded.getStatus(),
+                        "failed branch '" + branch.getBranchId()
+                                + "' records a response artifact");
+            }
+        }
+        if (allValid != edgeEvidence.getValidationPassed()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded edge verdict " + edgeEvidence.getValidationPassed()
+                            + " but the re-derived items validate to " + allValid);
+        }
+        if (recorded.getStatus() != StepStatus.STEP_STATUS_SUCCEEDED) {
+            // A failed fan-out step ends the run; nothing after it can be replayed.
+            steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
+            return terminalTail(recipe, evidence, index, steps);
+        }
+        if (!recorded.hasResponseArtifact()) {
+            return fail(steps, name, recorded.getStatus(),
+                    "succeeded fan-out step records no response artifact");
+        }
+        Message collected = parse(artifacts, recorded.getResponseArtifact(), collectType,
+                "collected message of step " + name);
+        Message expected;
+        try {
+            expected = mask(EdgeFlow.collect(collectType, fanOut.getCollectInto(),
+                    outputs));
+        } catch (IllegalArgumentException e) {
+            return fail(steps, name, recorded.getStatus(),
+                    "fan-out collect could not be rebuilt: " + e.getMessage());
+        }
+        if (!collected.equals(expected)) {
+            return fail(steps, name, recorded.getStatus(),
+                    "recorded collected message differs from the branch outputs in "
+                            + "index order");
+        }
+        scope.put(name, collected);
+        steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
+        return null;
+    }
+
+    /** The collect type of a fanned-out step, resolved against the replay schema. */
+    private static Descriptor collectType(List<FileDescriptor> schema,
+                                          ai.pipestream.proto.grpc.recipe.v1.RecipeStep step) {
+        Descriptor type = findMessage(schema, step.getFanOut().getCollectType());
+        if (type == null) {
+            throw new IllegalArgumentException("collect type "
+                    + step.getFanOut().getCollectType() + " not in the replay schema");
+        }
+        return type;
+    }
+
+    /** Every message type visible from the replay schema, for grounding resolution. */
+    private static com.google.protobuf.util.JsonFormat.TypeRegistry typeRegistry(
+            List<FileDescriptor> schema) {
+        com.google.protobuf.util.JsonFormat.TypeRegistry.Builder builder =
+                com.google.protobuf.util.JsonFormat.TypeRegistry.newBuilder();
+        Set<String> seen = new java.util.HashSet<>();
+        for (FileDescriptor file : schema) {
+            collectFileTypes(file, builder, seen);
+        }
+        return builder.build();
+    }
+
+    private static void collectFileTypes(
+            FileDescriptor file,
+            com.google.protobuf.util.JsonFormat.TypeRegistry.Builder out,
+            Set<String> seen) {
+        if (!seen.add(file.getFullName())) {
+            return;
+        }
+        for (Descriptor message : file.getMessageTypes()) {
+            out.add(message);
+        }
+        for (FileDescriptor dependency : file.getDependencies()) {
+            collectFileTypes(dependency, out, seen);
+        }
     }
 
     /** A skipped step must have a gate, and the gate must evaluate false on the scope. */

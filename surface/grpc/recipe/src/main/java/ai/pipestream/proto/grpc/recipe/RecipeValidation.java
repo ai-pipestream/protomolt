@@ -2,7 +2,11 @@ package ai.pipestream.proto.grpc.recipe;
 
 import ai.pipestream.proto.grpc.profile.ServiceProfileValidation;
 import ai.pipestream.proto.grpc.recipe.v1.ArtifactReference;
+import ai.pipestream.proto.grpc.recipe.v1.BranchEvidence;
+import ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy;
 import ai.pipestream.proto.grpc.recipe.v1.CelMappingRule;
+import ai.pipestream.proto.grpc.recipe.v1.EdgeEvidence;
+import ai.pipestream.proto.grpc.recipe.v1.FanOutSpec;
 import ai.pipestream.proto.grpc.recipe.v1.GrpcRecipe;
 import ai.pipestream.proto.grpc.recipe.v1.RecipeOutput;
 import ai.pipestream.proto.grpc.recipe.v1.RecipeStep;
@@ -15,6 +19,7 @@ import ai.pipestream.proto.grpc.recipe.v1.StepStatus;
 import ai.pipestream.proto.grpc.recipe.v1.StructuredAttemptEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationEvidence;
 import ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec;
+import ai.pipestream.proto.grpc.recipe.v1.TypedEdge;
 import ai.pipestream.proto.grpc.recipe.v1.VersionedRecipe;
 import ai.pipestream.proto.inference.v1.AttemptOutcome;
 import ai.pipestream.proto.inference.v1.FinishReason;
@@ -31,11 +36,20 @@ public final class RecipeValidation {
 
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}");
     private static final Pattern FINGERPRINT = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern BRANCH_ID = Pattern.compile(
+            "[A-Za-z0-9][A-Za-z0-9._-]{0,127}#[0-9]{1,4}");
     private static final Pattern MEDIA_TYPE = Pattern.compile(
             "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}");
     private static final int MAX_DEPENDENCIES = 64;
     private static final int MAX_STEPS = 256;
     private static final int MAX_RULES = 1_024;
+    private static final int MAX_EDGE_SOURCES = 64;
+    /** Hard item ceiling of a fan-out step. */
+    public static final int MAX_FANOUT_ITEMS = 1_024;
+    /** Hard in-flight branch ceiling of a fan-out step. */
+    public static final int MAX_FANOUT_CONCURRENCY = 64;
+    private static final int MAX_ITEMS_PATH_LENGTH = 512;
+    private static final int MAX_COLLECT_INTO_LENGTH = 256;
     /** Maximum catalog model id length on a structured-generation step. */
     public static final int MAX_MODEL_LENGTH = 256;
     private static final int MAX_PROVIDER_LENGTH = 128;
@@ -113,6 +127,17 @@ public final class RecipeValidation {
             require(step.getCompletion() == StepCompletion.STEP_COMPLETION_LIVE
                             || step.getCompletion() == StepCompletion.STEP_COMPLETION_EXTERNAL,
                     "step.completion must be live or external");
+            if (step.hasEdge()) {
+                validateEdge(step.getEdge());
+                require(step.getRulesCount() == 0 && step.getCelRulesCount() == 0,
+                        "step.rules and step.cel_rules must be empty when step.edge is set; "
+                                + "the edge owns request mapping");
+            }
+            if (step.hasFanOut()) {
+                require(step.hasEdge(), "step.fan_out requires step.edge; the items "
+                        + "resolve against the edge's produced message");
+                validateFanOut(step.getFanOut());
+            }
         }
 
         if (recipe.hasOutput()) {
@@ -203,6 +228,78 @@ public final class RecipeValidation {
         return ServiceProfileValidation.sha256(recipe.toByteArray());
     }
 
+    /**
+     * Computes the lowercase SHA-256 identity of a step's serialized edge contract:
+     * the {@code TypedEdge} bytes with the {@code FanOutSpec} bytes appended when the
+     * step fans out. Deterministic because both messages are map-free and field order
+     * is fixed. Recording and replay derive the edge fingerprint here, so a drifted
+     * edge surfaces identically on both sides.
+     */
+    public static String edgeFingerprint(RecipeStep step) {
+        require(step != null && step.hasEdge(), "step must carry an edge");
+        byte[] edge = step.getEdge().toByteArray();
+        if (!step.hasFanOut()) {
+            return ServiceProfileValidation.sha256(edge);
+        }
+        byte[] fanOut = step.getFanOut().toByteArray();
+        byte[] both = new byte[edge.length + fanOut.length];
+        System.arraycopy(edge, 0, both, 0, edge.length);
+        System.arraycopy(fanOut, 0, both, edge.length, fanOut.length);
+        return ServiceProfileValidation.sha256(both);
+    }
+
+    private static void validateEdgeEvidence(EdgeEvidence evidence, String stepName,
+                                             StepStatus status) {
+        validateFingerprint(evidence.getEdgeFingerprint(), "edge_evidence.edge_fingerprint");
+        require(evidence.getSourceCount() >= 1,
+                "edge_evidence.source_count must be at least 1");
+        require(evidence.getItemCount() >= 0
+                        && evidence.getItemCount() <= MAX_FANOUT_ITEMS,
+                "edge_evidence.item_count must be between 0 and " + MAX_FANOUT_ITEMS);
+        require(evidence.getBranchesCount() <= MAX_FANOUT_ITEMS,
+                "edge_evidence.branches exceeds the maximum of " + MAX_FANOUT_ITEMS);
+        if (evidence.getItemCount() == 0) {
+            require(evidence.getBranchesCount() == 0,
+                    "edge_evidence.branches must be empty when item_count is 0");
+        } else {
+            require(evidence.getBranchesCount() == evidence.getItemCount(),
+                    "edge_evidence.branches must cover every item: abandoned branches "
+                            + "are recorded, not dropped");
+        }
+        if (status == StepStatus.STEP_STATUS_SUCCEEDED
+                && evidence.getBranchesCount() == 0) {
+            require(evidence.getValidationPassed(),
+                    "a succeeded edge step without branches records validation_passed "
+                            + "true");
+        } else if (status == StepStatus.STEP_STATUS_SKIPPED) {
+            require(evidence.getValidationPassed(),
+                    "a gate-skipped edge step never evaluated its value; "
+                            + "validation_passed stays true");
+        }
+        Set<String> branchIds = new HashSet<>();
+        for (BranchEvidence branch : evidence.getBranchesList()) {
+            require(BRANCH_ID.matcher(branch.getBranchId()).matches(),
+                    "edge_evidence.branches.branch_id must be '<step-name>#<index>'");
+            require(branch.getBranchId().startsWith(stepName + "#"),
+                    "edge_evidence.branches.branch_id must name its own step: "
+                            + branch.getBranchId());
+            require(branchIds.add(branch.getBranchId()),
+                    "duplicate branch id: " + branch.getBranchId());
+            int index = Integer.parseInt(
+                    branch.getBranchId().substring(branch.getBranchId().lastIndexOf('#') + 1));
+            require(index < Math.max(evidence.getItemCount(), 1),
+                    "edge_evidence.branches.branch_id index exceeds the item count: "
+                            + branch.getBranchId());
+            require(branch.getStatus() == StepStatus.STEP_STATUS_SUCCEEDED
+                            || branch.getStatus() == StepStatus.STEP_STATUS_FAILED,
+                    "edge_evidence.branches.status must be SUCCEEDED or FAILED");
+            if (branch.hasResponseArtifact()) {
+                validate(branch.getResponseArtifact());
+            }
+            validateText(branch.getSummary(), "edge_evidence.branches.summary");
+        }
+    }
+
     private static void validateDependency(ServiceDependency dependency) {
         validateName(dependency.getAlias(), "dependency.alias");
         validateName(dependency.getServiceProfile(), "dependency.service_profile");
@@ -228,6 +325,14 @@ public final class RecipeValidation {
             require(step.getMethod().isEmpty(),
                     "step_evidence.method must be empty when structured evidence is present");
             validateStructuredEvidence(step.getStructured(), step.getStatus());
+        } else if (step.hasEdge()) {
+            // A structured fan-out step records no method and no structured
+            // evidence (there is one generation per branch, not one per step);
+            // every other edge step records its method as usual.
+            if (!step.getMethod().isEmpty()) {
+                validateMethod(step.getMethod(), "step_evidence.method");
+            }
+            validateEdgeEvidence(step.getEdge(), step.getStepName(), step.getStatus());
         } else {
             validateMethod(step.getMethod(), "step_evidence.method");
         }
@@ -245,8 +350,47 @@ public final class RecipeValidation {
         validateText(step.getSummary(), "step_evidence.summary");
     }
 
-    private static void validateStructuredSpec(StructuredGenerationSpec spec) {
-        validateType(spec.getTargetType(), "step.structured.target_type");
+    private static void validateEdge(TypedEdge edge) {
+        require(edge.getSourcesCount() >= 1, "step.edge.sources must not be empty");
+        require(edge.getSourcesCount() <= MAX_EDGE_SOURCES,
+                "step.edge.sources exceeds the maximum of " + MAX_EDGE_SOURCES);
+        for (String source : edge.getSourcesList()) {
+            validateName(source, "step.edge.sources");
+        }
+        validateType(edge.getProduceType(), "step.edge.produce_type");
+        validateRules(edge.getRulesCount(), edge.getRulesList(), "step.edge.rules");
+        validateCelRules(edge.getCelRulesList(), "step.edge.cel_rules");
+        if (!edge.getProjectTo().isEmpty()) {
+            validateType(edge.getProjectTo(), "step.edge.project_to");
+        }
+    }
+
+    private static void validateFanOut(FanOutSpec fanOut) {
+        require(!fanOut.getItems().isBlank()
+                        && fanOut.getItems().length() <= MAX_ITEMS_PATH_LENGTH
+                        && fanOut.getItems().codePoints().noneMatch(Character::isWhitespace),
+                "step.fan_out.items must be a non-blank dotted field path of at most "
+                        + MAX_ITEMS_PATH_LENGTH + " characters");
+        require(fanOut.getMaxItems() >= 1 && fanOut.getMaxItems() <= MAX_FANOUT_ITEMS,
+                "step.fan_out.max_items must be between 1 and " + MAX_FANOUT_ITEMS);
+        require(fanOut.getMaxConcurrency() >= 1
+                        && fanOut.getMaxConcurrency() <= MAX_FANOUT_CONCURRENCY,
+                "step.fan_out.max_concurrency must be between 1 and "
+                        + MAX_FANOUT_CONCURRENCY);
+        require(fanOut.getFailurePolicy() == BranchFailurePolicy.BRANCH_FAILURE_POLICY_FAIL_FAST
+                        || fanOut.getFailurePolicy()
+                                == BranchFailurePolicy.BRANCH_FAILURE_POLICY_CONTINUE,
+                "step.fan_out.failure_policy must be FAIL_FAST or CONTINUE");
+        validateType(fanOut.getCollectType(), "step.fan_out.collect_type");
+        require(!fanOut.getCollectInto().isBlank()
+                        && fanOut.getCollectInto().length() <= MAX_COLLECT_INTO_LENGTH
+                        && fanOut.getCollectInto().codePoints()
+                                .noneMatch(Character::isWhitespace),
+                "step.fan_out.collect_into must be a non-blank field name of at most "
+                        + MAX_COLLECT_INTO_LENGTH + " characters");
+    }
+
+    private static void validateStructuredSpec(StructuredGenerationSpec spec) {        validateType(spec.getTargetType(), "step.structured.target_type");
         require(!spec.getModel().isBlank()
                         && spec.getModel().length() <= MAX_MODEL_LENGTH,
                 "step.structured.model must be non-blank and at most "

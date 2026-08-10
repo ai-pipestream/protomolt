@@ -90,14 +90,16 @@ public final class ChainJson {
                 } catch (ActionException e) {
                     throw new ChainParseException(name, e.getMessage());
                 }
-                steps.add(new ChainDefinition.Step(name,
+                steps.add(step(name, () -> new ChainDefinition.Step(name,
                         ChainDefinition.Step.STRUCTURED_DEPENDENCY, false, null,
                         text(step, "when"), strings(step.get("rules")),
                         celRules(step.get("celRules"), name),
                         step.path("validate").asBoolean(false),
                         step.path("deadlineMs").asLong(0), text(step, "completion"),
                         new ChainDefinition.StructuredSpec(targetType, model,
-                                attemptsNode == null ? 0 : attemptsNode.intValue())));
+                                attemptsNode == null ? 0 : attemptsNode.intValue()),
+                        edge(step.get("edge"), name, schema),
+                        fanOut(step.get("fanOut"), name, schema))));
                 continue;
             }
             String target = text(step, "target");
@@ -111,11 +113,13 @@ public final class ChainJson {
             } catch (IllegalArgumentException e) {
                 throw new ChainParseException(name, e.getMessage());
             }
-            steps.add(ChainDefinition.Step.grpc(name, target,
+            steps.add(step(name, () -> new ChainDefinition.Step(name, target,
                     step.path("tls").asBoolean(false), resolved, text(step, "when"),
                     strings(step.get("rules")), celRules(step.get("celRules"), name),
                     step.path("validate").asBoolean(false),
-                    step.path("deadlineMs").asLong(0), text(step, "completion")));
+                    step.path("deadlineMs").asLong(0), text(step, "completion"), null,
+                    edge(step.get("edge"), name, schema),
+                    fanOut(step.get("fanOut"), name, schema))));
         }
         ChainDefinition.Output output = null;
         JsonNode outputNode = chain.get("output");
@@ -176,5 +180,99 @@ public final class ChainJson {
                     target, strings(rule.get("fallback"))));
         }
         return rules;
+    }
+
+    /** Builds one step, attributing any shape rejection to the step being parsed. */
+    private static ChainDefinition.Step step(String name, StepBuilder builder)
+            throws ChainParseException {
+        try {
+            return builder.build();
+        } catch (IllegalArgumentException e) {
+            throw new ChainParseException(name, e.getMessage());
+        }
+    }
+
+    @FunctionalInterface
+    private interface StepBuilder {
+        ChainDefinition.Step build() throws ChainParseException;
+    }
+
+    /** Parses a step's typed edge, resolving its types against the chain schema. */    private static ChainDefinition.EdgeSpec edge(JsonNode node, String step,
+                                                 SchemaResolver.ResolvedSchema schema)
+            throws ChainParseException {
+        if (node == null) {
+            return null;
+        }
+        if (!(node instanceof ObjectNode edge)) {
+            throw new ChainParseException(step, "'edge' must be an object");
+        }
+        String produceTypeName = text(edge, "produceType");
+        List<String> sources = strings(edge.get("sources"));
+        if (produceTypeName == null || sources.isEmpty()) {
+            throw new ChainParseException(step,
+                    "an edge needs 'sources' and 'produceType'");
+        }
+        try {
+            Descriptor produceType = schema.message(produceTypeName,
+                    "/chain/steps/" + step + "/edge/produceType");
+            String projectToName = text(edge, "projectTo");
+            Descriptor projectTo = projectToName == null ? null : schema.message(
+                    projectToName, "/chain/steps/" + step + "/edge/projectTo");
+            return new ChainDefinition.EdgeSpec(sources, produceType,
+                    strings(edge.get("rules")), celRules(edge.get("celRules"), step),
+                    projectTo, edge.path("validate").asBoolean(false));
+        } catch (ActionException | IllegalArgumentException e) {
+            throw new ChainParseException(step, e.getMessage());
+        }
+    }
+
+    /** Parses a step's bounded fan-out, resolving the collect type against the schema. */
+    private static ChainDefinition.FanOutSpec fanOut(JsonNode node, String step,
+                                                     SchemaResolver.ResolvedSchema schema)
+            throws ChainParseException {
+        if (node == null) {
+            return null;
+        }
+        if (!(node instanceof ObjectNode fanOut)) {
+            throw new ChainParseException(step, "'fanOut' must be an object");
+        }
+        String items = text(fanOut, "items");
+        String collectTypeName = text(fanOut, "collectType");
+        String collectInto = text(fanOut, "collectInto");
+        String policy = text(fanOut, "failurePolicy");
+        if (items == null || collectTypeName == null || collectInto == null
+                || policy == null) {
+            throw new ChainParseException(step, "a fanOut needs 'items', 'collectType', "
+                    + "'collectInto', and 'failurePolicy'");
+        }
+        ChainDefinition.BranchFailurePolicy failurePolicy;
+        try {
+            failurePolicy = ChainDefinition.BranchFailurePolicy.valueOf(policy);
+        } catch (IllegalArgumentException e) {
+            throw new ChainParseException(step, "fanOut.failurePolicy must be FAIL_FAST "
+                    + "or CONTINUE; got '" + policy + "'");
+        }
+        JsonNode maxItems = fanOut.get("maxItems");
+        JsonNode maxConcurrency = fanOut.get("maxConcurrency");
+        if (maxItems != null && (!maxItems.isIntegralNumber()
+                || !maxItems.canConvertToInt())) {
+            throw new ChainParseException(step, "fanOut.maxItems must be a 32-bit integer");
+        }
+        if (maxConcurrency != null && (!maxConcurrency.isIntegralNumber()
+                || !maxConcurrency.canConvertToInt())) {
+            throw new ChainParseException(step,
+                    "fanOut.maxConcurrency must be a 32-bit integer");
+        }
+        try {
+            return new ChainDefinition.FanOutSpec(items,
+                    maxItems == null ? 0 : maxItems.intValue(),
+                    maxConcurrency == null ? 0 : maxConcurrency.intValue(),
+                    failurePolicy,
+                    schema.message(collectTypeName,
+                            "/chain/steps/" + step + "/fanOut/collectType"),
+                    collectInto);
+        } catch (ActionException | IllegalArgumentException e) {
+            throw new ChainParseException(step, e.getMessage());
+        }
     }
 }

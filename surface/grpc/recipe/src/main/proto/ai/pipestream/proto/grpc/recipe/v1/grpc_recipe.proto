@@ -71,6 +71,137 @@ message RecipeStep {
   // names a declared dependency, which anchors the descriptor set the
   // target type resolves against; replay fingerprint-checks that anchor.
   StructuredGenerationSpec structured = 10 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // The typed edge feeding this step: which scope sources it reads, the message
+  // type it produces by mapping them, and the optional projection and
+  // validation applied before the step executes. When set, the top-level
+  // rules and cel_rules must be empty - the edge owns request mapping.
+  TypedEdge edge = 11 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Bounded fan-out over a repeated field of the edge's produced message.
+  // Requires edge: the items resolve against the produced value.
+  FanOutSpec fan_out = 12 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// A typed inter-step edge: ordered scope sources, the message type produced by
+// mapping them, and the projection and validation applied before the value
+// reaches the step. The produced (or projected) value is the step input: for a
+// gRPC step without fan-out it is the method request; for a structured step it
+// packs as the generation's grounding; with fan-out each item feeds one branch.
+message TypedEdge {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "A typed inter-step edge: scoped sources, the produced type, mapping rules, optional projection and validation."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Ordered scope sources the edge reads: "input" or prior step names.
+  repeated string sources = 1 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      max_items: 64
+      items: {string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The message type the edge produces by mapping the joined scope. For a gRPC
+  // step without fan-out this must be the method's request type.
+  string produce_type = 2 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Existing ProtoMolt mapping rules over the joined scope.
+  repeated string rules = 3 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 1024,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Typed CEL mapping rules.
+  repeated CelMappingRule cel_rules = 4 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 1024,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional projection target: a MessageProjection-annotated type. The
+  // produced value is projected to this consumer-visible form before
+  // validation and delivery; excluded fields never reach the step. Empty when
+  // no projection applies.
+  string project_to = 5 [
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Validate the produced (or projected) value before the step executes.
+  // Rejection happens before any provider invocation.
+  bool validate = 6 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// Bounded fan-out over a repeated field of the edge's produced message: each
+// item executes one branch with a stable identity, and the branch outputs
+// collect, in index order, into one repeated field of the collect type.
+message FanOutSpec {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Bounded fan-out: items path, item and concurrency caps, branch failure policy, and the collect target."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Path of the repeated field inside the edge's produced message whose items
+  // each execute one branch.
+  string items = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string = {
+      max_len: 512
+      pattern: "^[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*$"
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Item cap; a produced message with more items is rejected before execution.
+  int32 max_items = 2 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // In-flight branch cap.
+  int32 max_concurrency = 3 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 64
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What one failed branch does to the step.
+  BranchFailurePolicy failure_policy = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The message type the collected branch outputs form.
+  string collect_type = 5 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The repeated field of collect_type the ordered branch outputs land in; its
+  // element type must equal the branch output type.
+  string collect_into = 6 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string = {
+      max_len: 256
+      pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// What one failed branch does to a fanned-out step.
+enum BranchFailurePolicy {
+  // Invalid until explicitly selected by a compiler or author.
+  BRANCH_FAILURE_POLICY_UNSPECIFIED = 0;
+  // The first branch failure fails the step; remaining branches are abandoned.
+  BRANCH_FAILURE_POLICY_FAIL_FAST = 1;
+  // Failed branches are recorded; the collect succeeds with the survivors.
+  BRANCH_FAILURE_POLICY_CONTINUE = 2;
 }
 
 // A structured-generation recipe step: fill one message type with one model.
@@ -220,6 +351,89 @@ message StepEvidence {
   // evidence is the sensitivity-masked typed message in the step's response
   // artifact. An empty method is allowed exactly when this is present.
   StructuredGenerationEvidence structured = 10 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Typed-edge provenance, present exactly when the recipe step carries a
+  // TypedEdge. Binds the evidence to the exact edge by fingerprint and records
+  // the validation verdict, the declared source count, the fan-out
+  // cardinality, and every branch outcome. The masked edge-produced message is
+  // the step's request artifact; with fan-out the masked collected message is
+  // the response artifact. Raw values beyond those artifacts and the
+  // per-branch response artifacts are never persisted.
+  EdgeEvidence edge = 11 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// Bounded typed-edge provenance for one recipe step: a fingerprint, a verdict,
+// counts, and per-branch outcomes. No produced or projected value is ever
+// recorded here - those live, masked, in the artifacts.
+message EdgeEvidence {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Bounded typed-edge provenance: edge fingerprint, validation verdict, source and item counts, branch outcomes."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Lowercase SHA-256 of the serialized TypedEdge (+ FanOutSpec when present)
+  // from the recipe. Binds this evidence to the exact edge.
+  string edge_fingerprint = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The produced (or projected) value validated clean before execution; with
+  // fan-out, that every item did. True also when the edge declares no
+  // validation; false records a pre-invocation rejection.
+  bool validation_passed = 2 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Declared scope sources read.
+  int32 source_count = 3 [
+    (ai.pipestream.proto.validate.v1.field).int32.gte = 1,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Fan-out cardinality: items found; 0 when the step is not fanned out.
+  int32 item_count = 4 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 0
+      lte: 1024
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Per-branch outcomes in stable identity order; empty without fan-out. Under
+  // the fail-fast policy, branches abandoned after the first failure are
+  // recorded FAILED with an abandonment summary, so the branch count always
+  // equals the item count.
+  repeated BranchEvidence branches = 5 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 1024,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The outcome of one fan-out branch.
+message BranchEvidence {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "One fan-out branch: stable identity, terminal status, masked output artifact, bounded failure summary."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Stable identity: "<step-name>#<zero-based index>".
+  string branch_id = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}#[0-9]{1,4}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Terminal branch state: SUCCEEDED or FAILED only.
+  StepStatus status = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The masked branch output, when the branch produced one.
+  ArtifactReference response_artifact = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Bounded failure detail for a failed branch.
+  string summary = 4 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 16384,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // Bounded structured-generation provenance for one recipe step. Every field
