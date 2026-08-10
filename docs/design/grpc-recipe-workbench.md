@@ -182,6 +182,26 @@ Acceptance: an agent composes two live services, records a passing fixture,
 replays it offline, and promotes a versioned recipe whose exact dependencies
 are recoverable.
 
+#### Phase 2 ownership and delegation
+
+The core contract is the dependency gate for the parallel work packages below.
+Agents should not invent a competing recipe, artifact, or run-evidence model.
+Once the core contract commit is published, each delegated agent should branch
+from that commit, stay inside its listed boundary, and return a focused pull
+request for integration review.
+
+| Work package | Status | Ownership boundary | Acceptance evidence |
+| --- | --- | --- | --- |
+| Recipe and run-evidence contracts | **IN PROGRESS: core** | Protobuf messages, validation, repository interfaces, shared test fixtures, and MCP wiring seams | Contracts round-trip, reject invalid identities and references, and preserve exact service-profile fingerprints |
+| Content-addressed artifact store and redaction | **DELEGATABLE AFTER CORE** | Artifact repository implementation and tests only; no recipe or action API changes | Duplicate content has one identity, changed content fails verification, bounds are enforced, and sensitive fixtures prove redaction before persistence |
+| Existing-chain compiler | **DELEGATABLE AFTER CORE** | Adapter from `ChainDefinition`/`ChainJson` to the published recipe contract and its tests | Existing chain fixtures compile deterministically and every method/type reference resolves against embedded descriptors |
+| Offline fixture replay | **DELEGATABLE AFTER CORE** | Replay verifier, fixture loader, deterministic result model, and tests; no live network invocation | A recorded passing run replays without a server and altered request, response, or descriptor evidence fails clearly |
+| Registry promotion adapter | **DELEGATABLE AFTER CORE** | Recipe version storage in `GitSchemaRegistryStore`, compatibility checks, and tests | Promotion is immutable, recoverable by version, and rejects unresolved artifacts or dependency fingerprints |
+| Structural mapping suggestions | **DELEGATABLE AFTER COMPILER** | Descriptor-grounded candidate generation and type-check tests; no provider-specific LLM integration yet | Suggestions identify their source and target fields, pass the same compiler type checker, and never bypass validation |
+
+Delegated pull requests must include tests and a short update to this table.
+They must not add credentials, release automation, or unbounded live calls.
+
 ### Phase 3: structured inference
 
 - Implement `generate-structured` and its bounded validation-repair loop.

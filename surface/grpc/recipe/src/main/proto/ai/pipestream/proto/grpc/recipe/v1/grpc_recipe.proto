@@ -1,0 +1,185 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.grpc.recipe.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.grpc.recipe.v1";
+
+// A descriptor-grounded sequence of gRPC calls that can be checked, replayed, and promoted.
+message GrpcRecipe {
+  // Stable path-safe identity used by repositories and MCP resources.
+  string name = 1;
+  // Human-readable purpose with no execution semantics.
+  string description = 2;
+  // Fully-qualified protobuf message accepted as the recipe input.
+  string input_type = 3;
+  // Exact service profiles and descriptor fingerprints required by the steps.
+  repeated ServiceDependency dependencies = 4;
+  // Ordered execution steps.
+  repeated RecipeStep steps = 5;
+  // Optional projection of the recipe result. When absent, the last step response is returned.
+  RecipeOutput output = 6;
+  // Whole-recipe deadline. Step deadlines are nested inside this budget.
+  google.protobuf.Duration deadline = 7;
+}
+
+// One named and fingerprinted service dependency used by a recipe.
+message ServiceDependency {
+  // Recipe-local name referenced by steps.
+  string alias = 1;
+  // Stable service-profile name.
+  string service_profile = 2;
+  // Endpoint name within the profile.
+  string endpoint = 3;
+  // Lowercase SHA-256 fingerprint of the exact descriptor set used for checking.
+  string descriptor_fingerprint = 4;
+}
+
+// One serial gRPC call or externally completed step.
+message RecipeStep {
+  // Unique step name used in later mapping scopes and evidence.
+  string name = 1;
+  // Alias of a declared service dependency.
+  string dependency = 2;
+  // Fully-qualified gRPC method in Service/Method form.
+  string method = 3;
+  // Optional boolean CEL gate evaluated against the recipe scope.
+  string when = 4;
+  // Existing ProtoMolt mapping expressions retained for lossless chain compilation.
+  repeated string rules = 5;
+  // Typed CEL mapping rules.
+  repeated CelMappingRule cel_rules = 6;
+  // Whether declared protobuf validation rules run before the next step.
+  bool validate_response = 7;
+  // Per-step deadline. Zero inherits the remaining recipe deadline.
+  google.protobuf.Duration deadline = 8;
+  // How the response is obtained.
+  StepCompletion completion = 9;
+}
+
+// A CEL mapping rule with an explicit destination field path.
+message CelMappingRule {
+  // Optional boolean filter.
+  string filter = 1;
+  // Optional selector expression.
+  string selector = 2;
+  // Required target field path.
+  string target = 3;
+  // Ordered fallback expressions.
+  repeated string fallback = 4;
+}
+
+// Recipe result projection.
+message RecipeOutput {
+  // Fully-qualified protobuf output message.
+  string type = 1;
+  // Existing ProtoMolt mapping expressions retained for lossless chain compilation.
+  repeated string rules = 2;
+  // Typed CEL mapping rules.
+  repeated CelMappingRule cel_rules = 3;
+}
+
+// Response acquisition mode for a recipe step.
+enum StepCompletion {
+  // Invalid until explicitly selected by a compiler or author.
+  STEP_COMPLETION_UNSPECIFIED = 0;
+  // ProtoMolt invokes the declared method.
+  STEP_COMPLETION_LIVE = 1;
+  // An external actor supplies the response through a bounded job workflow.
+  STEP_COMPLETION_EXTERNAL = 2;
+}
+
+// Immutable promotion envelope for one named recipe version.
+message VersionedRecipe {
+  // Validated recipe content.
+  GrpcRecipe recipe = 1;
+  // Path-safe immutable version selected by the promoter.
+  string version = 2;
+  // Lowercase SHA-256 fingerprint of the serialized recipe.
+  string recipe_fingerprint = 3;
+  // Time this version was promoted.
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// Content-addressed reference to bounded evidence bytes stored outside agent context.
+message ArtifactReference {
+  // Lowercase SHA-256 fingerprint of the stored bytes.
+  string sha256 = 1;
+  // IANA media type of the stored bytes.
+  string media_type = 2;
+  // Exact byte length of the stored content.
+  uint64 size_bytes = 3;
+  // Whether the configured redaction pass ran before the bytes were persisted.
+  bool redacted = 4;
+}
+
+// Evidence from one bounded recipe probe or replay.
+message RunEvidence {
+  // Stable path-safe identity for this run.
+  string run_id = 1;
+  // Recipe identity used for the run.
+  string recipe_name = 2;
+  // Promoted version when one was used; empty is allowed for a draft probe.
+  string recipe_version = 3;
+  // Lowercase SHA-256 fingerprint of the exact recipe content executed.
+  string recipe_fingerprint = 4;
+  // Final or current run state.
+  RunStatus status = 5;
+  // Start time recorded by the execution host.
+  google.protobuf.Timestamp started_at = 6;
+  // Completion time for terminal states.
+  google.protobuf.Timestamp completed_at = 7;
+  // Exact service dependencies observed for the run.
+  repeated ServiceDependency dependencies = 8;
+  // Recipe input fixture after configured redaction.
+  ArtifactReference input_artifact = 9;
+  // Final output fixture, when execution produced one.
+  ArtifactReference output_artifact = 10;
+  // Ordered per-step evidence.
+  repeated StepEvidence steps = 11;
+  // Bounded diagnostic summary for a failed or cancelled run.
+  string failure_summary = 12;
+}
+
+// Evidence from one recipe step.
+message StepEvidence {
+  // Recipe step name.
+  string step_name = 1;
+  // Exact fully-qualified method observed during the run.
+  string method = 2;
+  // Final step state.
+  StepStatus status = 3;
+  // Step start time.
+  google.protobuf.Timestamp started_at = 4;
+  // Step completion time for terminal states.
+  google.protobuf.Timestamp completed_at = 5;
+  // Request fixture after configured redaction, when the step was invoked.
+  ArtifactReference request_artifact = 6;
+  // Response fixture after configured redaction, when one was produced.
+  ArtifactReference response_artifact = 7;
+  // Canonical gRPC status code in the range 0 through 16.
+  int32 grpc_status_code = 8;
+  // Bounded diagnostic summary.
+  string summary = 9;
+}
+
+// Recipe run state.
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  RUN_STATUS_RUNNING = 1;
+  RUN_STATUS_SUCCEEDED = 2;
+  RUN_STATUS_FAILED = 3;
+  RUN_STATUS_CANCELLED = 4;
+}
+
+// Individual step state.
+enum StepStatus {
+  STEP_STATUS_UNSPECIFIED = 0;
+  STEP_STATUS_SUCCEEDED = 1;
+  STEP_STATUS_FAILED = 2;
+  STEP_STATUS_SKIPPED = 3;
+  STEP_STATUS_CANCELLED = 4;
+}

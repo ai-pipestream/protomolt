@@ -28,6 +28,7 @@ def supportedModules = [
         'protomolt-grpc-invoke',
         'protomolt-grpc-service-profile',
         'protomolt-grpc-service-workspace',
+        'protomolt-grpc-recipe',
         'protomolt-grpc-service',
         'protomolt-grpc-validation',
         'protomolt-grpc-validation-micrometer',
@@ -120,7 +121,7 @@ catalog {
                               'protobuf-validation-protovalidate'])
         bundle('mapping', ['mapper-core', 'mapper-cel', 'metadata', 'projection'])
         bundle('dynamic-runtime', ['actions', 'grpc-channel-policy', 'grpc-invoke', 'grpc-service-profile',
-                                   'grpc-service-workspace', 'grpc-service', 'serve'])
+                                   'grpc-service-workspace', 'grpc-recipe', 'grpc-service', 'serve'])
         bundle('search', ['index-spi', 'index-ndjson', 'index-lucene',
                           'index-opensearch', 'index-solr', 'index-qdrant'])
     }
