@@ -61,6 +61,20 @@ contract becomes the long-term execution language because it already models
 unary, client-streaming, server-streaming, and bidirectional calls alongside
 CEL, projection, unnest, collect, and run records.
 
+Data does not pass directly from one step implementation to the next. A typed
+inter-step edge selects one or more upstream values, applies descriptor-checked
+mapping and projection, validates the resulting consumer input, and records the
+transition before the consumer runs. Structured inference is one consumer of
+that edge: its grounding packet comes from the same mapped, projected, and
+validated value a deterministic gRPC step would receive.
+
+Cardinality is explicit. An edge may preserve one value, fan out a bounded
+collection into independently identified branches, or collect explicitly
+compatible branches. Fan-out declares item and concurrency limits, ordering,
+and branch failure policy. Replay records stable branch identities, per-edge
+input and output fingerprints, validation verdicts, and item counts so it can
+reproduce the dataflow without re-invoking an inference provider.
+
 ### Run evidence
 
 Every exploratory or promoted execution produces a run record containing:
@@ -229,7 +243,8 @@ those capabilities behind one descriptor-grounded operation.
 | Structured generation contract and coordinator | **LANDED: #95** | Add the typed request, result, and per-attempt provenance contracts plus one bounded coordinator. Resolve the target descriptor, render the prompt and response schema, call `InferenceEngines`, parse strict protobuf JSON, validate, and retry only from rendered validation feedback. Do not change provider HTTP transports, recipe steps, or deployment. | A scripted provider returns invalid JSON or an invalid message on its first attempt and a valid message on its second. The coordinator stops at a validated `DynamicMessage`, records both attempts and token/model/schema provenance, rejects an unknown type or incompatible model before invocation, and never exceeds a validated maximum of three attempts. Tests use an in-process fake provider and require no container or GPU. |
 | Provider structured-output transport | **LANDED: #96** | Carry the coordinator's named, validated JSON Schema through `GenerateRequest`, advertise structured-output capability in catalog surfaces and launcher configuration, and emit the strict OpenAI-compatible response-format envelope from the shared OpenAI/OpenVINO transport. | Exact `/v1` and `/v3` wire tests prove the schema envelope, the catalog and transport reject incapable models before HTTP, malformed schemas fail without being echoed, and model labels or credential references never enter provider bodies. |
 | Recipe step and evidence integration | **LANDED: #98** | Add structured inference as a recipe step and persist bounded, redacted prompt, response, validation, and attempt evidence through the existing artifact and run-evidence repositories. | Offline replay verifies the selected model, prompt/schema fingerprints, typed output, validation result, and attempt history without calling a provider. |
-| Live structured-inference acceptance | **WAITING ON RECIPE INTEGRATION** | Exercise one explicitly configured compatible model through MCP and typed gRPC. This package owns test configuration only, not model deployment. | A live opt-in test performs one repair, returns a valid protobuf message, and proves that secrets and sensitive fields are absent from stored evidence. |
+| Typed inter-step dataflow and structured grounding | **NEXT AGENT** | Extend the recipe and chain edge contract, not the provider coordinator. An edge selects recipe input or prior outputs, applies existing descriptor-checked mappings and CEL, projects the consumer-visible form, validates it, and then passes that typed value to a gRPC or structured step. Add bounded fan-out with stable branch identities and explicit collect; do not add provider, container, or GPU requirements. | In-process tests map and project one upstream result into a structured step, prove excluded fields never reach its grounding packet, reject an invalid projected value before provider invocation, fan out two items with deterministic identities and bounded concurrency, exercise branch failure policy and collect, and replay the edge fingerprints, verdicts, and cardinality fully offline. Every persisted field has validation and sensitivity metadata; only actual searchable fields receive index annotations. |
+| Live structured-inference acceptance | **WAITING ON TYPED DATAFLOW** | Exercise one explicitly configured compatible model through MCP and typed gRPC after the grounding edge is available. This package owns test configuration only, not model deployment. | A live opt-in test maps and projects a prior typed result into one grounded generation, performs one repair, returns a valid protobuf message, and proves that secrets, excluded fields, and sensitive values are absent from provider requests and stored evidence. |
 
 The next agent should take only the row marked `NEXT AGENT` and branch from
 `main` after the preceding package lands. Any new persisted field must carry
@@ -239,6 +254,8 @@ provenance fields must not be mislabeled as indexed data.
 
 ### Phase 4: pipeline and application promotion
 
+- Preserve typed edge semantics across validation, mapping, projection,
+  fan-out, collect, and every gRPC streaming shape.
 - Implement pipeline checking and execution across all gRPC streaming shapes.
 - Compile recipes to the pipeline contract.
 - Add complete Python, Go, and TypeScript gRPC generation.
