@@ -176,31 +176,37 @@ class TypedEdgeTest {
                             workerCalls.incrementAndGet();
                             int now = inFlight.incrementAndGet();
                             maxInFlight.accumulateAndGet(now, Math::max);
+                            // The gauge window closes before the response goes out:
+                            // the client releases its permit only after the response
+                            // arrives, so an overlap here is a real semaphore breach.
+                            DynamicMessage message = (DynamicMessage) request;
+                            String title = (String) message.getField(
+                                    ticket.findFieldByName("title"));
+                            DynamicMessage response = null;
+                            io.grpc.StatusRuntimeException failure = null;
                             try {
-                                DynamicMessage message = (DynamicMessage) request;
-                                String title = (String) message.getField(
-                                        ticket.findFieldByName("title"));
                                 if (title.contains("bad")) {
-                                    out.onError(Status.INVALID_ARGUMENT
+                                    failure = Status.INVALID_ARGUMENT
                                             .withDescription("rejected item: " + title)
-                                            .asRuntimeException());
-                                    return;
-                                }
-                                if (title.contains("slow")) {
-                                    Thread.sleep(400);
+                                            .asRuntimeException();
                                 } else {
-                                    Thread.sleep(100);
+                                    Thread.sleep(title.contains("slow") ? 400 : 100);
+                                    response = DynamicMessage.newBuilder(ticket)
+                                            .setField(ticket.findFieldByName("title"),
+                                                    title + "-done")
+                                            .build();
                                 }
-                                out.onNext(DynamicMessage.newBuilder(ticket)
-                                        .setField(ticket.findFieldByName("title"),
-                                                title + "-done")
-                                        .build());
-                                out.onCompleted();
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
-                                out.onError(Status.CANCELLED.asRuntimeException());
+                                failure = Status.CANCELLED.asRuntimeException();
                             } finally {
                                 inFlight.decrementAndGet();
+                            }
+                            if (failure != null) {
+                                out.onError(failure);
+                            } else {
+                                out.onNext(response);
+                                out.onCompleted();
                             }
                         }))
                         .build())
