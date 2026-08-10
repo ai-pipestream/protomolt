@@ -1,0 +1,34 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Structured generation: fill a protobuf message with a model - render the prompt packet, call the inference catalog, parse strict protobuf JSON, validate, and retry only from rendered feedback'
+
+dependencies {
+    api project(':protomolt-inference-spi')
+    api project(':protomolt-inference-proto')
+
+    // The prompt packet (instructions + response JSON Schema) and the
+    // violation feedback rendered back to the model on retry.
+    implementation project(':protomolt-protobuf-prompt')
+
+    // Requests and parsed forms are validated against their declared
+    // validate.v1 rules; target types resolve through the descriptor registry.
+    implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-descriptors')
+
+    implementation libs.protobuf.java.util
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+
+    // The test fixture form dogfoods the house validate.v1 rules.
+    testImplementation project(':protomolt-protobuf-metadata')
+
+    testRuntimeOnly libs.slf4j.simple
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

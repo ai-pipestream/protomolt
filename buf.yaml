@@ -38,6 +38,8 @@ modules:
     name: buf.build/ai-pipestream/intake
   - path: inference/proto/src/main/proto
     name: buf.build/ai-pipestream/inference
+  - path: inference/structured/src/test/proto
+    name: buf.build/ai-pipestream/inference-structured-testdata
   - path: parse/proto/src/main/proto
     name: buf.build/ai-pipestream/parse
   - path: acquire/confluence/src/main/proto
