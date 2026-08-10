@@ -215,6 +215,28 @@ Acceptance: a model fills a validated protobuf form, repairs a deliberately
 invalid first attempt, and produces a replayable evidence record without
 exposing credentials or ungrounded fields.
 
+#### Phase 3 starting point and delegation
+
+Do not rebuild the pieces already on `main`. ProtoMolt already has `llm.v1`
+and `quality.v1` descriptor annotations, `PromptRenderer`,
+`ResponseFormatShaper`, `ValidationFeedbackRenderer`, strict protobuf JSON
+parsing, the inference catalog and provider SPI, unary and streaming inference
+actions, and OpenAI-compatible OpenVINO and generic providers. Phase 3 joins
+those capabilities behind one descriptor-grounded operation.
+
+| Work package | Status | Ownership boundary | Acceptance evidence |
+| --- | --- | --- | --- |
+| Structured generation contract and coordinator | **NEXT AGENT** | Add the typed request, result, and per-attempt provenance contracts plus one bounded coordinator. Resolve the target descriptor, render the prompt and response schema, call `InferenceEngines`, parse strict protobuf JSON, validate, and retry only from rendered validation feedback. Do not change provider HTTP transports, recipe steps, or deployment. | A scripted provider returns invalid JSON or an invalid message on its first attempt and a valid message on its second. The coordinator stops at a validated `DynamicMessage`, records both attempts and token/model/schema provenance, rejects an unknown type or incompatible model before invocation, and never exceeds a validated maximum of three attempts. Tests use an in-process fake provider and require no container or GPU. |
+| Provider structured-output transport | **WAITING ON CORE CONTRACT** | Advertise structured-output capability in the model catalog and pass the coordinator's JSON Schema through compatible OpenAI-style providers. Keep credentials host-resolved and reuse the existing transport policy. | Wire tests prove the exact response-format envelope, capability rejection is deterministic, and credentials never enter requests, results, or logs. |
+| Recipe step and evidence integration | **WAITING ON CORE CONTRACT** | Add structured inference as a recipe step and persist bounded, redacted prompt, response, validation, and attempt evidence through the existing artifact and run-evidence repositories. | Offline replay verifies the selected model, prompt/schema fingerprints, typed output, validation result, and attempt history without calling a provider. |
+| Live structured-inference acceptance | **WAITING ON PROVIDER WIRING** | Exercise one explicitly configured compatible model through MCP and typed gRPC. This package owns test configuration only, not model deployment. | A live opt-in test performs one repair, returns a valid protobuf message, and proves that secrets and sensitive fields are absent from stored evidence. |
+
+The next agent should take only the first row and branch from `main` after this
+roadmap change lands. Any new persisted field must carry validation and
+sensitivity metadata. Add index annotations only when the field is actually
+part of a searchable index contract; operational request and provenance fields
+must not be mislabeled as indexed data.
+
 ### Phase 4: pipeline and application promotion
 
 - Implement pipeline checking and execution across all gRPC streaming shapes.
@@ -284,8 +306,14 @@ Phase 2 delivers the full record-replay-promote loop:
   exact type, cardinality, and message-type agreement. Maps, `Struct`, and
   `Any` are never suggested, and every candidate is gated through the same
   `RuleChecker` the compiler uses, so a suggestion can never bypass validation.
-- MCP integration (#92): workbench actions for suggesting mappings, compiling
-  chains, recording sensitivity-redacted live fixtures, replaying them offline,
-  and promoting immutable versions into the git registry. The acceptance test
-  drives two live gRPC services through streamable HTTP MCP and recovers the
-  promoted recipe from registry storage after a restart.
+- MCP integration (#92): five workbench actions, `suggest-mappings`,
+  `compile-recipe`, `record-recipe-run`, `replay-recipe`, and
+  `promote-recipe`, are exposed through MCP, typed gRPC, REST, and OpenAPI. The
+  initialize response teaches the full discovery-to-promotion path, while the
+  host owns a persistent recipe workspace containing artifacts, run evidence,
+  and registry state. `ChainRunner` observation records sensitivity-redacted
+  fixtures; unsafe run/version identities, excessive mapping sources,
+  unresolved `Any`, and unredacted sensitive data fail before persistence.
+  The acceptance test drives two live gRPC services through streamable HTTP
+  MCP, executes all five actions, restarts the host, and recovers the exact
+  promoted recipe fingerprint from registry storage.
