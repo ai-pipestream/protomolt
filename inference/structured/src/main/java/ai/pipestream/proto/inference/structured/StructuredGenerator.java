@@ -59,6 +59,8 @@ public final class StructuredGenerator {
 
     /** The attempt ceiling: both the default and the hard cap. */
     private static final int MAX_ATTEMPTS = 3;
+    /** Mirrors StructuredAttempt.response_text's validated maximum. */
+    private static final int MAX_ATTEMPT_TEXT_LENGTH = 1_048_576;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -153,6 +155,13 @@ public final class StructuredGenerator {
             GenerateResponse response = invoke(request, constraint, conversation, attempts,
                     attemptNumber);
             String text = response.getText();
+            if (text.codePointCount(0, text.length()) > MAX_ATTEMPT_TEXT_LENGTH) {
+                throw new StructuredGenerationException(
+                        "provider output on attempt " + attemptNumber
+                                + " exceeds the structured evidence limit of "
+                                + MAX_ATTEMPT_TEXT_LENGTH + " characters",
+                        model, targetType, attempts);
+            }
             accumulate(totalUsage, response.getUsage());
             boolean lastAttempt = attemptNumber == maxAttempts;
 
@@ -186,8 +195,8 @@ public final class StructuredGenerator {
             return GenerateStructuredResponse.newBuilder()
                     .setMessage(Any.pack(form))
                     .setTargetType(targetType)
-                    .setModel(response.getModel())
-                    .setProvider(response.getProvider())
+                    .setModel(model)
+                    .setProvider(entry.getProvider())
                     .setModelVersion(response.getModelVersion())
                     .addAllAttempts(attempts)
                     .setTotalUsage(totalUsage)
