@@ -117,19 +117,22 @@ public final class StructuredGenerator {
                             + "': not registered in the descriptor registry",
                     model, targetType, List.of());
         }
-        return generateResolved(request, descriptor);
+        return generateResolved(request, descriptor, groundingRegistry(request,
+                registryTypeRegistry()));
     }
 
     /**
      * Fills an explicitly resolved target descriptor. Chain and recipe callers use
      * this overload because inline schemas are deliberately scoped to one action and
-     * are not installed into the host's shared descriptor registry.
+     * are not installed into the host's shared descriptor registry. Grounding types
+     * resolve against the descriptor's file set.
      *
      * @param request the validated structured-generation request
      * @param descriptor the exact target descriptor resolved with the chain
      * @return the validated, packed form with attempt history and provenance
      * @throws StructuredGenerationException when the request target and descriptor
-     *     disagree, or generation otherwise fails
+     *     disagree, the grounding type is not visible from the descriptor's file
+     *     set, or generation otherwise fails
      */
     public GenerateStructuredResponse generate(GenerateStructuredRequest request,
                                                 Descriptor descriptor) {
@@ -142,7 +145,61 @@ public final class StructuredGenerator {
                             + request.getTargetType() + "'",
                     request.getModel(), request.getTargetType(), List.of());
         }
-        return generateResolved(request, descriptor);
+        return generateResolved(request, descriptor, groundingRegistry(request,
+                fileSetTypeRegistry(descriptor)));
+    }
+
+    /**
+     * The TypeRegistry a grounding-carrying request renders against, with the
+     * grounding type resolved up front: an unknown grounding type fails here,
+     * before the catalog preflight and any model invocation. Returns null when
+     * the request carries no grounding.
+     */
+    private static JsonFormat.TypeRegistry groundingRegistry(
+            GenerateStructuredRequest request, JsonFormat.TypeRegistry registry) {
+        if (!request.hasGrounding()) {
+            return null;
+        }
+        String typeUrl = request.getGrounding().getTypeUrl();
+        String typeName = typeUrl.substring(typeUrl.lastIndexOf('/') + 1);
+        if (registry.find(typeName) == null) {
+            throw new StructuredGenerationException(
+                    "unknown grounding type '" + typeName
+                            + "': not resolvable from the descriptor source",
+                    request.getModel(), request.getTargetType(), List.of());
+        }
+        return registry;
+    }
+
+    /** Every message type the coordinator's descriptor registry knows. */
+    private JsonFormat.TypeRegistry registryTypeRegistry() {
+        JsonFormat.TypeRegistry.Builder builder = JsonFormat.TypeRegistry.newBuilder();
+        for (Descriptor registered : descriptors.registeredDescriptors()) {
+            builder.add(registered);
+        }
+        return builder.build();
+    }
+
+    /** Every message type visible from {@code descriptor}'s file set. */
+    private static JsonFormat.TypeRegistry fileSetTypeRegistry(Descriptor descriptor) {
+        JsonFormat.TypeRegistry.Builder builder = JsonFormat.TypeRegistry.newBuilder();
+        collectFileTypes(descriptor.getFile(), builder, new java.util.HashSet<>());
+        return builder.build();
+    }
+
+    private static void collectFileTypes(com.google.protobuf.Descriptors.FileDescriptor file,
+                                         JsonFormat.TypeRegistry.Builder out,
+                                         java.util.Set<String> seen) {
+        if (!seen.add(file.getFullName())) {
+            return;
+        }
+        for (Descriptor message : file.getMessageTypes()) {
+            out.add(message);
+        }
+        for (com.google.protobuf.Descriptors.FileDescriptor dependency
+                : file.getDependencies()) {
+            collectFileTypes(dependency, out, seen);
+        }
     }
 
     private void validateRequest(GenerateStructuredRequest request) {
@@ -156,7 +213,8 @@ public final class StructuredGenerator {
     }
 
     private GenerateStructuredResponse generateResolved(GenerateStructuredRequest request,
-                                                         Descriptor descriptor) {
+                                                         Descriptor descriptor,
+                                                         JsonFormat.TypeRegistry typeRegistry) {
         String model = request.getModel();
         String targetType = request.getTargetType();
 
@@ -167,7 +225,7 @@ public final class StructuredGenerator {
                     model, targetType, List.of());
         }
 
-        PromptPacket packet = renderPacket(descriptor, request);
+        PromptPacket packet = renderPacket(descriptor, request, typeRegistry);
         StructuredOutputConstraint constraint = StructuredOutputConstraint.newBuilder()
                 .setName(schemaName(targetType))
                 .setJsonSchema(packet.getResponseJsonSchema())
@@ -259,14 +317,20 @@ public final class StructuredGenerator {
         }
     }
 
-    private PromptPacket renderPacket(Descriptor descriptor, GenerateStructuredRequest request) {
+    private PromptPacket renderPacket(Descriptor descriptor, GenerateStructuredRequest request,
+                                      JsonFormat.TypeRegistry typeRegistry) {
         RenderPromptRequest.Builder renderRequest = RenderPromptRequest.newBuilder()
                 .setTargetType(request.getTargetType());
         if (request.hasPersona()) {
             renderRequest.setPersona(request.getPersona());
         }
+        if (request.hasGrounding()) {
+            // Grounding enters the prompt as document-specific context; the
+            // packet's instruction fingerprint covers it automatically.
+            renderRequest.setOverrides(request.getGrounding());
+        }
         return promptRenderer.render(descriptor, renderRequest.build(),
-                descriptor.getFile().getFullName());
+                descriptor.getFile().getFullName(), typeRegistry);
     }
 
     private GenerateResponse invoke(GenerateStructuredRequest request,

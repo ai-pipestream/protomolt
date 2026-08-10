@@ -86,6 +86,14 @@ message GenerateStructuredRequest {
       int32: {gte: 0, lte: 1048576}
     }
   ];
+
+  // Per-document grounding projected by the recipe edge; rendered into the
+  // prompt as document-specific context (RenderPromptRequest.overrides), so
+  // the prompt fingerprint covers it. The model may not contradict it. An
+  // unresolvable grounding type fails before any model invocation.
+  google.protobuf.Any grounding = 8 [
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // How one generation attempt ended.

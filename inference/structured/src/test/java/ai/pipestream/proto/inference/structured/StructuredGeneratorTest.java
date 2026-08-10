@@ -19,6 +19,7 @@ import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.StructuredAttempt;
 import ai.pipestream.proto.inference.v1.Usage;
 import ai.pipestream.proto.validate.ProtoValidator;
+import com.google.protobuf.Any;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -279,6 +280,70 @@ class StructuredGeneratorTest {
                     assertThat(e.getAttempts()).isEmpty();
                 });
         assertThat(provider.invocations()).isEqualTo(1);
+    }
+
+    @Test
+    void groundingIsRenderedIntoThePromptAndCoveredByTheFingerprint() {
+        provider.script(VALID_FORM_JSON, VALID_FORM_JSON);
+        TestForm groundingForm = TestForm.newBuilder()
+                .setName("Grounded Ada").setAge(41).build();
+
+        GenerateStructuredResponse grounded = generator.generate(request(STRUCTURED_MODEL)
+                .setGrounding(Any.pack(groundingForm)).build());
+        String groundedInstructions = provider.lastRequest().getMessages(0).getContent();
+        GenerateStructuredResponse plain = generator
+                .generate(request(STRUCTURED_MODEL).build());
+        String plainInstructions = provider.lastRequest().getMessages(0).getContent();
+
+        assertThat(provider.invocations()).isEqualTo(2);
+        assertThat(groundedInstructions)
+                .contains("Document-specific context")
+                .contains("Grounded Ada");
+        assertThat(plainInstructions).doesNotContain("Grounded Ada");
+        // Grounding rides inside the rendered instructions, so the prompt
+        // fingerprint covers it automatically; the schema is untouched.
+        assertThat(grounded.getPromptFingerprint())
+                .isNotEqualTo(plain.getPromptFingerprint());
+        assertThat(grounded.getSchemaFingerprint())
+                .isEqualTo(plain.getSchemaFingerprint());
+    }
+
+    @Test
+    void groundingResolvesAgainstTheOverloadFileSet() {
+        provider.script(VALID_FORM_JSON);
+        StructuredGenerator actionScoped = new StructuredGenerator(
+                engines, new DescriptorRegistry());
+        TestForm groundingForm = TestForm.newBuilder()
+                .setName("Grounded Ada").setAge(41).build();
+
+        GenerateStructuredResponse response = actionScoped.generate(
+                request(STRUCTURED_MODEL)
+                        .setGrounding(Any.pack(groundingForm)).build(),
+                TestForm.getDescriptor());
+
+        assertThat(response.getTargetType()).isEqualTo(TARGET_TYPE);
+        assertThat(provider.invocations()).isEqualTo(1);
+        assertThat(provider.lastRequest().getMessages(0).getContent())
+                .contains("Grounded Ada");
+    }
+
+    @Test
+    void anUnknownGroundingTypeFailsBeforeInvocation() {
+        Any unknown = Any.newBuilder()
+                .setTypeUrl("type.googleapis.com/example.v1.Ghost")
+                .setValue(com.google.protobuf.ByteString.EMPTY)
+                .build();
+
+        assertThatThrownBy(() -> generator.generate(
+                request(STRUCTURED_MODEL).setGrounding(unknown).build()))
+                .isInstanceOf(StructuredGenerationException.class)
+                .hasMessageContaining("unknown grounding type");
+        assertThatThrownBy(() -> generator.generate(
+                request(STRUCTURED_MODEL).setGrounding(unknown).build(),
+                TestForm.getDescriptor()))
+                .isInstanceOf(StructuredGenerationException.class)
+                .hasMessageContaining("unknown grounding type");
+        assertThat(provider.invocations()).isZero();
     }
 
     private static GenerateStructuredRequest.Builder request(String model) {
