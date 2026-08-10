@@ -192,12 +192,12 @@ for integration review.
 
 | Work package | Status | Ownership boundary | Acceptance evidence |
 | --- | --- | --- | --- |
-| Recipe and run-evidence contracts | **CORE BASE: `3f6e30b`** | Protobuf messages, validation, repository interfaces, shared test fixtures, and MCP wiring seams | Contracts round-trip, reject invalid identities and references, and preserve exact service-profile fingerprints |
-| Content-addressed artifact store and redaction | **READY: branch from `3f6e30b`** | Artifact repository implementation and tests only; no recipe or action API changes | Duplicate content has one identity, changed content fails verification, bounds are enforced, and sensitive fixtures prove redaction before persistence |
-| Existing-chain compiler | **READY: branch from `3f6e30b`** | Adapter from `ChainDefinition`/`ChainJson` to the published recipe contract and its tests | Existing chain fixtures compile deterministically and every method/type reference resolves against embedded descriptors |
-| Offline fixture replay | **DELEGATABLE AFTER ARTIFACT STORE** | Replay verifier, fixture loader, deterministic result model, and tests; no live network invocation | A recorded passing run replays without a server and altered request, response, or descriptor evidence fails clearly |
-| Registry promotion adapter | **READY: branch from `3f6e30b`** | Recipe version storage in `GitSchemaRegistryStore`, compatibility checks, and tests | Promotion is immutable, recoverable by version, and rejects unresolved artifacts or dependency fingerprints |
-| Structural mapping suggestions | **DELEGATABLE AFTER COMPILER** | Descriptor-grounded candidate generation and type-check tests; no provider-specific LLM integration yet | Suggestions identify their source and target fields, pass the same compiler type checker, and never bypass validation |
+| Recipe and run-evidence contracts | **LANDED: `3f6e30b`** | Protobuf messages, validation, repository interfaces, shared test fixtures, and MCP wiring seams | Contracts round-trip, reject invalid identities and references, and preserve exact service-profile fingerprints |
+| Content-addressed artifact store and redaction | **LANDED: #87** | Artifact repository implementation and tests only; no recipe or action API changes | Duplicate content has one identity, changed content fails verification, bounds are enforced, and sensitive fixtures prove redaction before persistence |
+| Existing-chain compiler | **LANDED: #88** | Adapter from `ChainDefinition`/`ChainJson` to the published recipe contract and its tests | Existing chain fixtures compile deterministically and every method/type reference resolves against embedded descriptors |
+| Offline fixture replay | **LANDED: this PR** | Replay verifier, fixture loader, deterministic result model, and tests; no live network invocation | A recorded passing run replays without a server and altered request, response, or descriptor evidence fails clearly |
+| Registry promotion adapter | **LANDED: #89** | Recipe version storage in `GitSchemaRegistryStore`, compatibility checks, and tests | Promotion is immutable, recoverable by version, and rejects unresolved artifacts or dependency fingerprints |
+| Structural mapping suggestions | **READY: branch from main** | Descriptor-grounded candidate generation and type-check tests; no provider-specific LLM integration yet | Suggestions identify their source and target fields, pass the same compiler type checker, and never bypass validation |
 
 Delegated pull requests must include tests and a short update to this table.
 They must not add credentials, release automation, or unbounded live calls.
