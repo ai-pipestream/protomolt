@@ -78,7 +78,7 @@ services:
     volumes:
       - rustfs-data:/data
     ports:
-      - "${PROTOMOLT_RUSTFS_PORT:-19900}:9000"
+      - "${PROTOMOLT_RUSTFS_PORT:-31900}:9000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 5s
