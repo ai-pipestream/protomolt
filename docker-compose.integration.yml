@@ -6,7 +6,7 @@
 # Iceberg REST catalog:      http://localhost:18181
 # Iceberg REST catalog (S3):  http://localhost:18182  (warehouse on RustFS)
 # Gravitino Iceberg REST:    http://localhost:19002/iceberg
-# RustFS (S3 API):           http://localhost:19000
+# RustFS (S3 API):           http://localhost:29900
 #
 # Its own Compose project so it never shares a namespace with the application stack in
 # docker-compose.yml — otherwise each sees the other's containers as orphans.
@@ -139,7 +139,7 @@ services:
   rustfs:
     image: rustfs/rustfs:1.0.0-beta.11-preview.1
     ports:
-      - "19000:9000"
+      - "29900:9000"
     environment:
       RUSTFS_ACCESS_KEY: protomolt
       RUSTFS_SECRET_KEY: protomoltsecret
@@ -155,7 +155,7 @@ services:
   # A second Iceberg REST catalog whose warehouse lives on RustFS through S3FileIO, for
   # the protomolt-iceberg-s3 suite. Unlike the file:// catalog above, nothing is shared on
   # disk: the catalog (container, reaches rustfs:9000) and the test JVM (host, reaches
-  # localhost:19000) both resolve the same s3:// keys, each through its own endpoint.
+  # localhost:29900) both resolve the same s3:// keys, each through its own endpoint.
   iceberg-rest-s3:
     image: apache/iceberg-rest-fixture:1.10.1
     depends_on:
