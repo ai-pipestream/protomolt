@@ -17,7 +17,7 @@
  * not protobuf — and is usable on its own; ProtoMolt's validation engine calls
  * into it for the format rules.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">Validation
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">Validation
  * guide</a>.</p>
  */
 package ai.pipestream.format;

@@ -14,7 +14,7 @@
  * counterpart of the mappings generator in the OpenSearch module and of the per-field spec report
  * in the Lucene module.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for the hint surface shared by all engines.
  */
 package ai.pipestream.proto.index.solr;

@@ -14,7 +14,7 @@
  * interpret indexing hints. The Lucene, OpenSearch, and Solr modules cover that path through the
  * {@code protomolt-index-spi} service interfaces.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for how the output path fits with the engine plugins.
  */
 package ai.pipestream.proto.index.ndjson;

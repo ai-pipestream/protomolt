@@ -59,7 +59,7 @@ tasks.register('acpGrpcLive', JavaExec) {
 
 // The acp-protocol tests run the protoc-backed verbs through the full protocol exchange, and
 // the process suite forks a JVM per test; that is slower than anything the default test task
-// runs, so they are their own lane rather than part of `build`. See docs/building.md.
+// runs, so they are their own lane rather than part of `build`. See docs/operations/building.md.
 tasks.named('test') {
     useJUnitPlatform {
         excludeTags 'acp-protocol'

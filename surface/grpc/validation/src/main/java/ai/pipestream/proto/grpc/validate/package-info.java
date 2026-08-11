@@ -19,7 +19,7 @@
  * {@link ai.pipestream.proto.quality.QualityScorer} — so this package holds only the call-path
  * wiring, and the same contract governs a topic and a service.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">Validation
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">Validation
  * guide</a> for the rule dialects and the gRPC boundary.</p>
  */
 package ai.pipestream.proto.grpc.validate;

@@ -14,9 +14,9 @@
  * keeping diagnostics off stdout as the transport requires. Nothing here is framework-aware;
  * a Spring or Quarkus MCP host can register the same catalog through its own APIs.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/mcp.md">MCP
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/mcp.md">MCP
  * guide</a>; the verbs themselves are documented with the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/actions.md">action
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/actions.md">action
  * catalog</a>.</p>
  */
 package ai.pipestream.proto.mcp;

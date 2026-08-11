@@ -20,7 +20,7 @@
  *
  * <p>JSON is confined to this layer. Every action wraps a descriptor-native library from a
  * sibling module, and machine-to-machine callers should prefer the binary endpoints.
- * See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/actions.md">Actions
+ * See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/actions.md">Actions
  * guide</a> for the catalog of verbs and their envelopes.</p>
  */
 package ai.pipestream.proto.actions;

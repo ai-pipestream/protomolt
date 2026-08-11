@@ -18,7 +18,7 @@
  *
  * <p>{@code ai.pipestream.proto.openapi} generates an OpenAPI document from the same registry,
  * and the server modules bind the gateway to a concrete HTTP stack. See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/rest-gateway.md">REST gateway
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST gateway
  * guide</a>.
  */
 package ai.pipestream.proto.rest;

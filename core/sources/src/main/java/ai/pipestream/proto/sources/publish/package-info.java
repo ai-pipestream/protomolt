@@ -20,7 +20,7 @@
  * outcome for that file; {@link SchemaPublishException} is reserved for
  * registry-level failures such as an unreachable endpoint.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/publishing.md">Publishing
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/publishing.md">Publishing
  * schemas to registries guide</a>.</p>
  */
 package ai.pipestream.proto.sources.publish;

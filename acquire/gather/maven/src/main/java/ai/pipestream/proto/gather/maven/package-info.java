@@ -13,7 +13,7 @@
  * <p>The SPI and the local sources live in {@code ai.pipestream.proto.gather};
  * {@code ai.pipestream.proto.gather.git} is the git-backed sibling.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/gathering.md">gathering
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">gathering
  * guide</a> for how a gathered source set is compiled and registered.</p>
  */
 package ai.pipestream.proto.gather.maven;

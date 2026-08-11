@@ -15,7 +15,7 @@
  * catalog's {@code io-impl} property; the {@code ai.pipestream.proto.lake.iceberg.s3} package in
  * the sibling module does the same for S3-compatible object stores.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/iceberg.md">Apache
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/iceberg.md">Apache
  * Iceberg guide</a> for the type mapping and catalog setup.</p>
  */
 package ai.pipestream.proto.lake.iceberg;

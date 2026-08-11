@@ -14,7 +14,7 @@
  * {@link ai.pipestream.proto.server.ProtoRestHttpSupport}, matching the standalone hosts.
  *
  * <p>See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/rest-gateway.md">REST gateway
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST gateway
  * and servers</a> guide.
  */
 package ai.pipestream.proto.server.spring;

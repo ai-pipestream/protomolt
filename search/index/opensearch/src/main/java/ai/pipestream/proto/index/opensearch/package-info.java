@@ -25,7 +25,7 @@
  * candidate set with kNN, score the candidates with a rerank provider, and answer the
  * reordered top-k.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for the hint surface and for how declared sensitivity classes are applied to
  * the search layer.
  */

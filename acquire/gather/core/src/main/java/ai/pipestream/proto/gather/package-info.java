@@ -21,7 +21,7 @@
  * repositories and {@code ai.pipestream.proto.gather.maven} for artifacts resolved by
  * coordinate.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/gathering.md">gathering
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">gathering
  * guide</a> for how source sets reach the registry.</p>
  */
 package ai.pipestream.proto.gather;

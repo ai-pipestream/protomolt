@@ -2,10 +2,10 @@
 
 This tutorial takes you from *"I have an OpenVINO Model Server running
 somewhere"* to *"my AI agent introspects its models and runs inference through
-it as first-class tools"* — with no protoc installed, no generated stubs
+it as first-class tools"*: with no protoc installed, no generated stubs
 checked in, and no schema written by hand.
 
-It is a concrete walkthrough of [the gRPC agent workflow](../mcp.md#the-grpc-agent-workflow):
+It is a concrete walkthrough of [the gRPC agent workflow](../surface/mcp.md#the-grpc-agent-workflow):
 reflect the server, fall back to its published schema when reflection is off,
 register that schema once, then introspect, generate a client, and infer.
 
@@ -19,7 +19,7 @@ pipeline over the KServe v2 gRPC API.
   / Open Inference Protocol (`inference.GRPCInferenceService`). This tutorial
   uses a host:port of `ovms-host:9000`; substitute your own.
 - **JDK 21+** to build and run ProtoMolt.
-- **[`grpcurl`](https://github.com/fullstorydev/grpcurl)** — a handy
+- **[`grpcurl`](https://github.com/fullstorydev/grpcurl)**: a handy
   command-line gRPC client, used here to show the reflection result plainly
   before we bring the agent in.
 
@@ -35,7 +35,7 @@ cd protomolt
 
 The launcher is now at
 `surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp`. Pick a directory
-for it to use as a registry — it does not need to exist; the store creates
+for it to use as a registry: it does not need to exist; the store creates
 and initializes the Git repository on first use.
 
 ## 2. Try reflection first
@@ -50,7 +50,7 @@ grpcurl -plaintext ovms-host:9000 list
 Failed to list services: server does not support the reflection API
 ```
 
-OVMS — like NVIDIA Triton and many other production servers — does not enable
+Like NVIDIA Triton and many production servers, OVMS does not enable
 gRPC server reflection. ProtoMolt's `reflect` verb reports the same thing, but
 as a structured result rather than an error, which is exactly what lets an
 agent decide to fall back:
@@ -62,14 +62,14 @@ agent decide to fall back:
 
 That `ok: false` is the fork in the road. When reflection works, you already
 have the schema. When it does not, you fetch the schema from where the project
-publishes it — which for KServe is a Git repository.
+publishes it: which for KServe is a Git repository.
 
 ## 3. Bring the schema in from Git
 
 The KServe gRPC contract lives in the
 [`kserve/open-inference-protocol`](https://github.com/kserve/open-inference-protocol)
 repository as a single self-contained `.proto`. ProtoMolt gathers `.proto`
-sources straight from Git — this is the "point it at the repo" step. In Java:
+sources straight from Git: this is the "point it at the repo" step. In Java:
 
 ```java
 ProtoGatherer gatherer = GitProtoGatherer.builder()
@@ -93,7 +93,7 @@ An agent reads it as a resource; a human resolves it by type name. You never
 wrote a line of it.
 
 > If you just want to try the flow without a registry, you can also paste the
-> `.proto` text inline as the `sources` schema on any tool call — the registry
+> `.proto` text inline as the `sources` schema on any tool call: the registry
 > is the durable, shareable version of the same thing.
 
 ## 4. Start the agent
@@ -125,7 +125,7 @@ KServe schema resolved from the registry):
   "responses": [{ "name": "OpenVINO Model Server", "version": "2026.1.0..." }] }
 ```
 
-Then ask a model to describe its own tensor interface — this is where the
+Then ask a model to describe its own tensor interface: this is where the
 agent learns what the model actually takes and returns:
 
 ```json
@@ -142,7 +142,7 @@ agent learns what the model actually takes and returns:
 ```
 
 The agent now knows the embedding model takes token tensors and returns a
-384-dimensional vector — discovered live, from the running server.
+384-dimensional vector: discovered live, from the running server.
 
 ## 6. Generate a native client
 
@@ -163,7 +163,7 @@ live call instead of a build step.
 
 ## 7. Run inference: text to embedding
 
-The MiniLM pipeline is two models — a tokenizer and the embedder:
+The MiniLM pipeline is two models: a tokenizer and the embedder:
 
 - `tokenizer_minilm`: a string in (`Parameter_1`, `BYTES`) → `input_ids`,
   `attention_mask`, `token_type_ids` (`INT64`).
@@ -194,7 +194,7 @@ first 6 dims: [-0.0568, -0.0415, -0.0492, -0.1137, 0.0086, -0.0807]
 L2 norm: 0.9999
 ```
 
-A real, normalized MiniLM sentence embedding — produced end to end through the
+A real, normalized MiniLM sentence embedding: produced end to end through the
 MCP server, against the running OpenVINO backend.
 
 ### One honesty note on tensors
@@ -203,7 +203,7 @@ KServe servers return tensor data in `rawOutputContents`: little-endian packed
 bytes, ordered to match the `outputs` list, not decoded into JSON arrays. Over
 `grpc-invoke` you unpack them yourself (an `int64` is 8 bytes, an `fp32` is 4).
 That unpacking is precisely what a **generated client does for you
-automatically** — which is why, past a quick introspection or a one-off call,
+automatically**: which is why, past a quick introspection or a one-off call,
 the natural move is step 6: generate the stub and do tensor I/O in a real
 client (Python with NumPy, Java with the generated messages, and so on).
 
@@ -212,20 +212,20 @@ client (Python with NumPy, Java with the generated messages, and so on).
 With the KServe schema registered once, the OpenVINO server is a first-class
 citizen of your agent's world:
 
-- **Introspection** — the agent reads any model's tensor contract from the
+- **Introspection**: the agent reads any model's tensor contract from the
   live server.
-- **Inference** — the agent calls `ModelInfer` directly, or generates a native
+- **Inference**: the agent calls `ModelInfer` directly, or generates a native
   client to do it at scale.
-- **Reuse** — the same registered schema gives every other language in your
+- **Reuse**: the same registered schema gives every other language in your
   fleet a generated client, and every registered gRPC service the same
   treatment.
 
 Nothing here was OpenVINO-specific past the model names: any KServe or Triton
-server works identically, and any gRPC service at all — reflection-enabled or
-schema-published — becomes agent-operable the same way.
+server works identically, and any gRPC service at all: reflection-enabled or
+schema-published: becomes agent-operable the same way.
 
 ## Related
 
-- [MCP server](../mcp.md) — the tool surface and the general gRPC-agent workflow
-- [Gathering proto sources](../gathering.md) — the Git gatherer used in step 3
-- [The registry](../registry.md) — where the KServe schema lives after step 3
+- [MCP server](../surface/mcp.md): the tool surface and the general gRPC-agent workflow
+- [Gathering proto sources](../acquire/gathering.md): the Git gatherer used in step 3
+- [The registry](../schema/registry.md): where the KServe schema lives after step 3

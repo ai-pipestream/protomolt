@@ -19,7 +19,7 @@
  * {@link ai.pipestream.proto.mapper.ProtoFieldMapper} for the field access itself and is in turn
  * used by {@code ai.pipestream.proto.metadata} and {@code ai.pipestream.proto.projection}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/mapping.md">Field
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/mapping.md">Field
  * mapping guide</a> for filter and selector examples.</p>
  */
 package ai.pipestream.proto.cel;

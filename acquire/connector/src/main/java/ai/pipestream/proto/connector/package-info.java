@@ -23,7 +23,7 @@
  * {@code ai.pipestream.proto.kafka.connect} is the production path when a deployment wants managed
  * offsets and rebalance-safe delivery.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/connector.md">Stream
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/connector.md">Stream
  * connectors guide</a> for the SPI walkthrough.</p>
  */
 package ai.pipestream.proto.connector;

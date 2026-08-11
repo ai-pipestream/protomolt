@@ -15,7 +15,7 @@
  * generated document is a plain map or JSON string, so a host can emit it at build time or
  * serve it from {@code /openapi.json} at startup.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/rest-gateway.md">REST
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST
  * gateway guide</a>.
  */
 package ai.pipestream.proto.openapi;

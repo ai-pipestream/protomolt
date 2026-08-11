@@ -22,7 +22,7 @@
  * {@code servers/spring}.
  *
  * <p>See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/framework-integrations.md">Framework
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/framework-integrations.md">Framework
  * integrations</a> guide.
  */
 package ai.pipestream.proto.spring;

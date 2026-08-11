@@ -20,7 +20,7 @@
  * as CEL, with the format functions in {@link ai.pipestream.proto.validate.cel} registered into the
  * validation environment.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">
  * validation guide</a> for the rule surface and its semantics.
  */
 package ai.pipestream.proto.validate;

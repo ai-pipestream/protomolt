@@ -25,7 +25,7 @@
  * Iceberg sink ships separately in {@code ai.pipestream.proto.kafka.connect.iceberg}, and the
  * lower-level streaming SPI these connectors sit above is {@code ai.pipestream.proto.connector}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/kafka-connect.md">Kafka
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/kafka-connect.md">Kafka
  * Connect guide</a> for connector and transform configuration.</p>
  */
 package ai.pipestream.proto.kafka.connect;

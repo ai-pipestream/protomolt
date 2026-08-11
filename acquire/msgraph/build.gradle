@@ -14,7 +14,7 @@ dependencies {
 
 tasks.register('graphProbe', JavaExec) {
     group = 'protomolt'
-    description = 'Probe what a Graph tenant allows: -Ptenant=... -Pclient=... [-Psecret=...] (see docs/msgraph.md)'
+    description = 'Probe what a Graph tenant allows: -Ptenant=... -Pclient=... [-Psecret=...] (see docs/acquire/msgraph.md)'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'ai.pipestream.proto.graph.GraphProbe'
     doFirst {

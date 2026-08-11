@@ -17,7 +17,7 @@
  * <p>This package describes message types; {@code ai.pipestream.proto.openapi} describes
  * service surfaces, and {@code ai.pipestream.proto.validate} enforces the same rules at
  * runtime. See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/json-schema.md">JSON Schema
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/json-schema.md">JSON Schema
  * guide</a>.
  */
 package ai.pipestream.proto.jsonschema;

@@ -14,7 +14,7 @@
  * controls: projecting columns out of the file entirely, and masking values by sensitivity class
  * through {@link ai.pipestream.proto.meta.SensitivityMasker}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/emitting.md">Emitting
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/emitting.md">Emitting
  * bundles guide</a> for the type mapping and the export options.</p>
  */
 package ai.pipestream.proto.emit.parquet;

@@ -14,7 +14,7 @@
  * {@link ai.pipestream.proto.registry}, and errors surface as Confluent-style
  * {@code {error_code, message}} JSON.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/registry.md">registry
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/registry.md">registry
  * guide</a> for usage.</p>
  */
 package ai.pipestream.proto.registry.server;

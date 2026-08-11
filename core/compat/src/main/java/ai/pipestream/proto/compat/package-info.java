@@ -20,7 +20,7 @@
  * path, by CI checks and by pre-publish guards, and compilation of schema text is delegated to
  * {@link ai.pipestream.proto.sources.ProtoSourceCompiler}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/compatibility.md">compatibility
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/compatibility.md">compatibility
  * checking guide</a> for usage.</p>
  */
 package ai.pipestream.proto.compat;

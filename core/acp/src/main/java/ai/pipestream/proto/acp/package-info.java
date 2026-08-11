@@ -14,7 +14,7 @@
  * a launched child process. Protocol failures surface as
  * {@link ai.pipestream.proto.acp.AcpError}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acp.md">ACP
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/acp.md">ACP
  * guide</a>.</p>
  */
 package ai.pipestream.proto.acp;

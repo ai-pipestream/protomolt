@@ -11,7 +11,7 @@
  * they honor, are documented on the runtime package {@link ai.pipestream.proto.quarkus}.
  *
  * <p>See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/framework-integrations.md">Framework
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/framework-integrations.md">Framework
  * integrations</a> guide.
  */
 package ai.pipestream.proto.quarkus.deployment;

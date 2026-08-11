@@ -17,7 +17,7 @@
  * encoding and similarity, and expected doc-values types, which the caller applies when
  * configuring the {@code IndexWriter}.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for the hint surface shared by all engines.
  */
 package ai.pipestream.proto.index.lucene;

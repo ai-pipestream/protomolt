@@ -19,7 +19,7 @@
  * <p>This package composes existing modules rather than adding verbs: the catalog comes from
  * {@link ai.pipestream.proto.grpc.service.ProtoMoltCatalog}, and each surface reuses the module
  * that defines it. See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/grpc-service.md">gRPC
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/grpc-service.md">gRPC
  * service guide</a>.
  */
 package ai.pipestream.proto.serve;

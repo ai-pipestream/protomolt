@@ -13,7 +13,7 @@
  * package adds no verbs of its own; {@code ai.pipestream.proto.mcp} and
  * {@code ai.pipestream.proto.acp} serve the same catalog to agents.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/actions.md">action
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/actions.md">action
  * catalog guide</a> for the verbs and their envelopes.</p>
  */
 package ai.pipestream.proto.cli;

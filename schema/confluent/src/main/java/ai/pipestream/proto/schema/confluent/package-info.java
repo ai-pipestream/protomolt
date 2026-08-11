@@ -17,9 +17,9 @@
  * <p>All three types target Apicurio Registry's ccompat facade as well as Confluent itself.
  * Apicurio's native v3 API is handled instead by {@code protomolt-schema-apicurio}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/descriptor-sources.md">descriptor
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/core/descriptor-sources.md">descriptor
  * sources guide</a> and the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/publishing.md">publishing
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/publishing.md">publishing
  * guide</a> for usage.</p>
  */
 package ai.pipestream.proto.schema.confluent;

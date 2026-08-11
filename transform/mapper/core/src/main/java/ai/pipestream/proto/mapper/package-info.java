@@ -16,7 +16,7 @@
  * filters and selectors. Mapping is separate from validation: reshaping a message and judging it
  * are distinct concerns.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/mapping.md">Field
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/mapping.md">Field
  * mapping guide</a> for the rule syntax and worked examples.</p>
  */
 package ai.pipestream.proto.mapper;

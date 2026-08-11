@@ -18,7 +18,7 @@
  * transforms in {@code ai.pipestream.proto.kafka.connect}, so a worker can install either without
  * the other's dependencies.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/iceberg.md">Iceberg
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/iceberg.md">Iceberg
  * guide</a> for catalog setup and sink configuration.</p>
  */
 package ai.pipestream.proto.kafka.connect.iceberg;

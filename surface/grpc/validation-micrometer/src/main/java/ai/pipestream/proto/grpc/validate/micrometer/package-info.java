@@ -15,7 +15,7 @@
  * the serde's Micrometer module; the interceptors themselves live in
  * {@link ai.pipestream.proto.grpc.validate}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">Validation
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">Validation
  * guide</a> for the meter list.</p>
  */
 package ai.pipestream.proto.grpc.validate.micrometer;

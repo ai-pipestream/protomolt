@@ -14,7 +14,7 @@
  * Readers for other dialects live in their own modules and join the chain through
  * {@link java.util.ServiceLoader}.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">
  * validation guide</a> for the annotation syntax this source reads.
  */
 package ai.pipestream.proto.validate.source;

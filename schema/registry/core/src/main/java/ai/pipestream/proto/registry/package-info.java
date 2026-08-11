@@ -23,7 +23,7 @@
  * verification and descriptor-set serving obtain compilable input. The HTTP surface over this
  * package lives in the {@code protomolt-registry-server} module.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/registry.md">registry
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/registry.md">registry
  * guide</a> for usage.</p>
  */
 package ai.pipestream.proto.registry;

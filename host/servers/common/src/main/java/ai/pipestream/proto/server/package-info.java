@@ -18,7 +18,7 @@
  * {@code servers/micronaut}, each depending on this package rather than on one another.
  *
  * <p>See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/rest-gateway.md">REST gateway
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST gateway
  * and servers</a> guide for the request contract these hosts share.
  */
 package ai.pipestream.proto.server;

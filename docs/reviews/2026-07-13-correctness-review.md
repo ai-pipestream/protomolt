@@ -14,21 +14,21 @@ exercise (malformed rules, unsigned extremes, hot-path perf, API failure modes).
 
 ---
 
-## P0 — Silent security / silent no-op (fix before any release)
+## P0: Silent security / silent no-op (fix before any release)
 
 ### 1. Validator silently validates nothing without the extension registry
 `protobuf/validation-protovalidate/.../ProtovalidateRuleSource.java:91`
 `fieldConstraints`/`messageConstraints` use `options.hasExtension(...)` with no
 unknown-field fallback. Descriptors built from a `FileDescriptorSet` parsed
 without `ValidateProto.registerAllExtensions` (schema registry, reflection,
-protoc plugin output) carry every `buf.validate` rule as unknown fields —
+protoc plugin output) carry every `buf.validate` rule as unknown fields,
 `validate()` returns OK for everything, silently. `PredefinedRules` already
 demonstrates the fix (reparse options against our own registry). A validator's
 worst failure mode is "silently validates nothing."
 
 ### 2. Insecure-by-default API token validation
 - `http/rest/ProtoRestGateway.java:33-35`: the 2-arg constructor defaults to
-  `ProtoApiTokenValidator.acceptNonBlank()` — any junk token passes a
+  `ProtoApiTokenValidator.acceptNonBlank()`: any junk token passes a
   `required=true` method.
 - `integrations/quarkus/.../ProtoToolsProducer.java:74-80` and
   `integrations/spring/.../ProtoToolsAutoConfiguration.java:49-55` wire that
@@ -45,18 +45,18 @@ bodies should be generic.
 ### 4. Predefined rules are silently unenforced in the library
 `ProtovalidateRuleSource.java:241-280`
 `(buf.validate.predefined)` extensions are only handled by the package-private
-conformance post-pass (`PredefinedRules`), not the library — a user schema with
+conformance post-pass (`PredefinedRules`), not the library: a user schema with
 predefined rules gets silent non-enforcement while conformance passes. Also the
 javadoc coverage note is stale. Promote `PredefinedRules` into the library.
 
 ---
 
-## P1 — Major correctness bugs
+## P1: Major correctness bugs
 
 ### Servers / HTTP layer
 - **Netty blocks the I/O event loop**: `NettyProtoRestServer.java:241` runs
   `gateway.invoke` on the worker loop; slow backends stall all connections incl.
-  `/health`. Vert.x uses `executeBlocking`, JDK uses virtual threads — Netty is
+  `/health`. Vert.x uses `executeBlocking`, JDK uses virtual threads: Netty is
   the outlier. Fix: offload to a virtual-thread executor (fits the VT-default story).
 - **Netty leaks event loops on bind failure**: `NettyProtoRestServer.java:111,123`
   `.sync()` sneaky-throws `BindException` (checked, uncaught by
@@ -65,8 +65,8 @@ javadoc coverage note is stale. Promote `PredefinedRules` into the library.
   `ProtoRestHttpSupport.java:138` + `JdkProtoRestServer.java:143` (parseQuery
   outside the try; sun-httpserver kills the exchange).
 - **No body-size limit on JDK/Vert.x hosts** (`readAllBytes()` / default
-  `BodyHandler`) — OOM vector; Netty caps at 16 MB. Unify.
-- **Declared `httpMethods` never enforced by any host** — a POST-only mutation
+  `BodyHandler`): OOM vector; Netty caps at 16 MB. Unify.
+- **Declared `httpMethods` never enforced by any host**: a POST-only mutation
   is invocable via GET, contradicting the published OpenAPI.
 
 ### Validation engine (beyond conformance)
@@ -77,10 +77,10 @@ javadoc coverage note is stale. Promote `PredefinedRules` into the library.
   uncompilable pattern as a per-value violation, not a compile error
   (`ProtoValidator.java:497-503,731-737`). Also `java.util.regex` on
   schema-supplied patterns is the known ReDoS surface (ties to the re2j plan).
-- **CEL compile errors surface lazily** — only when a rule is first evaluated
+- **CEL compile errors surface lazily**: only when a rule is first evaluated
   against a populated field (`ProtoValidator.java:986-988`). No eager
   compile-all path exists.
-- **No caching of the translated rule model** — every `validate()` rebuilds the
+- **No caching of the translated rule model**: every `validate()` rebuilds the
   full constraints tree per field, and `isMessageOneofMember` re-runs message
   constraint translation per field per message (`ProtoValidator.java:163-169,
   1057-1071`). A per-descriptor compiled-rule cache fixes this, hosts eager
@@ -89,11 +89,11 @@ javadoc coverage note is stale. Promote `PredefinedRules` into the library.
   collected violations (`ProtoValidator.java:989-992`). Needs a typed
   `RuleEvaluationException`.
 - **Unbounded descriptor-keyed caches** (`messageCelByType`, CelEvaluator
-  program cache, `ConformanceRunner.byType` — the latter a plain `HashMap` on a
+  program cache, `ConformanceRunner.byType`: the latter a plain `HashMap` on a
   public API): leaks under dynamic-schema churn.
 - **Conformance harness swallows predefined-rule failures**
   (`PredefinedRules.java:303-306,353-355` bare `return` on any
-  `RuntimeException`) — the 100% baseline could mask regressions in that area.
+  `RuntimeException`): the 100% baseline could mask regressions in that area.
 
 ### Core (descriptors/helpers)
 - **`GoogleDescriptorLoader` has no cycle guard** (`:145-179`): a cyclic
@@ -111,7 +111,7 @@ javadoc coverage note is stale. Promote `PredefinedRules` into the library.
 - **OpenAPI generator emits wrong schemas for well-known types**
   (`ProtoOpenApiGenerator.java:282-284`): Timestamp/Duration/Struct/Any/wrappers
   described as object-of-internal-fields while the gateway serves proto3 JSON
-  strings. The jsonschema module already has the correct WKT table — port it.
+  strings. The jsonschema module already has the correct WKT table: port it.
 - **JSON Schema int64 `const`/`enum` constraints reject canonical documents**
   (`ProtoJsonSchemaGenerator.java:401-424`): JsonFormat prints int64 as string;
   numeric `const: 42` fails `"42"`. Needs `anyOf` over both spellings.
@@ -132,18 +132,18 @@ javadoc coverage note is stale. Promote `PredefinedRules` into the library.
 - **Apicurio loader conflates auth/network failure with not-found**
   (`ApicurioDescriptorLoader.java:119-146` triple `catch (Exception ignored)` →
   null): registry outage reads as "type does not exist."
-- **Apicurio `RegistryClient` produced without `@Disposes`** — leaked transport
+- **Apicurio `RegistryClient` produced without `@Disposes`**: leaked transport
   threads per injection point / dev-mode reload.
 - **Apicurio loader registered twice** when both extensions are present
   (producer adds all loader beans + installer re-adds; no dedupe in
-  `DescriptorRegistry.addLoader`) — double network sweeps.
+  `DescriptorRegistry.addLoader`): double network sweeps.
 - **Confluent loader: no request timeouts** on data calls (hangs startup
   indefinitely) and per-subject `catch (Exception)` → warn-and-skip returns
   silently partial descriptor sets on flaky/unauthorized registries.
 
 ---
 
-## P2 — Minor (worth batching, not urgent)
+## P2: Minor (worth batching, not urgent)
 
 Servers: JDK host prefix-matches `/health*`/`/openapi.json*` (200 on
 `/healthzzz`); trailing-slash routing divergence; timing-unsafe secret compare

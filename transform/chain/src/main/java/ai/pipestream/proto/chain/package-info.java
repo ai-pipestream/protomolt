@@ -19,7 +19,7 @@
  * {@code ai.pipestream.proto.shapes}; the calls themselves are made through
  * {@code ai.pipestream.proto.grpc.invoke}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/design/chain-manager.md">chain
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/chain-manager.md">chain
  * manager design note</a> for the model behind these types.</p>
  */
 package ai.pipestream.proto.chain;

@@ -21,7 +21,7 @@
  * {@link IndexerContext}. The Lucene, OpenSearch, and Solr modules are such plugins; NDJSON
  * output is not an engine and ignores the plan entirely.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for the hint surface and end-to-end usage.
  */
 package ai.pipestream.proto.index.spi;
