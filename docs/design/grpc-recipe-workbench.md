@@ -307,7 +307,7 @@ restart recovery tests, a host-configurable outbound channel policy, and a
 generated catalog inventory. Workspace-bootstrap hardening adds one compact
 always-present resource, deep-link templates, and matching initialize/tool-list
 fingerprints so an agent can identify a stale client catalog without loading
-every tool schema. Status: **OPEN: #105**.
+every tool schema. Status: **LANDED: #105**.
 
 Phase 2 delivers the full record-replay-promote loop:
 
