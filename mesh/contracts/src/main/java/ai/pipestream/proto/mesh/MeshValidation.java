@@ -146,11 +146,15 @@ public final class MeshValidation {
         validateAnnotations(schema);
     }
 
-    /** The last path segment of an {@code Any} type URL: the fully qualified type name. */
+    /**
+     * The segment after the final slash of an {@code Any} type URL: the fully qualified type
+     * name. Protobuf requires at least one slash and a nonempty type name after the final
+     * slash; a leading-slash URL (an empty host) is a valid URI reference and is accepted.
+     */
     static String typeNameOf(String typeUrl) {
         int slash = typeUrl.lastIndexOf('/');
-        require(slash > 0,
-                "payload.type_url must contain a host and a slash: '" + typeUrl + "'");
+        require(slash >= 0,
+                "payload.type_url must contain a slash: '" + typeUrl + "'");
         require(slash < typeUrl.length() - 1,
                 "payload.type_url must end with the fully qualified type name: '" + typeUrl + "'");
         return typeUrl.substring(slash + 1);
