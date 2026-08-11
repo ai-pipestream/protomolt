@@ -61,6 +61,9 @@ class ServiceProfileResourcesTest {
 
         assertThat(resources.list(mapper).findValuesAsText("uri"))
                 .containsExactly("protomolt://services", "protomolt://services/health-local");
+        assertThat(resources.templates(mapper).findValuesAsText("uriTemplate"))
+                .containsExactly("protomolt://services/{profile}",
+                        "protomolt://services/{profile}/methods/{fullMethod}");
 
         var service = resources.read(mapper, "protomolt://services/health-local").orElseThrow();
         assertThat(service.path("text").asText())

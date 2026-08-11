@@ -44,6 +44,14 @@ class RegistryResourcesTest {
     }
 
     @Test
+    void templatesAddressSubjectsAndExactVersionsWithoutEnumeratingThem() {
+        assertThat(resources.templates(mapper).findValuesAsText("uriTemplate"))
+                .containsExactly(
+                        "protomolt://registry/subjects/{subject}",
+                        "protomolt://registry/subjects/{subject}/versions/{version}");
+    }
+
+    @Test
     void subjectsIndexReadsAsJson() throws Exception {
         Optional<ObjectNode> contents = resources.read(mapper, "protomolt://registry/subjects");
         assertThat(contents).isPresent();

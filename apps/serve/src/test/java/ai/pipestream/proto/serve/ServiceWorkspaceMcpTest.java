@@ -50,6 +50,11 @@ class ServiceWorkspaceMcpTest {
                         MAPPER.createObjectNode()).path("result").path("resources");
                 assertThat(resources.findValuesAsText("uri"))
                         .contains("protomolt://services/protomolt-self");
+                JsonNode templates = rpc(http, first.httpPort(), "resources/templates/list",
+                        MAPPER.createObjectNode()).path("result").path("resourceTemplates");
+                assertThat(templates.findValuesAsText("uriTemplate"))
+                        .contains("protomolt://services/{profile}",
+                                "protomolt://services/{profile}/methods/{fullMethod}");
             }
 
             // The endpoint from the first process is gone. Inspection must still work from the

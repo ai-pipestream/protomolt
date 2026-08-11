@@ -4,8 +4,9 @@
 Protocol. Every [action](actions.md) becomes an MCP tool with no translation
 layer. The catalog manifest's `{name, description, inputSchema}` entries are
 already the shape MCP requires, and the input schemas are JSON Schema in both
-worlds. Schema registries and durable gRPC service workspaces are optionally
-served as MCP resources, so an agent can browse their contracts without
+worlds. An always-present workspace bootstrap identifies the live catalog;
+schema registries and durable gRPC service workspaces are optionally served as
+additional MCP resources, so an agent can browse their contracts without
 spending tool calls.
 
 Together with the gRPC verbs (`reflect`, `grpc-invoke`) this makes any gRPC
@@ -52,6 +53,12 @@ The recipe workflow advertised during initialization is: inspect or reflect
 the services, use `suggest-mappings` where useful, verify and
 `compile-recipe`, then `record-recipe-run`, `replay-recipe`, and finally
 `promote-recipe`.
+
+Initialization and `tools/list` both carry the same tool count and SHA-256
+catalog fingerprint in `_meta`. Read `protomolt://workspace` for that identity,
+the exact live tool names, and the safe workflow without loading every tool
+schema. If a client exposes a different count or fingerprint, reconnect it so
+it performs fresh MCP discovery against the deployed server.
 
 ### Streamable HTTP
 
@@ -134,12 +141,13 @@ every other verb.
 
 ## Resources
 
-With `--registry-git`, the registry is browsable as MCP resources. With
-`--service-workspace`, registered gRPC service contracts are resources too.
-These reads do not spend tool calls:
+`protomolt://workspace` is always present. With `--registry-git`, the registry
+is browsable as MCP resources. With `--service-workspace`, registered gRPC
+service contracts are resources too. These reads do not spend tool calls:
 
 | URI | Contents |
 |---|---|
+| `protomolt://workspace` | Server identity, safe workflow, exact tool names, count, and catalog fingerprint |
 | `protomolt://registry/subjects` | All subjects plus the global compatibility mode |
 | `protomolt://registry/subjects/{subject}` | Version index, per-subject mode, latest schema |
 | `protomolt://registry/subjects/{subject}/versions/{n}` | One exact version with references |
@@ -151,6 +159,11 @@ Subject, profile, and method names are URL-encoded in URIs. All resource
 contents are JSON. Descriptor bytes never appear in service resources.
 `resources/list` stays small by listing the service root and profiles only;
 method URIs are addressable after reading the selected profile contract.
+
+`resources/templates/list` advertises templates for registry subjects and
+versions plus service profiles and individual methods. This lets a client form
+one exact URL-encoded deep link without enumerating every schema version or
+method as a separate resource.
 
 ## The gRPC agent workflow
 

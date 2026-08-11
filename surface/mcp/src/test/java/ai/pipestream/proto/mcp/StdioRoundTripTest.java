@@ -45,6 +45,7 @@ class StdioRoundTripTest {
                 "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"resources/list\"}",
                 "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"resources/read\",\"params\":{\"uri\":\"protomolt://registry/subjects/orders-value\"}}",
                 "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"list-types\",\"arguments\":{\"schema\":{\"sources\":{\"o.proto\":\"syntax = \\\"proto3\\\"; package shop; message Order { string id = 1; }\"}}}}}",
+                "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"resources/templates/list\",\"params\":{}}",
                 "not even json",
                 "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"ping\"}") + "\n";
 
@@ -52,8 +53,8 @@ class StdioRoundTripTest {
         server.run(new ByteArrayInputStream(session.getBytes(StandardCharsets.UTF_8)), out);
 
         String[] lines = out.toString(StandardCharsets.UTF_8).trim().split("\n");
-        // 7 non-notification inputs produce 7 responses (the parse error included).
-        assertThat(lines).hasSize(7);
+        // 8 non-notification inputs produce 8 responses (the parse error included).
+        assertThat(lines).hasSize(8);
 
         List<JsonNode> responses = Arrays.stream(lines).map(this::read).toList();
         JsonNode init = byId(responses, 1);
@@ -65,7 +66,8 @@ class StdioRoundTripTest {
 
         JsonNode resources = byId(responses, 3);
         assertThat(resources.get("result").get("resources").findValuesAsText("uri"))
-                .contains("protomolt://registry/subjects/orders-value");
+                .contains(WorkspaceResources.URI,
+                        "protomolt://registry/subjects/orders-value");
 
         JsonNode read = byId(responses, 4);
         String text = read.get("result").get("contents").get(0).get("text").asText();
@@ -75,6 +77,12 @@ class StdioRoundTripTest {
         JsonNode call = byId(responses, 5);
         assertThat(call.get("result").get("isError").asBoolean()).isFalse();
         assertThat(call.get("result").get("structuredContent").toString()).contains("shop.Order");
+
+        JsonNode templates = byId(responses, 7);
+        assertThat(templates.path("result").path("resourceTemplates")
+                .findValuesAsText("uriTemplate"))
+                .contains("protomolt://registry/subjects/{subject}",
+                        "protomolt://registry/subjects/{subject}/versions/{version}");
 
         JsonNode parseError = responses.stream()
                 .filter(node -> node.path("error").path("code").asInt() == -32700)

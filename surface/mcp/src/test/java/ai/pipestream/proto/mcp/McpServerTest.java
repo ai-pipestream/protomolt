@@ -54,7 +54,9 @@ class McpServerTest {
         assertThat(result.get("protocolVersion").asText()).isEqualTo("2025-03-26");
         assertThat(result.get("serverInfo").get("name").asText()).isEqualTo("protomolt-test");
         assertThat(result.get("capabilities").has("tools")).isTrue();
-        assertThat(result.get("capabilities").has("resources")).isFalse();
+        assertThat(result.get("capabilities").has("resources")).isTrue();
+        assertThat(result.path("_meta").path("ai.pipestream.protomolt/workspace").asText())
+                .isEqualTo(WorkspaceResources.URI);
     }
 
     @Test
@@ -72,7 +74,8 @@ class McpServerTest {
 
         assertThat(instructions.asText()).isEqualTo(McpServer.DEFAULT_INSTRUCTIONS);
         assertThat(instructions.asText().length()).isLessThanOrEqualTo(512);
-        assertThat(instructions.asText()).contains("service-register", "service-inspect",
+        assertThat(instructions.asText()).contains("protomolt://workspace", "service-register",
+                "service-inspect",
                 "reflect", "grpc-invoke", "suggest-mappings", "compile-recipe",
                 "record-recipe-run", "replay-recipe", "promote-recipe");
     }
@@ -146,7 +149,8 @@ class McpServerTest {
 
     @Test
     void toolsListExposesEveryCatalogActionWithInputSchema() {
-        JsonNode tools = respond(request(2, "tools/list", null)).get("result").get("tools");
+        JsonNode result = respond(request(2, "tools/list", null)).get("result");
+        JsonNode tools = result.get("tools");
         assertThat(tools.size()).isEqualTo(17);
         for (JsonNode tool : tools) {
             assertThat(tool.get("name").asText()).isNotEmpty();
@@ -155,6 +159,11 @@ class McpServerTest {
         }
         assertThat(tools.findValuesAsText("name"))
                 .contains("compile", "check-compat", "eval-cel", "list-types");
+        assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
+                .isEqualTo(tools.size());
+        assertThat(result.path("_meta")
+                .path("ai.pipestream.protomolt/toolCatalogFingerprint").asText())
+                .matches("sha256:[0-9a-f]{64}");
     }
 
     @Test
@@ -202,9 +211,37 @@ class McpServerTest {
     }
 
     @Test
-    void resourcesListIsEmptyWithoutRegistry() {
+    void resourcesListAlwaysContainsTheWorkspaceBootstrap() {
         JsonNode result = respond(request(8, "resources/list", null)).get("result");
-        assertThat(result.get("resources").size()).isZero();
+        assertThat(result.get("resources").findValuesAsText("uri"))
+                .containsExactly(WorkspaceResources.URI);
+    }
+
+    @Test
+    void workspaceResourceMatchesInitializeAndToolsListMetadata() throws Exception {
+        JsonNode initialized = respond(request(81, "initialize", null)).path("result");
+        JsonNode tools = respond(request(82, "tools/list", null)).path("result");
+        ObjectNode params = mapper.createObjectNode().put("uri", WorkspaceResources.URI);
+        JsonNode read = respond(request(83, "resources/read", params)).path("result");
+        JsonNode workspace = mapper.readTree(
+                read.path("contents").get(0).path("text").asText());
+
+        String expected = tools.path("_meta")
+                .path("ai.pipestream.protomolt/toolCatalogFingerprint").asText();
+        assertThat(initialized.path("_meta")
+                .path("ai.pipestream.protomolt/toolCatalogFingerprint").asText())
+                .isEqualTo(expected);
+        assertThat(workspace.path("toolCatalog").path("fingerprint").asText())
+                .isEqualTo(expected);
+        assertThat(workspace.path("toolCatalog").path("count").asInt())
+                .isEqualTo(tools.path("tools").size());
+    }
+
+    @Test
+    void resourceTemplateListingIsImplementedWithoutOptionalProviders() {
+        JsonNode result = respond(request(84, "resources/templates/list", null)).path("result");
+
+        assertThat(result.path("resourceTemplates")).isEmpty();
     }
 
     @Test

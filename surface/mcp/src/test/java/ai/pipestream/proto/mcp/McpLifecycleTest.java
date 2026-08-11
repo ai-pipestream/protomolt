@@ -91,15 +91,18 @@ class McpLifecycleTest {
 
         JsonNode first = server.handle(request(1, "resources/list", null)).orElseThrow().get("result");
         assertThat(first.path("resources")).hasSize(100);
-        assertThat(first.path("nextCursor").asText()).isEqualTo("100");
+        assertThat(first.path("resources").get(0).path("uri").asText())
+                .isEqualTo(WorkspaceResources.URI);
+        assertThat(first.path("nextCursor").asText()).isNotBlank();
         JsonNode second = server.handle(request(2, "resources/list",
                         params("cursor", first.path("nextCursor").asText())))
                 .orElseThrow().get("result");
         assertThat(second.path("resources")).hasSize(100);
-        assertThat(second.path("nextCursor").asText()).isEqualTo("200");
-        JsonNode last = server.handle(request(3, "resources/list", params("cursor", "200")))
+        assertThat(second.path("nextCursor").asText()).isNotBlank();
+        JsonNode last = server.handle(request(3, "resources/list", params("cursor",
+                        second.path("nextCursor").asText())))
                 .orElseThrow().get("result");
-        assertThat(last.path("resources")).hasSize(5);
+        assertThat(last.path("resources")).hasSize(6);
         assertThat(last.has("nextCursor")).isFalse();
 
         assertThat(error(server.handle(request(4, "resources/list", params("cursor", "bad")))))
@@ -111,13 +114,53 @@ class McpLifecycleTest {
     @Test
     void absentAndCompositeResourceCollectionsRejectForeignCursors() {
         assertThat(error(server(null).handle(
-                request(1, "resources/list", params("cursor", "1")))))
+                request(1, "resources/list", params("cursor", "2")))))
                 .isEqualTo(JsonRpc.INVALID_PARAMS);
 
         McpResources composite = CompositeResources.of(emptyResources(), emptyResources());
         assertThat(error(server(composite).handle(
                 request(2, "resources/list", params("cursor", "2:1")))))
                 .isEqualTo(JsonRpc.INVALID_PARAMS);
+    }
+
+    @Test
+    void resourceTemplateListingPaginatesAndRejectsInvalidCursors() {
+        McpResources templates = new ResourceList() {
+            @Override
+            public ArrayNode list(ObjectMapper mapper) {
+                return mapper.createArrayNode();
+            }
+
+            @Override
+            public ArrayNode templates(ObjectMapper mapper) {
+                ArrayNode result = mapper.createArrayNode();
+                for (int i = 0; i < 205; i++) {
+                    result.addObject().put("uriTemplate", "protomolt://test/{id}/" + i);
+                }
+                return result;
+            }
+        };
+        McpServer server = server(templates);
+
+        JsonNode first = server.handle(request(1, "resources/templates/list", null))
+                .orElseThrow().path("result");
+        assertThat(first.path("resourceTemplates")).hasSize(100);
+        assertThat(first.path("nextCursor").asText()).isEqualTo("100");
+        JsonNode second = server.handle(request(2, "resources/templates/list",
+                        params("cursor", first.path("nextCursor").asText())))
+                .orElseThrow().path("result");
+        assertThat(second.path("resourceTemplates")).hasSize(100);
+        JsonNode last = server.handle(request(3, "resources/templates/list",
+                        params("cursor", second.path("nextCursor").asText())))
+                .orElseThrow().path("result");
+        assertThat(last.path("resourceTemplates")).hasSize(5);
+        assertThat(last.has("nextCursor")).isFalse();
+
+        assertThat(error(server.handle(request(4, "resources/templates/list",
+                params("cursor", "bad"))))).isEqualTo(JsonRpc.INVALID_PARAMS);
+        ObjectNode invalid = request(5, "resources/templates/list", null);
+        invalid.put("params", "not-an-object");
+        assertThat(error(server.handle(invalid))).isEqualTo(JsonRpc.INVALID_PARAMS);
     }
 
     @Test
