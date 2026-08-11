@@ -2,6 +2,7 @@ package ai.pipestream.proto.inference.openai;
 
 import ai.pipestream.proto.inference.openvino.OpenAiChatTransport;
 import ai.pipestream.proto.inference.spi.ChunkObserver;
+import ai.pipestream.proto.inference.spi.CredentialResolver;
 import ai.pipestream.proto.inference.spi.InferenceProvider;
 import ai.pipestream.proto.inference.v1.GenerateRequest;
 import ai.pipestream.proto.inference.v1.GenerateResponse;
@@ -40,6 +41,20 @@ public final class OpenAiCompatProvider implements InferenceProvider {
      */
     public OpenAiCompatProvider(Duration requestTimeout) {
         this.transport = new OpenAiChatTransport(ID, "/v1/chat/completions", requestTimeout);
+    }
+
+    /**
+     * Creates the provider with an explicit per-request timeout and credential
+     * resolver (tests inject a fake; production uses the environment
+     * resolver via the other constructors).
+     *
+     * @param requestTimeout the timeout for one generation call
+     * @param credentialResolver resolves catalog credential references to
+     *     bearer material at request time
+     */
+    public OpenAiCompatProvider(Duration requestTimeout, CredentialResolver credentialResolver) {
+        this.transport = new OpenAiChatTransport(ID, "/v1/chat/completions", requestTimeout,
+                credentialResolver);
     }
 
     @Override

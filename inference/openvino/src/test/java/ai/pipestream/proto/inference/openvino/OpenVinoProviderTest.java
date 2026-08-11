@@ -1,6 +1,7 @@
 package ai.pipestream.proto.inference.openvino;
 
 import ai.pipestream.proto.inference.spi.ChunkObserver;
+import ai.pipestream.proto.inference.spi.CredentialResolutionException;
 import ai.pipestream.proto.inference.spi.InferenceException;
 import ai.pipestream.proto.inference.v1.ChatTurn;
 import ai.pipestream.proto.inference.v1.FinishReason;
@@ -37,6 +38,7 @@ class OpenVinoProviderTest {
 
     private HttpServer server;
     private final AtomicReference<String> lastBody = new AtomicReference<>();
+    private final AtomicReference<String> lastAuthorization = new AtomicReference<>();
     private volatile int status = 200;
     private volatile String responseBody = "";
 
@@ -46,6 +48,7 @@ class OpenVinoProviderTest {
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v3/chat/completions", exchange -> {
+            lastAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             lastBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -243,5 +246,109 @@ class OpenVinoProviderTest {
         assertThat(finals.get(0).getFinishReason()).isEqualTo(FinishReason.FINISH_REASON_STOP);
         assertThat(finals.get(0).getUsage().getPromptTokens()).isEqualTo(10);
         assertThat(lastBody.get()).contains("\"stream\":true").contains("include_usage");
+    }
+
+    @Test
+    void unarySendsTheResolvedBearerCredentialAndKeepsItOutOfTheBody() {
+        responseBody = """
+                {"choices":[{"message":{"content":"VALID"},"finish_reason":"stop"}],
+                 "usage":{"prompt_tokens":1,"completion_tokens":1}}
+                """;
+        OpenVinoProvider authenticated = new OpenVinoProvider(Duration.ofSeconds(5),
+                ref -> "ovms-secret-token");
+        ModelEntry authedModel = ModelEntry.newBuilder(model())
+                .setCredentialRef("env:OVMS_TOKEN").build();
+
+        authenticated.generate(authedModel, request("judge"));
+
+        assertThat(lastAuthorization.get()).isEqualTo("Bearer ovms-secret-token");
+        assertThat(lastBody.get())
+                .doesNotContain("ovms-secret-token")
+                .doesNotContain("env:OVMS_TOKEN")
+                .doesNotContain("credential_ref");
+    }
+
+    @Test
+    void streamingSendsTheResolvedBearerCredential() {
+        responseBody = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"}}]}\n\n"
+                + "data: [DONE]\n\n";
+        OpenVinoProvider authenticated = new OpenVinoProvider(Duration.ofSeconds(5),
+                ref -> "ovms-secret-token");
+        ModelEntry authedModel = ModelEntry.newBuilder(model())
+                .setCredentialRef("env:OVMS_TOKEN").build();
+        List<String> deltas = new ArrayList<>();
+
+        authenticated.generateStream(authedModel, GenerateStreamRequest.newBuilder()
+                        .setModel("judge")
+                        .addMessages(ChatTurn.newBuilder()
+                                .setRole(Role.ROLE_USER).setContent("go"))
+                        .build(),
+                new ChunkObserver() {
+                    @Override
+                    public void onNext(GenerateStreamResponse chunk) {
+                        if (!chunk.getLast()) {
+                            deltas.add(chunk.getTextDelta());
+                        }
+                    }
+
+                    @Override
+                    public void onComplete() {
+                    }
+
+                    @Override
+                    public void onError(InferenceException e) {
+                        throw new AssertionError(e);
+                    }
+                });
+
+        assertThat(deltas).containsExactly("OK");
+        assertThat(lastAuthorization.get()).isEqualTo("Bearer ovms-secret-token");
+        assertThat(lastBody.get())
+                .doesNotContain("ovms-secret-token")
+                .doesNotContain("env:OVMS_TOKEN");
+    }
+
+    @Test
+    void unresolvableCredentialFailsBeforeAnyHttpRequest() {
+        OpenVinoProvider failing = new OpenVinoProvider(Duration.ofSeconds(5), ref -> {
+            throw new CredentialResolutionException("credential reference does not resolve: "
+                    + "the referenced environment variable is unset or empty");
+        });
+        ModelEntry authedModel = ModelEntry.newBuilder(model())
+                .setCredentialRef("env:OVMS_UNSET").build();
+
+        assertThatThrownBy(() -> failing.generate(authedModel, request("judge")))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageNotContaining("env:OVMS_UNSET");
+        assertThatThrownBy(() -> failing.generateStream(authedModel,
+                GenerateStreamRequest.newBuilder().setModel("judge").build(),
+                new ChunkObserver() {
+                    @Override
+                    public void onNext(GenerateStreamResponse chunk) {
+                    }
+
+                    @Override
+                    public void onComplete() {
+                    }
+
+                    @Override
+                    public void onError(InferenceException e) {
+                    }
+                }))
+                .isInstanceOf(CredentialResolutionException.class);
+        assertThat(lastBody.get()).isNull();
+        assertThat(lastAuthorization.get()).isNull();
+    }
+
+    @Test
+    void noCredentialReferenceSendsNoAuthorizationHeader() {
+        responseBody = """
+                {"choices":[{"message":{"content":"VALID"},"finish_reason":"stop"}],
+                 "usage":{"prompt_tokens":1,"completion_tokens":1}}
+                """;
+
+        provider.generate(model(), request("judge"));
+
+        assertThat(lastAuthorization.get()).isNull();
     }
 }

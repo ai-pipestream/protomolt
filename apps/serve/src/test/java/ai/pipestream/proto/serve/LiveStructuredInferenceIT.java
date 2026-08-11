@@ -58,6 +58,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <pre>
  * PROTOMOLT_LIVE_STRUCTURED_ENDPOINT=http://127.0.0.1:1234 \
  * PROTOMOLT_LIVE_STRUCTURED_MODEL=qwen2.5-7b-instruct \
+ * [PROTOMOLT_LIVE_STRUCTURED_CREDENTIAL_REF=env:OPENAI_TOKEN \]
  * ./gradlew :protomolt-serve:test --tests '*LiveStructuredInferenceIT'
  * </pre>
  *
@@ -68,10 +69,17 @@ import static org.junit.jupiter.api.Assertions.fail;
  * endpoint is set and the test fails with a clear message when it is absent -
  * the test never defaults to a public API.</p>
  *
- * <p>No-auth constraint: the shared OpenAI-compatible transport sends no
- * credential headers (there is no auth-header support in the transport today),
- * so the endpoint MUST accept unauthenticated calls. Fronting proxies that
- * require an Authorization header are out of scope.</p>
+ * <p>Authenticated endpoints: when
+ * {@code PROTOMOLT_LIVE_STRUCTURED_CREDENTIAL_REF} is set (e.g.
+ * {@code env:OPENAI_TOKEN}), the catalog model carries that credential
+ * reference and the transport resolves it through the environment resolver,
+ * sending {@code Authorization: Bearer <resolved>} on every provider request.
+ * The variable the reference names must be set in the test process
+ * environment. The capturing proxy records the header and forwards it
+ * upstream, and the test asserts every outbound request carried the resolved
+ * bearer token while no request body ever contained it. Without the variable
+ * the model is registered unauthenticated, and the endpoint MUST accept
+ * unauthenticated calls.</p>
  *
  * <p>Wire-level privacy is proven deterministically: the catalog model's
  * endpoint points at an in-process capturing reverse proxy, which forwards to
@@ -98,6 +106,7 @@ class LiveStructuredInferenceIT {
 
     private static final String ENDPOINT_ENV = "PROTOMOLT_LIVE_STRUCTURED_ENDPOINT";
     private static final String MODEL_ENV = "PROTOMOLT_LIVE_STRUCTURED_MODEL";
+    private static final String CREDENTIAL_REF_ENV = "PROTOMOLT_LIVE_STRUCTURED_CREDENTIAL_REF";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -145,8 +154,14 @@ class LiveStructuredInferenceIT {
 
         Path recipes = directory.resolve("recipes");
         CapturingProxy proxy = new CapturingProxy(endpoint);
+        String credentialRef = System.getenv(CREDENTIAL_REF_ENV);
+        String expectedBearer = null;
+        if (credentialRef != null && !credentialRef.isBlank()) {
+            expectedBearer = expectedBearer(credentialRef);
+        }
         String modelSpec = MODEL_ID + "|openai|http://127.0.0.1:" + proxy.port()
-                + "|" + backend + "||structured-output";
+                + "|" + backend + "||structured-output"
+                + (expectedBearer == null ? "" : "|" + credentialRef);
         try (proxy;
              ProtoMoltServe serve = ProtoMoltServe.start(new ProtoMoltServe.Options(
                      "127.0.0.1", 0, 0, null, 0, null, false, null, null,
@@ -176,6 +191,19 @@ class LiveStructuredInferenceIT {
             assertThat(body).doesNotContain(EXCLUDED_SENTINEL, SENSITIVE_SENTINEL);
         }
 
+        // Authenticated runs: every outbound request carried exactly the
+        // resolved bearer token, and the token never entered a request body.
+        if (expectedBearer != null) {
+            assertThat(proxy.authorizations()).isNotEmpty();
+            for (String authorization : proxy.authorizations()) {
+                assertThat(authorization).isEqualTo(expectedBearer);
+            }
+            String token = expectedBearer.substring("Bearer ".length());
+            for (String body : proxy.bodies()) {
+                assertThat(body).doesNotContain(token);
+            }
+        }
+
         // Persistence-level proof: no file under the recipe workspace (input,
         // request, response, and output artifacts plus the stored run
         // evidence) carries either sentinel.
@@ -187,6 +215,21 @@ class LiveStructuredInferenceIT {
                         .doesNotContain(EXCLUDED_SENTINEL, SENSITIVE_SENTINEL);
             }
         }
+    }
+
+    /** The bearer header value the transport must send for the configured reference. */
+    private static String expectedBearer(String credentialRef) {
+        if (!credentialRef.startsWith("env:")) {
+            fail(CREDENTIAL_REF_ENV + " supports the env: scheme in this test: the "
+                    + "referenced variable must be readable from the test process environment.");
+        }
+        String value = System.getenv(credentialRef.substring("env:".length()));
+        if (value == null || value.isEmpty()) {
+            fail(CREDENTIAL_REF_ENV + " is set but the referenced environment variable "
+                    + "is unset or empty in the test process; the authenticated live run "
+                    + "cannot proceed.");
+        }
+        return "Bearer " + value;
     }
 
     /** compile-recipe, record-recipe-run, then offline replay-recipe, on one surface. */
@@ -470,6 +513,7 @@ class LiveStructuredInferenceIT {
         private final HttpClient client = HttpClient.newHttpClient();
         private final String target;
         private final List<String> bodies = new CopyOnWriteArrayList<>();
+        private final List<String> authorizations = new CopyOnWriteArrayList<>();
 
         private CapturingProxy(String endpoint) throws IOException {
             target = endpoint.endsWith("/")
@@ -488,18 +532,30 @@ class LiveStructuredInferenceIT {
             return List.copyOf(bodies);
         }
 
+        private List<String> authorizations() {
+            return List.copyOf(authorizations);
+        }
+
         private void forward(HttpExchange exchange) throws IOException {
             byte[] body = exchange.getRequestBody().readAllBytes();
             bodies.add(new String(body, StandardCharsets.UTF_8));
-            HttpRequest forwarded = HttpRequest.newBuilder(
+            String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+            if (authorization != null) {
+                authorizations.add(authorization);
+            }
+            HttpRequest.Builder forwarded = HttpRequest.newBuilder(
                             URI.create(target + exchange.getRequestURI()))
                     .timeout(Duration.ofMinutes(10))
-                    .header("Content-Type", "application/json")
+                    .header("Content-Type", "application/json");
+            if (authorization != null) {
+                forwarded.header("Authorization", authorization);
+            }
+            HttpRequest request = forwarded
                     .method(exchange.getRequestMethod(),
                             HttpRequest.BodyPublishers.ofByteArray(body))
                     .build();
             try {
-                HttpResponse<byte[]> response = client.send(forwarded,
+                HttpResponse<byte[]> response = client.send(request,
                         HttpResponse.BodyHandlers.ofByteArray());
                 byte[] responseBody = response.body();
                 exchange.getResponseHeaders().add("Content-Type",

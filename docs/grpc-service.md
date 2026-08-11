@@ -92,7 +92,7 @@ launcher flags, environment variables, defaults, and embedding API.
 Inference catalog entries use this repeatable form:
 
 ```text
---inference-model id|provider|endpoint[|backend[|label:value,...[|capability,...]]]
+--inference-model id|provider|endpoint[|backend[|label:value,...[|capability,...[|credential-ref]]]]
 ```
 
 The capability tokens are `streaming`, `thinking`, and `structured-output`.
@@ -100,8 +100,18 @@ For example, an OpenAI-compatible model that accepts strict JSON Schema can be
 registered as
 `judge|openai|https://models.example.test|backend-name||structured-output`.
 `PROTOMOLT_INFERENCE_MODELS` accepts the same entries separated by semicolons.
-The catalog specification accepts no credential material; credentials remain
-host-owned and must never be placed in model labels.
+
+The optional credential reference is an opaque pointer the transport resolves
+host-side at request time — today the `env:` scheme, resolved from the process
+environment. For example,
+`judge|openai|https://models.example.test|backend-name||structured-output|env:OPENAI_TOKEN`
+sends `Authorization: Bearer $OPENAI_TOKEN` on every request to that model;
+a model without the segment sends no authorization header. The reference is
+validated at startup, an unset or empty variable fails the request before any
+HTTP call, and neither the reference nor the resolved value ever enters a
+request body or an error message. The catalog specification accepts no
+credential material itself; credentials remain host-owned and must never be
+placed in model labels.
 
 `--demo` seeds a sample order-management schema (validation rules, indexing
 hints, metadata, a service) into a temp-directory registry and registers its

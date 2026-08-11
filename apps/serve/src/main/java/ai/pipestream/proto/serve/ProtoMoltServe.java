@@ -17,6 +17,8 @@ import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import ai.pipestream.proto.jobs.service.ChainJobsConfig;
 import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
 import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
+import ai.pipestream.proto.inference.spi.CredentialResolutionException;
+import ai.pipestream.proto.inference.spi.CredentialResolver;
 import ai.pipestream.proto.inference.spi.InferenceCatalog;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.structured.StructuredGenerator;
@@ -230,7 +232,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--jobs-kafka <bootstrap>] [--jobs-request-topic <name>] "
                                 + "[--jobs-workers <n>] [--jobs-target-concurrency <n>]] "
                                 + "[--inference-model <id|provider|endpoint"
-                                + "[|backend[|k:v,...[|capability,...]]]> ...] "
+                                + "[|backend[|k:v,...[|capability,...[|credential-ref]]]]> ...] "
                                 + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
                                 + "[--service-workspace <dir>] (or PROTOMOLT_SERVICE_WORKSPACE) "
                                 + "[--recipe-workspace <dir>] (or PROTOMOLT_RECIPE_WORKSPACE) "
@@ -378,12 +380,14 @@ public final class ProtoMoltServe implements AutoCloseable {
 
     /**
      * Builds the inference facade from {@code --inference-model} specs
-     * ({@code id|provider|endpoint[|backend[|labels[|capabilities]]]}). Supported
-     * capability tokens are {@code streaming}, {@code thinking}, and
-     * {@code structured-output}. Empty specs mean inference is not configured (null;
-     * the verbs answer {@code unavailable}). A bad spec or an unknown provider fails
-     * startup loud — a model the server cannot execute must never sit in the catalog
-     * looking runnable.
+     * ({@code id|provider|endpoint[|backend[|labels[|capabilities[|credential-ref]]]]}).
+     * Supported capability tokens are {@code streaming}, {@code thinking}, and
+     * {@code structured-output}. The credential reference is an opaque pointer
+     * (e.g. {@code env:OPENAI_TOKEN}) resolved host-side at request time, never
+     * credential material; a malformed reference fails startup. Empty specs mean
+     * inference is not configured (null; the verbs answer {@code unavailable}).
+     * A bad spec or an unknown provider fails startup loud — a model the server
+     * cannot execute must never sit in the catalog looking runnable.
      */
     static InferenceEngines inferenceEngines(java.util.List<String> specs) {
         if (specs == null || specs.isEmpty()) {
@@ -393,10 +397,11 @@ public final class ProtoMoltServe implements AutoCloseable {
         InferenceEngines engines = new InferenceEngines(catalog);
         for (String spec : specs) {
             String[] parts = spec.split("\\|", -1);
-            if (parts.length < 3 || parts.length > 6
+            if (parts.length < 3 || parts.length > 7
                     || parts[0].isBlank() || parts[1].isBlank() || parts[2].isBlank()) {
                 throw new IllegalArgumentException("bad --inference-model spec '" + spec
-                        + "' (want id|provider|endpoint[|backend[|labels[|capabilities]]])");
+                        + "' (want id|provider|endpoint[|backend[|labels[|capabilities"
+                        + "[|credential-ref]]]])");
             }
             ModelEntry.Builder entry = ModelEntry.newBuilder()
                     .setId(parts[0].trim())
@@ -415,7 +420,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     entry.putLabels(kv[0].trim(), kv[1].trim());
                 }
             }
-            if (parts.length == 6 && !parts[5].isBlank()) {
+            if (parts.length >= 6 && !parts[5].isBlank()) {
                 ModelCapabilities.Builder capabilities = ModelCapabilities.newBuilder();
                 for (String capability : parts[5].split(",")) {
                     switch (capability.trim()) {
@@ -427,6 +432,16 @@ public final class ProtoMoltServe implements AutoCloseable {
                     }
                 }
                 entry.setCapabilities(capabilities);
+            }
+            if (parts.length == 7 && !parts[6].isBlank()) {
+                String credentialRef = parts[6].trim();
+                try {
+                    CredentialResolver.checkFormat(credentialRef);
+                } catch (CredentialResolutionException e) {
+                    throw new IllegalArgumentException("bad credential reference in "
+                            + "--inference-model spec '" + spec + "': " + e.getMessage(), e);
+                }
+                entry.setCredentialRef(credentialRef);
             }
             engines.register(entry.build());
         }

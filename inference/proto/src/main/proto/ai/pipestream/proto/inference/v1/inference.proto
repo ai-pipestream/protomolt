@@ -375,6 +375,23 @@ message ModelEntry {
 
   // Free-form provenance labels (e.g. machine, gpu, role).
   map<string, string> labels = 6;
+
+  // An opaque reference to the credential the provider transport presents to
+  // this model's endpoint (e.g. "env:OPENAI_TOKEN"); empty = unauthenticated.
+  // The reference is resolved host-side at request time; credential material
+  // itself never enters the catalog.
+  string credential_ref = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {
+        max_len: 256
+        pattern: "^[a-z][a-z0-9-]*:[A-Za-z0-9._/-]+$"
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Opaque reference to the credential for this model's endpoint (e.g. env:OPENAI_TOKEN); resolved host-side at request time. Holds the reference only, never credential material."
+      sensitivity: "secret"
+    }
+  ];
 }
 
 // The request of list-models.
