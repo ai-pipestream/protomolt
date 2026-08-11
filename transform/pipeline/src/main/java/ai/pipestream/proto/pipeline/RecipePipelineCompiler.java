@@ -92,10 +92,32 @@ public final class RecipePipelineCompiler {
                         + "' is not a scope identifier; pipeline step names become mapping"
                         + " scope variables other than 'input'/'target'");
             }
-            steps.add(step.hasStructured()
+            PipelineStep compiled = step.hasStructured()
                     ? compileStructured(step, registry)
-                    : compileGrpc(step, files, registry, scope));
-            PipelineStep compiled = steps.get(steps.size() - 1);
+                    : compileGrpc(step, files, registry, scope);
+            steps.add(compiled);
+            if (compiled.hasGrpcCall()) {
+                GrpcCallStep call = compiled.getGrpcCall();
+                boolean consumesStream = (call.getMethodShape()
+                        == MethodShape.METHOD_SHAPE_CLIENT_STREAMING
+                        || call.getMethodShape()
+                        == MethodShape.METHOD_SHAPE_BIDI_STREAMING)
+                        && call.getEdgeCardinality()
+                        == EdgeCardinality.EDGE_CARDINALITY_MANY
+                        && !call.hasFanOut();
+                if (consumesStream) {
+                    List<String> streamSources = call.getEdge().getSourcesList().stream()
+                            .filter(source -> scope.get(source)
+                                    == EdgeCardinality.EDGE_CARDINALITY_MANY)
+                            .toList();
+                    // More than one stream has no declared join policy and the checker
+                    // rejects it. Preserve those bindings so later findings describe the
+                    // same invalid dataflow instead of pretending it was consumed.
+                    if (streamSources.size() == 1) {
+                        scope.remove(streamSources.get(0));
+                    }
+                }
+            }
             scope.put(step.getName(), compiled.hasGrpcCall()
                     ? compiled.getGrpcCall().getOutputCardinality()
                     : EdgeCardinality.EDGE_CARDINALITY_ONE);

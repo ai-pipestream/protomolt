@@ -38,6 +38,55 @@ class PipelineValidationTest {
     }
 
     @Test
+    void stepNameMustMatchTheContractIdentifierPattern() {
+        Pipeline pipeline = validPipeline().toBuilder()
+                .setSteps(0, validPipeline().getSteps(0).toBuilder()
+                        .setName("not-a-scope-variable")
+                        .build())
+                .build();
+        assertThatThrownBy(() -> PipelineValidation.validate(pipeline))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("step.name")
+                .hasMessageContaining("identifier");
+    }
+
+    @Test
+    void stepNameMustRespectTheContractLengthBound() {
+        Pipeline pipeline = validPipeline().toBuilder()
+                .setSteps(0, validPipeline().getSteps(0).toBuilder()
+                        .setName("a".repeat(129))
+                        .build())
+                .build();
+        assertThatThrownBy(() -> PipelineValidation.validate(pipeline))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("step.name")
+                .hasMessageContaining("identifier");
+    }
+
+    @Test
+    void unnestPathMustMatchTheContractDottedPathPattern() {
+        assertThatThrownBy(() -> PipelineValidation.validate(
+                ai.pipestream.proto.pipeline.v1.UnnestStep.newBuilder()
+                        .setSource("input")
+                        .setPath("items..value")
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("step.unnest.path");
+    }
+
+    @Test
+    void collectFieldMustMatchTheContractIdentifierPattern() {
+        assertThatThrownBy(() -> PipelineValidation.validate(
+                CollectStep.newBuilder()
+                        .setSource("stream")
+                        .setCollectType(PipelineFixtures.RESULTS)
+                        .setCollectInto("results.value")
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("step.collect.collect_into");
+    }
+
+    @Test
     void liveGrpcStepWithoutEdgeIsRejected() {
         Pipeline pipeline = validPipeline().toBuilder()
                 .setSteps(0, validPipeline().getSteps(0).toBuilder()

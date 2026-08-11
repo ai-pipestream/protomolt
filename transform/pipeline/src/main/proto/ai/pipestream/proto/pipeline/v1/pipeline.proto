@@ -103,7 +103,9 @@ message Pipeline {
 // One serial step. The step's name binds its output in the scope for later
 // edges: gRPC and structured steps bind their response or collect type,
 // unnest binds the element type of its repeated field with cardinality MANY,
-// and collect binds its collect type with cardinality ONE.
+// and collect binds its collect type with cardinality ONE. MANY bindings are
+// linear: one client-streaming/bidi request edge or one collect step consumes
+// the stream. Reuse requires collecting it into a replayable ONE message first.
 message PipelineStep {
   option (ai.pipestream.proto.meta.v1.message) = {
     description: "One serial pipeline step: a gRPC call, a structured generation, an unnest, or a collect."
@@ -190,7 +192,8 @@ message GrpcCallStep {
   ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fan_out = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // Declared cardinality of the edge feeding this step. Must be ONE when no
   // declared source binds a stream and MANY when one does; must be
-  // UNSPECIFIED exactly when the step carries no edge.
+  // UNSPECIFIED exactly when the step carries no edge. A MANY edge into a
+  // client-streaming or bidi method consumes its one live stream source.
   EdgeCardinality edge_cardinality = 5 [
     (ai.pipestream.proto.validate.v1.field).enum.defined_only = true,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
@@ -284,7 +287,8 @@ message CollectStep {
     sensitivity: "internal"
   };
 
-  // The single scope source to read. It must bind cardinality MANY.
+  // The single scope source to read. It must bind cardinality MANY and is
+  // consumed by this transition.
   string source = 1 [
     (ai.pipestream.proto.validate.v1.field).required = true,
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
@@ -360,6 +364,6 @@ enum EdgeCardinality {
   EDGE_CARDINALITY_ONE = 1;
   // A stream of messages per run. Stream edges map per element; a stream
   // binding feeds only a client-streaming or bidi request slot or a collect
-  // step.
+  // step, and that transition consumes the live stream binding.
   EDGE_CARDINALITY_MANY = 2;
 }

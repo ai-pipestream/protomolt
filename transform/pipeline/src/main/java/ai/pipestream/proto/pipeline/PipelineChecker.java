@@ -40,8 +40,11 @@ import java.util.regex.Pattern;
  * top of those, the cardinality discipline is absolute: a unary or server-streaming request
  * slot takes a ONE edge, a client-streaming or bidi slot takes a MANY edge, a structured
  * step's grounding takes ONE, fan-out branches invoke unary methods only, and a stream
- * reaches a ONE slot only through an explicit collect step. A pipeline that verifies cannot
- * fail on a shape or type error at run time, only on live-service behavior.</p>
+ * reaches a ONE slot only through an explicit collect step. Stream bindings are linear:
+ * a client-streaming/bidi edge or collect transition consumes its one live stream source,
+ * and multiple live stream sources require an explicit join policy. A pipeline that
+ * verifies cannot fail on a shape or type error at run time, only on live-service
+ * behavior.</p>
  */
 public final class PipelineChecker {
 
@@ -212,12 +215,22 @@ public final class PipelineChecker {
 
         // The slot cardinality: client-streaming and bidi methods consume a request
         // stream; unary and server-streaming methods consume one request.
-        EdgeCardinality edgeCardinality = edgeCardinality(call.getEdge(), scope);
+        List<String> streamSources = streamSources(call.getEdge(), scope);
+        EdgeCardinality edgeCardinality = streamSources.isEmpty()
+                ? EdgeCardinality.EDGE_CARDINALITY_ONE
+                : EdgeCardinality.EDGE_CARDINALITY_MANY;
         if (edgeCardinality != call.getEdgeCardinality()) {
             findings.add(new Finding(step.getName(), "cardinality",
                     "the edge declares " + call.getEdgeCardinality() + " but its sources"
                             + " make it " + edgeCardinality + "; the declared cardinality"
                             + " must match the dataflow"));
+        }
+        if (streamSources.size() > 1) {
+            findings.add(new Finding(step.getName(), "cardinality",
+                    "the edge reads multiple live stream bindings " + streamSources
+                            + ", but the pipeline contract declares no implicit zip,"
+                            + " merge, or Cartesian policy; collect all but one stream or"
+                            + " add an explicit join transition"));
         }
         if (method.isClientStreaming()
                 && edgeCardinality != EdgeCardinality.EDGE_CARDINALITY_MANY) {
@@ -267,6 +280,13 @@ public final class PipelineChecker {
                             + method.getInputType().getFullName() + " (declared in file "
                             + method.getInputType().getFile().getName() + "); got "
                             + call.getEdge().getProduceType()));
+        }
+        // A client-streaming or bidi request consumes its one input stream. Keeping the
+        // binding live would make it appear replayable and would also make a later output
+        // projection fail even though the explicit cardinality transition completed.
+        if (method.isClientStreaming() && streamSources.size() == 1
+                && !call.hasFanOut()) {
+            scope.remove(streamSources.get(0));
         }
         bind(step.getName(), scope, call,
                 call.hasFanOut()
@@ -531,22 +551,27 @@ public final class PipelineChecker {
                             + "' carries " + source.type().getFullName()));
             return;
         }
+        // Collect is a linear stream transition: the source is consumed and replaced by
+        // the single collected binding. This is what makes a final output mapping legal
+        // after the stream has been explicitly collapsed.
+        scope.remove(collect.getSource());
         scope.put(step.getName(),
                 new Binding(collectType, EdgeCardinality.EDGE_CARDINALITY_ONE));
     }
 
-    /** The cardinality an edge's declared sources give it: MANY when any source streams. */
-    private static EdgeCardinality edgeCardinality(
+    /** The live stream bindings among an edge's declared sources, in source order. */
+    private static List<String> streamSources(
             ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge,
             Map<String, Binding> scope) {
+        List<String> streams = new ArrayList<>();
         for (String source : edge.getSourcesList()) {
             Binding known = scope.get(source);
             if (known != null && known.cardinality()
                     == EdgeCardinality.EDGE_CARDINALITY_MANY) {
-                return EdgeCardinality.EDGE_CARDINALITY_MANY;
+                streams.add(source);
             }
         }
-        return EdgeCardinality.EDGE_CARDINALITY_ONE;
+        return streams;
     }
 
     private static EdgeCardinality outputCardinality(GrpcCallStep call,

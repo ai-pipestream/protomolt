@@ -190,6 +190,41 @@ class RecipePipelineCompilerTest {
     }
 
     @Test
+    void consumedRecipeStreamDoesNotLeakIntoLaterSynthesizedEdges() {
+        GrpcRecipe recipe = recipeWithSteps(
+                RecipeStep.newBuilder()
+                        .setName("search")
+                        .setDependency("pipeline.test.Search")
+                        .setMethod(PipelineFixtures.STREAM)
+                        .addRules("title = input.title")
+                        .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                        .build(),
+                RecipeStep.newBuilder()
+                        .setName("upload")
+                        .setDependency("pipeline.test.Ingest")
+                        .setMethod(PipelineFixtures.UPLOAD)
+                        .setEdge(PipelineFixtures.edge(PipelineFixtures.TICKET,
+                                List.of("search"), "title = search.title"))
+                        .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                        .build(),
+                RecipeStep.newBuilder()
+                        .setName("fetch")
+                        .setDependency("pipeline.test.Lookup")
+                        .setMethod(PipelineFixtures.FETCH)
+                        .addRules("title = input.title")
+                        .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                        .build());
+
+        Pipeline pipeline = RecipePipelineCompiler.compile(recipe,
+                PipelineFixtures.files());
+        assertThat(pipeline.getSteps(2).getGrpcCall().getEdge().getSourcesList())
+                .containsExactly("input", "upload");
+        assertThat(pipeline.getSteps(2).getGrpcCall().getEdgeCardinality())
+                .isEqualTo(EdgeCardinality.EDGE_CARDINALITY_ONE);
+        assertThat(checker.verify(pipeline, PipelineFixtures.files())).isEmpty();
+    }
+
+    @Test
     void dependencyFingerprintMismatchFailsFast() {
         GrpcRecipe recipe = recipeWithSteps(RecipeStep.newBuilder()
                 .setName("fetch")

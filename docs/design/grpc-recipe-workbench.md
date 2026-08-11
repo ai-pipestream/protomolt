@@ -350,9 +350,11 @@ Phase 4 opens with the pipeline contract and its static checker
   `pipeline.proto`: every gRPC step declares its method's streaming shape and
   both edge cardinalities, the recipe's `TypedEdge` and `FanOutSpec` are
   embedded unchanged, and explicit `unnest` (one to stream) and `collect`
-  (stream to one) steps are the only cardinality transitions. Every persisted
-  field carries validate.v1 bounds and meta.v1 sensitivity metadata; no field
-  is indexed, because none is genuinely searchable.
+  (stream to one) steps are the only cardinality transitions. Stream bindings
+  are linear: a client-streaming/bidi edge or collect consumes one live stream,
+  while multiple live streams require a future explicit join policy. Every
+  persisted field carries validate.v1 bounds and meta.v1 sensitivity metadata;
+  no field is indexed, because none is genuinely searchable.
 - `RecipePipelineCompiler` normalizes a validated recipe into the contract
   against the exact descriptor set it was checked against: top-level rule
   lanes become synthesized edges over the full scope, streaming shapes and

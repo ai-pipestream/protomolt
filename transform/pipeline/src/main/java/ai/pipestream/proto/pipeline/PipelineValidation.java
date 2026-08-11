@@ -13,6 +13,7 @@ import ai.pipestream.proto.pipeline.v1.UnnestStep;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Structural and safety validation for the pipeline contract, mirroring the validate.v1
@@ -29,6 +30,11 @@ public final class PipelineValidation {
     private static final int MAX_DEPENDENCIES = 64;
     private static final int MAX_STEPS = 256;
     private static final int MAX_RULES = 1_024;
+    private static final int MAX_IDENTIFIER_LENGTH = 128;
+    private static final Pattern IDENTIFIER =
+            Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final Pattern DOTTED_PATH = Pattern.compile(
+            "[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*");
 
     private PipelineValidation() {
     }
@@ -91,7 +97,10 @@ public final class PipelineValidation {
 
     private static void validate(PipelineStep step, Set<String> aliases) {
         require(step != null, "step must not be null");
-        RecipeValidation.validateName(step.getName(), "step.name");
+        require(identifier(step.getName())
+                        && !step.getName().equals("input")
+                        && !step.getName().equals("target"),
+                "step.name must be an identifier other than 'input'/'target'");
         if (!step.getDependency().isEmpty()) {
             RecipeValidation.validateName(step.getDependency(), "step.dependency");
             require(aliases == null || aliases.contains(step.getDependency()),
@@ -185,11 +194,10 @@ public final class PipelineValidation {
     /** Validates an unnest step. */
     public static void validate(UnnestStep unnest) {
         require(unnest != null, "unnest must not be null");
-        require(unnest.getSource().matches("[A-Za-z_][A-Za-z0-9_]*"),
+        require(identifier(unnest.getSource()),
                 "step.unnest.source must be an identifier");
-        require(!unnest.getPath().isBlank()
-                        && unnest.getPath().length() <= 512
-                        && unnest.getPath().codePoints().noneMatch(Character::isWhitespace),
+        require(unnest.getPath().length() <= 512
+                        && DOTTED_PATH.matcher(unnest.getPath()).matches(),
                 "step.unnest.path must be a non-blank dotted field path of at most "
                         + "512 characters");
     }
@@ -197,13 +205,11 @@ public final class PipelineValidation {
     /** Validates a collect step. */
     public static void validate(CollectStep collect) {
         require(collect != null, "collect must not be null");
-        require(collect.getSource().matches("[A-Za-z_][A-Za-z0-9_]*"),
+        require(identifier(collect.getSource()),
                 "step.collect.source must be an identifier");
         RecipeValidation.validateType(collect.getCollectType(), "step.collect.collect_type");
-        require(!collect.getCollectInto().isBlank()
-                        && collect.getCollectInto().length() <= 256
-                        && collect.getCollectInto().codePoints()
-                                .noneMatch(Character::isWhitespace),
+        require(collect.getCollectInto().length() <= 256
+                        && IDENTIFIER.matcher(collect.getCollectInto()).matches(),
                 "step.collect.collect_into must be a non-blank field name of at most "
                         + "256 characters");
     }
@@ -224,6 +230,11 @@ public final class PipelineValidation {
 
     private static boolean defined(MethodShape shape) {
         return shape != MethodShape.UNRECOGNIZED;
+    }
+
+    private static boolean identifier(String value) {
+        return value.length() <= MAX_IDENTIFIER_LENGTH
+                && IDENTIFIER.matcher(value).matches();
     }
 
     private static void require(boolean condition, String message) {

@@ -220,6 +220,73 @@ class PipelineCheckerCardinalityTest {
     }
 
     @Test
+    void collectedStreamCanFeedTheFinalOutput() {
+        Pipeline pipeline = streamingFirstStep()
+                .addSteps(PipelineStep.newBuilder()
+                        .setName("gather")
+                        .setCollect(CollectStep.newBuilder()
+                                .setSource("search")
+                                .setCollectType(PipelineFixtures.RESULTS)
+                                .setCollectInto("results")
+                                .build())
+                        .build())
+                .setOutput(PipelineOutput.newBuilder()
+                        .setType(PipelineFixtures.RESULTS)
+                        .addRules("results = gather.results")
+                        .build())
+                .build();
+        assertThat(checker.verify(pipeline, PipelineFixtures.files())).isEmpty();
+    }
+
+    @Test
+    void clientStreamingCallConsumesItsInputStreamBeforeOutput() {
+        Pipeline pipeline = streamingFirstStep()
+                .addSteps(PipelineFixtures.grpcStep("upload", "pipeline.test.Ingest",
+                        PipelineFixtures.UPLOAD,
+                        MethodShape.METHOD_SHAPE_CLIENT_STREAMING,
+                        EdgeCardinality.EDGE_CARDINALITY_MANY,
+                        EdgeCardinality.EDGE_CARDINALITY_ONE,
+                        PipelineFixtures.edge(PipelineFixtures.TICKET,
+                                List.of("search"), "title = search.title")))
+                .setOutput(PipelineOutput.newBuilder()
+                        .setType(PipelineFixtures.TICKET)
+                        .addRules("title = input.title")
+                        .build())
+                .build();
+        assertThat(checker.verify(pipeline, PipelineFixtures.files())).isEmpty();
+    }
+
+    @Test
+    void multipleLiveStreamSourcesRequireAnExplicitJoinPolicy() {
+        Pipeline pipeline = streamingFirstStep()
+                .addSteps(PipelineFixtures.grpcStep("search_again",
+                        "pipeline.test.Search", PipelineFixtures.STREAM,
+                        MethodShape.METHOD_SHAPE_SERVER_STREAMING,
+                        EdgeCardinality.EDGE_CARDINALITY_ONE,
+                        EdgeCardinality.EDGE_CARDINALITY_MANY,
+                        PipelineFixtures.edge(PipelineFixtures.TICKET,
+                                List.of("input"), "title = input.title")))
+                .addSteps(PipelineFixtures.grpcStep("upload", "pipeline.test.Ingest",
+                        PipelineFixtures.UPLOAD,
+                        MethodShape.METHOD_SHAPE_CLIENT_STREAMING,
+                        EdgeCardinality.EDGE_CARDINALITY_MANY,
+                        EdgeCardinality.EDGE_CARDINALITY_ONE,
+                        PipelineFixtures.edge(PipelineFixtures.TICKET,
+                                List.of("search", "search_again"),
+                                "title = search.title")))
+                .build();
+        assertThat(checker.verify(pipeline, PipelineFixtures.files()))
+                .anySatisfy(finding -> {
+                    assertThat(finding.step()).isEqualTo("upload");
+                    assertThat(finding.kind()).isEqualTo("cardinality");
+                    assertThat(finding.error()).contains("multiple live stream bindings")
+                            .contains("search")
+                            .contains("search_again")
+                            .contains("explicit join");
+                });
+    }
+
+    @Test
     void structuredGroundingFromStreamIsRejected() {
         Pipeline pipeline = streamingFirstStep()
                 .addDependencies(PipelineFixtures.dependency("structured-generation"))
