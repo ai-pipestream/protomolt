@@ -175,6 +175,8 @@ conflicts fail promotion rather than silently dropping policy.
 - Introduce protobuf service-profile contracts and a repository interface.
 - Add service registration, listing, description, and refresh actions.
 - Expose service profiles and method contracts as MCP resources.
+- Expose an always-present workspace bootstrap, resource templates, and a
+  catalog fingerprint so a client can detect stale tool discovery.
 - Introduce the shared outbound channel-policy seam.
 - Replace manually maintained action-count documentation with generated or
   test-verified inventory.
@@ -302,7 +304,10 @@ The delivered Phase 1 foundation includes MCP instructions and lifecycle,
 service-profile contracts, bounded reflection, durable profile and descriptor
 storage, service registration and inspection tools, paginated MCP resources,
 restart recovery tests, a host-configurable outbound channel policy, and a
-generated catalog inventory.
+generated catalog inventory. Workspace-bootstrap hardening adds one compact
+always-present resource, deep-link templates, and matching initialize/tool-list
+fingerprints so an agent can identify a stale client catalog without loading
+every tool schema. Status: **OPEN: #105**.
 
 Phase 2 delivers the full record-replay-promote loop:
 

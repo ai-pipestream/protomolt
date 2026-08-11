@@ -53,6 +53,16 @@ public final class RegistryResources implements McpResources {
     }
 
     @Override
+    public ArrayNode templates(ObjectMapper mapper) {
+        ArrayNode templates = mapper.createArrayNode();
+        template(templates, ROOT + "/{subject}", "registry-subject",
+                "Version index and latest schema for one URL-encoded registry subject");
+        template(templates, ROOT + "/{subject}/versions/{version}", "registry-version",
+                "One exact version of one URL-encoded registry subject");
+        return templates;
+    }
+
+    @Override
     public Page page(ObjectMapper mapper, String cursor, int pageSize) {
         if (pageSize <= 0) {
             throw new IllegalArgumentException("page size must be positive");
@@ -179,6 +189,15 @@ public final class RegistryResources implements McpResources {
     private static void resource(ArrayNode resources, String uri, String name, String description) {
         ObjectNode entry = resources.addObject();
         entry.put("uri", uri);
+        entry.put("name", name);
+        entry.put("description", description);
+        entry.put("mimeType", "application/json");
+    }
+
+    private static void template(ArrayNode templates, String uriTemplate, String name,
+                                 String description) {
+        ObjectNode entry = templates.addObject();
+        entry.put("uriTemplate", uriTemplate);
         entry.put("name", name);
         entry.put("description", description);
         entry.put("mimeType", "application/json");

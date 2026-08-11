@@ -99,6 +99,11 @@ class McpHttpTest {
         assertThat(result.path("protocolVersion").asText()).isEqualTo("2025-06-18");
         assertThat(result.path("serverInfo").path("name").asText()).isEqualTo("protomolt");
         assertThat(result.path("capabilities").has("tools")).isTrue();
+        assertThat(result.path("capabilities").has("resources")).isTrue();
+        assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
+                .isEqualTo(40);
+        assertThat(result.path("_meta").path("ai.pipestream.protomolt/workspace").asText())
+                .isEqualTo("protomolt://workspace");
         assertThat(result.path("instructions").asText())
                 .contains("service-register", "service-inspect", "reflect", "grpc-invoke",
                         "generate-stubs");
@@ -126,14 +131,49 @@ class McpHttpTest {
                 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
                 """);
         assertThat(response.statusCode()).isEqualTo(200);
-        JsonNode tools = MAPPER.readTree(response.body()).path("result").path("tools");
+        JsonNode result = MAPPER.readTree(response.body()).path("result");
+        JsonNode tools = result.path("tools");
         assertThat(tools.size()).isEqualTo(40);
+        assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
+                .isEqualTo(tools.size());
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
                 "generate-stubs", "join-messages", "synthesize-shape", "merge-schemas",
                 "check-rules", "run-chain", "check-chain", "infer-schema", "mask-message",
                 "submit-chain", "get-job", "list-jobs", "complete-step", "service-register",
                 "service-list", "service-inspect", "service-refresh", "suggest-mappings",
                 "compile-recipe", "record-recipe-run", "replay-recipe", "promote-recipe");
+    }
+
+    @Test
+    void workspaceBootstrapIsReadableOverStreamableHttp() throws Exception {
+        HttpSession session = initializeSession();
+        assertThat(post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+
+        HttpResponse<String> listed = post(session, """
+                {"jsonrpc":"2.0","id":21,"method":"resources/list","params":{}}
+                """);
+        assertThat(MAPPER.readTree(listed.body()).path("result").path("resources")
+                .findValuesAsText("uri")).contains("protomolt://workspace");
+
+        HttpResponse<String> read = post(session, """
+                {"jsonrpc":"2.0","id":22,"method":"resources/read","params":
+                 {"uri":"protomolt://workspace"}}
+                """);
+        String text = MAPPER.readTree(read.body()).path("result").path("contents")
+                .get(0).path("text").asText();
+        JsonNode workspace = MAPPER.readTree(text);
+        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(40);
+        assertThat(workspace.path("toolCatalog").path("names"))
+                .anySatisfy(name -> assertThat(name.asText()).isEqualTo("service-register"));
+
+        HttpResponse<String> templates = post(session, """
+                {"jsonrpc":"2.0","id":23,"method":"resources/templates/list","params":{}}
+                """);
+        assertThat(templates.statusCode()).isEqualTo(200);
+        assertThat(MAPPER.readTree(templates.body()).path("result")
+                .path("resourceTemplates")).isEmpty();
     }
 
     @Test

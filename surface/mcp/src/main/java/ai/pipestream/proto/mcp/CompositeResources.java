@@ -34,6 +34,13 @@ public final class CompositeResources implements McpResources {
     }
 
     @Override
+    public ArrayNode templates(ObjectMapper mapper) {
+        ArrayNode result = mapper.createArrayNode();
+        delegates.forEach(delegate -> delegate.templates(mapper).forEach(result::add));
+        return result;
+    }
+
+    @Override
     public Page page(ObjectMapper mapper, String cursor, int pageSize) {
         if (pageSize <= 0) {
             throw new IllegalArgumentException("page size must be positive");

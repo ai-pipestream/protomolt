@@ -58,12 +58,13 @@ public final class McpServer {
      * initialization metadata still get the complete gRPC workflow.
      */
     public static final String DEFAULT_INSTRUCTIONS =
-            "ProtoMolt workflow: call `service-register` once, then `service-inspect`; use `reflect` "
-                    + "for ad hoc targets. Choose exact methods and fields from descriptors, then use "
-                    + "`grpc-invoke`. To compose services, use `suggest-mappings`, `check-chain`, "
-                    + "`compile-recipe`, `record-recipe-run`, `replay-recipe`, then `promote-recipe`. "
-                    + "Use `generate-stubs` only for native clients. Check `ok` and status at every "
-                    + "step. Never guess a method or payload when a descriptor can answer.";
+            "ProtoMolt workflow: read `protomolt://workspace`; reconnect if its live tool count "
+                    + "differs. Call `service-register` once, then `service-inspect`; use `reflect` "
+                    + "for ad hoc targets. Choose exact methods and fields from descriptors, then "
+                    + "`grpc-invoke`. Compose with `suggest-mappings`, `check-chain`, "
+                    + "`compile-recipe`, `record-recipe-run`, `replay-recipe`, and `promote-recipe`. "
+                    + "Use `generate-stubs` only for native clients. Check `ok` and status. Never "
+                    + "guess methods or payloads.";
 
     private static final List<String> SUPPORTED_VERSIONS =
             List.of("2025-06-18", "2025-03-26", "2024-11-05");
@@ -113,10 +114,12 @@ public final class McpServer {
     public McpServer(ActionCatalog catalog, McpResources resources,
                      String serverName, String serverVersion, String instructions) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
-        this.resources = resources;
         this.serverName = Objects.requireNonNull(serverName, "serverName");
         this.serverVersion = Objects.requireNonNull(serverVersion, "serverVersion");
         this.instructions = Objects.requireNonNull(instructions, "instructions");
+        this.resources = CompositeResources.of(
+                new WorkspaceResources(catalog, serverName, serverVersion, instructions),
+                resources);
     }
 
     /**
@@ -187,6 +190,8 @@ public final class McpServer {
                 case "tools/list" -> Optional.of(JsonRpc.result(mapper, id, listTools()));
                 case "tools/call" -> Optional.of(JsonRpc.result(mapper, id, callTool(params)));
                 case "resources/list" -> Optional.of(JsonRpc.result(mapper, id, listResources(params)));
+                case "resources/templates/list" -> Optional.of(JsonRpc.result(mapper, id,
+                        listResourceTemplates(params)));
                 case "resources/read" -> readResource(params)
                         .map(contents -> JsonRpc.result(mapper, id, contents))
                         .or(() -> Optional.of(JsonRpc.error(mapper, id, JsonRpc.RESOURCE_NOT_FOUND,
@@ -216,14 +221,13 @@ public final class McpServer {
                 supportsProtocolVersion(requested) ? requested : PROTOCOL_VERSION);
         ObjectNode capabilities = result.putObject("capabilities");
         capabilities.putObject("tools").put("listChanged", false);
-        if (resources != null) {
-            capabilities.putObject("resources")
-                    .put("subscribe", false)
-                    .put("listChanged", false);
-        }
+        capabilities.putObject("resources")
+                .put("subscribe", false)
+                .put("listChanged", false);
         ObjectNode serverInfo = result.putObject("serverInfo");
         serverInfo.put("name", serverName);
         serverInfo.put("version", serverVersion);
+        addToolCatalogMetadata(result);
         if (!instructions.isEmpty()) {
             result.put("instructions", instructions);
         }
@@ -234,8 +238,23 @@ public final class McpServer {
         ObjectNode result = mapper.createObjectNode();
         // The catalog manifest entries ({name, description, inputSchema}) are already the
         // MCP tool shape; inputSchema is JSON Schema in both worlds.
-        result.set("tools", catalog.list());
+        ArrayNode manifest = catalog.list();
+        result.set("tools", manifest);
+        addToolCatalogMetadata(result, manifest);
         return result;
+    }
+
+    private void addToolCatalogMetadata(ObjectNode result) {
+        addToolCatalogMetadata(result, catalog.list());
+    }
+
+    private void addToolCatalogMetadata(ObjectNode result, ArrayNode manifest) {
+        ObjectNode toolCatalog = WorkspaceResources.toolCatalog(manifest, mapper);
+        ObjectNode metadata = result.putObject("_meta");
+        metadata.put("ai.pipestream.protomolt/toolCatalogFingerprint",
+                toolCatalog.path("fingerprint").asText());
+        metadata.put("ai.pipestream.protomolt/toolCount", toolCatalog.path("count").asInt());
+        metadata.put("ai.pipestream.protomolt/workspace", WorkspaceResources.URI);
     }
 
     private ObjectNode callTool(JsonNode params) {
@@ -295,6 +314,46 @@ public final class McpServer {
             result.put("nextCursor", page.nextCursor());
         }
         return result;
+    }
+
+    private ObjectNode listResourceTemplates(JsonNode params) {
+        if (params == null || !params.isObject()) {
+            throw new IllegalArgumentException("resources/templates/list params must be an object");
+        }
+        int offset = cursorOffset(params.get("cursor"), "resource template");
+        ArrayNode all = resources.templates(mapper);
+        if (offset > all.size()) {
+            throw new IllegalArgumentException("resource template cursor is invalid");
+        }
+        int end = Math.min(offset + RESOURCE_PAGE_SIZE, all.size());
+        ArrayNode page = mapper.createArrayNode();
+        for (int i = offset; i < end; i++) {
+            page.add(all.get(i));
+        }
+        ObjectNode result = mapper.createObjectNode();
+        result.set("resourceTemplates", page);
+        if (end < all.size()) {
+            result.put("nextCursor", Integer.toString(end));
+        }
+        return result;
+    }
+
+    private static int cursorOffset(JsonNode cursor, String label) {
+        if (cursor == null || cursor.isNull()) {
+            return 0;
+        }
+        if (!cursor.isTextual() || cursor.asText().isBlank()) {
+            throw new IllegalArgumentException(label + " cursor must be a non-empty string");
+        }
+        try {
+            int offset = Integer.parseInt(cursor.asText());
+            if (offset < 0) {
+                throw new NumberFormatException();
+            }
+            return offset;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(label + " cursor is invalid");
+        }
     }
 
     /** Per-connection MCP lifecycle used by stdio and the streamable HTTP adapter. */

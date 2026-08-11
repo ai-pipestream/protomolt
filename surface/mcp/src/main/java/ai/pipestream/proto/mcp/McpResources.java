@@ -23,6 +23,11 @@ public interface McpResources {
     /** Lists the resources served by this collection. */
     ArrayNode list(ObjectMapper mapper);
 
+    /** Lists URI templates for resources that are addressable but intentionally not enumerated. */
+    default ArrayNode templates(ObjectMapper mapper) {
+        return mapper.createArrayNode();
+    }
+
     /**
      * Returns one bounded page. The default keeps existing providers source-compatible while
      * allowing providers with a cheap page primitive to avoid materializing their full index.

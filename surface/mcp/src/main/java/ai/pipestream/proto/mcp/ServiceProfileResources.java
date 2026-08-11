@@ -41,6 +41,16 @@ public final class ServiceProfileResources implements McpResources {
     }
 
     @Override
+    public ArrayNode templates(ObjectMapper mapper) {
+        ArrayNode templates = mapper.createArrayNode();
+        template(templates, ROOT + "/{profile}", "service-profile",
+                "One URL-encoded service profile and its reflected method contracts");
+        template(templates, ROOT + "/{profile}/methods/{fullMethod}", "service-method",
+                "One reflected gRPC method contract from a URL-encoded service profile");
+        return templates;
+    }
+
+    @Override
     public Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
         if (ROOT.equals(uri)) {
             ObjectNode document = mapper.createObjectNode();
@@ -109,6 +119,15 @@ public final class ServiceProfileResources implements McpResources {
     private static void resource(ArrayNode resources, String uri, String name, String description) {
         ObjectNode node = resources.addObject();
         node.put("uri", uri);
+        node.put("name", name);
+        node.put("description", description);
+        node.put("mimeType", "application/json");
+    }
+
+    private static void template(ArrayNode templates, String uriTemplate, String name,
+                                 String description) {
+        ObjectNode node = templates.addObject();
+        node.put("uriTemplate", uriTemplate);
         node.put("name", name);
         node.put("description", description);
         node.put("mimeType", "application/json");
