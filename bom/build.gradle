@@ -51,6 +51,7 @@ def supportedModules = [
         'protomolt-projection',
         'protomolt-pipeline',
         'protomolt-delegation',
+        'protomolt-mesh-proto',
         'protomolt-schema-apicurio',
         'protomolt-schema-apicurio-deployment',
         'protomolt-schema-confluent',

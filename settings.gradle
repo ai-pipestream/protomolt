@@ -126,6 +126,13 @@ project(':protomolt-delegation').projectDir = file('transform/delegation')
 include 'protomolt-chain'
 project(':protomolt-chain').projectDir = file('transform/chain')
 
+// mesh/ — the PipeStream protobuf mesh profile: core entity contracts and
+// processing annotations (design: docs/design/pipestream-protobuf-mesh,
+// package 01).
+
+include 'protomolt-mesh-proto'
+project(':protomolt-mesh-proto').projectDir = file('mesh/proto')
+
 // search/ — index mappers plus the embedding and rerank model SPIs.
 
 include 'protomolt-index-spi'

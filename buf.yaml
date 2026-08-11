@@ -52,6 +52,8 @@ modules:
     name: buf.build/ai-pipestream/pipeline
   - path: transform/delegation/src/main/proto
     name: buf.build/ai-pipestream/delegation
+  - path: mesh/proto/src/main/proto
+    name: buf.build/ai-pipestream/mesh
 lint:
   use:
     - STANDARD
