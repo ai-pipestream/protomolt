@@ -51,6 +51,7 @@ class DynamicGrpcStreamTest {
               rpc Silent(Open) returns (stream Tick);
               rpc Fail(Open) returns (stream Tick);
               rpc Sum(stream Tick) returns (Total);
+              rpc Echo(stream Tick) returns (stream Tick);
               rpc One(Open) returns (Tick);
             }
             """;
@@ -75,13 +76,14 @@ class DynamicGrpcStreamTest {
         var silent = DynamicGrpcCalls.methodDescriptor(service.findMethodByName("Silent"));
         var fail = DynamicGrpcCalls.methodDescriptor(service.findMethodByName("Fail"));
         var sum = DynamicGrpcCalls.methodDescriptor(service.findMethodByName("Sum"));
+        var echo = DynamicGrpcCalls.methodDescriptor(service.findMethodByName("Echo"));
         var one = DynamicGrpcCalls.methodDescriptor(service.findMethodByName("One"));
 
         io.grpc.ServiceDescriptor grpcService = io.grpc.ServiceDescriptor
                 .newBuilder(service.getFullName())
                 .setSchemaDescriptor((io.grpc.protobuf.ProtoFileDescriptorSupplier) () -> file)
                 .addMethod(count).addMethod(watch).addMethod(silent)
-                .addMethod(fail).addMethod(sum).addMethod(one)
+                .addMethod(fail).addMethod(sum).addMethod(echo).addMethod(one)
                 .build();
 
         ServerServiceDefinition definition = ServerServiceDefinition.builder(grpcService)
@@ -138,6 +140,23 @@ class DynamicGrpcStreamTest {
                         out.onCompleted();
                     }
                 }))
+                .addMethod(echo, ServerCalls.asyncBidiStreamingCall(out ->
+                        new StreamObserver<>() {
+                            @Override
+                            public void onNext(DynamicMessage value) {
+                                out.onNext(value);
+                            }
+
+                            @Override
+                            public void onError(Throwable throwable) {
+                                // Client cancellation ends the bounded call.
+                            }
+
+                            @Override
+                            public void onCompleted() {
+                                out.onCompleted();
+                            }
+                        }))
                 .addMethod(one, ServerCalls.asyncUnaryCall((request, out) -> {
                     out.onNext(tick(42, ""));
                     out.onCompleted();
@@ -261,6 +280,27 @@ class DynamicGrpcStreamTest {
     }
 
     @Test
+    void bidiStreamingDrainsFiniteResponsesInOrder() {
+        List<DynamicMessage> responses = DynamicGrpcCalls.callBidiStreaming(channel,
+                file.findServiceByName("Feed").findMethodByName("Echo"),
+                IntStream.range(0, 3).mapToObj(i -> tick(i, "")).iterator(),
+                CallOptions.DEFAULT, new Metadata(), 10);
+
+        assertThat(responses).extracting(DynamicGrpcStreamTest::seqOf)
+                .containsExactly(0L, 1L, 2L);
+    }
+
+    @Test
+    void bidiStreamingResponsePrefixIsBounded() {
+        List<DynamicMessage> responses = DynamicGrpcCalls.callBidiStreaming(channel,
+                file.findServiceByName("Feed").findMethodByName("Echo"),
+                IntStream.range(0, 100).mapToObj(i -> tick(i, "")).iterator(),
+                CallOptions.DEFAULT, new Metadata(), 5);
+
+        assertThat(responses).hasSize(5);
+    }
+
+    @Test
     void wrongShapesAreRejected() {
         var one = file.findServiceByName("Feed").findMethodByName("One");
         var sum = file.findServiceByName("Feed").findMethodByName("Sum");
@@ -274,5 +314,8 @@ class DynamicGrpcStreamTest {
         assertThatThrownBy(() -> DynamicGrpcCalls.openServerStream(
                 channel, sum, open(1), CallOptions.DEFAULT, new Metadata()))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> DynamicGrpcCalls.callBidiStreaming(
+                channel, one, List.of(open(1)).iterator(), CallOptions.DEFAULT,
+                new Metadata(), 1)).isInstanceOf(IllegalArgumentException.class);
     }
 }

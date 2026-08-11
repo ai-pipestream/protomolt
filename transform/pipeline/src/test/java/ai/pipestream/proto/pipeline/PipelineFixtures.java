@@ -154,6 +154,7 @@ final class PipelineFixtures {
                 .setName(name)
                 .setInputType(inputType)
                 .setDescriptorFingerprint(fingerprint())
+                .setMaxStreamMessages(1_000)
                 .setDeadline(Duration.newBuilder().setSeconds(30).build());
     }
 

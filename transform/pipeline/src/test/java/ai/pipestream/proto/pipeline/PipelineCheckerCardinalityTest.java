@@ -305,6 +305,28 @@ class PipelineCheckerCardinalityTest {
     }
 
     @Test
+    void serialGateWhileAStreamIsLiveIsRejected() {
+        Pipeline pipeline = streamingFirstStep()
+                .addSteps(PipelineFixtures.grpcStep("fetch", "pipeline.test.Lookup",
+                                PipelineFixtures.FETCH, MethodShape.METHOD_SHAPE_UNARY,
+                                EdgeCardinality.EDGE_CARDINALITY_ONE,
+                                EdgeCardinality.EDGE_CARDINALITY_ONE,
+                                PipelineFixtures.edge(PipelineFixtures.TICKET,
+                                        List.of("input"), "title = input.title"))
+                        .setWhen("input.title != ''").build())
+                .build();
+
+        assertThat(checker.verify(pipeline, PipelineFixtures.files()))
+                .anySatisfy(finding -> {
+                    assertThat(finding.step()).isEqualTo("fetch");
+                    assertThat(finding.kind()).isEqualTo("when");
+                    assertThat(finding.error()).contains("live stream bindings")
+                            .contains("search")
+                            .contains("collect");
+                });
+    }
+
+    @Test
     void descriptorFingerprintMismatchIsRejectedPrecisely() {
         Pipeline pipeline = PipelineFixtures.base("card", PipelineFixtures.TICKET)
                 .addDependencies(PipelineFixtures.dependency("pipeline.test.Lookup"))

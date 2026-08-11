@@ -1,5 +1,5 @@
 /**
- * The pipeline execution contract and its offline static checker.
+ * The pipeline execution contract, offline static checker, and in-process executor.
  *
  * <p>A {@link ai.pipestream.proto.pipeline.v1.Pipeline} is the compiled, streaming-aware form
  * of a {@link ai.pipestream.proto.grpc.recipe.v1.GrpcRecipe}: every gRPC or structured step is
@@ -10,6 +10,13 @@
  * {@link PipelineChecker} verifies a pipeline against a descriptor set without any network,
  * reflection call, or execution, rejecting cardinality and streaming-shape mismatches with
  * descriptor-precise messages.</p>
+ *
+ * <p>{@link PipelineExecutor} runs a checked pipeline through a host-owned
+ * {@link PipelineTransport}. The transport resolves the persisted service-profile and endpoint
+ * references to live channels, keeping raw targets and credential material outside the pipeline.
+ * Unary, server-streaming, client-streaming, and bidi calls share the same typed dataflow;
+ * materialized streams have an explicit message cap, and fan-out branches run on virtual threads
+ * behind their declared concurrency semaphore.</p>
  *
  * <p>Cardinality discipline: the pipeline input binds {@code input} at cardinality ONE. An
  * edge whose declared sources are all ONE produces one message; an edge reading a MANY

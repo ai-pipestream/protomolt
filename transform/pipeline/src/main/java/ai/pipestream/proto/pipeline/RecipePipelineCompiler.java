@@ -41,6 +41,7 @@ import java.util.regex.Pattern;
 public final class RecipePipelineCompiler {
 
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final int DEFAULT_MAX_STREAM_MESSAGES = 10_000;
 
     private RecipePipelineCompiler() {
     }
@@ -131,6 +132,7 @@ public final class RecipePipelineCompiler {
                 .addAllDependencies(recipe.getDependenciesList())
                 .addAllSteps(steps)
                 .setDeadline(recipe.getDeadline())
+                .setMaxStreamMessages(DEFAULT_MAX_STREAM_MESSAGES)
                 .setSourceRecipeName(recipe.getName())
                 .setSourceRecipeFingerprint(RecipeValidation.fingerprint(recipe));
         if (recipe.hasOutput()) {

@@ -187,6 +187,16 @@ public final class PipelineChecker {
                             + "; the contract must match the descriptor"));
         }
         if (!step.getWhen().isBlank()) {
+            List<String> liveStreams = scope.entrySet().stream()
+                    .filter(entry -> entry.getValue().cardinality()
+                            == EdgeCardinality.EDGE_CARDINALITY_MANY)
+                    .map(Map.Entry::getKey)
+                    .toList();
+            if (!liveStreams.isEmpty()) {
+                findings.add(new Finding(step.getName(), "when",
+                        "a serial step gate has no single value for live stream bindings "
+                                + liveStreams + "; collect them before evaluating a gate"));
+            }
             for (RuleChecker.Finding finding : checker.checkScoped(types(scope),
                     method.getInputType(), List.of(), List.of(), List.of(step.getWhen()))) {
                 findings.add(new Finding(step.getName(), "when",
