@@ -1,0 +1,26 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The protobuf mesh core contract: EntityEnvelope, EntityHeader, SchemaReference, claim checks, and the mesh processing options'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    // The contract reuses the recipe's content-addressed ArtifactReference for
+    // claim checks and descriptor artifacts.
+    api project(':protomolt-grpc-recipe')
+    // Persisted mesh fields carry the house validation and sensitivity metadata
+    // options, plus index hints on exactly the named discovery-query fields.
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+    api project(':protomolt-index-spi')
+}
+
+// Messages and options only — node services arrive with the transport
+// modules, so no protoc-gen-grpc-java here.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}
