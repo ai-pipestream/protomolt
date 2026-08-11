@@ -34,7 +34,19 @@ services:
       - "traefik.http.routers.protomolt.rule=Host(`${PROTOMOLT_HOSTNAME:-protomolt.rokkon.com}`)"
       - "traefik.http.routers.protomolt.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
       - "traefik.http.routers.protomolt.tls=true"
-      - "traefik.http.services.protomolt.loadbalancer.server.port=8080"
+      - "traefik.http.routers.protomolt.service=protomolt-http"
+      - "traefik.http.services.protomolt-http.loadbalancer.server.port=8080"
+      - "traefik.http.routers.protomolt-grpc.rule=Host(`${PROTOMOLT_GRPC_HOSTNAME:-protomolt-grpc.rokkon.com}`)"
+      - "traefik.http.routers.protomolt-grpc.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.protomolt-grpc.tls=true"
+      - "traefik.http.routers.protomolt-grpc.service=protomolt-grpc"
+      - "traefik.http.services.protomolt-grpc.loadbalancer.server.port=9090"
+      - "traefik.http.services.protomolt-grpc.loadbalancer.server.scheme=h2c"
+      - "traefik.http.routers.protomolt-registry.rule=Host(`${PROTOMOLT_REGISTRY_HOSTNAME:-protomolt-registry.rokkon.com}`)"
+      - "traefik.http.routers.protomolt-registry.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.protomolt-registry.tls=true"
+      - "traefik.http.routers.protomolt-registry.service=protomolt-registry"
+      - "traefik.http.services.protomolt-registry.loadbalancer.server.port=8081"
     restart: unless-stopped
 
   rustfs:

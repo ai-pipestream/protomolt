@@ -14,9 +14,18 @@ The stack provides:
 | RustFS | `http://nas:19900` | Persistent S3-compatible artifact storage |
 | Keycloak | `http://nas:19901` | Local OIDC identity provider |
 
-Traefik also routes the HTTP/MCP surface at
-`https://protomolt.rokkon.com` and Keycloak at
-`https://keycloak.rokkon.com`. Those names need DNS records pointing at the NAS.
+Traefik terminates TLS with the NAS wildcard certificate for all externally
+named surfaces:
+
+| Surface | TLS endpoint |
+|---|---|
+| MCP, REST, Swagger, console | `https://protomolt.rokkon.com` |
+| gRPC and reflection | `protomolt-grpc.rokkon.com:443` |
+| Schema registry | `https://protomolt-registry.rokkon.com` |
+| Keycloak | `https://keycloak.rokkon.com` |
+
+All four names are single labels under `rokkon.com`, so a `*.rokkon.com`
+certificate covers them. They need DNS records pointing at the NAS.
 
 ## Portainer configuration
 
