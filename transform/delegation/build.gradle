@@ -20,6 +20,8 @@ dependencies {
 
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
+
+    testImplementation libs.grpc.inprocess
 }
 
 protobuf {

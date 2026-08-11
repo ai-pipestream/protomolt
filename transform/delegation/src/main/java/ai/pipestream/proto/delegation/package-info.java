@@ -1,5 +1,5 @@
 /**
- * The agent delegation contract and its offline lifecycle checker.
+ * Agent delegation contract, coordinator runtime, worker bridge, and lifecycle checker.
  *
  * <p>The contract ({@code delegation.proto}, package
  * {@link ai.pipestream.proto.delegation.v1}) is the engine-neutral boundary between a
@@ -22,5 +22,12 @@
  * frame id is a conflicting duplicate), per-(lane, task, attempt) sequencing, lease
  * and revision staleness, monotonic progress and checkpoints, evidence completeness,
  * and terminal immutability, reporting precise findings and never repairing input.</p>
+ *
+ * <p>{@link InProcessDelegationCoordinator} implements the bidi service and exposes a
+ * cursor-based blocking event wait for embedded and MCP callers. {@link
+ * DelegationWorker} keeps the stream and provider execution separate through {@link
+ * WorkerRunner}; worker invocations run on virtual threads. {@link CandidateReviewer}
+ * controls acceptance and revision, while {@link ScriptedWorkerRunner} supplies
+ * deterministic provider-free scenarios.</p>
  */
 package ai.pipestream.proto.delegation;

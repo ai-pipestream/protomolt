@@ -55,18 +55,19 @@ recorded contract.
 
 ## Agent delegation
 
-Implement the coordinator service and worker adapter around the existing
-delegation contract. The runtime needs:
+Extend the in-process coordinator where deployments need durable or remote
+coordination:
 
-- worker admission and capability matching;
-- lease scheduling, renewal, expiry, and reassignment;
 - durable transcripts and checkpoint recovery;
-- cancellation and revision delivery;
-- repository and artifact evidence verification; and
-- MCP resources for task and worker status.
+- capability-based offer routing across multiple connected workers;
+- repository and artifact evidence verifiers backed by configured stores;
+- MCP resources and tools for task status, review, cancellation, and event
+  waiting; and
+- production `WorkerRunner` adapters for selected LLM providers.
 
-The provider adapter should keep control of the stream and process lifecycle.
-The LLM receives a bounded task and returns structured progress and evidence.
+Keep provider authentication and process lifecycle inside each adapter. The
+delegation stream carries bounded tasks, progress, checkpoints, and evidence,
+not provider credentials.
 
 ## Retrieval and metadata
 
