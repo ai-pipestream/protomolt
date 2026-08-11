@@ -274,7 +274,7 @@ agent or a ProtoMolt exploration session.
 
 | Work package | Status | Ownership boundary | Acceptance evidence |
 | --- | --- | --- | --- |
-| Pipeline contract and static checker | **PR OPEN: #107** | Define the pipeline execution contract covering every gRPC streaming shape (unary, server- and client-streaming, bidi) with typed edge semantics preserved, plus the static checker that verifies a compiled recipe against that contract before any execution. Branch from `main` after the credential-references package lands. Do not add pipeline execution, application generation, or container tooling. | In-process tests prove the checker accepts shape-correct pipelines, rejects cardinality and streaming-shape mismatches with descriptor-precise messages, and validates a compiled recipe fully offline with no container or GPU. |
+| Pipeline contract and static checker | **LANDED: #107** | Define the pipeline execution contract covering every gRPC streaming shape (unary, server- and client-streaming, bidi) with typed edge semantics preserved, plus the static checker that verifies a compiled recipe against that contract before any execution. Branch from `main` after the credential-references package lands. Do not add pipeline execution, application generation, or container tooling. | In-process tests prove the checker accepts shape-correct pipelines, rejects cardinality and streaming-shape mismatches with descriptor-precise messages, and validates a compiled recipe fully offline with no container or GPU. |
 
 ### Phase 5: grounded retrieval
 
