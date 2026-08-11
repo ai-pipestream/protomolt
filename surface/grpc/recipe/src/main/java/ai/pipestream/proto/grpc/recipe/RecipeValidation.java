@@ -90,7 +90,7 @@ public final class RecipeValidation {
 
         Set<String> dependencyAliases = new HashSet<>();
         for (ServiceDependency dependency : recipe.getDependenciesList()) {
-            validateDependency(dependency);
+            validate(dependency);
             require(dependencyAliases.add(dependency.getAlias()),
                     "duplicate dependency alias: " + dependency.getAlias());
         }
@@ -103,7 +103,7 @@ public final class RecipeValidation {
             require(dependencyAliases.contains(step.getDependency()),
                     "step dependency is not declared: " + step.getDependency());
             if (step.hasStructured()) {
-                validateStructuredSpec(step.getStructured());
+                validate(step.getStructured());
                 require(step.getMethod().isEmpty(),
                         "step.method must be empty when step.structured is set");
                 require(step.getWhen().isBlank(),
@@ -128,7 +128,7 @@ public final class RecipeValidation {
                             || step.getCompletion() == StepCompletion.STEP_COMPLETION_EXTERNAL,
                     "step.completion must be live or external");
             if (step.hasEdge()) {
-                validateEdge(step.getEdge());
+                validate(step.getEdge());
                 require(step.getRulesCount() == 0 && step.getCelRulesCount() == 0,
                         "step.rules and step.cel_rules must be empty when step.edge is set; "
                                 + "the edge owns request mapping");
@@ -136,7 +136,7 @@ public final class RecipeValidation {
             if (step.hasFanOut()) {
                 require(step.hasEdge(), "step.fan_out requires step.edge; the items "
                         + "resolve against the edge's produced message");
-                validateFanOut(step.getFanOut());
+                validate(step.getFanOut());
             }
         }
 
@@ -186,7 +186,7 @@ public final class RecipeValidation {
                 "run.dependencies exceeds the maximum of " + MAX_DEPENDENCIES);
         Set<String> aliases = new HashSet<>();
         for (ServiceDependency dependency : evidence.getDependenciesList()) {
-            validateDependency(dependency);
+            validate(dependency);
             require(aliases.add(dependency.getAlias()),
                     "duplicate run dependency alias: " + dependency.getAlias());
         }
@@ -300,7 +300,8 @@ public final class RecipeValidation {
         }
     }
 
-    private static void validateDependency(ServiceDependency dependency) {
+    /** Validates one named and fingerprinted service dependency. */
+    public static void validate(ServiceDependency dependency) {
         validateName(dependency.getAlias(), "dependency.alias");
         validateName(dependency.getServiceProfile(), "dependency.service_profile");
         validateName(dependency.getEndpoint(), "dependency.endpoint");
@@ -350,7 +351,8 @@ public final class RecipeValidation {
         validateText(step.getSummary(), "step_evidence.summary");
     }
 
-    private static void validateEdge(TypedEdge edge) {
+    /** Validates a typed inter-step edge contract. */
+    public static void validate(TypedEdge edge) {
         require(edge.getSourcesCount() >= 1, "step.edge.sources must not be empty");
         require(edge.getSourcesCount() <= MAX_EDGE_SOURCES,
                 "step.edge.sources exceeds the maximum of " + MAX_EDGE_SOURCES);
@@ -365,7 +367,8 @@ public final class RecipeValidation {
         }
     }
 
-    private static void validateFanOut(FanOutSpec fanOut) {
+    /** Validates a bounded fan-out contract. */
+    public static void validate(FanOutSpec fanOut) {
         require(!fanOut.getItems().isBlank()
                         && fanOut.getItems().length() <= MAX_ITEMS_PATH_LENGTH
                         && fanOut.getItems().codePoints().noneMatch(Character::isWhitespace),
@@ -390,7 +393,9 @@ public final class RecipeValidation {
                         + MAX_COLLECT_INTO_LENGTH + " characters");
     }
 
-    private static void validateStructuredSpec(StructuredGenerationSpec spec) {        validateType(spec.getTargetType(), "step.structured.target_type");
+    /** Validates a structured-generation specification. */
+    public static void validate(StructuredGenerationSpec spec) {
+        validateType(spec.getTargetType(), "step.structured.target_type");
         require(!spec.getModel().isBlank()
                         && spec.getModel().length() <= MAX_MODEL_LENGTH,
                 "step.structured.model must be non-blank and at most "
@@ -511,13 +516,15 @@ public final class RecipeValidation {
         }
     }
 
-    private static void validateType(String value, String field) {
+    /** Validates a fully-qualified protobuf message name. */
+    public static void validateType(String value, String field) {
         require(value != null && !value.isBlank()
                         && value.codePoints().noneMatch(Character::isWhitespace),
                 field + " must be a fully-qualified protobuf message name");
     }
 
-    private static void validateMethod(String value, String field) {
+    /** Validates a method reference in Service/Method form. */
+    public static void validateMethod(String value, String field) {
         require(value != null && !value.isBlank() && value.indexOf('/') > 0
                         && value.indexOf('/') == value.lastIndexOf('/')
                         && value.indexOf('/') < value.length() - 1
@@ -525,22 +532,26 @@ public final class RecipeValidation {
                 field + " must use Service/Method form");
     }
 
-    private static void validateFingerprint(String value, String field) {
+    /** Validates a lowercase SHA-256 fingerprint. */
+    public static void validateFingerprint(String value, String field) {
         require(value != null && FINGERPRINT.matcher(value).matches(),
                 field + " must be a lowercase SHA-256 fingerprint");
     }
 
-    private static void validateText(String value, String field) {
+    /** Validates bounded diagnostic or provenance text. */
+    public static void validateText(String value, String field) {
         require(value != null && value.length() <= MAX_TEXT_LENGTH,
                 field + " exceeds the maximum length of " + MAX_TEXT_LENGTH);
     }
 
-    private static void validatePositiveDuration(Duration value, String field) {
+    /** Validates a duration that must be positive. */
+    public static void validatePositiveDuration(Duration value, String field) {
         validateDuration(value, field);
         require(value.getSeconds() > 0 || value.getNanos() > 0, field + " must be positive");
     }
 
-    private static void validateDuration(Duration value, String field) {
+    /** Validates a non-negative well-formed duration. */
+    public static void validateDuration(Duration value, String field) {
         require(value.getSeconds() >= 0 && value.getNanos() >= 0
                         && value.getNanos() < 1_000_000_000,
                 field + " must be a non-negative valid duration");
