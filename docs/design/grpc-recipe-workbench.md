@@ -276,6 +276,21 @@ agent or a ProtoMolt exploration session.
 | --- | --- | --- | --- |
 | Pipeline contract and static checker | **LANDED: #107** | Define the pipeline execution contract covering every gRPC streaming shape (unary, server- and client-streaming, bidi) with typed edge semantics preserved, plus the static checker that verifies a compiled recipe against that contract before any execution. Branch from `main` after the credential-references package lands. Do not add pipeline execution, application generation, or container tooling. | In-process tests prove the checker accepts shape-correct pipelines, rejects cardinality and streaming-shape mismatches with descriptor-precise messages, and validates a compiled recipe fully offline with no container or GPU. |
 
+#### Agent work delegation
+
+Phase 4's recipes and pipelines execute deterministic work. Some steps in a
+larger delivery are judgment work: bounded, reviewable chunks a coordinator
+delegates to an LLM-backed worker process. This boundary is deliberately
+separate from ChainJob (durable queue-driven chain execution) and from the
+pipeline contract (typed dataflow): the coordinator holds one bidirectional
+stream per worker, the worker's runner owns the socket while the provider
+stays metadata, one attempt's lease is active at a time, and nothing is
+accepted without structured evidence that every required check ran.
+
+| Work package | Status | Ownership boundary | Acceptance evidence |
+| --- | --- | --- | --- |
+| Agent delegation contract and offline lifecycle checker | **PR OPEN: #109** | The engine-neutral coordinator/worker bidirectional-streaming contract (hello and admission, offer/accept/reject, a single active lease with heartbeat, renewal, and expiry, monotonic progress and resumable checkpoints, the completion-candidate/revision-requested/accepted review flow, and cancellation) plus the pure in-process reducer that checks a recorded transcript and never repairs it. No persistence, Kafka, MCP actions, provider adapters, or process launching. | In-process tests prove happy-path completion, reject/re-offer, checkpoint resume after reconnect, lease expiry and reassignment, the cancellation race, revision and re-review, idempotent and conflicting duplicates, missing acceptance evidence, stale worker and revision, checkpoint regression, and terminal immutability; dogfood tests prove the contract's own validate.v1 rules evaluate. |
+
 ### Phase 5: grounded retrieval
 
 - Define the engine-neutral retrieval and evidence contracts.
