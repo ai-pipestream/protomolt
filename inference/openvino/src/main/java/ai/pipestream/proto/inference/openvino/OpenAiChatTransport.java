@@ -1,6 +1,8 @@
 package ai.pipestream.proto.inference.openvino;
 
 import ai.pipestream.proto.inference.spi.ChunkObserver;
+import ai.pipestream.proto.inference.spi.CredentialResolver;
+import ai.pipestream.proto.inference.spi.EnvCredentialResolver;
 import ai.pipestream.proto.inference.spi.InferenceException;
 import ai.pipestream.proto.inference.v1.ChatTurn;
 import ai.pipestream.proto.inference.v1.FinishReason;
@@ -39,6 +41,13 @@ import java.util.List;
  * protobuf. Unset sampling knobs are omitted from the wire body so the
  * backend applies its own defaults (a proto3 zero is not a value).</p>
  *
+ * <p>When the catalog entry carries a {@code credential_ref}, the resolver is
+ * consulted immediately before each request is built and the result goes out
+ * as {@code Authorization: Bearer <resolved>}; an entry without a reference
+ * sends no authorization header. Resolution failures surface before any HTTP
+ * request is made, and neither the reference nor the resolved material ever
+ * enters the request body or an exception message.</p>
+ *
  * <p>Every failure is an {@link InferenceException} naming the model id and
  * endpoint. Instances are stateless and thread-safe.</p>
  */
@@ -51,9 +60,11 @@ public final class OpenAiChatTransport {
     private final String chatPath;
     private final HttpClient client;
     private final Duration requestTimeout;
+    private final CredentialResolver credentialResolver;
 
     /**
-     * Creates the transport for one provider profile.
+     * Creates the transport for one provider profile with the production
+     * environment-variable credential resolver.
      *
      * @param providerId the id stamped on responses' provenance (e.g. "openvino", "openai")
      * @param chatPath the chat-completions path (e.g. "/v3/chat/completions" for OVMS,
@@ -61,9 +72,26 @@ public final class OpenAiChatTransport {
      * @param requestTimeout the timeout for one generation call
      */
     public OpenAiChatTransport(String providerId, String chatPath, Duration requestTimeout) {
+        this(providerId, chatPath, requestTimeout, new EnvCredentialResolver());
+    }
+
+    /**
+     * Creates the transport for one provider profile with an explicit
+     * credential resolver.
+     *
+     * @param providerId the id stamped on responses' provenance (e.g. "openvino", "openai")
+     * @param chatPath the chat-completions path (e.g. "/v3/chat/completions" for OVMS,
+     *     "/v1/chat/completions" for Ollama, vLLM, llama.cpp)
+     * @param requestTimeout the timeout for one generation call
+     * @param credentialResolver resolves catalog credential references (e.g.
+     *     {@code env:OPENAI_TOKEN}) to bearer material at request time
+     */
+    public OpenAiChatTransport(String providerId, String chatPath, Duration requestTimeout,
+                               CredentialResolver credentialResolver) {
         this.providerId = providerId;
         this.chatPath = chatPath;
         this.requestTimeout = requestTimeout;
+        this.credentialResolver = credentialResolver;
         this.client = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
@@ -101,9 +129,11 @@ public final class OpenAiChatTransport {
     public void generateStream(ModelEntry model, GenerateStreamRequest request, ChunkObserver observer) {
         ObjectNode body = chatBody(model, request.getMessagesList(), request.getTemperature(),
                 request.getTopP(), request.getMaxOutputTokens(), true, null);
-        HttpRequest httpRequest = HttpRequest.newBuilder(chatUri(model))
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(chatUri(model))
                 .timeout(requestTimeout)
-                .header("Content-Type", "application/json")
+                .header("Content-Type", "application/json");
+        authorize(model, requestBuilder);
+        HttpRequest httpRequest = requestBuilder
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
         HttpResponse<java.io.InputStream> response;
@@ -234,9 +264,11 @@ public final class OpenAiChatTransport {
     }
 
     private JsonNode post(ModelEntry model, ObjectNode body, boolean stream) {
-        HttpRequest httpRequest = HttpRequest.newBuilder(chatUri(model))
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(chatUri(model))
                 .timeout(requestTimeout)
-                .header("Content-Type", "application/json")
+                .header("Content-Type", "application/json");
+        authorize(model, requestBuilder);
+        HttpRequest httpRequest = requestBuilder
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
         HttpResponse<String> response;
@@ -268,6 +300,20 @@ public final class OpenAiChatTransport {
                     + " answered with no choices: " + abbreviate(response.toString()));
         }
         return choice;
+    }
+
+    /**
+     * Sets the bearer credential when the entry carries a reference. Resolution
+     * happens here, immediately before the request is built, so a resolution
+     * failure surfaces before any HTTP request is made.
+     */
+    private void authorize(ModelEntry model, HttpRequest.Builder requestBuilder) {
+        String credentialRef = model.getCredentialRef();
+        if (!credentialRef.isEmpty()) {
+            requestBuilder.header("Authorization",
+                    "Bearer " + CredentialResolver.resolveBearer(
+                            credentialResolver, credentialRef));
+        }
     }
 
     private URI chatUri(ModelEntry model) {

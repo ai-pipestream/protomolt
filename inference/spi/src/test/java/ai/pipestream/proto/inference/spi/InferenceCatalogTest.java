@@ -52,6 +52,18 @@ class InferenceCatalogTest {
     }
 
     @Test
+    void incompleteEntryErrorDoesNotRenderCredentialReference() {
+        String credentialRef = "env:PRIVATE_MODEL_TOKEN";
+        InferenceException failure = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> catalog.register(ModelEntry.newBuilder()
+                        .setCredentialRef(credentialRef).build()),
+                InferenceException.class);
+
+        assertThat(failure).hasMessageContaining("no id");
+        assertThat(failure.getMessage().contains(credentialRef)).isFalse();
+    }
+
+    @Test
     void unknownIdFailsLoud() {
         assertThatThrownBy(() -> catalog.get("nope"))
                 .isInstanceOf(UnknownModelException.class)

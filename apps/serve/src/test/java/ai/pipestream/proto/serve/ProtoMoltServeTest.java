@@ -198,4 +198,38 @@ class ProtoMoltServeTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("telepathy");
     }
+
+    @Test
+    void inferenceModelSpecParsesCredentialReference() {
+        InferenceEngines engines = ProtoMoltServe.inferenceEngines(java.util.List.of(
+                "judge|openai|https://models.example.test|backend||structured-output|"
+                        + "env:OPENAI_TOKEN"));
+
+        ModelEntry entry = engines.describe(DescribeModelRequest.newBuilder()
+                .setModel("judge").build()).getEntry();
+        assertThat(entry.getCredentialRef()).isEqualTo("env:OPENAI_TOKEN");
+        assertThat(entry.getCapabilities().getStructuredOutput()).isTrue();
+    }
+
+    @Test
+    void inferenceModelSpecWithoutCredentialReferenceLeavesItEmpty() {
+        InferenceEngines engines = ProtoMoltServe.inferenceEngines(java.util.List.of(
+                "judge|openai|https://models.example.test|backend|machine:krick|streaming"));
+
+        ModelEntry entry = engines.describe(DescribeModelRequest.newBuilder()
+                .setModel("judge").build()).getEntry();
+        assertThat(entry.getCredentialRef()).isEmpty();
+    }
+
+    @Test
+    void inferenceModelSpecRejectsMalformedCredentialReference() {
+        String credentialRef = "not-a-valid-reference";
+        IllegalArgumentException failure = org.assertj.core.api.Assertions.catchThrowableOfType(() ->
+                ProtoMoltServe.inferenceEngines(java.util.List.of(
+                        "judge|openai|https://models.example.test||||" + credentialRef)),
+                IllegalArgumentException.class);
+
+        assertThat(failure).hasMessageContaining("credential");
+        assertThat(failure.getMessage().contains(credentialRef)).isFalse();
+    }
 }

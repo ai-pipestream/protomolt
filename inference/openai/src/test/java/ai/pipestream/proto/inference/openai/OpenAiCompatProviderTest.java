@@ -1,8 +1,12 @@
 package ai.pipestream.proto.inference.openai;
 
+import ai.pipestream.proto.inference.spi.ChunkObserver;
+import ai.pipestream.proto.inference.spi.InferenceException;
 import ai.pipestream.proto.inference.v1.ChatTurn;
 import ai.pipestream.proto.inference.v1.GenerateRequest;
 import ai.pipestream.proto.inference.v1.GenerateResponse;
+import ai.pipestream.proto.inference.v1.GenerateStreamRequest;
+import ai.pipestream.proto.inference.v1.GenerateStreamResponse;
 import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import ai.pipestream.proto.inference.v1.Role;
@@ -19,6 +23,8 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +35,13 @@ class OpenAiCompatProviderTest {
 
     private HttpServer server;
     private final AtomicReference<String> lastBody = new AtomicReference<>();
+    private final AtomicReference<String> lastAuthorization = new AtomicReference<>();
+    private volatile String responseBody = """
+            {"id":"chat-1","model":"gpt-oss:20b",
+             "choices":[{"index":0,"message":{"role":"assistant","content":"GUILTY"},
+                         "finish_reason":"stop"}],
+             "usage":{"prompt_tokens":42,"completion_tokens":3,"total_tokens":45}}
+            """;
 
     private final OpenAiCompatProvider provider = new OpenAiCompatProvider(Duration.ofSeconds(5));
 
@@ -36,13 +49,9 @@ class OpenAiCompatProviderTest {
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
+            lastAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             lastBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            byte[] bytes = """
-                    {"id":"chat-1","model":"gpt-oss:20b",
-                     "choices":[{"index":0,"message":{"role":"assistant","content":"GUILTY"},
-                                 "finish_reason":"stop"}],
-                     "usage":{"prompt_tokens":42,"completion_tokens":3,"total_tokens":45}}
-                    """.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream out = exchange.getResponseBody()) {
@@ -105,5 +114,79 @@ class OpenAiCompatProviderTest {
         assertThat(body.at("/response_format/json_schema/schema"))
                 .isEqualTo(MAPPER.readTree(constraint.getJsonSchema()));
         assertThat(lastBody.get()).doesNotContain("credentialRef", "OPENAI_TOKEN");
+    }
+
+    @Test
+    void unarySendsTheResolvedBearerCredentialAndKeepsItOutOfTheBody() {
+        OpenAiCompatProvider authenticated = new OpenAiCompatProvider(Duration.ofSeconds(5),
+                ref -> "openai-secret-token");
+        ModelEntry model = ModelEntry.newBuilder()
+                .setId("gpt-oss-20b-plaintiff")
+                .setProvider("openai")
+                .setEndpoint("http://127.0.0.1:" + server.getAddress().getPort())
+                .setBackendModel("gpt-oss:20b")
+                .setCredentialRef("env:OPENAI_TOKEN")
+                .build();
+
+        authenticated.generate(model, GenerateRequest.newBuilder()
+                .setModel(model.getId())
+                .addMessages(ChatTurn.newBuilder().setRole(Role.ROLE_USER).setContent("verdict?"))
+                .build());
+
+        assertThat(lastAuthorization.get()).isEqualTo("Bearer openai-secret-token");
+        assertThat(lastBody.get())
+                .doesNotContain("openai-secret-token")
+                .doesNotContain("env:OPENAI_TOKEN");
+    }
+
+    @Test
+    void streamingSendsTheResolvedBearerCredential() {
+        responseBody = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"}}]}\n\n"
+                + "data: [DONE]\n\n";
+        OpenAiCompatProvider authenticated = new OpenAiCompatProvider(Duration.ofSeconds(5),
+                ref -> "openai-secret-token");
+        ModelEntry model = ModelEntry.newBuilder()
+                .setId("gpt-oss-20b-plaintiff")
+                .setProvider("openai")
+                .setEndpoint("http://127.0.0.1:" + server.getAddress().getPort())
+                .setBackendModel("gpt-oss:20b")
+                .setCredentialRef("env:OPENAI_TOKEN")
+                .build();
+        List<String> deltas = new ArrayList<>();
+
+        authenticated.generateStream(model, GenerateStreamRequest.newBuilder()
+                        .setModel(model.getId())
+                        .addMessages(ChatTurn.newBuilder()
+                                .setRole(Role.ROLE_USER).setContent("verdict?"))
+                        .build(),
+                new ChunkObserver() {
+                    @Override
+                    public void onNext(GenerateStreamResponse chunk) {
+                        if (!chunk.getLast()) {
+                            deltas.add(chunk.getTextDelta());
+                        }
+                    }
+
+                    @Override
+                    public void onComplete() {
+                    }
+
+                    @Override
+                    public void onError(InferenceException e) {
+                        throw new AssertionError(e);
+                    }
+                });
+
+        assertThat(deltas).containsExactly("OK");
+        assertThat(lastAuthorization.get()).isEqualTo("Bearer openai-secret-token");
+        assertThat(lastBody.get())
+                .doesNotContain("openai-secret-token")
+                .doesNotContain("env:OPENAI_TOKEN");
+    }
+
+    @Test
+    void noCredentialReferenceSendsNoAuthorizationHeader() {
+        speaksV1AndStampsOpenaiProvenance();
+        assertThat(lastAuthorization.get()).isNull();
     }
 }
