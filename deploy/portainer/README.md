@@ -50,6 +50,10 @@ The server starts with a durable Git registry, durable service-profile and
 recipe workspaces, and the demo seed. An MCP client can therefore connect and
 immediately discover useful resources and verbs. Registered gRPC targets need
 only be routable from the NAS; they do not have to share this Compose network.
+Unauthenticated reflection targets can be registered now. Authenticated
+service-profile reflection remains a bounded delegatable work item in
+`docs/design/grpc-recipe-workbench.md`; the coordinator keeps its API token
+enabled until that host credential boundary lands.
 
 Keycloak uses its embedded development database on a persistent volume and is
 intentionally started with `start-dev`. It is suitable for this private
