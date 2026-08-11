@@ -272,7 +272,7 @@ agent or a ProtoMolt exploration session.
 
 | Work package | Status | Ownership boundary | Acceptance evidence |
 | --- | --- | --- | --- |
-| Pipeline contract and static checker | **NEXT AGENT** | Define the pipeline execution contract covering every gRPC streaming shape (unary, server- and client-streaming, bidi) with typed edge semantics preserved, plus the static checker that verifies a compiled recipe against that contract before any execution. Branch from `main` after the credential-references package lands. Do not add pipeline execution, application generation, or container tooling. | In-process tests prove the checker accepts shape-correct pipelines, rejects cardinality and streaming-shape mismatches with descriptor-precise messages, and validates a compiled recipe fully offline with no container or GPU. |
+| Pipeline contract and static checker | **PR OPEN: #107** | Define the pipeline execution contract covering every gRPC streaming shape (unary, server- and client-streaming, bidi) with typed edge semantics preserved, plus the static checker that verifies a compiled recipe against that contract before any execution. Branch from `main` after the credential-references package lands. Do not add pipeline execution, application generation, or container tooling. | In-process tests prove the checker accepts shape-correct pipelines, rejects cardinality and streaming-shape mismatches with descriptor-precise messages, and validates a compiled recipe fully offline with no container or GPU. |
 
 ### Phase 5: grounded retrieval
 
@@ -342,3 +342,26 @@ Phase 2 delivers the full record-replay-promote loop:
   The acceptance test drives two live gRPC services through streamable HTTP
   MCP, executes all five actions, restarts the host, and recovers the exact
   promoted recipe fingerprint from registry storage.
+
+Phase 4 opens with the pipeline contract and its static checker
+(transform/pipeline):
+
+- The `Pipeline` contract supersedes the unused runtime-oriented draft in
+  `pipeline.proto`: every gRPC step declares its method's streaming shape and
+  both edge cardinalities, the recipe's `TypedEdge` and `FanOutSpec` are
+  embedded unchanged, and explicit `unnest` (one to stream) and `collect`
+  (stream to one) steps are the only cardinality transitions. Every persisted
+  field carries validate.v1 bounds and meta.v1 sensitivity metadata; no field
+  is indexed, because none is genuinely searchable.
+- `RecipePipelineCompiler` normalizes a validated recipe into the contract
+  against the exact descriptor set it was checked against: top-level rule
+  lanes become synthesized edges over the full scope, streaming shapes and
+  cardinalities are declared from descriptor flags, and compilation is
+  deterministic and fail-fast.
+- `PipelineChecker` verifies a pipeline fully offline. It re-derives every
+  shape and cardinality from the descriptors, runs every mapping, CEL rule,
+  gate, and projection through the same `RuleChecker`/`MessageProjection`
+  machinery the chain verifier uses, and rejects mismatches with
+  descriptor-precise messages naming the file, type, field path, and
+  streaming flags. A checked pipeline cannot fail on a shape or type error at
+  run time.
