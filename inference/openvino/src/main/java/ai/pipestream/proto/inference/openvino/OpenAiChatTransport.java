@@ -311,7 +311,8 @@ public final class OpenAiChatTransport {
         String credentialRef = model.getCredentialRef();
         if (!credentialRef.isEmpty()) {
             requestBuilder.header("Authorization",
-                    "Bearer " + credentialResolver.resolve(credentialRef));
+                    "Bearer " + CredentialResolver.resolveBearer(
+                            credentialResolver, credentialRef));
         }
     }
 

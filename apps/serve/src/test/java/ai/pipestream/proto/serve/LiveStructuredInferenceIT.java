@@ -195,26 +195,41 @@ class LiveStructuredInferenceIT {
         // resolved bearer token, and the token never entered a request body.
         if (expectedBearer != null) {
             assertThat(proxy.authorizations()).isNotEmpty();
-            for (String authorization : proxy.authorizations()) {
-                assertThat(authorization).isEqualTo(expectedBearer);
-            }
+            boolean everyHeaderMatches = proxy.authorizations().stream()
+                    .allMatch(expectedBearer::equals);
+            assertThat(everyHeaderMatches)
+                    .as("every provider request carried the configured bearer credential")
+                    .isTrue();
             String token = expectedBearer.substring("Bearer ".length());
-            for (String body : proxy.bodies()) {
-                assertThat(body).doesNotContain(token);
-            }
+            boolean bodyContainsToken = proxy.bodies().stream()
+                    .anyMatch(body -> body.contains(token));
+            assertThat(bodyContainsToken)
+                    .as("provider request bodies never contain bearer material")
+                    .isFalse();
         }
 
         // Persistence-level proof: no file under the recipe workspace (input,
         // request, response, and output artifacts plus the stored run
-        // evidence) carries either sentinel.
+        // evidence) carries either sentinel, credential reference, or bearer
+        // material. Boolean assertions deliberately avoid printing credential
+        // values if this live check fails.
+        boolean credentialEvidenceLeak = false;
         try (Stream<Path> paths = Files.walk(recipes)) {
             for (Path path : paths.filter(Files::isRegularFile).toList()) {
                 String content = new String(Files.readAllBytes(path),
                         StandardCharsets.ISO_8859_1);
                 assertThat(content).as("persisted file %s", path)
                         .doesNotContain(EXCLUDED_SENTINEL, SENSITIVE_SENTINEL);
+                if (expectedBearer != null) {
+                    String token = expectedBearer.substring("Bearer ".length());
+                    credentialEvidenceLeak |= content.contains(token)
+                            || content.contains(credentialRef);
+                }
             }
         }
+        assertThat(credentialEvidenceLeak)
+                .as("persisted recipe evidence excludes credential references and material")
+                .isFalse();
     }
 
     /** The bearer header value the transport must send for the configured reference. */

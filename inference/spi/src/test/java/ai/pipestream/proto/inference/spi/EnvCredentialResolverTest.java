@@ -56,6 +56,11 @@ class EnvCredentialResolverTest {
         assertThatThrownBy(() -> empty.resolve(REF))
                 .isInstanceOf(CredentialResolutionException.class)
                 .hasMessageContaining("unset or empty");
+
+        EnvCredentialResolver blank = new EnvCredentialResolver(name -> "   ");
+        assertThatThrownBy(() -> blank.resolve(REF))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("unset or empty");
     }
 
     @Test
@@ -78,5 +83,29 @@ class EnvCredentialResolverTest {
                 .hasMessageNotContaining("Env:OPENAI_TOKEN");
         assertThatThrownBy(() -> CredentialResolver.checkFormat(""))
                 .isInstanceOf(CredentialResolutionException.class);
+        assertThatThrownBy(() -> CredentialResolver.checkFormat(
+                "env:" + "X".repeat(CredentialResolver.MAX_REFERENCE_LENGTH)))
+                .isInstanceOf(CredentialResolutionException.class);
+    }
+
+    @Test
+    void transportGuardRejectsBadCustomResolverResultsWithoutEchoingThem() {
+        assertThatThrownBy(() -> CredentialResolver.resolveBearer(ref -> null, REF))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("no credential material");
+        assertThatThrownBy(() -> CredentialResolver.resolveBearer(ref -> "bad token", REF))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("not valid bearer-token");
+        assertThatThrownBy(() -> CredentialResolver.resolveBearer(ref ->
+                        "x".repeat(CredentialResolver.MAX_CREDENTIAL_LENGTH + 1), REF))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("size limit");
+
+        String secret = "secret-from-resolver-exception";
+        CredentialResolutionException failure = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> CredentialResolver.resolveBearer(ref -> {
+                    throw new CredentialResolutionException(secret);
+                }, REF), CredentialResolutionException.class);
+        assertThat(failure.getMessage().contains(secret)).isFalse();
     }
 }

@@ -397,9 +397,10 @@ public final class ProtoMoltServe implements AutoCloseable {
         InferenceEngines engines = new InferenceEngines(catalog);
         for (String spec : specs) {
             String[] parts = spec.split("\\|", -1);
+            String displaySpec = redactCredentialReference(spec);
             if (parts.length < 3 || parts.length > 7
                     || parts[0].isBlank() || parts[1].isBlank() || parts[2].isBlank()) {
-                throw new IllegalArgumentException("bad --inference-model spec '" + spec
+                throw new IllegalArgumentException("bad --inference-model spec '" + displaySpec
                         + "' (want id|provider|endpoint[|backend[|labels[|capabilities"
                         + "[|credential-ref]]]])");
             }
@@ -415,7 +416,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     String[] kv = label.split(":", 2);
                     if (kv.length != 2 || kv[0].isBlank()) {
                         throw new IllegalArgumentException("bad label '" + label
-                                + "' in --inference-model spec '" + spec + "' (want k:v)");
+                                + "' in --inference-model spec '" + displaySpec
+                                + "' (want k:v)");
                     }
                     entry.putLabels(kv[0].trim(), kv[1].trim());
                 }
@@ -428,7 +430,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                         case "thinking" -> capabilities.setThinking(true);
                         case "structured-output" -> capabilities.setStructuredOutput(true);
                         default -> throw new IllegalArgumentException("unknown capability '"
-                                + capability + "' in --inference-model spec '" + spec + "'");
+                                + capability + "' in --inference-model spec '"
+                                + displaySpec + "'");
                     }
                 }
                 entry.setCapabilities(capabilities);
@@ -439,13 +442,27 @@ public final class ProtoMoltServe implements AutoCloseable {
                     CredentialResolver.checkFormat(credentialRef);
                 } catch (CredentialResolutionException e) {
                     throw new IllegalArgumentException("bad credential reference in "
-                            + "--inference-model spec '" + spec + "': " + e.getMessage(), e);
+                            + "--inference-model spec '" + displaySpec + "': "
+                            + e.getMessage(), e);
                 }
                 entry.setCredentialRef(credentialRef);
             }
             engines.register(entry.build());
         }
         return engines;
+    }
+
+    /** Keeps a secret-sensitive credential reference out of launcher diagnostics. */
+    private static String redactCredentialReference(String spec) {
+        String[] parts = spec.split("\\|", -1);
+        if (parts.length < 7) {
+            return spec;
+        }
+        parts[6] = "<credential-ref>";
+        for (int i = 7; i < parts.length; i++) {
+            parts[i] = "<redacted>";
+        }
+        return String.join("|", parts);
     }
 
     /**

@@ -30,7 +30,9 @@ public final class InferenceCatalog {
      */
     public void register(ModelEntry entry) {
         if (entry.getId().isEmpty()) {
-            throw new InferenceException("catalog entry has no id: " + entry);
+            // ModelEntry now contains a secret-sensitive credential reference;
+            // never stringify the whole entry into a failure message.
+            throw new InferenceException("catalog entry has no id");
         }
         if (entry.getProvider().isEmpty()) {
             throw new InferenceException("catalog entry " + entry.getId() + " has no provider");

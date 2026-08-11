@@ -111,7 +111,9 @@ validated at startup, an unset or empty variable fails the request before any
 HTTP call, and neither the reference nor the resolved value ever enters a
 request body or an error message. The catalog specification accepts no
 credential material itself; credentials remain host-owned and must never be
-placed in model labels.
+placed in model labels. Resolved values are bounded to 16 KiB and must use
+RFC 6750 bearer-token characters before the HTTP client can construct a
+header.
 
 `--demo` seeds a sample order-management schema (validation rules, indexing
 hints, metadata, a service) into a temp-directory registry and registers its

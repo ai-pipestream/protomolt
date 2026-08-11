@@ -46,7 +46,7 @@ public final class EnvCredentialResolver implements CredentialResolver {
                     + "scheme (supported: " + SCHEME + ")");
         }
         String value = environment.apply(credentialRef.substring(colon + 1));
-        if (value == null || value.isEmpty()) {
+        if (value == null || value.isBlank()) {
             throw new CredentialResolutionException("credential reference does not "
                     + "resolve: the referenced environment variable is unset or empty");
         }

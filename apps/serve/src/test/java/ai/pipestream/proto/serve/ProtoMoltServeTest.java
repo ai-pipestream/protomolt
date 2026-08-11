@@ -223,10 +223,13 @@ class ProtoMoltServeTest {
 
     @Test
     void inferenceModelSpecRejectsMalformedCredentialReference() {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        String credentialRef = "not-a-valid-reference";
+        IllegalArgumentException failure = org.assertj.core.api.Assertions.catchThrowableOfType(() ->
                 ProtoMoltServe.inferenceEngines(java.util.List.of(
-                        "judge|openai|https://models.example.test||||not a reference")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("credential");
+                        "judge|openai|https://models.example.test||||" + credentialRef)),
+                IllegalArgumentException.class);
+
+        assertThat(failure).hasMessageContaining("credential");
+        assertThat(failure.getMessage().contains(credentialRef)).isFalse();
     }
 }

@@ -24,6 +24,12 @@ import java.util.regex.Pattern;
 @FunctionalInterface
 public interface CredentialResolver {
 
+    /** Mirrors {@code ModelEntry.credential_ref}'s validated maximum. */
+    int MAX_REFERENCE_LENGTH = 256;
+
+    /** Prevents an environment lookup from becoming an unbounded HTTP header. */
+    int MAX_CREDENTIAL_LENGTH = 16 * 1024;
+
     /**
      * The well-formed reference shape: {@code <scheme>:<name>}, a lowercase
      * scheme and a name of word characters, dots, dashes, and slashes. Every
@@ -31,6 +37,9 @@ public interface CredentialResolver {
      * the same way everywhere.
      */
     Pattern REFERENCE_FORMAT = Pattern.compile("^[a-z][a-z0-9-]*:[A-Za-z0-9._/-]+$");
+
+    /** RFC 6750 bearer-token characters, including optional base64 padding. */
+    Pattern BEARER_FORMAT = Pattern.compile("^[A-Za-z0-9\\-._~+/]+=*$");
 
     /**
      * Resolves one reference to its credential material.
@@ -55,9 +64,46 @@ public interface CredentialResolver {
      *     reference
      */
     static void checkFormat(String credentialRef) {
-        if (credentialRef == null || !REFERENCE_FORMAT.matcher(credentialRef).matches()) {
+        if (credentialRef == null || credentialRef.length() > MAX_REFERENCE_LENGTH
+                || !REFERENCE_FORMAT.matcher(credentialRef).matches()) {
             throw new CredentialResolutionException("malformed credential reference "
                     + "(want '<scheme>:<name>', e.g. env:OPENAI_TOKEN)");
         }
+    }
+
+    /**
+     * Resolves and validates material before a transport puts it in a bearer
+     * header. This guard applies to injected resolvers as well as the built-in
+     * environment resolver, and deliberately discards arbitrary resolver
+     * exception messages because they may contain credential material.
+     *
+     * @param resolver the configured resolver
+     * @param credentialRef the already opaque catalog reference
+     * @return bounded, header-safe bearer material
+     * @throws CredentialResolutionException without the reference or material
+     */
+    static String resolveBearer(CredentialResolver resolver, String credentialRef) {
+        checkFormat(credentialRef);
+        final String credential;
+        try {
+            credential = resolver.resolve(credentialRef);
+        } catch (RuntimeException e) {
+            // Resolver implementations are plugins. Do not trust their
+            // exception text or cause chain to exclude credential material.
+            throw new CredentialResolutionException("credential resolution failed");
+        }
+        if (credential == null || credential.isBlank()) {
+            throw new CredentialResolutionException(
+                    "credential resolver returned no credential material");
+        }
+        if (credential.length() > MAX_CREDENTIAL_LENGTH) {
+            throw new CredentialResolutionException(
+                    "resolved credential exceeds the bearer header size limit");
+        }
+        if (!BEARER_FORMAT.matcher(credential).matches()) {
+            throw new CredentialResolutionException(
+                    "resolved credential is not valid bearer-token material");
+        }
+        return credential;
     }
 }
