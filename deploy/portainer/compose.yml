@@ -20,7 +20,7 @@ services:
     restart: "no"
 
   serve:
-    image: ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:5f69b73168d42e2e8e02ee8cf3fa4911634bc121f34eaa3d0dac22c03051fa21
+    image: ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:5cd5ee8b4e2e7e8668ac9b5bbebcddc12fa54123ac69e083f329b7c082de99e1
     container_name: protomolt-coordinator
     command:
       - --registry-git
