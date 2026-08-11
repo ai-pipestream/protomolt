@@ -15,7 +15,7 @@
  * separate step through {@link ai.pipestream.proto.emit.BundleSink}; no destination rides in the
  * request.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/emitting.md">Emitting
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/emitting.md">Emitting
  * bundles guide</a> for the bundle layout and the sink options.</p>
  */
 package ai.pipestream.proto.emit.okf;

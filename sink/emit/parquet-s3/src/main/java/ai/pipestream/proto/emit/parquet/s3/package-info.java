@@ -10,7 +10,7 @@
  * protomolt-iceberg-s3's {@code S3Catalogs}, on the raw SDK client rather than Iceberg's
  * {@code S3FileIO}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/emitting.md">Emitting
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/emitting.md">Emitting
  * bundles guide</a> for the Parquet renderer itself.</p>
  */
 package ai.pipestream.proto.emit.parquet.s3;

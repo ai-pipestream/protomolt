@@ -24,7 +24,7 @@
  * {@code ai.pipestream.proto.sources} produces descriptors that can be fed
  * back into one.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/descriptor-sources.md">Descriptor
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/core/descriptor-sources.md">Descriptor
  * sources guide</a> for the full loader table and usage.</p>
  */
 package ai.pipestream.proto.descriptors;

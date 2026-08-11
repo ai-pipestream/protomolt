@@ -19,7 +19,7 @@
  * {@code ai.pipestream.proto.mapper} and {@code ai.pipestream.proto.cel}; this package adds
  * the named-source scope on top of them.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/design/join-shapes.md">join
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/join-shapes.md">join
  * shapes design note</a> for the rule syntax and the derived-shape kinds.</p>
  */
 package ai.pipestream.proto.shapes;

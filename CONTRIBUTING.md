@@ -15,7 +15,7 @@ cd protomolt
 You need JDK 21+ and [buf](https://buf.build/docs/installation) on the
 `PATH`. `./gradlew build` runs the full test suite, `buf lint`, and the
 protovalidate conformance gate. See
-[docs/building.md](docs/building.md) for the optional registry integration
+[docs/operations/building.md](docs/operations/building.md) for the optional registry integration
 tests.
 
 ## Ground rules
@@ -30,7 +30,7 @@ tests.
   no separate style guide to memorize.
 - Keep modules decoupled: `core/` must not depend on any framework, engine
   plugins communicate through `search/index/spi`, and validation dialects plug in
-  via `ValidationRuleSource` — new capabilities should arrive as new
+  via `ValidationRuleSource`: new capabilities should arrive as new
   modules behind existing seams rather than new dependencies in existing
   ones.
 
@@ -51,7 +51,7 @@ The most useful contributions tend to be implementations of existing SPIs:
 
 Open a pull request against `main`. CI must pass (build, tests, lint,
 breaking-change check). For anything larger than a bug fix, consider opening
-an issue first to discuss the approach — especially for new modules, where
+an issue first to discuss the approach: especially for new modules, where
 naming and placement matter.
 
 ## License

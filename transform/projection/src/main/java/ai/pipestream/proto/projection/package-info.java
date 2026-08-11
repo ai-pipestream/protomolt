@@ -23,7 +23,7 @@
  * that makes a mapping part of the schema rather than external configuration.</p>
  *
  * <p>See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/projection.md">Projections
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/projection.md">Projections
  * guide</a> for the option syntax and resolution semantics.</p>
  */
 package ai.pipestream.proto.projection;

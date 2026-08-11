@@ -17,7 +17,7 @@
  * reading any dialect directly. Rule ids emitted for these constraints are stable and align with
  * protovalidate's naming, so results interoperate across dialects.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">
  * validation guide</a> for the rule surface each record covers.
  */
 package ai.pipestream.proto.validate.model;

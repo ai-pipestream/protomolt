@@ -1,71 +1,76 @@
 # ProtoMolt documentation
 
-Start with the [project README](../README.md) for an overview and a
-build-from-clone quick start. The guides here cover each subsystem in depth.
+The [project README](../README.md) has the build and first-run instructions.
+The guides below follow the repository's module layout.
 
-## Guides
+## Acquire
 
-| Guide | Covers |
-|---|---|
-| [Descriptor sources](descriptor-sources.md) | The `DescriptorLoader` SPI; classpath, descriptor-set, Apicurio, and Confluent sources; schema hygiene checks |
-| [Gathering proto sources](gathering.md) | The `ProtoGatherer` SPI; filesystem, jar, Git, and Maven gatherers; the descriptor-loader adapter |
-| [Publishing schemas](publishing.md) | The `SchemaPublisher` SPI; Apicurio and Confluent publishers; naming, idempotency, dry runs |
-| [Compatibility checking](compatibility.md) | Typed schema diffs; backward/forward/full/transitive policy evaluation; wire, JSON, and source rule layers |
-| [The registry](registry.md) | Git-backed schema storage; the Confluent-protocol server; compatibility-gated writes; descriptor-set serving |
-| [Actions](actions.md) | The verb catalog — compile, validate, diff, check, render, evaluate — self-describing for consoles and LLM tools |
-| [Generated action inventory](generated/action-inventory.json) | Machine-readable names for the built-in, standalone MCP, and full catalogs; regenerated from the catalog constructors |
-| [MCP server](mcp.md) | The catalog as MCP tools and the registry as MCP resources; the gRPC agent workflow (reflect, invoke, generate); plain-Java stdio transport |
-| [ACP agent](acp.md) | The catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio |
-| [The command line](cli.md) | The catalog as `protomolt-cli`: run any verb with JSON in and JSON out, list the verbs, or drive them from an interactive console |
-| [Stream connectors](connector.md) | The `StreamSource` SPI: push-style inputs (gRPC server streams, Kafka topics) with pause/resume flow control, bridged to synchronous consumers by the bounded `SourcePump` |
-| [Streaming demo](demo-streaming.md) | A server-streaming gRPC call rendered live through the ACP agent, in the terminal or an IDE |
-| [The gRPC service](grpc-service.md) | The catalog as `ProtoMoltService` — typed RPCs served descriptor-natively with reflection; JSON/REST with OpenAPI and Swagger UI; the `protomolt-serve` launcher |
-| [Outbound gRPC channel policy](grpc-channel-policy.md) | Host-owned target, transport, deadline, and channel-concurrency guardrails for outbound gRPC actions |
-| [gRPC service workspaces](service-workspace.md) | Register stable service identities, persist reflected descriptors, inspect method contracts through tools and MCP resources, and refresh schemas explicitly |
-| [Kafka Connect](kafka-connect.md) | The sink (topics drive gRPC methods), the source (server streams feed topics, resumable via CEL tokens), and four protobuf-aware transforms (validate, map, redact, CEL filter) |
-| [Kafka serde](kafka-serde.md) | A protobuf serializer and deserializer speaking the Confluent wire format, enforcing the schema's declared rules on write, with the packaged descriptor set as a floor under the registry |
-| [Joins and derived shapes](design/join-shapes.md) | Multi-source mapping scopes; envelope/projection/oneof output shapes; schema merging with clash resolution; derived schemas as registry subjects; the shape verbs |
-| [Field mapping](mapping.md) | Text rule syntax; CEL filters, selectors, and environments |
-| [Projections](projection.md) | Self-describing message-to-message mappings as descriptor options: candidate paths, CEL, and literals on the target message |
-| [Validation](validation.md) | The rule surface; dialect SPI; protovalidate interoperability and conformance; validating gRPC interceptors |
-| [Quality scoring](quality.md) | CEL-scored quality dimensions declared as message options; weighted composites, measured (and optionally gated) in the Kafka serde |
-| [Schema metadata](metadata.md) | Declared descriptor-option metadata; CEL-based runtime extraction |
-| [Field masking](masking.md) | Schema-declared sensitivity classes masked on every surface: remove, redact, and AES-GCM encrypt/decrypt; the `mask-message` verb and the `RedactMessage` transform |
-| [JSON Schema generation](json-schema.md) | Draft 2020-12 schemas from descriptors and validation rules |
-| [Search indexing](indexing.md) | Indexing hints, plans, NDJSON output, and the Lucene/OpenSearch/Solr plugins |
-| [Text embeddings](embeddings.md) | The `EmbeddingProvider` SPI; the plan-driven `PlanEmbedder` filling VECTOR fields from TEXT fields; the Model2Vec, TEI, and OVMS providers; equivalence certification |
-| [Reranking](rerank.md) | The `RerankProvider` SPI; the TEI gRPC and OVMS REST providers; ranked-list equivalence certification |
-| [Emitting bundles](emitting.md) | The bundle/sink SPI (directory, git, zip), OKF knowledge bundles, and descriptor-driven Parquet |
-| [Microsoft Graph](msgraph.md) | OneDrive/SharePoint files and metadata, and agentless Copilot connector ingestion |
-| [Apache Iceberg](iceberg.md) | Descriptor-driven table schemas and snapshot appends through any Iceberg catalog |
-| [REST gateway and servers](rest-gateway.md) | JSON transcoding, the gateway, OpenAPI, and the six server hosts |
-| [Framework integrations](framework-integrations.md) | Spring Boot auto-configuration and the Quarkus extension |
-| [Core utilities](helpers.md) | `Any`/`Struct` handling, type conversion, message diff, schema hygiene |
-| [Running in Docker](docker.md) | `docker compose up` for the whole API — gRPC, REST, Swagger, console, and MCP over HTTP — plus the ACP agent over stdio |
-| [Building and testing](building.md) | Building from a clone, integration tests, linting, publishing |
+- [Stream connectors](acquire/connector.md): bounded, flow-controlled inputs
+- [Gathering proto sources](acquire/gathering.md): filesystem, jar, Git, and Maven sources
+- [Microsoft Graph](acquire/msgraph.md): OneDrive, SharePoint, and Copilot connectors
+
+## Core and schema
+
+- [Descriptor sources](core/descriptor-sources.md): descriptor loading and hygiene checks
+- [Core utilities](core/helpers.md): `Any`, `Struct`, conversion, and message comparison
+- [Compatibility checking](schema/compatibility.md): wire, JSON, and source compatibility
+- [JSON Schema generation](schema/json-schema.md): draft 2020-12 output from protobuf descriptors
+- [Schema metadata](schema/metadata.md): ownership, sensitivity, descriptions, and extraction
+- [Publishing schemas](schema/publishing.md): Confluent and Apicurio publishers
+- [Registry](schema/registry.md): Git storage, compatibility gates, and registry protocols
+
+## Transform and execution
+
+- [Field mapping](transform/mapping.md): path rules and CEL expressions
+- [Field masking](transform/masking.md): remove, redact, encrypt, and decrypt policies
+- [Projections](transform/projection.md): descriptor-declared message projections
+- [Validation](transform/validation.md): rule dialects, protovalidate, and gRPC enforcement
+- [Quality scoring](transform/quality.md): CEL-based dimensions and weighted scores
+- [Joins and derived shapes](transform/join-shapes.md): joins, unions, merges, and generated shapes
+- [Chain manager](transform/chain-manager.md): checked serial compositions of gRPC calls
+- [Recipes and run evidence](transform/recipes.md): record, replay, promotion, and structured steps
+- [Pipelines](transform/pipeline.md): checked execution across all gRPC streaming shapes
+- [Agent delegation](transform/delegation.md): coordinator and worker streaming contract
+
+## Search and sinks
+
+- [Search indexing](search/indexing.md): index plans and Lucene, OpenSearch, and Solr output
+- [Text embeddings](search/embeddings.md): Model2Vec, TEI, and OVMS providers
+- [Reranking](search/rerank.md): TEI and OVMS rerank providers
+- [Emitting bundles](sink/emitting.md): directory, Git, zip, OKF, and Parquet sinks
+- [Apache Iceberg](sink/iceberg.md): descriptor-driven tables and snapshot appends
+- [Kafka Connect](sink/kafka-connect.md): gRPC source, sink, and protobuf transforms
+- [Kafka serde](sink/kafka-serde.md): Confluent wire format with schema enforcement
+
+## Surfaces
+
+- [Actions](surface/actions.md): the self-describing verb catalog
+- [MCP server](surface/mcp.md): tools, resources, service discovery, and invocation
+- [ACP agent](surface/acp.md): stdio integration for ACP clients
+- [gRPC service](surface/grpc-service.md): typed RPCs, reflection, REST, OpenAPI, and launcher
+- [REST gateway](surface/rest-gateway.md): JSON transcoding and server hosts
+- [Service workspaces](surface/service-workspace.md): persistent service profiles and descriptors
+- [Framework integrations](surface/framework-integrations.md): Spring Boot and Quarkus
+
+The [generated action inventory](generated/action-inventory.json) lists each
+built-in action exposed by the standalone and full catalogs.
+
+## Applications and operations
+
+- [Command line](apps/cli.md): invoke actions from a shell or interactive console
+- [Docker](apps/docker.md): container images and Compose setup
+- [Building and testing](operations/building.md): builds, tests, linting, and publishing
+- [Outbound gRPC policy](operations/grpc-channel-policy.md): target, transport, deadline, and concurrency limits
 
 ## Tutorials
 
-- [Operating an OpenVINO server](tutorials/openvino.md) — reflect, fall back to
-  the KServe schema, introspect models, and run a text → embedding inference,
-  all from an AI agent through the MCP server
-- [Python clients without protoc](tutorials/python.md) — reflect a server,
-  have ProtoMolt generate the `_pb2.py` modules, and call it with plain
-  grpcio; no protoc, no grpcio-tools
+- [OpenVINO from an AI agent](tutorials/openvino.md)
+- [Python clients without protoc](tutorials/python.md)
+- [Streaming through the ACP agent](tutorials/streaming.md)
 
-## Project direction
+## Architecture and records
 
-- [Roadmap](roadmap.md) — toward a schema registry over Git and Maven
-- [Chain manager design](design/chain-manager.md) — typed, registered
-  compositions of gRPC calls: one endpoint in, one composed answer out; a
-  sidecar to existing pipelines, deliberately not a pipeline
-- [Pipeline design](design/pipeline.md): a pipeline is a protobuf message
-  that chains steps together; any gRPC service can be a step, alongside
-  projections, CEL filters and selects, unnest, and collect
-- [gRPC recipe workbench](design/grpc-recipe-workbench.md) — the
-  explore-to-verify-to-promote lifecycle for service profiles, agent-assisted
-  recipes, run evidence, structured inference, and standalone applications
-
-## Records
-
-- [reviews/](reviews/) — dated correctness and security review records
+- [Planned work](design/planned-work.md): open product and hardening work
+- [Intake and parsing](design/intake-and-parsing.md): platform ingestion architecture
+- [Document platform](design/document-platform.md): repository and account service architecture
+- [Review records](reviews): dated correctness and security reviews

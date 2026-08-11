@@ -1,7 +1,7 @@
 # Python clients without protoc
 
 This tutorial takes a Python developer from *"there's a gRPC server at this
-address"* to *"my Python code calls it natively"* — with no protoc installed,
+address"* to *"my Python code calls it natively"*: with no protoc installed,
 no `grpcio-tools`, and no generated stubs checked in. ProtoMolt discovers the
 schema and mints the Python message modules; your side needs exactly two pip
 packages:
@@ -11,11 +11,11 @@ pip install grpcio requests
 ```
 
 Every command and output below was run against a live server. The target
-here is ProtoMolt's own gRPC service (so the tutorial is self-contained —
+here is ProtoMolt's own gRPC service (so the tutorial is self-contained,
 one process is both the toolkit and the demo target), but nothing is
 specific to it: any reflection-enabled gRPC server works identically, and
 servers without reflection work from a registered schema instead (see
-[the gRPC agent workflow](../mcp.md#the-grpc-agent-workflow)).
+[the gRPC agent workflow](../surface/mcp.md#the-grpc-agent-workflow)).
 
 ## 1. Start ProtoMolt
 
@@ -23,7 +23,7 @@ servers without reflection work from a registered schema instead (see
 docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
 ```
 
-(Or run the launcher from a [release zip or a clone](../grpc-service.md#running-everything-protomolt-serve).)
+(Or run the launcher from a [release zip or a clone](../surface/grpc-service.md#running-everything-protomolt-serve).)
 `--demo` seeds a sample order-management schema, so every call below has
 material to work with.
 
@@ -52,7 +52,7 @@ print(reflected["services"])
 
 ## 3. Generate the Python message modules
 
-The reflected descriptor set is a schema input to every other verb —
+The reflected descriptor set is a schema input to every other verb,
 including the code generator, which runs protoc's own Python generator as
 WebAssembly on the server:
 
@@ -79,7 +79,7 @@ Real `protoc --python_out` output, from a server, on demand.
 
 ## 4. Call the server with plain grpcio
 
-`grpcio` can invoke any method given the path and the message classes — the
+`grpcio` can invoke any method given the path and the message classes: the
 `*_pb2_grpc.py` convenience stubs are optional sugar, not a requirement:
 
 ```python
@@ -106,7 +106,7 @@ print([t.full_name for t in response.types])
  'demo.shop.v1.ListOrdersRequest', 'demo.shop.v1.OrderService']
 ```
 
-Native protobuf over gRPC, typed end to end, from Python — and the message
+This is native protobuf over gRPC from Python. The message
 classes were minted moments ago from a reflected schema.
 
 ## 5. Keep going
@@ -136,7 +136,7 @@ for the exact surface name sets.
 ## One honesty note on service stubs
 
 `generate-stubs` runs protoc's built-in generators, which for Python produce
-message modules (`*_pb2.py`) — the `*_pb2_grpc.py` service-stub files come
+message modules (`*_pb2.py`): the `*_pb2_grpc.py` service-stub files come
 from the separate `grpc_python` plugin, which ProtoMolt does not ship yet.
 The `channel.unary_unary(...)` pattern above needs only the message classes
 and is exactly what those stubs wrap. When the gRPC plugin series lands, the
@@ -145,7 +145,7 @@ same call mints both files and step 4 collapses into
 
 ## Related
 
-- [The gRPC service](../grpc-service.md) — the typed surface this tutorial calls
-- [MCP server](../mcp.md) — the same verbs as agent tools
-- [Operating an OpenVINO server](openvino.md) — the same workflow against a
+- [The gRPC service](../surface/grpc-service.md): the typed surface this tutorial calls
+- [MCP server](../surface/mcp.md): the same verbs as agent tools
+- [Operating an OpenVINO server](openvino.md): the same workflow against a
   production inference server

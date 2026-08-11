@@ -12,7 +12,7 @@
  * returning both the source texts and the compiled descriptor set, which makes git a usable
  * contract source for services that do not enable gRPC reflection.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/gathering.md">gathering
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">gathering
  * guide</a>; the SPI and the local sources live in {@code ai.pipestream.proto.gather}.</p>
  */
 package ai.pipestream.proto.gather.git;

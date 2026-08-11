@@ -13,7 +13,7 @@
  * {@link ai.pipestream.proto.lake.iceberg.LocalFileIO} is the local-filesystem counterpart to
  * this package.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/iceberg.md">Apache
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/iceberg.md">Apache
  * Iceberg guide</a> for the object-store lane.</p>
  */
 package ai.pipestream.proto.lake.iceberg.s3;

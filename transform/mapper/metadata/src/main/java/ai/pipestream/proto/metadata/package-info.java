@@ -13,7 +13,7 @@
  * declared on schemas as descriptor options under {@code ai.pipestream.proto.meta}.</p>
  *
  * <p>See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/metadata.md">Schema metadata
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/metadata.md">Schema metadata
  * guide</a> for how the two kinds relate.</p>
  */
 package ai.pipestream.proto.metadata;

@@ -15,7 +15,7 @@
  * Every source in the chain is consulted for every field and message and all violations are
  * merged.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">
  * validation guide</a> for how rule sources are configured.
  */
 package ai.pipestream.proto.validate.spi;

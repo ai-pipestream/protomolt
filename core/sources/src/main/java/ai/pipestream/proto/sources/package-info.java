@@ -19,7 +19,7 @@
  * <p>Descriptors produced here are consumed through
  * {@link ai.pipestream.proto.descriptors.DescriptorRegistry} like any other.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/gathering.md">Gathering
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">Gathering
  * proto sources guide</a>.</p>
  */
 package ai.pipestream.proto.sources;

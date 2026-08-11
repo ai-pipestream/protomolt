@@ -21,7 +21,7 @@
  *
  * <p>{@code ai.pipestream.proto.serve} mounts this service alongside the REST, OpenAPI, and MCP
  * surfaces in one process. See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/grpc-service.md">gRPC
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/grpc-service.md">gRPC
  * service guide</a>.
  */
 package ai.pipestream.proto.grpc.service;

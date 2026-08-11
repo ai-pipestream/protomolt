@@ -21,7 +21,7 @@
  * identifiers inside binary descriptors before they reach a registry or
  * compiler. Both report failures as {@link ProtoSchemaValidationException}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/helpers.md">Core
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/core/helpers.md">Core
  * utilities guide</a>.</p>
  */
 package ai.pipestream.proto.helpers;

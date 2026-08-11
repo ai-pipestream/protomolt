@@ -22,7 +22,7 @@
  * from message contents with CEL selectors is a separate concern and lives in the
  * {@code protomolt-metadata} module.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/metadata.md">Schema
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/metadata.md">Schema
  * metadata guide</a> for the annotation form and the masking surfaces.</p>
  */
 package ai.pipestream.proto.meta;

@@ -14,7 +14,7 @@
  * module is one implementation of the SPI declared in
  * {@code ai.pipestream.proto.kafka.serde}; other metrics systems are bound the same way.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/kafka-serde.md">Kafka
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/kafka-serde.md">Kafka
  * serde guide</a> for the meter names and their tags.</p>
  */
 package ai.pipestream.proto.kafka.serde.micrometer;

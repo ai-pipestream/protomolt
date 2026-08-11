@@ -11,7 +11,7 @@ dependencies {
     testImplementation libs.testcontainers.junit.jupiter
 }
 
-// Forward the Apicurio integration-test endpoint override (see docs/building.md
+// Forward the Apicurio integration-test endpoint override (see docs/operations/building.md
 // "Integration tests") to the test JVM. All lanes self-provision Testcontainers
 // registries; the override only retargets the Apicurio ccompat lanes.
 tasks.withType(Test).configureEach {

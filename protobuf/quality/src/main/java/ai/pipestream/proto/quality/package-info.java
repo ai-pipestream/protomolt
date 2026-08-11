@@ -21,7 +21,7 @@
  * Consumers hold it at the boundaries — the Kafka serde and the validating gRPC server
  * interceptor both turn a composite score into an admission decision.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/quality.md">Quality
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/quality.md">Quality
  * scoring guide</a> for the annotation form and the scoring rules.</p>
  */
 package ai.pipestream.proto.quality;

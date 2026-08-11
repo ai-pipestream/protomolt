@@ -21,7 +21,7 @@
  * classpath observes every record the serde handles without configuration; the
  * {@code protomolt-serde-micrometer} module ships one that reports to Micrometer.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/kafka-serde.md">Kafka
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/kafka-serde.md">Kafka
  * serde guide</a> for configuration and the wire-format details.</p>
  */
 package ai.pipestream.proto.kafka.serde;

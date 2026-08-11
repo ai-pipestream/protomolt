@@ -22,9 +22,9 @@
  * the payload with a generated message class. Apicurio's Confluent-compatible ccompat facade is
  * served instead by {@code protomolt-schema-confluent}.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/descriptor-sources.md">descriptor
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/core/descriptor-sources.md">descriptor
  * sources guide</a> and the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/publishing.md">publishing
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/publishing.md">publishing
  * guide</a> for usage.</p>
  */
 package ai.pipestream.proto.schema.apicurio;

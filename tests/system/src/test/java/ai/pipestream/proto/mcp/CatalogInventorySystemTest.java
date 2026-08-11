@@ -41,13 +41,13 @@ class CatalogInventorySystemTest {
     void catalogDocumentationLinksTheGeneratedInventoryInsteadOfOwningCounts() throws Exception {
         Path root = repositoryRoot();
         Map<String, String> docs = Map.of(
-                "docs/actions.md", "generated/action-inventory.json",
-                "docs/mcp.md", "generated/action-inventory.json",
-                "docs/grpc-service.md", "generated/action-inventory.json",
-                "docs/cli.md", "generated/action-inventory.json",
+                "docs/surface/actions.md", "../generated/action-inventory.json",
+                "docs/surface/mcp.md", "../generated/action-inventory.json",
+                "docs/surface/grpc-service.md", "../generated/action-inventory.json",
+                "docs/apps/cli.md", "../generated/action-inventory.json",
                 "docs/tutorials/python.md", "../generated/action-inventory.json",
                 "docs/tutorials/openvino.md", "../generated/action-inventory.json",
-                "docs/building.md", "generateActionInventory");
+                "docs/operations/building.md", "generateActionInventory");
         for (Map.Entry<String, String> entry : docs.entrySet()) {
             String text = Files.readString(root.resolve(entry.getKey()));
             assertThat(text).as(entry.getKey()).contains(entry.getValue());

@@ -17,7 +17,7 @@
  * {@link ai.pipestream.proto.validate.protovalidate.ProtovalidateRuleSource}, which this module
  * puts on the classpath.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/validation.md">
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/validation.md">
  * validation guide</a> for how the two conformance modes are run.
  */
 package ai.pipestream.proto.validate.conformance;

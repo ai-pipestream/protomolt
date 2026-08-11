@@ -18,7 +18,7 @@
  * Protocol, and {@code ai.pipestream.proto.cli} over a terminal; all three share the line
  * contract that a failing verb prints its error and leaves the session running.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acp.md">ACP
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/acp.md">ACP
  * agent guide</a>.</p>
  */
 package ai.pipestream.proto.acp;

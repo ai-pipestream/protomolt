@@ -12,7 +12,7 @@
  * target message from internal conversion faults. The transcoder carries no HTTP or framework
  * dependencies; {@code ai.pipestream.proto.rest} builds the JSON/REST gateway on top of it.
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/rest-gateway.md">REST
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST
  * gateway guide</a> for how the transcoder is wired into a server.
  */
 package ai.pipestream.proto.json;

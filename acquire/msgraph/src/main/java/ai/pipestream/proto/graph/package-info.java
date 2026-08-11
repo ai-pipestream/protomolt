@@ -20,7 +20,7 @@
  * <p>{@link GraphProbe} is a standalone command that reports which of these surfaces a given
  * tenant actually permits; every probe is a read.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/msgraph.md">Microsoft
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/msgraph.md">Microsoft
  * Graph guide</a> for the permissions each lane requires.</p>
  */
 package ai.pipestream.proto.graph;

@@ -18,7 +18,7 @@
  * <p>NDJSON is engine-agnostic and does not interpret the plan; the engine plugins that do —
  * Lucene, OpenSearch, Solr — read the same plan model from sibling modules.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/indexing.md">Search
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for the hint vocabulary and the engine split.</p>
  */
 package ai.pipestream.proto.indexing;

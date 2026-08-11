@@ -22,7 +22,7 @@
  * {@code grpc-invoke} and {@code reflect} verbs of
  * {@link ai.pipestream.proto.actions.ActionCatalog}; the classes underneath are usable on their
  * own as a library. See the
- * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/actions.md">actions
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/actions.md">actions
  * guide</a>.
  */
 package ai.pipestream.proto.grpc.invoke;

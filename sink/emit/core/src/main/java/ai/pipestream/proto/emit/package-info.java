@@ -15,7 +15,7 @@
  * {@code ai.pipestream.proto.emit.okf} for Open Knowledge Format documents and
  * {@code ai.pipestream.proto.emit.parquet} for columnar message data.</p>
  *
- * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/emitting.md">Emitting
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/emitting.md">Emitting
  * bundles guide</a> for the end-to-end flow.</p>
  */
 package ai.pipestream.proto.emit;

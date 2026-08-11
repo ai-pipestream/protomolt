@@ -54,7 +54,7 @@ immediately discover useful resources and verbs. Registered gRPC targets need
 only be routable from the NAS; they do not have to share this Compose network.
 Unauthenticated reflection targets can be registered now. Authenticated
 service-profile reflection remains a bounded delegatable work item in
-`docs/design/grpc-recipe-workbench.md`; the coordinator keeps its API token
+`docs/transform/recipes.md`; the coordinator keeps its API token
 enabled until that host credential boundary lands.
 
 Keycloak uses its embedded development database on a persistent volume and is

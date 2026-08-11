@@ -33,9 +33,10 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `transform/mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
 | `transform/shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
 | `transform/projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
-| `transform/pipeline/` | `pipeline` | The pipeline schema: chained gRPC calls, projections, and CEL steps as one protobuf message |
-| `transform/chain/` | `chain` | The chain manager: configured, type-checked compositions of gRPC calls (verify statically, run serially with gates and deadlines, store named chains in the registry) — plus keyed/zip joins over two live gRPC streams |
-| `jobs/` | `jobs-proto`, `jobs-service` | Async chain execution as durable jobs: the same chain definition with the same serial semantics, detached — Postgres job rows with per-step checkpoints, park/resume on `completion: 'external'` steps (the human-in-the-loop lane), Kafka request/event topics, retries with typed failure kinds; four verbs (`submit-chain`, `get-job`, `list-jobs`, `complete-step`) ride the catalog |
+| `transform/pipeline/` | `pipeline` | Checked pipeline execution across every gRPC streaming shape, with typed edges, structured generation, unnest, collect, and bounded fan-out |
+| `transform/chain/` | `chain` | Checked serial gRPC compositions with gates, deadlines, named registry storage, and keyed or zip joins over two live streams |
+| `transform/delegation/` | `delegation` | Coordinator and worker bidirectional contract, validation, and deterministic offline transcript reduction |
+| `jobs/` | `jobs-proto`, `jobs-service` | Durable chain jobs with step checkpoints, external completion, Kafka request and event topics, typed failures, and retries |
 | `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Indexing plans and hints; NDJSON output; engine plugins |
 | `search/embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
 | `search/embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
@@ -62,15 +63,15 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 
 ## Getting started
 
-Run the whole server — gRPC with reflection, JSON/REST with Swagger UI, MCP,
-and a registry — in one container, with a sample schema seeded:
+Run gRPC with reflection, JSON/REST with Swagger UI, MCP, a registry, and a
+sample schema in one container:
 
 ```shell
 docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
 ```
 
-Then exercise it (or open the console at http://localhost:8080/console —
-Swagger UI lives at http://localhost:8080/docs):
+Then exercise it. The console is at http://localhost:8080/console and Swagger
+UI is at http://localhost:8080/docs.
 
 ```shell
 # Validate a message against the demo schema's declared rules:
@@ -88,7 +89,7 @@ claude mcp add --transport http protomolt http://localhost:8080/mcp
 From a clone, `docker compose up` builds and runs the same server, and
 `docker compose run --rm acp` is the ACP agent an IDE drives over stdio;
 `./scripts/docker-smoke.sh` brings the stack up and proves both the MCP and
-ACP surfaces answer. See [Running in Docker](docs/docker.md).
+ACP surfaces answer. See [Running in Docker](docs/apps/docker.md).
 
 Prefer a process over a container? Every release attaches runnable
 `protomolt-serve` and `protomolt-mcp` zips (JRE 21+ is the only
@@ -167,103 +168,29 @@ docker run --rm ghcr.io/ai-pipestream/protomolt-cli list
 All `generate-stubs` generators (java, kotlin, grpc-java, python, cpp, csharp,
 ruby, php, objc) work natively. The generators are one bundled WebAssembly
 module; inside a native image it runs on Chicory's interpreter rather than
-being compiled to JVM bytecode at first use — same module, same generators,
+being compiled to JVM bytecode at first use: same module, same generators,
 slower per-invocation execution. (On the JVM nothing changes.)
 
 Only the CLI is a native-image target today. `apps/serve` is deliberately
 JVM-only for now: it is a runnable *example* of embedding the toolkit (gRPC
 service, REST gateway, MCP, registry) into a server build, not a supported
 native artifact. Native servers are planned through the framework
-integrations instead — the Spring, Quarkus, and Micronaut modules are the
+integrations instead: the Spring, Quarkus, and Micronaut modules are the
 supported embedding paths, and following their native-image tooling (Spring
 AOT, Quarkus native, Micronaut AOT) is the intended route to a native server
 in the future.
 
 ## Documentation
 
-- [Descriptor sources](docs/descriptor-sources.md) — the loader SPI;
-  classpath, descriptor-set, Apicurio, and Confluent sources; schema hygiene
-- [Gathering proto sources](docs/gathering.md) — filesystem, jar, Git, and
-  Maven gatherers; the descriptor-loader adapter
-- [Publishing schemas](docs/publishing.md) — registering gathered sources
-  with Apicurio and Confluent-compatible registries
-- [Compatibility checking](docs/compatibility.md) — breaking-change
-  detection with backward/forward/full policies
-- [The registry](docs/registry.md) — git-backed schema storage behind the
-  Confluent protocol, with compatibility-gated writes
-- [Actions](docs/actions.md) — the verb catalog for consoles and LLM
-  tooling
-- [MCP server](docs/mcp.md) — the catalog and registry over the Model
-  Context Protocol for AI agents; reflect, invoke, and generate against any
-  gRPC service
-- [ACP agent](docs/acp.md) — the catalog as an Agent Client Protocol agent:
-  run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio
-- [Stream connectors](docs/connector.md) — the `StreamSource` SPI: gRPC
-  server streams and Kafka topics with pause/resume flow control, bridged to
-  synchronous consumers by the bounded `SourcePump`
-- [Streaming demo](docs/demo-streaming.md) — a server-streaming gRPC call
-  rendered live through the ACP agent, in the terminal or an IDE
-- [The gRPC service](docs/grpc-service.md) — the catalog as
-  `ProtoMoltService`: typed RPCs with reflection, the same verbs over
-  JSON/REST with OpenAPI and Swagger UI, one launcher for all of it
-- [Operating an OpenVINO server](docs/tutorials/openvino.md) — a full
-  gRPC-agent walkthrough: reflect, register the KServe schema, introspect
-  models, run a text → embedding inference
-- [Python clients without protoc](docs/tutorials/python.md) — reflect a
-  server, generate the `_pb2.py` modules, call it with plain grpcio
-- [Kafka Connect](docs/kafka-connect.md) — the sink (topics drive gRPC
-  methods), the source (server streams feed topics, resumable via CEL
-  tokens), and the four protobuf-aware transforms
-- [Kafka serde](docs/kafka-serde.md) — a protobuf serializer and
-  deserializer speaking the Confluent wire format, enforcing the schema's
-  declared rules on write
-- [Joins and derived shapes](docs/design/join-shapes.md) — multi-source
-  mapping scopes, envelope/projection/oneof output shapes, schema merging
-  with clash resolution, derived schemas as registry subjects
-- [Field mapping](docs/mapping.md) — text rule syntax, CEL filters and
-  selectors
-- [Projections](docs/projection.md) — self-describing message-to-message
-  mappings as descriptor options on the target message
-- [Validation](docs/validation.md) — the rule surface, dialect SPI,
-  protovalidate interoperability, conformance
-- [Quality scoring](docs/quality.md) — CEL-scored quality dimensions
-  declared as message options; weighted composites, measured and optionally
-  gated in the Kafka serde
-- [Schema metadata](docs/metadata.md) — descriptor-option metadata and
-  runtime extraction
-- [JSON Schema generation](docs/json-schema.md) — draft 2020-12 schemas from
-  descriptors and validation rules
-- [Search indexing](docs/indexing.md) — indexing hints, plans, NDJSON, and
-  the Lucene/OpenSearch/Solr plugins
-- [Text embeddings](docs/embeddings.md) — the `EmbeddingProvider` SPI,
-  plan-driven document embedding, and the Model2Vec provider
-- [Reranking](docs/rerank.md) — the `RerankProvider` SPI, the TEI and OVMS
-  providers, and ranked-list equivalence certification
-- [Emitting bundles](docs/emitting.md) — the bundle/sink SPI (directory,
-  git, zip), OKF knowledge bundles, and descriptor-driven Parquet
-- [Microsoft Graph](docs/msgraph.md) — OneDrive/SharePoint files and
-  metadata, and agentless Copilot connector ingestion
-- [Apache Iceberg](docs/iceberg.md) — descriptor-driven table schemas and
-  snapshot appends through any Iceberg catalog
-- [REST gateway and servers](docs/rest-gateway.md) — JSON transcoding, the
-  gateway, OpenAPI generation, and the six server hosts
-- [Framework integrations](docs/framework-integrations.md) — Spring Boot
-  auto-configuration and the Quarkus extension
-- [Core utilities](docs/helpers.md) — `Any`/`Struct` helpers, type
-  conversion, message diff
-- [Building and testing](docs/building.md) — build, integration tests,
-  linting, publishing
-- [Chain manager design](docs/design/chain-manager.md) — typed, registered
-  compositions of gRPC calls: one endpoint in, one composed answer out; a
-  sidecar to existing pipelines, deliberately not a pipeline
-- [Pipeline design](docs/design/pipeline.md) — a pipeline as a protobuf
-  message chaining steps: any gRPC service, alongside projections, CEL
-  filters and selects, unnest, and collect
-- [Intake and parsing design](docs/design/intake-and-parsing.md) — the
-  platform front door (API-key-scoped ingest lanes in front of repo-service)
-  and the parsing coordinator (CEL routing rules, scatter-gather fan-out,
-  the SearchMetadata fold)
-- [Roadmap](docs/roadmap.md) — toward a schema registry over Git and Maven
+The [documentation index](docs/README.md) follows the repository's module
+layout. Start with these workflows:
+
+- [Connect an agent over MCP](docs/surface/mcp.md)
+- [Register and inspect a gRPC service](docs/surface/service-workspace.md)
+- [Build, replay, and promote a recipe](docs/transform/recipes.md)
+- [Run a checked streaming pipeline](docs/transform/pipeline.md)
+- [Generate a Python client without protoc](docs/tutorials/python.md)
+- [Build and test ProtoMolt](docs/operations/building.md)
 
 ## Requirements
 
@@ -271,7 +198,7 @@ in the future.
   toolchains; GraalVM CE 25 works as the build JDK)
 - Gradle 9.6+ for building from source (wrapper included)
 - GraalVM JDK 25 (e.g. CE 25.1.3) only when building the native CLI with
-  `:protomolt-cli:nativeCompile` — the resulting binary needs no JDK at all
+  `:protomolt-cli:nativeCompile`: the resulting binary needs no JDK at all
 
 ## Building
 
@@ -279,7 +206,7 @@ in the future.
 are derived from `v*` tags (Axion); an untagged checkout builds as a
 snapshot. Integration tests against real schema registries are opt-in and
 skip automatically when no registry is reachable; see
-[Building and testing](docs/building.md).
+[Building and testing](docs/operations/building.md).
 
 ## Runtime disk footprint
 
@@ -289,7 +216,7 @@ Git repository (`--registry-git`, or a temporary directory in `--demo`
 mode) and `gather-git`'s persistent clone cache (`--gather-cache` /
 `PROTOMOLT_GATHER_CACHE`, defaulting to `~/.cache/protomolt/gather/git`).
 Cache placement is server configuration, never request input. Everything
-else — compilation of `.proto` text to descriptors included — runs
+else, including compilation of `.proto` text to descriptors, runs
 entirely in memory.
 
 ## Naming
