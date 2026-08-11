@@ -62,6 +62,8 @@ public final class MeshGate {
      */
     public Descriptor admit(EntityEnvelope entity, Instant now) {
         MeshValidation.validate(entity, now);
-        return resolver.resolve(entity);
+        // Schema-only resolution: the envelope is already fully validated, and the structural
+        // layer proved the body's type identity agrees with this schema reference.
+        return resolver.resolve(entity.getSchema());
     }
 }

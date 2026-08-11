@@ -2,12 +2,7 @@ package ai.pipestream.proto.mesh;
 
 import ai.pipestream.proto.index.hints.IndexingHintsProto;
 import ai.pipestream.proto.meta.MetadataProto;
-import ai.pipestream.proto.mesh.v1.ClaimCheck;
 import ai.pipestream.proto.mesh.v1.EntityEnvelope;
-import ai.pipestream.proto.mesh.v1.EntityHeader;
-import ai.pipestream.proto.mesh.v1.EntityStatus;
-import ai.pipestream.proto.mesh.v1.ProfileReference;
-import ai.pipestream.proto.mesh.v1.SchemaReference;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import org.junit.jupiter.api.Test;
@@ -24,14 +19,22 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class MeshAnnotationCoverageTest {
 
-    /** The persisted contract messages the annotation discipline covers. */
-    private static final List<Descriptor> PERSISTED_MESSAGES = List.of(
-            EntityEnvelope.getDescriptor(),
-            EntityHeader.getDescriptor(),
-            SchemaReference.getDescriptor(),
-            ClaimCheck.getDescriptor(),
-            ProfileReference.getDescriptor(),
-            EntityStatus.getDescriptor());
+    /**
+     * Messages in entity.proto that are not persisted contract state and are therefore exempt
+     * from the annotation discipline: none today. A new message added to entity.proto is
+     * covered automatically (the set derives from the file descriptor), so it must either carry
+     * the full annotation discipline or be consciously exempted here. (The options.proto
+     * carriers are schema-time option definitions in a separate file, so they never enter the
+     * derived set.)
+     */
+    private static final Set<String> NON_PERSISTED_MESSAGES = Set.of();
+
+    /** Every top-level message declared in entity.proto, minus the explicit exemptions. */
+    private static List<Descriptor> persistedMessages() {
+        return EntityEnvelope.getDescriptor().getFile().getMessageTypes().stream()
+                .filter(message -> !NON_PERSISTED_MESSAGES.contains(message.getName()))
+                .toList();
+    }
 
     /**
      * The exact indexed-field allowlist: the named discovery-query fields and nothing else. A
@@ -50,8 +53,7 @@ class MeshAnnotationCoverageTest {
 
     /**
      * Fields exempt from the meta.v1 sensitivity requirement: none. Every persisted field must
-     * declare a sensitivity class. (The options.proto carriers are schema-time option definitions
-     * consumed at compile time, not persisted contract fields, so they are out of scope here.)
+     * declare a sensitivity class.
      */
     private static final Set<String> SENSITIVITY_EXEMPTIONS = Set.of();
 
@@ -62,7 +64,7 @@ class MeshAnnotationCoverageTest {
     @Test
     void exactlyTheAllowlistedFieldsCarryIndexHints() {
         Set<String> indexed = new TreeSet<>();
-        for (Descriptor message : PERSISTED_MESSAGES) {
+        for (Descriptor message : persistedMessages()) {
             for (FieldDescriptor field : message.getFields()) {
                 if (field.getOptions().hasExtension(IndexingHintsProto.index)) {
                     indexed.add(id(message, field));
@@ -75,7 +77,7 @@ class MeshAnnotationCoverageTest {
     @Test
     void everyPersistedFieldDeclaresMetaSensitivity() {
         Set<String> missing = new TreeSet<>();
-        for (Descriptor message : PERSISTED_MESSAGES) {
+        for (Descriptor message : persistedMessages()) {
             for (FieldDescriptor field : message.getFields()) {
                 if (SENSITIVITY_EXEMPTIONS.contains(id(message, field))) {
                     continue;

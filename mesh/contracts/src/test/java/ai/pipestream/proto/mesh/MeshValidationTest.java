@@ -104,7 +104,21 @@ class MeshValidationTest {
                 .build();
         assertThatThrownBy(() -> MeshValidation.validate(entity, BEFORE_DEADLINE))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must contain a host and a slash");
+                .hasMessageContaining("must contain a slash");
+    }
+
+    @Test
+    void aLeadingSlashTypeUrlIsAccepted() {
+        // An empty host is a valid URI reference; only the final segment matters.
+        byte[] bytes = MeshFixtures.payload().getValue().toByteArray();
+        EntityEnvelope entity = MeshFixtures.inlineEntity()
+                .setPayload(Any.newBuilder()
+                        .setTypeUrl("/" + MeshFixtures.TYPE_NAME)
+                        .setValue(MeshFixtures.payload().getValue()))
+                .setHeader(MeshFixtures.header(bytes))
+                .build();
+        assertThatCode(() -> MeshValidation.validate(entity, BEFORE_DEADLINE))
+                .doesNotThrowAnyException();
     }
 
     @Test
