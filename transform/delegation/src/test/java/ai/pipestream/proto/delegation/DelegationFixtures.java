@@ -260,36 +260,48 @@ final class DelegationFixtures {
 
         TranscriptBuilder candidate(String task, String worker, int revision,
                                     TaskSpec spec) {
+            int attempt = currentAttempt.getOrDefault(task, 1);
+            return candidateForAttempt(task, worker, attempt, revision, spec);
+        }
+
+        TranscriptBuilder candidateForAttempt(String task, String worker, int attempt,
+                                              int revision, TaskSpec spec) {
             CompletionCandidate.Builder candidate = CompletionCandidate.newBuilder()
+                    .setAttempt(attempt)
                     .setRevision(revision)
                     .setSummary("the bounded change is implemented and proven")
                     .addCommits(commit("task-output-" + revision));
             spec.getRequiredChecksList()
                     .forEach(check -> candidate.addEvidence(evidence(check.getName())));
-            return worker(worker, task, currentAttempt.getOrDefault(task, 1),
+            return worker(worker, task, attempt,
                     DelegateRequest.newBuilder().setCompletion(candidate));
         }
 
         TranscriptBuilder candidateWith(String task, String worker, int revision,
                                         CompletionCandidate candidate) {
-            return worker(worker, task, currentAttempt.getOrDefault(task, 1),
-                    DelegateRequest.newBuilder().setCompletion(candidate));
+            int attempt = currentAttempt.getOrDefault(task, 1);
+            return worker(worker, task, attempt, DelegateRequest.newBuilder()
+                    .setCompletion(candidate.toBuilder().setAttempt(attempt)));
         }
 
         TranscriptBuilder revisionRequested(String task, String worker, int revision,
                                             String feedback) {
-            return coordinator(worker, task, currentAttempt.getOrDefault(task, 1),
+            int attempt = currentAttempt.getOrDefault(task, 1);
+            return coordinator(worker, task, attempt,
                     DelegateResponse.newBuilder()
                             .setRevisionRequested(RevisionRequested.newBuilder()
+                                    .setAttempt(attempt)
                                     .setRevision(revision)
                                     .setFeedback(feedback)));
         }
 
         TranscriptBuilder accepted(String task, String worker, int revision,
                                    String verdict) {
-            return coordinator(worker, task, currentAttempt.getOrDefault(task, 1),
+            int attempt = currentAttempt.getOrDefault(task, 1);
+            return coordinator(worker, task, attempt,
                     DelegateResponse.newBuilder()
                             .setAccepted(CompletionAccepted.newBuilder()
+                                    .setAttempt(attempt)
                                     .setRevision(revision)
                                     .setVerdict(verdict)));
         }
@@ -314,7 +326,7 @@ final class DelegationFixtures {
             DelegateRequest frame = payload
                     .setFrameId(uuid("frame-" + (++frameCounter)))
                     .setTaskId(task)
-                    .setSeq(nextSeq(Lane.LANE_WORKER, task, attempt))
+                    .setSeq(nextSeq(worker, Lane.LANE_WORKER, task, attempt))
                     .setSentAt(nextStamp())
                     .build();
             entries.add(TranscriptEntry.newBuilder()
@@ -330,7 +342,7 @@ final class DelegationFixtures {
             DelegateResponse frame = payload
                     .setFrameId(uuid("frame-" + (++frameCounter)))
                     .setTaskId(task)
-                    .setSeq(nextSeq(Lane.LANE_COORDINATOR, task, attempt))
+                    .setSeq(nextSeq(worker, Lane.LANE_COORDINATOR, task, attempt))
                     .setSentAt(nextStamp())
                     .build();
             entries.add(TranscriptEntry.newBuilder()
@@ -341,8 +353,8 @@ final class DelegationFixtures {
             return this;
         }
 
-        private long nextSeq(Lane lane, String task, int attempt) {
-            String key = lane + "\n" + task + "\n" + attempt;
+        private long nextSeq(String worker, Lane lane, String task, int attempt) {
+            String key = worker + "\n" + lane + "\n" + task + "\n" + attempt;
             long next = sequences.getOrDefault(key, 1L);
             sequences.put(key, next + 1);
             return next;

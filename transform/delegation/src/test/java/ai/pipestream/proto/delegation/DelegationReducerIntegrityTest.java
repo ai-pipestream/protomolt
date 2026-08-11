@@ -5,6 +5,7 @@ import ai.pipestream.proto.delegation.v1.CheckVerdict;
 import ai.pipestream.proto.delegation.v1.CheckpointReference;
 import ai.pipestream.proto.delegation.v1.CompletionCandidate;
 import ai.pipestream.proto.delegation.v1.DelegateRequest;
+import ai.pipestream.proto.delegation.v1.TaskSpec;
 import ai.pipestream.proto.delegation.v1.Transcript;
 import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import com.google.protobuf.Timestamp;
@@ -90,6 +91,7 @@ class DelegationReducerIntegrityTest {
     @Test
     void missingRequiredCheckEvidenceIsRejected() {
         CompletionCandidate thin = CompletionCandidate.newBuilder()
+                .setAttempt(1)
                 .setRevision(1)
                 .setSummary("compile only")
                 .addEvidence(evidence("compile"))
@@ -103,12 +105,58 @@ class DelegationReducerIntegrityTest {
             assertThat(f.kind()).isEqualTo("evidence");
             assertThat(f.error()).contains("tests");
         });
+        assertThat(result.tasks().get(TASK).phase())
+                .isEqualTo(DelegationReducer.Phase.LEASED);
+    }
+
+    /** Invalid evidence cannot open a candidate that the coordinator then accepts. */
+    @Test
+    void invalidEvidenceCannotDriveTheTaskToAccepted() {
+        CompletionCandidate thin = CompletionCandidate.newBuilder()
+                .setAttempt(1)
+                .setRevision(1)
+                .setSummary("compile only")
+                .addEvidence(evidence("compile"))
+                .addCommits(commit("thin-accepted"))
+                .build();
+        Transcript transcript = leasedAttempt()
+                .candidateWith(TASK, WORKER, 1, thin)
+                .accepted(TASK, WORKER, 1, "accepted without all evidence")
+                .build();
+        DelegationReducer.Result result = reducer.reduce(transcript);
+        assertThat(result.findings()).extracting(DelegationReducer.Finding::kind)
+                .contains("evidence", "revision");
+        assertThat(result.tasks().get(TASK).phase())
+                .isEqualTo(DelegationReducer.Phase.LEASED);
+    }
+
+    /** A delayed completion from an older lease cannot cross an attempt boundary. */
+    @Test
+    void staleCompletionCannotBeInterpretedAsTheCurrentAttempt() {
+        TaskSpec checks = spec("compile", "tests");
+        Transcript transcript = leasedAttempt()
+                .expire(TASK, WORKER, 1)
+                .offer(TASK, WORKER, 2, checks)
+                .accept(TASK, WORKER, 2)
+                .candidateForAttempt(TASK, WORKER, 1, 1, checks)
+                .accepted(TASK, WORKER, 1, "must not accept the stale candidate")
+                .build();
+        DelegationReducer.Result result = reducer.reduce(transcript);
+        assertThat(result.findings()).anySatisfy(f -> {
+            assertThat(f.kind()).isEqualTo("lease");
+            assertThat(f.error()).contains("stale attempt 1")
+                    .contains("current attempt is 2");
+        });
+        assertThat(result.tasks().get(TASK).phase())
+                .isEqualTo(DelegationReducer.Phase.LEASED);
+        assertThat(result.tasks().get(TASK).attempt()).isEqualTo(2);
     }
 
     /** Evidence for a check the spec never required is a finding. */
     @Test
     void evidenceForAnUnrequiredCheckIsRejected() {
         CompletionCandidate extra = CompletionCandidate.newBuilder()
+                .setAttempt(1)
                 .setRevision(1)
                 .setSummary("with a bonus check")
                 .addEvidence(evidence("compile"))
@@ -136,6 +184,7 @@ class DelegationReducerIntegrityTest {
                 .setDetail("3 failures")
                 .build();
         CompletionCandidate candidate = CompletionCandidate.newBuilder()
+                .setAttempt(1)
                 .setRevision(1)
                 .setSummary("tests red")
                 .addEvidence(evidence("compile"))
@@ -195,6 +244,42 @@ class DelegationReducerIntegrityTest {
         assertThat(result.findings()).anySatisfy(f -> {
             assertThat(f.kind()).isEqualTo("checkpoint");
             assertThat(f.error()).contains("regresses");
+        });
+    }
+
+    /** A rejected checkpoint cannot replace the valid token used by resume checks. */
+    @Test
+    void aRegressedCheckpointCannotOverwriteTheResumeToken() {
+        CheckpointReference poisoned = DelegationFixtures.TranscriptBuilder
+                .resumeFrom(1, 1, "tok-evil");
+        Transcript transcript = leasedAttempt()
+                .checkpoint(TASK, WORKER, 1, 1, "tok-good")
+                .checkpoint(TASK, WORKER, 1, 1, "tok-evil")
+                .expire(TASK, WORKER, 1)
+                .offerResuming(TASK, WORKER, 2, spec("compile", "tests"), poisoned)
+                .build();
+        DelegationReducer.Result result = reducer.reduce(transcript);
+        assertThat(result.findings()).anySatisfy(f -> {
+            assertThat(f.kind()).isEqualTo("checkpoint");
+            assertThat(f.error()).contains("token does not match");
+        });
+        assertThat(result.tasks().get(TASK).phase())
+                .isEqualTo(DelegationReducer.Phase.EXPIRED);
+    }
+
+    /** Idempotency includes the stream identity, not only the wire-frame bytes. */
+    @Test
+    void aFrameIdReusedOnAnotherWorkerStreamConflicts() {
+        DelegationFixtures.TranscriptBuilder builder = new DelegationFixtures.TranscriptBuilder()
+                .hello(WORKER).admit(WORKER)
+                .hello(SECOND_WORKER).admit(SECOND_WORKER)
+                .offer(TASK, WORKER, 1, spec("compile"));
+        TranscriptEntry offer = builder.lastEntry();
+        builder.append(offer.toBuilder().setWorkerId(SECOND_WORKER).build());
+        DelegationReducer.Result result = reducer.reduce(builder.build());
+        assertThat(result.findings()).singleElement().satisfies(f -> {
+            assertThat(f.kind()).isEqualTo("duplicate");
+            assertThat(f.error()).contains("conflicting duplicate");
         });
     }
 

@@ -19,7 +19,8 @@ option java_package = "ai.pipestream.proto.delegation.v1";
 // adapter or runner process maintains the stream and invokes the provider
 // (Sol, Kimi, Cursor, Codex, ...), so provider identity is hello metadata,
 // not a protocol peer. One stream carries one worker's session; a task's
-// frames are correlated by task_id, and each (lane, task, attempt) scope
+// frames are correlated by task_id, and each (worker stream, lane, task,
+// attempt) scope
 // carries its own strictly increasing seq, so a recorded transcript replays
 // deterministically.
 //
@@ -42,7 +43,8 @@ option java_package = "ai.pipestream.proto.delegation.v1";
 
 // The delegation boundary: one long-lived bidirectional stream per worker
 // process. The worker opens the stream with a hello; every later frame is
-// correlated by task_id and sequenced per (lane, task, attempt).
+// correlated by task_id and sequenced per (worker stream, lane, task,
+// attempt).
 service AgentDelegationService {
   // The single delegation stream. The first request frame must be a hello;
   // the coordinator answers with an admission decision before any task frame.
@@ -82,8 +84,9 @@ message DelegateRequest {
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // 1-based sequence inside the (worker lane, task_id, attempt) scope; gaps
-  // and rewinds are findings. Session frames sequence on the empty task.
+  // 1-based sequence inside this worker stream's (worker lane, task_id,
+  // attempt) scope; gaps and rewinds are findings. Session frames sequence on
+  // the empty task.
   int64 seq = 3 [
     (ai.pipestream.proto.validate.v1.field).int64.gte = 1,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
@@ -148,7 +151,8 @@ message DelegateResponse {
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // 1-based sequence inside the (coordinator lane, task_id, attempt) scope.
+  // 1-based sequence inside this worker stream's (coordinator lane, task_id,
+  // attempt) scope.
   int64 seq = 3 [
     (ai.pipestream.proto.validate.v1.field).int64.gte = 1,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
@@ -731,6 +735,16 @@ message CompletionCandidate {
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 64,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // The lease attempt that produced this candidate. This prevents a delayed
+  // candidate from an earlier lease from being interpreted as current after
+  // the same worker is re-offered the task.
+  int32 attempt = 6 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // Proof that one acceptance check ran. The raw check output is never inlined:
@@ -923,6 +937,14 @@ message RevisionRequested {
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // The open attempt whose candidate is being returned for revision.
+  int32 attempt = 4 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // The candidate revision is accepted. Terminal for the task: nothing about
@@ -947,6 +969,14 @@ message CompletionAccepted {
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
       string: {max_len: 2048}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The open attempt whose candidate is accepted.
+  int32 attempt = 3 [
+    (ai.pipestream.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

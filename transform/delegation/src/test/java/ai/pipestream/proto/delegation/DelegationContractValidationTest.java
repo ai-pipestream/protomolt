@@ -93,6 +93,7 @@ class DelegationContractValidationTest {
     @Test
     void aCandidateWithoutOutputReferencesFailsTheMessageCel() {
         CompletionCandidate bare = CompletionCandidate.newBuilder()
+                .setAttempt(1)
                 .setRevision(1)
                 .setSummary("done, trust me")
                 .addEvidence(evidence("compile"))
@@ -103,6 +104,22 @@ class DelegationContractValidationTest {
         assertThat(result.valid()).isFalse();
         assertThat(result.violations()).anySatisfy(
                 v -> assertThat(v.ruleId()).isEqualTo("candidate-references-output"));
+    }
+
+    @Test
+    void aCandidateWithoutAnAttemptFailsTheFieldRule() {
+        CompletionCandidate unbound = CompletionCandidate.newBuilder()
+                .setRevision(1)
+                .setSummary("cannot be attributed to a lease")
+                .addEvidence(evidence("compile"))
+                .addCommits(commit("unbound"))
+                .build();
+        ValidationResult result = ProtoValidator
+                .forMessageType(CompletionCandidate.getDescriptor())
+                .validate(unbound);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.violations())
+                .anySatisfy(v -> assertThat(v.path()).contains("attempt"));
     }
 
     @Test
@@ -147,6 +164,7 @@ class DelegationContractValidationTest {
     @Test
     void aWellFormedCandidateValidates() {
         CompletionCandidate candidate = CompletionCandidate.newBuilder()
+                .setAttempt(1)
                 .setRevision(1)
                 .setSummary("implemented and proven")
                 .addEvidence(evidence("compile"))

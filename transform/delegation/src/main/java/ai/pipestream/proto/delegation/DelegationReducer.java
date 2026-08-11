@@ -50,11 +50,11 @@ import java.util.Set;
  *
  * <p>Idempotency and ordering: a frame redelivered with identical bytes replays
  * silently; the same frame id with changed bytes is a conflicting duplicate. Each
- * (lane, task, attempt) scope sequences from 1; a gap or rewind is a finding (the
- * reducer still advances its expectation past a gap so one hole does not cascade into
- * noise, but the finding stands). Cancellation is terminal the moment the coordinator
- * emits it: a completion candidate that arrives afterwards races the cancellation and
- * loses.</p>
+ * (worker stream, lane, task, attempt) scope sequences from 1; a gap or rewind is a
+ * finding (the reducer still advances its expectation past a gap so one hole does not
+ * cascade into noise, but the finding stands). Cancellation is terminal the moment the
+ * coordinator emits it: a completion candidate that arrives afterwards races the
+ * cancellation and loses.</p>
  *
  * <p>Evidence: a completion candidate must prove every required acceptance check of the
  * current offer's spec ran, with a passing verdict, exactly once per check. Missing,
@@ -185,7 +185,7 @@ public final class DelegationReducer {
             return;
         }
         String frameId = frameId(entry);
-        ByteString bytes = frameBytes(entry);
+        ByteString bytes = entry.toByteString();
 
         // Idempotent redelivery: identical bytes under a known frame id replay
         // silently; changed bytes under a known id are a conflicting duplicate and
@@ -206,10 +206,11 @@ public final class DelegationReducer {
         DelegateResponse response = workerLane ? null : entry.getCoordinatorFrame();
         String taskId = frameTaskId(entry);
         TaskTrack task = taskId.isEmpty() ? null : tasks.get(taskId);
-        int attempt = attemptOf(request, response, task);
+        int attempt = attemptOf(request, response);
 
-        // Replay-safe ordering inside the (lane, task, attempt) scope.
-        String seqKey = entry.getLane() + "\n" + taskId + "\n" + attempt;
+        // Replay-safe ordering inside the worker stream's (lane, task, attempt) scope.
+        String seqKey = entry.getWorkerId() + "\n" + entry.getLane() + "\n"
+                + taskId + "\n" + attempt;
         long seq = workerLane ? request.getSeq() : response.getSeq();
         long expected = expectedSeq.getOrDefault(seqKey, 1L);
         if (seq < expected) {
@@ -366,12 +367,14 @@ public final class DelegationReducer {
                             "checkpoint_seq " + seq + " regresses from "
                                     + task.lastCheckpointSeq
                                     + "; checkpoints never rewind"));
-                } else if (seq > task.lastCheckpointSeq + 1) {
+                    return;
+                }
+                if (seq > task.lastCheckpointSeq + 1) {
                     findings.add(new Finding(taskId, frameId, "checkpoint",
                             "checkpoint_seq " + seq + " skips "
                                     + (task.lastCheckpointSeq + 1)));
                 }
-                task.lastCheckpointSeq = Math.max(task.lastCheckpointSeq, seq);
+                task.lastCheckpointSeq = seq;
                 task.checkpoints.put(checkpoint.getAttempt() + ":" + seq,
                         checkpoint.getResumeToken());
             }
@@ -448,6 +451,13 @@ public final class DelegationReducer {
                             + "' but the lease is held by '" + task.holder + "'"));
             return;
         }
+        if (candidate.getAttempt() != task.attempt) {
+            findings.add(new Finding(taskId, frameId, "lease",
+                    "completion candidate for stale attempt "
+                            + candidate.getAttempt() + "; the current attempt is "
+                            + task.attempt));
+            return;
+        }
         if (candidate.getRevision() != task.expectedRevision) {
             findings.add(new Finding(taskId, frameId, "revision",
                     "candidate revision " + candidate.getRevision()
@@ -456,13 +466,16 @@ public final class DelegationReducer {
                             + "; stale or skipped revisions are not reviewable"));
             return;
         }
-        verifyEvidence(candidate, task, findings);
+        if (!verifyEvidence(candidate, task, frameId, findings)) {
+            return;
+        }
         task.phase = Phase.CANDIDATE;
         task.candidateRevision = candidate.getRevision();
     }
 
-    private static void verifyEvidence(CompletionCandidate candidate, TaskTrack task,
-                                       List<Finding> findings) {
+    private static boolean verifyEvidence(CompletionCandidate candidate, TaskTrack task,
+                                          String frameId, List<Finding> findings) {
+        int initialFindings = findings.size();
         Set<String> required = new LinkedHashSet<>();
         if (task.spec != null) {
             task.spec.getRequiredChecksList()
@@ -472,12 +485,12 @@ public final class DelegationReducer {
         for (CheckEvidence evidence : candidate.getEvidenceList()) {
             evidenced.add(evidence.getCheckName());
             if (!required.contains(evidence.getCheckName())) {
-                findings.add(new Finding(task.taskId, "", "evidence",
+                findings.add(new Finding(task.taskId, frameId, "evidence",
                         "evidence names check '" + evidence.getCheckName()
                                 + "' which the offer's spec does not require"));
             }
             if (evidence.getVerdict() != CheckVerdict.CHECK_VERDICT_PASSED) {
-                findings.add(new Finding(task.taskId, "", "evidence",
+                findings.add(new Finding(task.taskId, frameId, "evidence",
                         "evidence for check '" + evidence.getCheckName()
                                 + "' reports " + evidence.getVerdict()
                                 + "; a candidate must prove passing checks"));
@@ -486,10 +499,11 @@ public final class DelegationReducer {
         Set<String> missing = new LinkedHashSet<>(required);
         missing.removeAll(evidenced);
         if (!missing.isEmpty()) {
-            findings.add(new Finding(task.taskId, "", "evidence",
+            findings.add(new Finding(task.taskId, frameId, "evidence",
                     "the candidate carries no evidence for required checks "
                             + missing + "; every required check must be proven"));
         }
+        return findings.size() == initialFindings;
     }
 
     private static void reduceCoordinator(String workerId, DelegateResponse frame,
@@ -663,12 +677,15 @@ public final class DelegationReducer {
                 task.phase = Phase.CANCELLED;
             }
             case REVISION_REQUESTED -> {
+                int attempt = frame.getRevisionRequested().getAttempt();
                 int revision = frame.getRevisionRequested().getRevision();
-                if (task.phase != Phase.CANDIDATE
+                if (attempt != task.attempt || task.phase != Phase.CANDIDATE
                         || revision != task.candidateRevision) {
                     findings.add(new Finding(taskId, frameId, "revision",
-                            "revision request for revision " + revision
+                            "revision request for attempt " + attempt
+                                    + " revision " + revision
                                     + " but the task is " + task.phase
+                                    + " on attempt " + task.attempt
                                     + " with open candidate revision "
                                     + task.candidateRevision));
                     return;
@@ -677,14 +694,15 @@ public final class DelegationReducer {
                 task.expectedRevision = revision + 1;
             }
             case ACCEPTED -> {
+                int attempt = frame.getAccepted().getAttempt();
                 int revision = frame.getAccepted().getRevision();
-                if (task.phase != Phase.CANDIDATE
+                if (attempt != task.attempt || task.phase != Phase.CANDIDATE
                         || revision != task.candidateRevision) {
                     findings.add(new Finding(taskId, frameId, "revision",
-                            "acceptance of revision " + revision
+                            "acceptance of attempt " + attempt + " revision " + revision
                                     + " but the task is " + task.phase
-                                    + " with open candidate revision "
-                                    + task.candidateRevision));
+                                    + " on attempt " + task.attempt
+                                    + " with open candidate revision " + task.candidateRevision));
                     return;
                 }
                 task.phase = Phase.ACCEPTED;
@@ -732,15 +750,8 @@ public final class DelegationReducer {
                 ? entry.getCoordinatorFrame().getTaskId() : "";
     }
 
-    private static ByteString frameBytes(TranscriptEntry entry) {
-        return entry.getLane() == Lane.LANE_WORKER
-                ? entry.getWorkerFrame().toByteString()
-                : entry.getCoordinatorFrame().toByteString();
-    }
-
     /** The attempt a frame belongs to, for sequencing; 0 on the session scope. */
-    private static int attemptOf(DelegateRequest request, DelegateResponse response,
-                                 TaskTrack task) {
+    private static int attemptOf(DelegateRequest request, DelegateResponse response) {
         if (request != null) {
             return switch (request.getPayloadCase()) {
                 case HELLO -> 0;
@@ -752,8 +763,7 @@ public final class DelegationReducer {
                 case BLOCKED -> request.getBlocked().getAttempt();
                 case FAILED -> request.getFailed().getAttempt();
                 case CANCELLED -> request.getCancelled().getAttempt();
-                // A candidate's revision space is per attempt; the open attempt owns it.
-                case COMPLETION -> task != null ? task.attempt : 0;
+                case COMPLETION -> request.getCompletion().getAttempt();
                 default -> 0;
             };
         }
@@ -763,8 +773,8 @@ public final class DelegationReducer {
             case RENEWAL -> response.getRenewal().getAttempt();
             case EXPIRED -> response.getExpired().getAttempt();
             case CANCELLATION -> response.getCancellation().getAttempt();
-            // Review frames belong to the open attempt, like the candidate they judge.
-            case REVISION_REQUESTED, ACCEPTED -> task != null ? task.attempt : 0;
+            case REVISION_REQUESTED -> response.getRevisionRequested().getAttempt();
+            case ACCEPTED -> response.getAccepted().getAttempt();
             default -> 0;
         };
     }

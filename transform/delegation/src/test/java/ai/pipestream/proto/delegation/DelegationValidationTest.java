@@ -71,6 +71,7 @@ class DelegationValidationTest {
     @Test
     void aCandidateMustReferenceACommitOrArtifact() {
         CompletionCandidate bare = CompletionCandidate.newBuilder()
+                .setAttempt(1)
                 .setRevision(1)
                 .setSummary("done, trust me")
                 .addEvidence(evidence("compile"))
@@ -81,8 +82,22 @@ class DelegationValidationTest {
     }
 
     @Test
+    void aCandidateMustNameItsLeaseAttempt() {
+        CompletionCandidate unbound = CompletionCandidate.newBuilder()
+                .setRevision(1)
+                .setSummary("cannot be attributed to a lease")
+                .addEvidence(evidence("compile"))
+                .addCommits(commit("unbound"))
+                .build();
+        assertThatThrownBy(() -> DelegationValidation.validate(unbound))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("completion.attempt");
+    }
+
+    @Test
     void aCandidateMustNotRepeatEvidenceForOneCheck() {
         CompletionCandidate doubled = CompletionCandidate.newBuilder()
+                .setAttempt(1)
                 .setRevision(1)
                 .setSummary("done twice over")
                 .addEvidence(evidence("compile"))
@@ -155,6 +170,21 @@ class DelegationValidationTest {
         assertThatThrownBy(() -> DelegationValidation.validate(bad))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("frame_id");
+    }
+
+    @Test
+    void aFrameTimestampMustBeInTheProtobufRange() {
+        DelegateRequest bad = DelegateRequest.newBuilder()
+                .setFrameId(DelegationFixtures.uuid("bad-time-frame"))
+                .setSeq(1)
+                .setSentAt(Timestamp.newBuilder().setSeconds(Long.MAX_VALUE))
+                .setHello(WorkerHello.newBuilder()
+                        .setWorkerId("worker-sol-1")
+                        .setProtocolVersion(1))
+                .build();
+        assertThatThrownBy(() -> DelegationValidation.validate(bad))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("frame.sent_at");
     }
 
     @Test

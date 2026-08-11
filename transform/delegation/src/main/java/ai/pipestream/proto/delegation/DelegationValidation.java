@@ -25,6 +25,8 @@ import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
 import ai.pipestream.proto.grpc.recipe.RecipeValidation;
+import com.google.protobuf.Timestamp;
+import com.google.protobuf.util.Timestamps;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -67,7 +69,7 @@ public final class DelegationValidation {
                 "frame exceeds the maximum serialized size of " + MAX_FRAME_BYTES
                         + " bytes");
         validateEnvelope(frame.getFrameId(), frame.getTaskId(), frame.getSeq(),
-                frame.hasSentAt());
+                frame.hasSentAt(), frame.getSentAt());
         switch (frame.getPayloadCase()) {
             case HELLO -> {
                 require(frame.getTaskId().isEmpty(),
@@ -123,7 +125,7 @@ public final class DelegationValidation {
                 "frame exceeds the maximum serialized size of " + MAX_FRAME_BYTES
                         + " bytes");
         validateEnvelope(frame.getFrameId(), frame.getTaskId(), frame.getSeq(),
-                frame.hasSentAt());
+                frame.hasSentAt(), frame.getSentAt());
         switch (frame.getPayloadCase()) {
             case ADMISSION -> {
                 require(frame.getTaskId().isEmpty(),
@@ -139,6 +141,8 @@ public final class DelegationValidation {
                 validateAttempt(frame.getRenewal().getAttempt(), "renewal.attempt");
                 require(frame.getRenewal().hasExpiresAt(),
                         "renewal.expires_at must be set");
+                validateTimestamp(frame.getRenewal().getExpiresAt(),
+                        "renewal.expires_at");
             }
             case EXPIRED -> {
                 requireTaskScoped(frame.getTaskId());
@@ -231,6 +235,7 @@ public final class DelegationValidation {
         RecipeValidation.validatePositiveDuration(offer.getLeaseDuration(),
                 "offer.lease_duration");
         require(offer.hasExpiresAt(), "offer.expires_at must be set");
+        validateTimestamp(offer.getExpiresAt(), "offer.expires_at");
         if (offer.hasResumeFrom()) {
             validate(offer.getResumeFrom());
         }
@@ -346,6 +351,7 @@ public final class DelegationValidation {
     /** Validates a revision request. */
     public static void validate(RevisionRequested requested) {
         require(requested != null, "revision_requested must not be null");
+        validateAttempt(requested.getAttempt(), "revision_requested.attempt");
         validateRevision(requested.getRevision(), "revision_requested.revision");
         require(!requested.getFeedback().isBlank(),
                 "revision_requested.feedback must not be blank");
@@ -359,6 +365,7 @@ public final class DelegationValidation {
     /** Validates a completion acceptance. */
     public static void validate(CompletionAccepted accepted) {
         require(accepted != null, "accepted must not be null");
+        validateAttempt(accepted.getAttempt(), "accepted.attempt");
         validateRevision(accepted.getRevision(), "accepted.revision");
         require(!accepted.getVerdict().isBlank(), "accepted.verdict must not be blank");
         bounded(accepted.getVerdict(), 2_048, "accepted.verdict");
@@ -371,6 +378,7 @@ public final class DelegationValidation {
      */
     public static void validate(CompletionCandidate candidate) {
         require(candidate != null, "completion must not be null");
+        validateAttempt(candidate.getAttempt(), "completion.attempt");
         validateRevision(candidate.getRevision(), "completion.revision");
         require(!candidate.getSummary().isBlank(), "completion.summary must not be blank");
         bounded(candidate.getSummary(), 4_096, "completion.summary");
@@ -403,6 +411,7 @@ public final class DelegationValidation {
                         || evidence.getVerdict() == CheckVerdict.CHECK_VERDICT_FAILED,
                 "evidence.verdict must be PASSED or FAILED");
         require(evidence.hasRanAt(), "evidence.ran_at must be set");
+        validateTimestamp(evidence.getRanAt(), "evidence.ran_at");
         bounded(evidence.getDetail(), 4_096, "evidence.detail");
         require(evidence.getArtifactsCount() <= MAX_NEEDS,
                 "evidence.artifacts exceeds the maximum of " + MAX_NEEDS);
@@ -421,13 +430,14 @@ public final class DelegationValidation {
     }
 
     private static void validateEnvelope(String frameId, String taskId, long seq,
-                                         boolean hasSentAt) {
+                                         boolean hasSentAt, Timestamp sentAt) {
         require(UUID.matcher(frameId).matches(),
                 "frame.frame_id must be a uuid: " + frameId);
         require(taskId.isEmpty() || UUID.matcher(taskId).matches(),
                 "frame.task_id must be a uuid or empty: " + taskId);
         require(seq >= 1, "frame.seq must be at least 1");
         require(hasSentAt, "frame.sent_at must be set");
+        validateTimestamp(sentAt, "frame.sent_at");
     }
 
     private static void requireTaskScoped(String taskId) {
@@ -447,6 +457,10 @@ public final class DelegationValidation {
     private static void validateName(String value, String field) {
         require(NAME.matcher(value).matches(),
                 field + " must be a path-safe name: " + value);
+    }
+
+    private static void validateTimestamp(Timestamp value, String field) {
+        require(Timestamps.isValid(value), field + " must be a valid timestamp");
     }
 
     private static void bounded(String value, int max, String field) {
