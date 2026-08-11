@@ -2,111 +2,364 @@ syntax = "proto3";
 
 package ai.pipestream.proto.pipeline.v1;
 
-option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.pipeline";
-option java_outer_classname = "PipelineProto";
-
+import "ai/pipestream/proto/grpc/recipe/v1/grpc_recipe.proto";
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/duration.proto";
-import "google/protobuf/struct.proto";
 
-// A chain of steps that hands a stream of protobuf messages from one step to
-// the next. Steps run in order, in one process, with nothing saved in between.
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.pipeline.v1";
+
+// The pipeline execution contract: the compiled, streaming-aware form of a
+// GrpcRecipe. A pipeline is the typed-edge-normalized rendering of a recipe:
+// every gRPC or structured step is fed by an explicit TypedEdge (the compiler
+// synthesizes one from a recipe step's top-level rules when it has none), and
+// every edge carries an explicit cardinality. The static checker re-derives
+// every method's streaming shape and every binding's cardinality from the
+// descriptor set named by descriptor_fingerprint and rejects any drift, so a
+// pipeline that checks cannot fail on a shape or type error at run time.
+// This contract supersedes the earlier runtime-oriented pipeline.proto in
+// this file: that draft modeled its own CEL/filter/select steps and was never
+// wired to an executor. The recipe's TypedEdge and FanOutSpec are embedded
+// unchanged so mapping, CEL, projection, fan-out, and branch failure policy
+// keep exactly one meaning across recipes and pipelines.
 message Pipeline {
-  string name = 1;
-  string description = 2;
-  // Fully-qualified message type the flow starts from.
-  string input_type = 3;
-  // Constants available to CEL steps as `vars.<name>`.
-  map<string, google.protobuf.Value> vars = 4;
-  repeated Step steps = 5;
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "The compiled, streaming-aware execution form of a gRPC recipe: typed edges with explicit cardinality over every gRPC streaming shape."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Stable path-safe identity, echoing the source recipe.
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Human-readable purpose with no execution semantics.
+  string description = 2 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 16384,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Fully-qualified message type accepted as the pipeline input. It binds the
+  // scope name "input" with cardinality ONE.
+  string input_type = 3 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Lowercase SHA-256 fingerprint of the descriptor set every type, method,
+  // and dependency reference resolves against: the SHA-256 of the
+  // FileDescriptorSet whose files are serialized in name order. The checker
+  // recomputes it from the supplied descriptors and rejects a mismatch.
+  string descriptor_fingerprint = 4 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The exact service dependencies carried over from the recipe. Each
+  // dependency's descriptor fingerprint must equal descriptor_fingerprint.
+  repeated ai.pipestream.proto.grpc.recipe.v1.ServiceDependency dependencies = 5 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      max_items: 64
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Ordered execution steps. Each step binds its name in the scope with the
+  // type and cardinality its kind produces.
+  repeated PipelineStep steps = 6 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      max_items: 256
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional projection of the pipeline result over the final scope. Every
+  // binding the scope holds must have cardinality ONE: a stream must be
+  // collected before the output mapping can read it. When absent, the last
+  // step's binding is the result.
+  PipelineOutput output = 7 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Whole-pipeline deadline. Step deadlines nest inside this budget.
+  google.protobuf.Duration deadline = 8 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).duration.gte = {nanos: 1},
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Name of the recipe this pipeline was compiled from; empty when the
+  // pipeline was authored directly.
+  string source_recipe_name = 9 [
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Lowercase SHA-256 fingerprint of the serialized source recipe; empty
+  // exactly when source_recipe_name is empty.
+  string source_recipe_fingerprint = 10 [
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-f]{64}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
-// Where a gRPC service lives. Its schema comes from server reflection.
-message Endpoint {
-  string host = 1;
-  int32 port = 2;
-  bool plaintext = 3;
-}
+// One serial step. The step's name binds its output in the scope for later
+// edges: gRPC and structured steps bind their response or collect type,
+// unnest binds the element type of its repeated field with cardinality MANY,
+// and collect binds its collect type with cardinality ONE.
+message PipelineStep {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "One serial pipeline step: a gRPC call, a structured generation, an unnest, or a collect."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
 
-message Step {
-  // Labels the step in errors and in the run record.
-  string name = 1;
+  // Unique step name. Step names become mapping scope variables, so they must
+  // be identifiers other than "input" and "target".
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Alias of a declared service dependency. Required on gRPC and structured
+  // steps; must be empty on unnest and collect steps, which call no service.
+  string dependency = 2 [
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional boolean CEL gate over the scope, allowed on gRPC steps only. A
+  // false gate skips the step; the scope binding still forms, exactly as in
+  // the chain runner.
+  string when = 3 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 16384,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Per-step deadline. Zero inherits the remaining pipeline deadline.
+  google.protobuf.Duration deadline = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // The step's work.
   oneof kind {
-    GrpcCall grpc_call = 2;
-    CelFilter cel_filter = 3;
-    CelSelect cel_select = 4;
-    Project project = 5;
-    Unnest unnest = 6;
-    Collect collect = 7;
-    Let let = 8;
+    // One gRPC call of any streaming shape.
+    GrpcCallStep grpc_call = 5 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+    // One structured generation filling a protobuf type with a catalog model.
+    StructuredStep structured = 6 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+    // Turns a repeated field of a ONE binding into a stream of its elements.
+    UnnestStep unnest = 7 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+    // Collapses a stream binding into one message's repeated field.
+    CollectStep collect = 8 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   }
 }
 
-// Calls a method on any gRPC service. The call shape follows the method's own
-// streaming flags: a unary method over a stream runs once per element, a
-// client-streaming method consumes the flow as its request stream, and
-// server-streaming or bidi responses become the new flow.
-message GrpcCall {
-  Endpoint endpoint = 1;
-  // Fully-qualified service name, e.g. "acme.search.v1.SearchService".
-  string service = 2;
-  string method = 3;
-  oneof request {
-    // Constant request payload.
-    google.protobuf.Value input = 4;
-    // CEL that builds the request from the flow message (`input`) and `vars`.
-    string input_cel = 5;
-  }
+// One gRPC call. The method's streaming shape is derived from its
+// descriptor's streaming flags and declared here at compile time; the checker
+// re-derives it and rejects drift. Cardinality is explicit on both sides of
+// the call: a client-streaming or bidi method's request slot takes a MANY
+// edge, a unary or server-streaming method takes ONE, and a server-streaming
+// or bidi response binds MANY. There is no implicit per-element invocation:
+// feeding a stream to a ONE slot requires an explicit collect step, and
+// feeding one value to a MANY slot requires an explicit unnest upstream.
+message GrpcCallStep {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "One gRPC call with declared streaming shape and explicit edge and output cardinalities."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Fully-qualified gRPC method in "package.Service/Method" form.
+  string method = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+/[A-Za-z][A-Za-z0-9_]*$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The method's streaming shape as declared at compile time. The checker
+  // re-derives it from the descriptor's clientStreaming/serverStreaming flags.
+  MethodShape method_shape = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The typed edge producing the request value, or the request-stream element
+  // value when the method is client-streaming or bidi. Required on live
+  // calls; must be absent on external-completion steps, whose request lane is
+  // owned by the completing actor. When any declared source binds a stream,
+  // the edge is a stream edge: its rules apply per element and produce_type
+  // names the element type.
+  ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Bounded fan-out over a repeated field of the edge's produced message.
+  // Unary methods only: each item executes one branch and the ordered branch
+  // outputs collect into one message, so a fanned-out step binds its collect
+  // type with cardinality ONE regardless of the method's response shape.
+  ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fan_out = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Declared cardinality of the edge feeding this step. Must be ONE when no
+  // declared source binds a stream and MANY when one does; must be
+  // UNSPECIFIED exactly when the step carries no edge.
+  EdgeCardinality edge_cardinality = 5 [
+    (ai.pipestream.proto.validate.v1.field).enum.defined_only = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Declared cardinality of the scope binding this step produces: MANY for a
+  // server-streaming or bidi response, ONE otherwise, including fanned-out
+  // steps, whose binding is the single collect message.
+  EdgeCardinality output_cardinality = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Whether the response's declared validation rules run before the next
+  // step. With a streaming response the check applies per element.
+  bool validate_response = 7 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // How the response is obtained. External steps carry no edge and no fan-out.
+  ai.pipestream.proto.grpc.recipe.v1.StepCompletion completion = 8 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
-// Keeps the flow messages where the condition holds.
-message CelFilter {
-  // Boolean CEL over `input`.
-  string condition = 1;
+// One structured generation: the coordinator fills the target type with the
+// catalog model, always validating its output. A structured step always binds
+// its target type (or its fan-out collect type) with cardinality ONE; its
+// grounding edge must also have cardinality ONE, since grounding is a single
+// message.
+message StructuredStep {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "One structured generation: target type, catalog model, attempt cap, and optional grounding edge."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The generation specification: target type, catalog model, attempt cap.
+  ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec spec = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional grounding edge. When present it must read only ONE bindings: a
+  // stream must be collected before it can ground a generation.
+  ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge = 2 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Bounded fan-out over a repeated field of the edge's produced message: one
+  // generation per item, collected into one message. Requires edge.
+  ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fan_out = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
-// Replaces each flow message with the result of the expression.
-message CelSelect {
-  string expression = 1;
+// Turns a repeated message field of a ONE binding into a stream of its
+// elements: the inverse of collect. This is the only way to obtain a MANY
+// binding from a unary response, which is what a client-streaming or bidi
+// request slot requires.
+message UnnestStep {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Turns a repeated message field of a single binding into a stream of its elements."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The single scope source to read. It must bind cardinality ONE.
+  string source = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Dotted path to a repeated message field of the source type; every
+  // intermediate segment must be a singular message field. The step binds the
+  // field's element type with cardinality MANY.
+  string path = 2 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string = {
+      max_len: 512
+      pattern: "^[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*$"
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
-// Maps each flow message through a protomolt-projection target. The flow type
-// must be one of the target's declared sources.
-message Project {
-  string target_type = 1;
+// Collapses a stream binding into one message's repeated field, preserving
+// stream order. This is the only way to feed a stream into a ONE slot: a
+// unary or server-streaming request, structured grounding, and the output
+// mapping all take ONE values.
+message CollectStep {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Collapses a stream binding into one message's repeated field, preserving order."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The single scope source to read. It must bind cardinality MANY.
+  string source = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The message type the collected elements form.
+  string collect_type = 2 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The repeated message field of collect_type the ordered elements land in;
+  // its element type must equal the source's element type.
+  string collect_into = 3 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string = {
+      max_len: 256
+      pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
-// Turns a repeated field of the flow message into a stream of its elements.
-message Unnest {
-  string path = 1;
+// Pipeline result projection over the final scope, checked with the same
+// scoped rule dialects as the recipe output.
+message PipelineOutput {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Pipeline result projection: output type plus scoped text and CEL mapping rules."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Fully-qualified protobuf output message.
+  string type = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Scoped text mapping rules over the final scope.
+  repeated string rules = 2 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 1024,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Typed CEL mapping rules over the final scope.
+  repeated ai.pipestream.proto.grpc.recipe.v1.CelMappingRule cel_rules = 3 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 1024,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
-// Collapses the stream into a single list value, for steps that need the
-// whole set at once (rerank).
-message Collect {
+// A gRPC method's streaming shape, derived from its descriptor's
+// clientStreaming and serverStreaming flags.
+enum MethodShape {
+  // Invalid until explicitly declared by a compiler or author.
+  METHOD_SHAPE_UNSPECIFIED = 0;
+  // Neither flag set: one request, one response.
+  METHOD_SHAPE_UNARY = 1;
+  // serverStreaming set: one request, a stream of responses.
+  METHOD_SHAPE_SERVER_STREAMING = 2;
+  // clientStreaming set: a stream of requests, one response.
+  METHOD_SHAPE_CLIENT_STREAMING = 3;
+  // Both flags set: a stream of requests, a stream of responses.
+  METHOD_SHAPE_BIDI_STREAMING = 4;
 }
 
-// Binds a CEL value as `vars.<name>` for later steps. The flow is unchanged.
-message Let {
-  string name = 1;
-  string cel = 2;
-}
-
-// What happened in one run. Returned to the caller; persisted when the
-// pipeline itself is stored.
-message RunRecord {
-  string pipeline = 1;
-  string input_type = 2;
-  string output_type = 3;
-  bool ok = 4;
-  repeated StepRecord steps = 5;
-}
-
-message StepRecord {
-  string name = 1;
-  int32 index = 2;
-  google.protobuf.Duration elapsed = 3;
-  int64 messages_in = 4;
-  int64 messages_out = 5;
-  string error = 6;
+// The cardinality of a scope binding or edge: how many messages one run of
+// the pipeline carries through it.
+enum EdgeCardinality {
+  // Invalid on a binding; on a gRPC step's edge_cardinality it marks the
+  // absence of an edge (external-completion steps only).
+  EDGE_CARDINALITY_UNSPECIFIED = 0;
+  // Exactly one message per run.
+  EDGE_CARDINALITY_ONE = 1;
+  // A stream of messages per run. Stream edges map per element; a stream
+  // binding feeds only a client-streaming or bidi request slot or a collect
+  // step.
+  EDGE_CARDINALITY_MANY = 2;
 }

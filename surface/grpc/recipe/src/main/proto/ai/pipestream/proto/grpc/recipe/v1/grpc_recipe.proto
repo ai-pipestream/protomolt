@@ -98,7 +98,9 @@ message TypedEdge {
     (ai.pipestream.proto.validate.v1.field).repeated = {
       min_items: 1
       max_items: 64
-      items: {string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}}
+      items: {
+        string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      }
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -541,18 +543,28 @@ message StructuredAttemptEvidence {
 
 // Recipe run state.
 enum RunStatus {
+  // Invalid until the host records a state.
   RUN_STATUS_UNSPECIFIED = 0;
+  // The run is still executing.
   RUN_STATUS_RUNNING = 1;
+  // Every step completed successfully.
   RUN_STATUS_SUCCEEDED = 2;
+  // The run ended on a step or validation failure.
   RUN_STATUS_FAILED = 3;
+  // The run was cancelled before completion.
   RUN_STATUS_CANCELLED = 4;
 }
 
 // Individual step state.
 enum StepStatus {
+  // Invalid until the host records a state.
   STEP_STATUS_UNSPECIFIED = 0;
+  // The step completed successfully.
   STEP_STATUS_SUCCEEDED = 1;
+  // The step failed.
   STEP_STATUS_FAILED = 2;
+  // The step's gate evaluated false and the step did not execute.
   STEP_STATUS_SKIPPED = 3;
+  // The step was cancelled before completion.
   STEP_STATUS_CANCELLED = 4;
 }
