@@ -46,6 +46,10 @@ modules:
     name: buf.build/ai-pipestream/acquire-confluence
   - path: transform/projection/src/main/proto
     name: buf.build/ai-pipestream/projection
+  - path: surface/grpc/recipe/src/main/proto
+    name: buf.build/ai-pipestream/grpc-recipe
+  - path: transform/pipeline/src/main/proto
+    name: buf.build/ai-pipestream/pipeline
 lint:
   use:
     - STANDARD
