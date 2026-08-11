@@ -12,7 +12,7 @@ option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.delegation.v1";
 
 // ============================================================================
-// AGENT DELEGATION — the engine-neutral coordinator/worker contract.
+// AGENT DELEGATION: the engine-neutral coordinator/worker contract.
 //
 // A coordinator delegates one bounded task to an LLM-backed worker process
 // over a single bidirectional stream. The LLM never owns the socket: an
