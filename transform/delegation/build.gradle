@@ -1,0 +1,41 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The agent delegation contract: the engine-neutral coordinator/worker bidirectional protocol plus the offline lifecycle reducer'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+    // The contract reuses the recipe's content-addressed ArtifactReference for
+    // context, checkpoint state, and completion evidence references.
+    api project(':protomolt-grpc-recipe')
+    // Persisted delegation fields carry the house validation and sensitivity
+    // metadata options.
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

@@ -50,6 +50,8 @@ modules:
     name: buf.build/ai-pipestream/grpc-recipe
   - path: transform/pipeline/src/main/proto
     name: buf.build/ai-pipestream/pipeline
+  - path: transform/delegation/src/main/proto
+    name: buf.build/ai-pipestream/delegation
 lint:
   use:
     - STANDARD

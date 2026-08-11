@@ -120,6 +120,9 @@ project(':protomolt-projection').projectDir = file('transform/projection')
 include 'protomolt-pipeline'
 project(':protomolt-pipeline').projectDir = file('transform/pipeline')
 
+include 'protomolt-delegation'
+project(':protomolt-delegation').projectDir = file('transform/delegation')
+
 include 'protomolt-chain'
 project(':protomolt-chain').projectDir = file('transform/chain')
 
