@@ -1,8 +1,8 @@
 # Agent delegation
 
-The delegation module defines a provider-neutral bidirectional gRPC contract
-between a coordinator and an LLM-backed worker adapter. It also provides a
-pure reducer that validates recorded task transcripts.
+The delegation module provides a provider-neutral bidirectional gRPC contract,
+an in-process coordinator, a worker adapter boundary, and deterministic
+transcript validation.
 
 The protobuf contract is
 [`delegation.proto`](../../transform/delegation/src/main/proto/ai/pipestream/proto/delegation/v1/delegation.proto).
@@ -88,7 +88,27 @@ documents.
 
 ## Runtime integration
 
-The module supplies the wire contract, validators, and offline reducer. A
-deployment still needs a coordinator service implementation, worker adapters,
-transcript persistence, admission policy, and provider-specific process
-integration.
+`InProcessDelegationCoordinator` implements the generated gRPC service. It
+handles admission, offers, leases, progress, checkpoints, cancellation, and
+candidate review. Each accepted frame is appended to a replayable transcript
+and checked against `DelegationReducer`.
+
+`CandidateReviewer` runs on a virtual thread and can accept a candidate,
+request a revision, or leave it pending for external review. Reviewers can
+inspect referenced commits and artifacts before accepting reported evidence.
+
+`waitForEvent` blocks until a task event appears after a caller-owned cursor or
+the timeout expires. It is suitable for an MCP long-poll tool and is safe to
+call from a virtual thread.
+
+`DelegationWorker` owns the gRPC stream and invokes a `WorkerRunner` on virtual
+threads. The runner receives a task offer, optional revision feedback, and
+callbacks for progress, checkpoints, heartbeats, and cancellation. A Kimi,
+Codex, Cursor, or local-model adapter only needs to implement `WorkerRunner`.
+
+`ScriptedWorkerRunner` provides deterministic in-process task and revision
+scenarios without a provider, container, or GPU.
+
+Deployments choose their admission policy, candidate reviewer, transcript
+persistence, and provider adapter. The in-process coordinator does not grant
+repository, artifact, or provider credentials.
