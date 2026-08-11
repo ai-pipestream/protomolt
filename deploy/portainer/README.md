@@ -14,7 +14,7 @@ The stack provides:
 | ProtoMolt MCP/HTTP | `http://nas:19902/mcp` | MCP, REST, OpenAPI, Swagger, and console |
 | ProtoMolt gRPC | `nas:19903` | ProtoMolt API and reflection |
 | ProtoMolt registry | `http://nas:19904` | Git-backed Confluent-compatible schema registry |
-| RustFS | `http://nas:19900` | Persistent S3-compatible artifact storage |
+| RustFS | `http://nas:31900` | Persistent S3-compatible artifact storage |
 | Keycloak | `http://nas:19901` | Local OIDC identity provider |
 
 Traefik terminates TLS with the NAS wildcard certificate for all externally
@@ -43,8 +43,10 @@ stored in Portainer, not committed.
 | `PROTOMOLT_KEYCLOAK_ADMIN_PASSWORD` | yes | Keycloak bootstrap admin password |
 | `PROTOMOLT_KEYCLOAK_CLIENT_SECRET` | yes | Secret for the `protomolt-coordinator` service client |
 
-The defaults reserve NAS ports `19900` through `19904`. Every binding and
-hostname can be overridden with the corresponding variable in `compose.yml`.
+The coordinator and Keycloak defaults reserve NAS ports `19901` through
+`19904`. RustFS uses `31900`, a separate host range that avoids the shared
+development-services ports. Every binding and hostname can be overridden with
+the corresponding variable in `compose.yml`.
 
 The server starts with a durable Git registry, durable service-profile and
 recipe workspaces, and the demo seed. An MCP client can therefore connect and
