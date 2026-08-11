@@ -133,6 +133,9 @@ project(':protomolt-chain').projectDir = file('transform/chain')
 include 'protomolt-mesh-proto'
 project(':protomolt-mesh-proto').projectDir = file('mesh/proto')
 
+include 'protomolt-mesh-contracts'
+project(':protomolt-mesh-contracts').projectDir = file('mesh/contracts')
+
 // search/ — index mappers plus the embedding and rerank model SPIs.
 
 include 'protomolt-index-spi'
