@@ -70,6 +70,9 @@ built-in action exposed by the standalone and full catalogs.
 
 ## Architecture and records
 
+- [PipeStream protobuf mesh](design/pipestream-protobuf-mesh/README.md):
+  contract-driven `Any` routing, service advertisement, recursive processing,
+  LLM software generation, and OpenNLP PII policy across mesh nodes
 - [Planned work](design/planned-work.md): open product and hardening work
 - [Intake and parsing](design/intake-and-parsing.md): platform ingestion architecture
 - [Document platform](design/document-platform.md): repository and account service architecture
