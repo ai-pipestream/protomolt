@@ -98,6 +98,19 @@ message Pipeline {
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-f]{64}$",
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // Maximum messages any one live binding may carry. The executor rejects an
+  // unnest or live response that exceeds this bound before it enters scope;
+  // this prevents a finite pipeline from materializing an unbounded stream.
+  int32 max_stream_messages = 11 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      int32: {
+        gte: 1
+        lte: 100000
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // One serial step. The step's name binds its output in the scope for later

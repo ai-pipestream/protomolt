@@ -275,6 +275,7 @@ agent or a ProtoMolt exploration session.
 | Work package | Status | Ownership boundary | Acceptance evidence |
 | --- | --- | --- | --- |
 | Pipeline contract and static checker | **LANDED: #107** | Define the pipeline execution contract covering every gRPC streaming shape (unary, server- and client-streaming, bidi) with typed edge semantics preserved, plus the static checker that verifies a compiled recipe against that contract before any execution. Branch from `main` after the credential-references package lands. Do not add pipeline execution, application generation, or container tooling. | In-process tests prove the checker accepts shape-correct pipelines, rejects cardinality and streaming-shape mismatches with descriptor-precise messages, and validates a compiled recipe fully offline with no container or GPU. |
+| In-process pipeline executor | **LANDED: #108** | Execute only statically checked pipelines through a host-owned service-profile transport seam. Preserve typed mapping, CEL, projection, validation, unnest/collect, structured generation, and bounded fan-out semantics across unary, server-streaming, client-streaming, and bidi calls. Keep persistence, external-step completion, MCP actions, application generation, and deployment out of this package. | In-process tests execute every streaming shape and cardinality transition, prove projected grounding excludes private fields, bound live streams, exercise gate skips and external-step rejection before transport, run fan-out on virtual threads at its declared concurrency, retain ordered branch-failure evidence under `CONTINUE`, and verify bounded dynamic bidi flow control. No container or GPU is required. |
 
 #### Agent work delegation
 
@@ -387,3 +388,13 @@ Phase 4 opens with the pipeline contract and its static checker
   descriptor-precise messages naming the file, type, field path, and
   streaming flags. A checked pipeline cannot fail on a shape or type error at
   run time.
+- `PipelineExecutor` (#108) executes a checked contract through
+  `PipelineTransport`, whose host resolves the stored service-profile and
+  endpoint references to channels and credentials. The engine applies the same
+  scoped text/CEL mappings, projection, and declared validation as the chain
+  layer, implements explicit unnest and collect, and executes every gRPC
+  streaming shape. Finite runs materialize no more than the validated
+  `max_stream_messages` bound. Fan-out branches use virtual threads behind the
+  contract's semaphore, preserve result order, and retain a bounded outcome for
+  every failed or abandoned branch. Synchronous execution rejects external
+  completion explicitly; that lifecycle remains owned by the durable jobs lane.

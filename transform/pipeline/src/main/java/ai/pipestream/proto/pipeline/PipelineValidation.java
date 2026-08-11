@@ -31,6 +31,7 @@ public final class PipelineValidation {
     private static final int MAX_STEPS = 256;
     private static final int MAX_RULES = 1_024;
     private static final int MAX_IDENTIFIER_LENGTH = 128;
+    private static final int MAX_STREAM_MESSAGES = 100_000;
     private static final Pattern IDENTIFIER =
             Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern DOTTED_PATH = Pattern.compile(
@@ -78,6 +79,10 @@ public final class PipelineValidation {
         }
         RecipeValidation.validatePositiveDuration(pipeline.getDeadline(),
                 "pipeline.deadline");
+        require(pipeline.getMaxStreamMessages() >= 1
+                        && pipeline.getMaxStreamMessages() <= MAX_STREAM_MESSAGES,
+                "pipeline.max_stream_messages must be between 1 and "
+                        + MAX_STREAM_MESSAGES);
         require(pipeline.getSourceRecipeName().isEmpty()
                         == pipeline.getSourceRecipeFingerprint().isEmpty(),
                 "pipeline.source_recipe_name and pipeline.source_recipe_fingerprint must "

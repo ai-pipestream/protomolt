@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'The pipeline contract: the compiled, streaming-aware form of a gRPC recipe, plus its offline static checker'
+description = 'The compiled streaming-aware pipeline contract, checker, and in-process executor'
 
 dependencies {
     api libs.protobuf.java
@@ -21,6 +21,12 @@ dependencies {
     // Edge projection targets resolve through the compiled projection.
     implementation project(':protomolt-projection')
     implementation project(':protomolt-descriptors')
+    // The executor applies the same CEL mappings and declared validation rules as chains.
+    implementation project(':protomolt-protobuf-validation-protovalidate')
+    // Structured pipeline steps delegate to the bounded structured-generation coordinator.
+    implementation project(':protomolt-inference-structured')
+    implementation project(':protomolt-grpc-invoke')
+    implementation libs.protobuf.java.util
 
     testImplementation project(':protomolt-proto-sources')
     // The end-to-end tests compile chains into recipes with the existing
