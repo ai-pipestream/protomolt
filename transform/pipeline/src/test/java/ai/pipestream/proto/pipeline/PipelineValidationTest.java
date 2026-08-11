@@ -251,4 +251,18 @@ class PipelineValidationTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("deadline");
     }
+
+    @Test
+    void streamMaterializationLimitIsRequiredAndBounded() {
+        assertThatThrownBy(() -> PipelineValidation.validate(validPipeline().toBuilder()
+                .setMaxStreamMessages(0).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_stream_messages")
+                .hasMessageContaining("between 1 and 100000");
+        assertThatThrownBy(() -> PipelineValidation.validate(validPipeline().toBuilder()
+                .setMaxStreamMessages(100_001).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_stream_messages")
+                .hasMessageContaining("between 1 and 100000");
+    }
 }

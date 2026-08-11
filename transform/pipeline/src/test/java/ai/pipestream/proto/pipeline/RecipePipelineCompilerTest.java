@@ -53,6 +53,7 @@ class RecipePipelineCompilerTest {
                 .isEqualTo(RecipeValidation.fingerprint(recipe));
         assertThat(pipeline.getDescriptorFingerprint())
                 .isEqualTo(PipelineFixtures.fingerprint());
+        assertThat(pipeline.getMaxStreamMessages()).isEqualTo(10_000);
         assertThat(pipeline.getStepsList()).singleElement().satisfies(step -> {
             // The top-level rule lane is normalized into an explicit edge over the scope.
             assertThat(step.getGrpcCall().getMethod())

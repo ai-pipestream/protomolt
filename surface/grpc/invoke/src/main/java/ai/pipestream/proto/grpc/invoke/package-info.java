@@ -4,7 +4,8 @@
  * <p>{@link DynamicGrpcCalls} builds the wire method descriptor from a protobuf
  * {@link com.google.protobuf.Descriptors.MethodDescriptor} with
  * {@link com.google.protobuf.DynamicMessage} marshallers, so any method described by a
- * descriptor set is callable: unary, client-streaming, and server-streaming. For an
+ * descriptor set is callable: unary, client-streaming, server-streaming, and finite
+ * bidirectional-streaming. For an
  * open-ended server stream, {@link DynamicGrpcStream} gives a flow-controlled handle whose
  * poll-shaped {@code take} contract suits a worker loop or a connector source task, requesting
  * messages from the server only as the consumer drains them.

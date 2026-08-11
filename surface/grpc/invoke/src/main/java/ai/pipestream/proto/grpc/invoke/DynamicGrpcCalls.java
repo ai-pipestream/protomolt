@@ -7,6 +7,7 @@ import io.grpc.Channel;
 import io.grpc.Context;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
+import io.grpc.Status;
 import io.grpc.stub.ClientCalls;
 import io.grpc.stub.MetadataUtils;
 
@@ -168,6 +169,55 @@ public final class DynamicGrpcCalls {
             throw e;
         }
         return sink.awaitResponse();
+    }
+
+    /**
+     * Invokes a finite bidirectional-streaming method. Requests are sent with outbound
+     * readiness flow control while responses are drained concurrently into a bounded
+     * buffer. Reaching {@code maxResponses} cancels the call and returns that bounded
+     * prefix; callers that need to detect overflow can request one value beyond their
+     * own limit.
+     *
+     * @throws io.grpc.StatusRuntimeException on any non-OK status
+     * @throws IllegalArgumentException       for methods that are not bidirectional
+     */
+    public static List<DynamicMessage> callBidiStreaming(Channel channel,
+                                                         Descriptors.MethodDescriptor method,
+                                                         Iterator<DynamicMessage> requests,
+                                                         CallOptions options,
+                                                         Metadata headers,
+                                                         int maxResponses) {
+        if (!method.isClientStreaming() || !method.isServerStreaming()) {
+            throw new IllegalArgumentException(
+                    "Method " + method.getFullName() + " is "
+                            + methodType(method).name().toLowerCase().replace('_', '-')
+                            + "; callBidiStreaming requires a bidirectional method");
+        }
+        if (maxResponses <= 0) {
+            throw new IllegalArgumentException("maxResponses must be positive");
+        }
+        BidiStreamingSink sink = new BidiStreamingSink(maxResponses);
+        io.grpc.stub.StreamObserver<DynamicMessage> upstream = ClientCalls.asyncBidiStreamingCall(
+                decorate(channel, headers).newCall(methodDescriptor(method), options),
+                sink.observer());
+        try {
+            while (requests.hasNext() && !sink.isDone()) {
+                sink.awaitReady();
+                if (!sink.isDone()) {
+                    upstream.onNext(requests.next());
+                }
+            }
+            if (!sink.isDone()) {
+                upstream.onCompleted();
+            }
+        } catch (RuntimeException e) {
+            upstream.onError(Status.CANCELLED
+                    .withDescription("request iterator failed: " + e.getMessage())
+                    .withCause(e)
+                    .asRuntimeException());
+            throw e;
+        }
+        return sink.awaitResponses();
     }
 
     private static Channel decorate(Channel channel, Metadata headers) {
