@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'The protobuf mesh core contract: EntityEnvelope, EntityHeader, SchemaReference, claim checks, and the mesh processing options (design package 01)'
+description = 'The protobuf mesh core contract: EntityEnvelope, EntityHeader, SchemaReference, claim checks, and the mesh processing options'
 
 dependencies {
     api libs.protobuf.java
@@ -17,8 +17,8 @@ dependencies {
     api project(':protomolt-index-spi')
 }
 
-// Messages and options only — node services arrive with the transport packages
-// (design packages 02 and 09), so no protoc-gen-grpc-java here.
+// Messages and options only — node services arrive with the transport
+// modules, so no protoc-gen-grpc-java here.
 protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:4.35.1"

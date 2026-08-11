@@ -94,6 +94,34 @@ class MeshValidationTest {
     }
 
     @Test
+    void aTypeUrlWithoutASlashFailsFast() {
+        byte[] bytes = MeshFixtures.payload().getValue().toByteArray();
+        EntityEnvelope entity = MeshFixtures.inlineEntity()
+                .setPayload(Any.newBuilder()
+                        .setTypeUrl("badurl")
+                        .setValue(MeshFixtures.payload().getValue()))
+                .setHeader(MeshFixtures.header(bytes))
+                .build();
+        assertThatThrownBy(() -> MeshValidation.validate(entity, BEFORE_DEADLINE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must contain a host and a slash");
+    }
+
+    @Test
+    void aTypeUrlWithAnEmptyTypeNameFailsFast() {
+        byte[] bytes = MeshFixtures.payload().getValue().toByteArray();
+        EntityEnvelope entity = MeshFixtures.inlineEntity()
+                .setPayload(Any.newBuilder()
+                        .setTypeUrl("type.googleapis.com/")
+                        .setValue(MeshFixtures.payload().getValue()))
+                .setHeader(MeshFixtures.header(bytes))
+                .build();
+        assertThatThrownBy(() -> MeshValidation.validate(entity, BEFORE_DEADLINE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must end with the fully qualified type name");
+    }
+
+    @Test
     void anEntityWithBothBodiesIsRejectedBeforeAnyBoundary() {
         EntityEnvelope entity = MeshFixtures.inlineEntity()
                 .setClaimCheck(MeshFixtures.claimCheckEntity().getClaimCheck())

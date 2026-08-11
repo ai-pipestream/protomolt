@@ -14,9 +14,8 @@ option java_package = "ai.pipestream.proto.mesh.v1";
 
 // ============================================================================
 // MESH CORE CONTRACTS: the transport-independent entity vocabulary every mesh
-// node, processor, route, and persistence adapter shares (design package 01,
-// docs/design/pipestream-protobuf-mesh). Contract gate only: no networking,
-// storage, or processor logic lives here.
+// node, processor, route, and persistence adapter shares. Contract gate only:
+// no networking, storage, or processor logic lives here.
 //
 // An EntityEnvelope carries exactly one inline google.protobuf.Any payload or
 // one typed ClaimCheck. Schema identity is a pair: the fully qualified payload
@@ -415,8 +414,7 @@ enum TerminalState {
 }
 
 // Where one scatter/rehydration scope is in its lifecycle. The scope runtime
-// (design package 04) drives these transitions; the enum lives here because
-// the contract owns it.
+// drives these transitions; the enum lives here because the contract owns it.
 enum ScopeState {
   // Invalid; every scope record names a real state.
   SCOPE_STATE_UNSPECIFIED = 0;

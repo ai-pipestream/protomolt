@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'The protobuf mesh contract gate: fail-fast envelope validation, canonical descriptor-set fingerprinting, and the schema-identity resolver (design package 01)'
+description = 'The protobuf mesh contract gate: fail-fast envelope validation, canonical descriptor-set fingerprinting, and the schema-identity resolver'
 
 dependencies {
     api project(':protomolt-mesh-proto')

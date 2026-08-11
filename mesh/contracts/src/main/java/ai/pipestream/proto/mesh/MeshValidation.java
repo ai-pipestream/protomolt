@@ -6,19 +6,28 @@ import ai.pipestream.proto.mesh.v1.EntityStatus;
 import ai.pipestream.proto.mesh.v1.TerminalState;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
+import com.google.protobuf.Timestamp;
+import com.google.protobuf.util.Timestamps;
 
 import java.time.Instant;
 import java.util.stream.Collectors;
 
 /**
- * The mesh contract gate: the fail-fast validation entry point every routing, persistence, and
- * processor-execution boundary calls before touching an entity.
+ * The fail-fast validation layer of the mesh contract gate.
  *
- * <p>Validation composes two layers. First the contract's own {@code validate.v1} annotations
- * (field bounds plus the message-level CEL rules: exactly one body, schema identity agreement,
- * parent/depth consistency, deadline order) run through {@link ProtoValidator}. Then the checks
- * annotations cannot express run here: the payload digest and length against the exact bytes, and
- * deadline expiry against the caller's clock.
+ * <p>The documented public path for admitting an entity at a routing, persistence, or
+ * processor-execution boundary is {@link MeshGate#admit}, which composes these checks with
+ * deadline expiry and schema-identity resolution so no caller can accidentally run only a
+ * subset. The methods here remain public for the finer-grained internal callers (the resolver,
+ * status-record writers) that legitimately need one layer at a time.
+ *
+ * <p>Validation composes three layers. Well-known-type timestamp validity runs first (an
+ * out-of-range Timestamp must be rejected before any CEL comparison sees it). Then the
+ * contract's own {@code validate.v1} annotations (field bounds plus the message-level CEL rules:
+ * exactly one body, schema identity agreement, parent/depth consistency, deadline order) run
+ * through {@link ProtoValidator}. Then the checks annotations cannot express run here: the
+ * payload digest and length against the exact bytes, inline type-URL shape and agreement with
+ * the schema, and deadline expiry against the caller's clock.
  *
  * <p>Every failure throws {@link IllegalArgumentException} with a field-precise message; nothing
  * partially valid crosses the gate.
@@ -58,16 +67,24 @@ public final class MeshValidation {
     }
 
     /**
-     * Validates everything about an entity except deadline expiry: the validate.v1 annotations,
-     * then digest and length agreement with the exact payload bytes and inline type-URL agreement
-     * with the schema. Expiry is deliberately separate: it is a temporal judgment a boundary
-     * makes against its own clock, not a structural property, and schema resolution must work on
-     * expired entities (for example when rehydrating evidence after the fact).
+     * Validates everything about an entity except deadline expiry: well-known-type timestamp
+     * validity, the validate.v1 annotations, then digest and length agreement with the exact
+     * payload bytes and inline type-URL shape and agreement with the schema. Expiry is
+     * deliberately separate: it is a temporal judgment a boundary makes against its own clock,
+     * not a structural property, and schema resolution must work on expired entities (for
+     * example when rehydrating evidence after the fact).
      *
      * @param entity the entity to validate
      */
     public static void validateStructure(EntityEnvelope entity) {
         require(entity != null, "entity must not be null");
+        validateTimestamp(entity.getHeader().getCreatedAt(), "header.created_at");
+        if (entity.getHeader().hasDeadline()) {
+            validateTimestamp(entity.getHeader().getDeadline(), "header.deadline");
+        }
+        if (entity.hasClaimCheck() && entity.getClaimCheck().hasExpiresAt()) {
+            validateTimestamp(entity.getClaimCheck().getExpiresAt(), "claim_check.expires_at");
+        }
         validateAnnotations(entity);
         long payloadLength = entity.getHeader().getPayloadLength();
         String payloadDigest = entity.getHeader().getPayloadDigest();
@@ -98,13 +115,18 @@ public final class MeshValidation {
     }
 
     /**
-     * Validates a mutable entity status record: annotations plus the terminal consistency the
-     * schema documents (terminal fields set exactly when the state is TERMINAL).
+     * Validates a mutable entity status record: timestamp validity, annotations, plus the
+     * terminal consistency the schema documents (terminal fields set exactly when the state is
+     * TERMINAL).
      *
      * @param status the status record to validate
      */
     public static void validate(EntityStatus status) {
         require(status != null, "status must not be null");
+        if (status.hasTerminalAt()) {
+            validateTimestamp(status.getTerminalAt(), "status.terminal_at");
+        }
+        validateTimestamp(status.getUpdatedAt(), "status.updated_at");
         validateAnnotations(status);
         boolean terminal = status.getState() == EntityState.ENTITY_STATE_TERMINAL;
         require(terminal == (status.getTerminalState() != TerminalState.TERMINAL_STATE_UNSPECIFIED),
@@ -127,7 +149,19 @@ public final class MeshValidation {
     /** The last path segment of an {@code Any} type URL: the fully qualified type name. */
     static String typeNameOf(String typeUrl) {
         int slash = typeUrl.lastIndexOf('/');
-        return slash < 0 ? typeUrl : typeUrl.substring(slash + 1);
+        require(slash > 0,
+                "payload.type_url must contain a host and a slash: '" + typeUrl + "'");
+        require(slash < typeUrl.length() - 1,
+                "payload.type_url must end with the fully qualified type name: '" + typeUrl + "'");
+        return typeUrl.substring(slash + 1);
+    }
+
+    /**
+     * Rejects a {@link Timestamp} that violates the well-known-type validity rules (seconds
+     * within 0001-01-01T00:00:00Z..9999-12-31T23:59:59Z, nanos within [0, 999999999]).
+     */
+    private static void validateTimestamp(Timestamp value, String field) {
+        require(Timestamps.isValid(value), field + " must be a valid protobuf Timestamp");
     }
 
     private static void validateAnnotations(com.google.protobuf.Message message) {
