@@ -4,6 +4,9 @@
 endpoint. Portainer is the sole lifecycle owner. The existing DJL stack remains
 on the GPU host and is not duplicated here.
 
+The server image is pinned by digest. Updating the coordinator is an explicit
+compose change after a new image has been built and verified from `main`.
+
 The stack provides:
 
 | Service | LAN endpoint | Purpose |

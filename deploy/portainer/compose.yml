@@ -6,8 +6,21 @@
 # environment variables and are deliberately absent from this file.
 
 services:
+  serve-init:
+    image: busybox:1.37.0
+    user: "0:0"
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /data/registry.git /data/services /data/recipes
+        chown -R 10001:10001 /data
+    volumes:
+      - protomolt-data:/data
+    restart: "no"
+
   serve:
-    image: ghcr.io/ai-pipestream/protomolt-serve:edge
+    image: ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:5f69b73168d42e2e8e02ee8cf3fa4911634bc121f34eaa3d0dac22c03051fa21
     container_name: protomolt-coordinator
     command:
       - --registry-git
@@ -19,6 +32,9 @@ services:
       - --demo
     environment:
       PROTOMOLT_API_TOKEN: ${PROTOMOLT_API_TOKEN:?set PROTOMOLT_API_TOKEN in Portainer}
+    depends_on:
+      serve-init:
+        condition: service_completed_successfully
     volumes:
       - protomolt-data:/data
     ports:
