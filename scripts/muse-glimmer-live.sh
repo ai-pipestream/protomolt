@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ENDPOINT="${GLIMMER_ENDPOINT:-http://127.0.0.1:8011}"
-MODEL="${GLIMMER_MODEL:-meta-models/Muse-Glimmer-30B}"
+MODEL="${GLIMMER_MODEL:-muse-glimmer-30b}"
 COMPOSE_FILE="${GLIMMER_COMPOSE_FILE:-deploy/krick-1/compose.yml}"
 MAX_TOKENS="${GLIMMER_SMOKE_MAX_TOKENS:-32}"
 TURN_SECONDS="${GLIMMER_SMOKE_TURN_SECONDS:-120}"

@@ -3,14 +3,18 @@
 `deploy/krick-1/` runs Meta Muse Glimmer as a persistent local delegation
 worker on the krick-1 workstation beside the existing Kimi worker:
 
-- `glimmer-vllm` serves `meta-models/Muse-Glimmer-30B` from a pinned
-  `intel/llm-scaler-vllm:0.21.0-b3` derivative. The b3 image ships
+- `glimmer-vllm` serves the verified local Muse Glimmer artifacts from a
+  pinned `intel/llm-scaler-vllm:0.21.0-b3` derivative. The b3 image ships
   Transformers 5.8.0, which rejects `model_type muse_glimmer`, so
-  `Dockerfile.glimmer-vllm` pins `transformers==5.15.0`. Inference runs with
-  online FP8 and the DFlash assistant on one B70 mapped through `/dev/dri`
-  and `ONEAPI_DEVICE_SELECTOR`. `--cpu-offload-gb` and `--swap-space` stay at
-  zero: inference is GPU-only and there is no CPU model offload or fallback.
-  `--limit-mm-per-prompt=image=0` keeps the server text-only.
+  `Dockerfile.glimmer-vllm` pins `transformers==5.15.0`. The model loads from
+  the pinned host directory `/work/models/muse-glimmer` mounted read-only at
+  `/models`, serves `/models/Muse-Glimmer-30B` as `muse-glimmer-30b`, and runs
+  online FP8 on one B70 mapped through `/dev/dri` with a read-only
+  `/dev/dri/by-path` bind that oneCCL initialization needs. The baseline is
+  text-only (`--limit-mm-per-prompt=image=0,video=0`) with a 4096 context;
+  larger contexts are opt-in through `GLIMMER_MAX_MODEL_LEN`.
+  `--cpu-offload-gb` and `--swap-space` stay at zero: inference is GPU-only
+  and there is no CPU model offload or fallback.
 - `kimi-worker` is the existing Kimi delegation worker. Kimi authentication
   enters through the host `~/.kimi-code` mount and is never baked into an
   image or written to this package.
@@ -19,8 +23,8 @@ worker on the krick-1 workstation beside the existing Kimi worker:
   sends no credential to the sidecar.
 
 The sidecar publishes `127.0.0.1:8011` on the host loopback only. The
-`pipeline-ovms` service on host ports 9000 and 9002 is a separate deployment;
-this stack does not define, alter, or stop it.
+`pipeline-ovms` service on host ports 9000 and 9002 is not managed by this
+stack; it is currently stopped with user approval to free the B70.
 
 ## Run
 
@@ -42,13 +46,14 @@ future transport work and are not configured here.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `GLIMMER_VLLM_IMAGE` | `protomolt-glimmer-vllm:0.21.0-b3-transformers-5.15.0` | local tag for the pinned derivative |
-| `GLIMMER_MODEL` | `meta-models/Muse-Glimmer-30B` | served model id, also passed to the Glimmer worker |
-| `GLIMMER_MODEL_CACHE` | `/work/models/huggingface` | host model cache mounted into the sidecar |
+| `GLIMMER_MODEL_DIR` | `/work/models/muse-glimmer` | pinned local artifacts mounted read-only at `/models` |
+| `GLIMMER_MODEL_PATH` | `/models/Muse-Glimmer-30B` | model directory the server loads |
+| `GLIMMER_SERVED_NAME` | `muse-glimmer-30b` | served model id, also passed to the Glimmer worker |
 | `GLIMMER_HOST_PORT` | `8011` | loopback host port for the sidecar |
-| `GLIMMER_MAX_MODEL_LEN` | `32768` | vLLM context length |
-| `GLIMMER_SPECULATIVE_CONFIG` | `{"method":"dflash","num_speculative_tokens":4}` | DFlash assistant configuration |
+| `GLIMMER_MAX_MODEL_LEN` | `4096` | verified context baseline; larger values are opt-in |
+| `GLIMMER_SPECULATIVE_CONFIG` | empty (disabled) | opt-in DFlash experiment, see below |
 | `GLIMMER_DEVICE_SELECTOR` | `level_zero:0` | the single B70 for inference |
-| `GLIMMER_HF_HUB_OFFLINE` | `0` | set `1` to serve only from the local cache |
+| `GLIMMER_HF_HUB_OFFLINE` | `1` | serve only from the local artifacts |
 | `PROTOMOLT_MCP_ENDPOINT` | `https://protomolt.rokkon.com/mcp` | coordinator MCP endpoint |
 | `PROTOMOLT_MCP_TOKEN` | none, required | MCP bearer token |
 | `KRICK_KIMI_IDENTITY` | `kimi-worker` | Kimi worker identity |
@@ -58,6 +63,22 @@ future transport work and are not configured here.
 | `KRICK_AGENT_UID` / `KRICK_AGENT_GID` | `1000` | container user matching the host |
 | `KRICK_AGENT_STATE_DIR` | `~/.local/state/protomolt-agents` | durable host state |
 | `KRICK_PROTOMOLT_GIT_DIR` | `/work/main/dev-tools/protomolt/.git` | linked-worktree Git metadata |
+
+## DFlash experiment (opt-in, two GPUs)
+
+Speculative decoding is disabled by default. One FP8 main model plus one FP8
+assistant exceeds the 32 GiB of a single B70 (33.21 GiB loaded, negative KV
+capacity), so DFlash is only an experiment for a two-GPU setup. To try it,
+map a second card, raise tensor parallelism, and set
+`GLIMMER_SPECULATIVE_CONFIG` to a JSON object that names an explicit
+assistant path, for example:
+
+```shell
+GLIMMER_SPECULATIVE_CONFIG='{"method":"dflash","model":"/models/Muse-Glimmer-30B-DFlash","num_speculative_tokens":4}'
+```
+
+The variable is empty by default and the server flag is omitted entirely
+unless it is set.
 
 ## Tailnet access
 
@@ -69,7 +90,13 @@ unchanged:
 tailscale serve --bg --set-path /glimmer http://127.0.0.1:8011
 ```
 
-## Live smoke
+## Verification
+
+`deploy/krick-1/check-deployment-statics.sh` runs static checks without
+containers or a GPU and fails when the compose file drifts from the verified
+baseline: the read-only `/dev/dri/by-path` bind and pinned `/models` mount
+must be present, CPU offload and swap must stay zero, and DFlash must remain
+opt-in only.
 
 `scripts/muse-glimmer-live.sh` checks the model list and one bounded chat
 completion against the running sidecar, then requires log or metrics evidence

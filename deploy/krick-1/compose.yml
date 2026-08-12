@@ -1,9 +1,10 @@
 # Persistent delegation workers and the Muse Glimmer sidecar for the krick-1
 # workstation. The stack runs a pinned Intel llm-scaler-vllm derivative serving
-# meta-models/Muse-Glimmer-30B on one B70, a Kimi worker with host Kimi auth,
-# and a Glimmer worker that reaches the model over the Compose network. The
-# pipeline-ovms service on host ports 9000 and 9002 is a separate deployment
-# and is not defined, altered, or stopped here.
+# the verified local Muse Glimmer artifacts on one B70, a Kimi worker with
+# host Kimi auth, and a Glimmer worker that reaches the model over the Compose
+# network. The pipeline-ovms service on host ports 9000 and 9002 is not
+# managed by this stack; it is currently stopped with user approval to free
+# the B70.
 #
 #   ./gradlew :protomolt-agent-host:installDist
 #   docker compose -f deploy/krick-1/compose.yml build
@@ -25,24 +26,30 @@ services:
       dockerfile: Dockerfile.glimmer-vllm
     image: ${GLIMMER_VLLM_IMAGE:-protomolt-glimmer-vllm:0.21.0-b3-transformers-5.15.0}
     container_name: protomolt-glimmer-vllm
-    # Online FP8 with the DFlash assistant on one B70, text-only. CPU offload
-    # and swap stay at zero: inference is GPU-only with no CPU fallback.
-    entrypoint: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+    # Single B70 default: online FP8, text-only, 4096 context baseline, no
+    # speculative decoding. One FP8 main plus one FP8 assistant exceeds the
+    # 32 GiB card, so DFlash stays an opt-in two-GPU experiment through
+    # GLIMMER_SPECULATIVE_CONFIG (see README.md). CPU offload and swap stay
+    # at zero: inference is GPU-only with no CPU fallback.
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - --model=${GLIMMER_MODEL:-meta-models/Muse-Glimmer-30B}
-      - --served-model-name=${GLIMMER_MODEL:-meta-models/Muse-Glimmer-30B}
-      - --host=0.0.0.0
-      - --port=8011
-      - --quantization=fp8
-      - --cpu-offload-gb=0
-      - --swap-space=0
-      - --max-model-len=${GLIMMER_MAX_MODEL_LEN:-32768}
-      - --limit-mm-per-prompt=image=0
-      - --tensor-parallel-size=1
-      - --speculative-config=${GLIMMER_SPECULATIVE_CONFIG:-{"method":"dflash","num_speculative_tokens":4}}
+      - >-
+        exec python3 -m vllm.entrypoints.openai.api_server
+        --model=${GLIMMER_MODEL_PATH:-/models/Muse-Glimmer-30B}
+        --served-model-name=${GLIMMER_SERVED_NAME:-muse-glimmer-30b}
+        --host=0.0.0.0
+        --port=8011
+        --quantization=fp8
+        --cpu-offload-gb=0
+        --swap-space=0
+        --max-model-len=${GLIMMER_MAX_MODEL_LEN:-4096}
+        --limit-mm-per-prompt=image=0,video=0
+        --tensor-parallel-size=1
+        $${GLIMMER_SPECULATIVE_CONFIG:+--speculative-config '$${GLIMMER_SPECULATIVE_CONFIG}'}
     environment:
       ONEAPI_DEVICE_SELECTOR: ${GLIMMER_DEVICE_SELECTOR:-level_zero:0}
-      HF_HUB_OFFLINE: ${GLIMMER_HF_HUB_OFFLINE:-0}
+      HF_HUB_OFFLINE: ${GLIMMER_HF_HUB_OFFLINE:-1}
+      GLIMMER_SPECULATIVE_CONFIG: ${GLIMMER_SPECULATIVE_CONFIG:-}
     devices:
       # Explicit Intel GPU mapping: the single B70 render nodes, nothing else.
       - /dev/dri:/dev/dri
@@ -50,7 +57,10 @@ services:
       # Host loopback only. Workers reach the model by Compose service name.
       - 127.0.0.1:${GLIMMER_HOST_PORT:-8011}:8011
     volumes:
-      - ${GLIMMER_MODEL_CACHE:-/work/models/huggingface}:/root/.cache/huggingface
+      # Pinned local artifacts verified on krick-1, mounted read-only.
+      - ${GLIMMER_MODEL_DIR:-/work/models/muse-glimmer}:/models:ro
+      # oneCCL initialization needs the by-path links next to the device nodes.
+      - /dev/dri/by-path:/dev/dri/by-path:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/v1/models', timeout=5)"]
       interval: 30s
@@ -116,7 +126,7 @@ services:
       - --provider-endpoint
       - http://glimmer-vllm:8011/v1
       - --model
-      - ${GLIMMER_MODEL:-meta-models/Muse-Glimmer-30B}
+      - ${GLIMMER_SERVED_NAME:-muse-glimmer-30b}
       - --workspace
       - /workspace
       - --state

@@ -109,7 +109,7 @@ apps/agent-host/build/install/protomolt-agent-host/bin/protomolt-agent-host \
   --identity glimmer-worker \
   --provider openai \
   --provider-endpoint http://127.0.0.1:8011/v1 \
-  --model meta-models/Muse-Glimmer-30B \
+  --model muse-glimmer-30b \
   --workspace /work/worktrees/protomolt/glimmer \
   --state /var/lib/protomolt/agents/glimmer-worker.json \
   --token-env PROTOMOLT_MCP_TOKEN
