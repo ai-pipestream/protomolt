@@ -10,8 +10,8 @@
 #   PROTOMOLT_AGENT_HOST_LIVE=1            required; anything else skips
 #   PROTOMOLT_MCP_TOKEN                    required; MCP bearer token
 #   PROTOMOLT_MCP_ENDPOINT                 default https://protomolt.rokkon.com/mcp
-#   PROTOMOLT_LIVE_WORKER_ID               default kimi-live-worker
-#   PROTOMOLT_LIVE_COORDINATOR_ID          default codex-live-coordinator
+#   PROTOMOLT_LIVE_WORKER_ID               default unique kimi-live-* identity
+#   PROTOMOLT_LIVE_COORDINATOR_ID          default unique codex-live-* identity
 #   PROTOMOLT_LIVE_BUDGET_SECONDS          default 1200 (overall deadline)
 #   PROTOMOLT_LIVE_KEEP_WORKDIR=1          keep the temp workdir on success
 #
@@ -27,8 +27,9 @@ fi
 cd "$(dirname "$0")/.."
 
 ENDPOINT="${PROTOMOLT_MCP_ENDPOINT:-https://protomolt.rokkon.com/mcp}"
-WORKER_ID="${PROTOMOLT_LIVE_WORKER_ID:-kimi-live-worker}"
-COORDINATOR_ID="${PROTOMOLT_LIVE_COORDINATOR_ID:-codex-live-coordinator}"
+RUN_SUFFIX="$(date -u +%Y%m%d%H%M%S)-$$"
+WORKER_ID="${PROTOMOLT_LIVE_WORKER_ID:-kimi-live-$RUN_SUFFIX}"
+COORDINATOR_ID="${PROTOMOLT_LIVE_COORDINATOR_ID:-codex-live-$RUN_SUFFIX}"
 BUDGET="${PROTOMOLT_LIVE_BUDGET_SECONDS:-1200}"
 LAUNCHER="$PWD/apps/agent-host/build/install/protomolt-agent-host/bin/protomolt-agent-host"
 
@@ -140,13 +141,60 @@ start_agent() { # start_agent <name> <logfile> <args...>: prints the child pid
   echo $!
 }
 
+# True when the watched task has emitted the named payload kind. Events from
+# other live tasks share the same feed and must never satisfy this run.
+task_has_kind() {
+  local kind="$1"
+  [ -n "$TASK_ID" ] || return 1
+  python3 - "$EVENTS_JSONL" "$TASK_ID" "$kind" <<'PYEOF'
+import json, sys
+for line in open(sys.argv[1]):
+    event = json.loads(line)
+    if event.get("taskId") != sys.argv[2]:
+        continue
+    entry = event.get("entry", {})
+    frame = entry.get("workerFrame") or entry.get("coordinatorFrame") or {}
+    if sys.argv[3] in frame:
+        sys.exit(0)
+sys.exit(1)
+PYEOF
+}
+
+task_has_failed_terminal() {
+  [ -n "$TASK_ID" ] || return 1
+  python3 - "$EVENTS_JSONL" "$TASK_ID" <<'PYEOF'
+import json, sys
+bad = {"failed", "cancelled", "rejected", "expired", "blocked"}
+for line in open(sys.argv[1]):
+    event = json.loads(line)
+    if event.get("taskId") != sys.argv[2]:
+        continue
+    entry = event.get("entry", {})
+    frame = entry.get("workerFrame") or entry.get("coordinatorFrame") or {}
+    if bad.intersection(frame):
+        sys.exit(0)
+sys.exit(1)
+PYEOF
+}
+
 say "STEP preflight: tools, launcher, endpoint $ENDPOINT"
 command -v curl >/dev/null || fail "curl is required"
 command -v python3 >/dev/null || fail "python3 is required"
+command -v git >/dev/null || fail "git is required"
 if [ ! -x "$LAUNCHER" ]; then
   echo "building the agent host distribution"
   ./gradlew :protomolt-agent-host:installDist -x test --console=plain -q || fail "gradle installDist failed"
 fi
+
+# The candidate contract requires a real commit reference. Give both provider
+# processes isolated repositories with a valid HEAD instead of relying on a
+# model to notice an empty directory and initialize Git itself.
+for workspace in "$WORK/workspace-kimi" "$WORK/workspace-codex"; do
+  git init -q -b main "$workspace"
+  git -C "$workspace" -c user.name="ProtoMolt Live Acceptance" \
+    -c user.email="protomolt-live@localhost" \
+    commit --allow-empty -q -m "Initialize live acceptance workspace"
+done
 mcp_initialize
 
 say "STEP worker-start: $WORKER_ID (kimi)"
@@ -171,17 +219,35 @@ echo "STEP worker-register OK: $WORKER_ID is registered"
 python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print("worker state cursor=%s providerSession=%s" % (s.get("cursor", 0), s.get("providerSessionId", "")))' \
   "$WORK/state/kimi-worker.json" || fail "worker state file missing after registration"
 
+# Snapshot the feed tail before starting the coordinator. A live server may
+# already contain many completed tasks; beginning at zero would let historical
+# offers and terminal frames impersonate this run.
+CURSOR=0
+while :; do
+  baseline="$WORK/baseline.json"
+  mcp_call delegation-watch "{\"afterCursor\": $CURSOR, \"timeoutMs\": 0, \"maxEvents\": 256}" > "$baseline" \
+    || fail "could not establish the delegation-watch baseline"
+  CURSOR="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cursor", sys.argv[2]))' "$baseline" "$CURSOR")"
+  truncated="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("truncated", False)).lower())' "$baseline")"
+  [ "$truncated" = "true" ] || break
+done
+echo "STEP watch-baseline OK: cursor=$CURSOR"
+
 say "STEP coordinator-start: $COORDINATOR_ID (codex) with bounded bootstrap objective"
 cat > "$WORK/objective.txt" <<EOF
 Offer exactly one bounded task to the worker named $WORKER_ID. Choose any task
-uuid. Task objective: in the worker workspace create SUMMARY.md with three
-lines describing this delegation round trip, then run the single required
-acceptance check named live-check that verifies the file exists and is
-non-empty. Require only the check live-check. The worker must send progress,
-one resumable checkpoint, and a completion candidate with evidence for
-live-check and one commit reference. When the candidate arrives, review the
-evidence: request one revision if the evidence or the commit reference is
-missing, otherwise accept the task.
+uuid. The task must have two stages. In stage one the worker accepts the offer,
+sends progress and one resumable checkpoint, then stops without creating the
+deliverable or submitting a completion candidate. Stage two begins only after
+the worker receives coordinator guidance whose exact text is
+continue-after-live-restart. It then creates SUMMARY.md with three lines in its
+workspace, runs the single required check named live-check that verifies the
+file exists and is non-empty, commits it, and submits a completion candidate
+with passing live-check evidence and the commit reference. Put these stage
+rules in the task objective and require only live-check. When the checkpoint
+arrives, use host-ack and do not send guidance; the acceptance harness sends
+it after restarting the worker. When the candidate arrives, request a revision
+if evidence or the commit reference is missing, otherwise accept the task.
 EOF
 COORDINATOR_PID="$(start_agent coordinator "$WORK/logs/coordinator.log" \
   --endpoint "$ENDPOINT" \
@@ -194,8 +260,7 @@ COORDINATOR_PID="$(start_agent coordinator "$WORK/logs/coordinator.log" \
   --token-env PROTOMOLT_MCP_TOKEN)"
 echo "coordinator pid $COORDINATOR_PID, log $WORK/logs/coordinator.log"
 
-say "STEP watch: delegation-watch from cursor 0 until the task is accepted (budget ${BUDGET}s)"
-CURSOR=0
+say "STEP watch: delegation-watch from cursor $CURSOR until the task is accepted (budget ${BUDGET}s)"
 TASK_ID=""
 RESTARTED=""
 PRE_RESTART_SESSION=""
@@ -220,19 +285,22 @@ with open(sys.argv[2], "a") as out:
             kinds[0] if kinds else "?", frame.get("taskId", "")))
 PYEOF
   CURSOR="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cursor", 0))' "$batch")"
-  # First offer fixes the task id for the final transcript checks.
+  # The first new offer addressed to this unique worker fixes the task id.
   if [ -z "$TASK_ID" ]; then
     TASK_ID="$(python3 -c '
 import json, sys
 for line in open(sys.argv[1]):
-    frame = (json.loads(line).get("entry", {}).get("coordinatorFrame") or {})
-    if "offer" in frame:
-        print(frame.get("taskId", ""))
-        break' "$EVENTS_JSONL")"
+    event = json.loads(line)
+    frame = (event.get("entry", {}).get("coordinatorFrame") or {})
+    if event.get("workerId") == sys.argv[2] and "offer" in frame:
+        print(event.get("taskId", ""))
+        break' "$EVENTS_JSONL" "$WORKER_ID")"
     [ -n "$TASK_ID" ] && echo "STEP task-offered OK: taskId=$TASK_ID"
   fi
   # First checkpoint with no restart yet: bounce the worker mid-task.
-  if [ -z "$RESTARTED" ] && grep -q '"checkpoint"' "$EVENTS_JSONL"; then
+  if [ -z "$RESTARTED" ] && task_has_kind checkpoint; then
+    task_has_kind completion \
+      && fail "worker submitted completion before the restart guidance gate"
     say "STEP worker-restart: checkpoint observed, restarting $WORKER_ID"
     PRE_RESTART_SESSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("providerSessionId", ""))' "$WORK/state/kimi-worker.json")"
     PRE_RESTART_CURSOR="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cursor", 0))' "$WORK/state/kimi-worker.json")"
@@ -254,38 +322,50 @@ for line in open(sys.argv[1]):
       --state "$WORK/state/kimi-worker.json" \
       --token-env PROTOMOLT_MCP_TOKEN)"
     echo "worker restarted, pid $WORKER_PID, log $WORK/logs/worker-restarted.log"
-    POST_RESTART_SESSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("providerSessionId", ""))' "$WORK/state/kimi-worker.json")"
-    POST_RESTART_CURSOR="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cursor", 0))' "$WORK/state/kimi-worker.json")"
-    [ "$POST_RESTART_SESSION" = "$PRE_RESTART_SESSION" ] \
-      || fail "provider session changed across restart: $PRE_RESTART_SESSION -> $POST_RESTART_SESSION"
-    [ "$POST_RESTART_CURSOR" -ge "$PRE_RESTART_CURSOR" ] \
-      || fail "cursor regressed across restart: $PRE_RESTART_CURSOR -> $POST_RESTART_CURSOR"
-    echo "PROOF resume: provider session $POST_RESTART_SESSION kept, cursor $POST_RESTART_CURSOR kept"
+    deadline=$((SECONDS + 180))
+    until mcp_call delegation-worker-list '{}' 2>/dev/null | python3 -c '
+import json, sys
+workers = json.load(sys.stdin).get("workers", [])
+sys.exit(0 if any(w.get("workerId") == sys.argv[1] and w.get("connected")
+                  for w in workers) else 1)' "$WORKER_ID"; do
+      [ $SECONDS -lt $deadline ] || { tail -20 "$WORK/logs/worker-restarted.log" >&2; fail "replacement worker did not reconnect within 180s"; }
+      kill -0 "$WORKER_PID" 2>/dev/null || { tail -20 "$WORK/logs/worker-restarted.log" >&2; fail "replacement worker died before reconnecting"; }
+      sleep 3
+    done
+    echo "STEP worker-reregister OK: $WORKER_ID is connected"
+    mcp_call delegation-message \
+      "{\"taskId\": \"$TASK_ID\", \"sender\": \"coordinator\", \"recipient\": \"$WORKER_ID\", \"kind\": \"TASK_MESSAGE_KIND_GUIDANCE\", \"text\": \"continue-after-live-restart\"}" \
+      > "$WORK/logs/restart-guidance.json" \
+      || fail "could not send the post-restart guidance"
+    echo "STEP restart-guidance OK: continue-after-live-restart"
     RESTARTED=1
   fi
   # Terminal: the coordinator accepted the candidate.
-  if grep -q '"accepted"' "$EVENTS_JSONL"; then
+  if task_has_kind accepted; then
     echo "STEP task-accepted OK"
     break
   fi
   # Loud terminal failures.
-  if python3 -c '
-import json, sys
-bad = {"failed", "cancelled", "rejected", "expired", "blocked"}
-for line in open(sys.argv[1]):
-    event = json.loads(line)
-    entry = event.get("entry", {})
-    frame = entry.get("workerFrame") or entry.get("coordinatorFrame") or {}
-    if bad.intersection(frame):
-        sys.exit(0)
-sys.exit(1)' "$EVENTS_JSONL"; then
+  if task_has_failed_terminal; then
     tail -20 "$WORK/logs/worker.log" "$WORK/logs/coordinator.log" >&2 || true
     fail "task reached a failed terminal state; see $EVENTS_JSONL"
   fi
 done
-grep -q '"accepted"' "$EVENTS_JSONL" || fail "task was not accepted within ${BUDGET}s"
+task_has_kind accepted || fail "task was not accepted within ${BUDGET}s"
 [ -n "$TASK_ID" ] || fail "no task offer was ever observed"
 [ -n "$RESTARTED" ] || fail "no checkpoint was observed, so the restart path went unproven"
+
+# Completion after reconnect proves the replacement provider actually ran a
+# turn. Read the state only now, after that resumed work, so the comparison is
+# not merely observing the unchanged file immediately after process start.
+POST_RESTART_SESSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("providerSessionId", ""))' "$WORK/state/kimi-worker.json")"
+POST_RESTART_CURSOR="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cursor", 0))' "$WORK/state/kimi-worker.json")"
+[ -n "$PRE_RESTART_SESSION" ] || fail "the worker recorded no provider session before restart"
+[ "$POST_RESTART_SESSION" = "$PRE_RESTART_SESSION" ] \
+  || fail "provider session changed across restart: $PRE_RESTART_SESSION -> $POST_RESTART_SESSION"
+[ "$POST_RESTART_CURSOR" -gt "$PRE_RESTART_CURSOR" ] \
+  || fail "cursor did not advance after restart: $PRE_RESTART_CURSOR -> $POST_RESTART_CURSOR"
+echo "PROOF resume: provider session $POST_RESTART_SESSION kept, cursor advanced $PRE_RESTART_CURSOR -> $POST_RESTART_CURSOR"
 
 say "STEP transcript: delegation-transcript for $TASK_ID"
 transcript="$WORK/transcript.json"
@@ -302,7 +382,8 @@ for event in events:
     if frame.get("frameId"):
         frame_ids.append(frame["frameId"])
     cursors.append(event.get("cursor", 0))
-required = {"offer", "accept", "progress", "checkpoint", "completion", "accepted"}
+required = {"offer", "accept", "progress", "checkpoint", "taskMessage",
+            "completion", "accepted"}
 missing = required.difference(kinds)
 if missing:
     print("missing lifecycle frames: " + ", ".join(sorted(missing)), file=sys.stderr)
@@ -312,6 +393,11 @@ if len(frame_ids) != len(set(frame_ids)):
     sys.exit(1)
 if cursors != sorted(cursors) or len(cursors) != len(set(cursors)):
     print("transcript cursors are not strictly increasing", file=sys.stderr)
+    sys.exit(1)
+if not (kinds.index("checkpoint") < kinds.index("taskMessage")
+        < kinds.index("completion")):
+    print("restart guidance was not between checkpoint and completion",
+          file=sys.stderr)
     sys.exit(1)
 print("PROOF transcript: %d frames, kinds %s, no duplicate frame ids, cursors ordered" % (
     len(events), ",".join(dict.fromkeys(kinds))))

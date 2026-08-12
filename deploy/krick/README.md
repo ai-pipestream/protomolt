@@ -22,16 +22,21 @@ carries a credential.
 - Kimi Code installed and authenticated on the host (`~/.kimi-code`), and the
   Codex CLI authenticated on the host (`~/.codex`). The image carries the
   Codex CLI itself; the Kimi binary enters through the `~/.kimi-code` mount.
-- The workspace and state directories, created once:
+- Two dedicated git worktrees and the state directory, created once from the
+  repository root:
 
 ```shell
-mkdir -p /work/worktrees/protomolt/kimi /work/worktrees/protomolt/codex \
-  ~/.local/state/protomolt-agents
+git fetch origin
+git worktree add -b agent/kimi-worker \
+  /work/worktrees/protomolt/kimi origin/main
+git worktree add -b agent/codex-coordinator \
+  /work/worktrees/protomolt/codex origin/main
+mkdir -p ~/.local/state/protomolt-agents
 ```
 
-The workspaces are ordinary git worktrees the agents implement in. The state
-directory holds each host's cursor and provider session record; back it up
-with the worktrees.
+Choose different branch names if either example branch already exists. The
+agents implement and commit inside these worktrees. The state directory holds
+each host's cursor and provider session record; back it up with the worktrees.
 
 ## Run
 
