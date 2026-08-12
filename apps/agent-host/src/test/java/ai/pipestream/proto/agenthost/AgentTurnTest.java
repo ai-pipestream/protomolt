@@ -19,7 +19,7 @@ class AgentTurnTest {
     void workerMustAcknowledgeEveryCursorAndCannotSpoofItsIdentity() {
         String response = """
                 {"handledEventCursors":[4,7],"commands":[{"tool":"delegation-message",
-                 "arguments":{"taskId":"11111111-1111-1111-1111-111111111111",
+                 "arguments":{"taskId":"11111111-1111-4111-8111-111111111111",
                  "kind":"TASK_MESSAGE_KIND_QUESTION","text":"scope?"}}]}
                 """;
         AgentTurn turn = AgentTurn.parse(response, AgentRole.WORKER, List.of(4L, 7L),
@@ -77,6 +77,45 @@ class AgentTurnTest {
             assertStrictObjects(AgentTurn.outputSchema(role), "$", findings);
             assertThat(findings).as("%s schema findings", role).isEmpty();
         }
+    }
+
+    @Test
+    void ordinaryJsonProvidersCannotBypassTheAdvertisedCommandSchema() {
+        assertThatThrownBy(() -> AgentTurn.parse("""
+                {"handledEventCursors":[4],"commands":[{
+                  "tool":"delegation-progress",
+                  "arguments":{
+                    "taskId":"11111111-1111-4111-8111-111111111111",
+                    "message":"working"
+                  }}]}
+                """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("attempt is required");
+
+        assertThatThrownBy(() -> AgentTurn.parse("""
+                {"handledEventCursors":[4],"commands":[{
+                  "tool":"delegation-progress",
+                  "arguments":{
+                    "taskId":"11111111-1111-4111-8111-111111111111",
+                    "attempt":1,
+                    "message":"working",
+                    "unreviewed":true
+                  }}]}
+                """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("unknown field 'unreviewed'");
+
+        AgentTurn valid = AgentTurn.parse("""
+                {"handledEventCursors":[4],"commands":[{
+                  "tool":"delegation-progress",
+                  "arguments":{
+                    "taskId":"11111111-1111-4111-8111-111111111111",
+                    "attempt":1,
+                    "message":"working"
+                  }}]}
+                """, AgentRole.WORKER, List.of(4L), "kimi-worker");
+        assertThat(valid.commands().getFirst().arguments().path("workerId").asText())
+                .isEqualTo("kimi-worker");
     }
 
     private static void assertStrictObjects(JsonNode node, String path,
