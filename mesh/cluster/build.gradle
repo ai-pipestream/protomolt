@@ -14,11 +14,15 @@ dependencies {
     // The bridge derives leased processor advertisements from delegation
     // WorkerHello frames.
     api project(':protomolt-delegation')
+    // Durable directory event logs use repository-service raw blob RPCs.
+    api project(':protomolt-repo-proto')
     // Persisted cluster fields carry the house validation, sensitivity, and
     // index-hint options.
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-metadata')
     api project(':protomolt-index-spi')
+
+    testImplementation libs.grpc.inprocess
 }
 
 // Messages and enums only; no services, so no protoc-gen-grpc-java here.

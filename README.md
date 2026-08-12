@@ -30,12 +30,13 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `schema/registry/` | `registry`, `registry-server` | Git-backed schema registry: subject/version store with compatibility-gated writes, served over the Confluent protocol |
 | `schema/` | `schema-apicurio`, `schema-apicurio-deployment`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries; the Apicurio loader's Quarkus build-time half |
 | `protobuf/` | `protobuf-metadata`, `protobuf-quality`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; CEL-scored quality dimensions declared as message options; protovalidate dialect and conformance harness |
+| `mesh/cluster/` | `mesh-cluster` | In-memory cluster discovery with fenced presence and capacity, encrypted repository-service event persistence, and restart replay |
 | `transform/mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
 | `transform/shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
 | `transform/projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
 | `transform/pipeline/` | `pipeline` | Checked pipeline execution across every gRPC streaming shape, with typed edges, structured generation, unnest, collect, and bounded fan-out |
 | `transform/chain/` | `chain` | Checked serial gRPC compositions with gates, deadlines, named registry storage, and keyed or zip joins over two live streams |
-| `transform/delegation/` | `delegation` | Coordinator and worker bidirectional contract, validation, and deterministic offline transcript reduction |
+| `transform/delegation/` | `delegation` | Coordinator and worker bidirectional contract, transcript reduction, encrypted repository-service persistence, and restart restoration |
 | `jobs/` | `jobs-proto`, `jobs-service` | Durable chain jobs with step checkpoints, external completion, Kafka request and event topics, typed failures, and retries |
 | `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Indexing plans and hints; NDJSON output; engine plugins |
 | `search/embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
