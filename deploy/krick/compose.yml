@@ -43,8 +43,14 @@ services:
       PROTOMOLT_MCP_TOKEN: ${PROTOMOLT_MCP_TOKEN:?set PROTOMOLT_MCP_TOKEN in the shell or deploy/krick/.env}
     volumes:
       - ${KRICK_KIMI_WORKSPACE:-/work/worktrees/protomolt/kimi}:/workspace
+      # Linked worktrees point here with an absolute path. Mount the common
+      # Git metadata at that same path so local commits update the right branch.
+      - ${KRICK_PROTOMOLT_GIT_DIR:-/work/main/dev-tools/protomolt/.git}:/work/main/dev-tools/protomolt/.git
       - ${KRICK_AGENT_STATE_DIR:-~/.local/state/protomolt-agents}:/state
       - ~/.kimi-code:/home/protomolt/.kimi-code
+      # Git identity and non-secret client settings are needed for reviewable
+      # local commits. Push credentials are intentionally not mounted.
+      - ~/.gitconfig:/home/protomolt/.gitconfig:ro
     restart: unless-stopped
 
   codex-coordinator:
@@ -75,8 +81,10 @@ services:
       PROTOMOLT_MCP_TOKEN: ${PROTOMOLT_MCP_TOKEN:?set PROTOMOLT_MCP_TOKEN in the shell or deploy/krick/.env}
     volumes:
       - ${KRICK_CODEX_WORKSPACE:-/work/worktrees/protomolt/codex}:/workspace
+      - ${KRICK_PROTOMOLT_GIT_DIR:-/work/main/dev-tools/protomolt/.git}:/work/main/dev-tools/protomolt/.git
       - ${KRICK_AGENT_STATE_DIR:-~/.local/state/protomolt-agents}:/state
       - ~/.codex:/home/protomolt/.codex
+      - ~/.gitconfig:/home/protomolt/.gitconfig:ro
       # The objective is input, not a credential. It is processed once; the
       # saved host state prevents it from running again on restart.
       - ./codex-objective.txt:/bootstrap/objective.txt:ro

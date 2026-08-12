@@ -68,7 +68,15 @@ krick = open("deploy/krick/compose.yml").read()
 if "${PROTOMOLT_MCP_TOKEN:?" not in krick:
     print("krick compose must require PROTOMOLT_MCP_TOKEN")
     sys.exit(1)
+if krick.count("~/.gitconfig:/home/protomolt/.gitconfig:ro") != 2:
+    print("krick agents must receive the host git config read-only")
+    sys.exit(1)
+if krick.count("/work/main/dev-tools/protomolt/.git") != 4:
+    print("krick agents must receive linked-worktree git metadata")
+    sys.exit(1)
 print("krick compose requires PROTOMOLT_MCP_TOKEN")
+print("krick compose mounts git config read-only for both agents")
+print("krick compose mounts linked-worktree git metadata for both agents")
 PYEOF
 
 say "dockerfiles: COPY sources match the Gradle installDist layout"
@@ -89,6 +97,16 @@ for dockerfile, copy_source, gradle_file, distribution in pairs:
         print(gradle_file, "applies no application plugin; the distribution cannot build")
         sys.exit(1)
     print("dockerfile OK", dockerfile, "->", copy_source)
+
+agent_host = open("apps/agent-host/Dockerfile").read()
+if "FROM eclipse-temurin:21-jdk" not in agent_host:
+    print("agent-host image must include javac for delegated build and test work")
+    sys.exit(1)
+print("agent-host image includes a JDK for delegated build and test work")
+if "chmod 755 /home/protomolt" not in agent_host:
+    print("agent-host image home must be readable by provider file watchers")
+    sys.exit(1)
+print("agent-host image home is readable by provider file watchers")
 PYEOF
 
 say "no em dashes in authored deployment files"
