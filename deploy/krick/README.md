@@ -22,6 +22,8 @@ carries a credential.
 - Kimi Code installed and authenticated on the host (`~/.kimi-code`), and the
   Codex CLI authenticated on the host (`~/.codex`). The image carries the
   Codex CLI itself; the Kimi binary enters through the `~/.kimi-code` mount.
+- A host `~/.gitconfig` with the commit identity the agents should use. It is
+  mounted read-only. Git push credentials are not mounted.
 - Two dedicated git worktrees and the state directory, created once from the
   repository root:
 
@@ -37,6 +39,9 @@ mkdir -p ~/.local/state/protomolt-agents
 Choose different branch names if either example branch already exists. The
 agents implement and commit inside these worktrees. The state directory holds
 each host's cursor and provider session record; back it up with the worktrees.
+The compose stack also mounts the source repository's shared `.git` directory
+at its original absolute path because linked worktrees refer to it there. Set
+`KRICK_PROTOMOLT_GIT_DIR` if the main checkout moves.
 
 ## Run
 
@@ -66,6 +71,7 @@ stop the stack and clear `~/.local/state/protomolt-agents`, then start again.
 | `KRICK_KIMI_WORKSPACE` | no | `/work/worktrees/protomolt/kimi` | Worktree the Kimi worker operates in |
 | `KRICK_CODEX_WORKSPACE` | no | `/work/worktrees/protomolt/codex` | Worktree the Codex coordinator operates in |
 | `KRICK_AGENT_STATE_DIR` | no | `~/.local/state/protomolt-agents` | Host directory for cursor and provider session state |
+| `KRICK_PROTOMOLT_GIT_DIR` | no | `/work/main/dev-tools/protomolt/.git` | Shared Git metadata used by the linked worktrees |
 | `KRICK_AGENT_UID` / `KRICK_AGENT_GID` | no | `1000` | Container process id; match the host user so mounts stay writable |
 
 ## Without containers

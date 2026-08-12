@@ -34,7 +34,10 @@ COPY build/install/protomolt-agent-host /opt/protomolt-agent-host
 RUN useradd --system --uid 10001 --create-home --home-dir /home/protomolt protomolt \
     # Jars inherit the build host's cache permissions (some are 600); the app dir is
     # root-owned read-only for the app user, so normalize read bits explicitly.
-    && chmod -R a+rX /opt/protomolt-agent-host
+    && chmod -R a+rX /opt/protomolt-agent-host \
+    # Compose runs as the host UID so bind-mounted provider state stays writable.
+    # That UID must be able to traverse the image-owned home to reach those mounts.
+    && chmod 711 /home/protomolt
 USER 10001
 ENV HOME=/home/protomolt
 # The Kimi CLI binary ships in its config directory (mounted at runtime).
