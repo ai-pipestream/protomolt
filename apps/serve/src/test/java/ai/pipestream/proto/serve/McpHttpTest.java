@@ -101,7 +101,7 @@ class McpHttpTest {
         assertThat(result.path("capabilities").has("tools")).isTrue();
         assertThat(result.path("capabilities").has("resources")).isTrue();
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
-                .isEqualTo(40);
+                .isEqualTo(52);
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/workspace").asText())
                 .isEqualTo("protomolt://workspace");
         assertThat(result.path("instructions").asText())
@@ -133,7 +133,7 @@ class McpHttpTest {
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode result = MAPPER.readTree(response.body()).path("result");
         JsonNode tools = result.path("tools");
-        assertThat(tools.size()).isEqualTo(40);
+        assertThat(tools.size()).isEqualTo(52);
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
                 .isEqualTo(tools.size());
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
@@ -141,7 +141,9 @@ class McpHttpTest {
                 "check-rules", "run-chain", "check-chain", "infer-schema", "mask-message",
                 "submit-chain", "get-job", "list-jobs", "complete-step", "service-register",
                 "service-list", "service-inspect", "service-refresh", "suggest-mappings",
-                "compile-recipe", "record-recipe-run", "replay-recipe", "promote-recipe");
+                "compile-recipe", "record-recipe-run", "replay-recipe", "promote-recipe",
+                "delegation-worker-register", "delegation-offer", "delegation-watch",
+                "delegation-message", "delegation-review", "delegation-transcript");
     }
 
     @Test
@@ -164,7 +166,7 @@ class McpHttpTest {
         String text = MAPPER.readTree(read.body()).path("result").path("contents")
                 .get(0).path("text").asText();
         JsonNode workspace = MAPPER.readTree(text);
-        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(40);
+        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(52);
         assertThat(workspace.path("toolCatalog").path("names"))
                 .anySatisfy(name -> assertThat(name.asText()).isEqualTo("service-register"));
 
@@ -173,7 +175,8 @@ class McpHttpTest {
                 """);
         assertThat(templates.statusCode()).isEqualTo(200);
         assertThat(MAPPER.readTree(templates.body()).path("result")
-                .path("resourceTemplates")).isEmpty();
+                .path("resourceTemplates").findValuesAsText("name"))
+                .containsExactly("delegation-transcript");
     }
 
     @Test
