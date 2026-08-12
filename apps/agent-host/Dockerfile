@@ -13,7 +13,7 @@
 #   docker run --rm protomolt-agent-host:local --help
 FROM node:22.20.0-bookworm-slim AS node
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jdk
 
 # Node runtime for the Codex CLI (node, npm, corepack live in /usr/local).
 COPY --from=node /usr/local /usr/local

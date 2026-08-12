@@ -99,6 +99,10 @@ for dockerfile, copy_source, gradle_file, distribution in pairs:
     print("dockerfile OK", dockerfile, "->", copy_source)
 
 agent_host = open("apps/agent-host/Dockerfile").read()
+if "FROM eclipse-temurin:21-jdk" not in agent_host:
+    print("agent-host image must include javac for delegated build and test work")
+    sys.exit(1)
+print("agent-host image includes a JDK for delegated build and test work")
 if "chmod 755 /home/protomolt" not in agent_host:
     print("agent-host image home must be readable by provider file watchers")
     sys.exit(1)
