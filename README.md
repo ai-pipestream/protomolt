@@ -60,6 +60,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `host/integrations/` | `spring`, `quarkus`, `quarkus-deployment` | Dependency-injection wiring (beans and producers, not HTTP hosts); the Quarkus extension's build-time half |
 | `apps/serve/` | `serve` | One-process server: the gRPC service with reflection, the verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, optional registry |
 | `apps/cli/` | `cli` | The command line: run any catalog verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same catalog |
+| `apps/agent-host/` | `agent-host` | Persistent Codex and Kimi processes attached to delegation over MCP, with structured command gates, cursor recovery, and provider session resume |
 | `bom/` | `bom` | Version alignment for all published artifacts |
 
 ## Getting started

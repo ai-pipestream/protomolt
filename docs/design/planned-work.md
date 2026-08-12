@@ -55,16 +55,15 @@ recorded contract.
 
 ## Agent delegation
 
-Extend the in-process coordinator where deployments need durable or remote
-coordination:
+Extend delegation where deployments need multi-coordinator ownership and
+stronger recovery:
 
 - automatic reoffer from the latest valid checkpoint after restart;
 - fenced or compare-and-set transcript writes for multiple coordinators;
 - capability-based offer routing across multiple connected workers;
 - repository and artifact evidence verifiers backed by configured stores;
-- MCP resources and tools for task status, review, cancellation, and event
-  waiting; and
-- production `WorkerRunner` adapters for selected LLM providers.
+- caller-supplied idempotency keys on MCP mutation tools; and
+- provider adapters beyond Codex and Kimi.
 
 Keep provider authentication and process lifecycle inside each adapter. The
 delegation stream carries bounded tasks, progress, checkpoints, and evidence,
