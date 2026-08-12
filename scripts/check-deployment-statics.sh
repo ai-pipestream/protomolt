@@ -99,10 +99,10 @@ for dockerfile, copy_source, gradle_file, distribution in pairs:
     print("dockerfile OK", dockerfile, "->", copy_source)
 
 agent_host = open("apps/agent-host/Dockerfile").read()
-if "chmod 711 /home/protomolt" not in agent_host:
-    print("agent-host image home must be traversable by the Compose host UID")
+if "chmod 755 /home/protomolt" not in agent_host:
+    print("agent-host image home must be readable by provider file watchers")
     sys.exit(1)
-print("agent-host image home is traversable by the Compose host UID")
+print("agent-host image home is readable by provider file watchers")
 PYEOF
 
 say "no em dashes in authored deployment files"
