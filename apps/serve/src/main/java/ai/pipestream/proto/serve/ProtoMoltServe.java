@@ -52,6 +52,9 @@ import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * The one-process ProtoMolt server: {@code ProtoMoltService} over gRPC (reflection enabled),
  * the same verbs over JSON/REST with OpenAPI and Swagger UI, the MCP server on
@@ -66,6 +69,8 @@ import java.util.Set;
  * </pre>
  */
 public final class ProtoMoltServe implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ProtoMoltServe.class);
 
     /**
      * Launcher options; a port of 0 picks a free port. A non-null {@code apiToken} guards
@@ -936,41 +941,43 @@ public final class ProtoMoltServe implements AutoCloseable {
     public static void main(String[] args) throws Exception {
         Options options = Options.parse(args);
         ProtoMoltServe serve = start(options);
-        System.out.printf("""
+        LOG.info("""
                 ProtoMolt serving:
-                  gRPC  %1$s:%2$d   ai.pipestream.protomolt.v1.ProtoMoltService (reflection on)
-                  REST  http://%1$s:%3$d/grpc-json/ProtoMoltService/{Method}
-                  API   http://%1$s:%3$d/openapi.json
-                  Docs  http://%1$s:%3$d/docs
-                  MCP   http://%1$s:%3$d/mcp   (streamable HTTP)
-                """, options.host(), serve.grpcPort(), serve.httpPort());
+                  gRPC  {}:{}   ai.pipestream.protomolt.v1.ProtoMoltService (reflection on)
+                  REST  http://{}:{}/grpc-json/ProtoMoltService/{Method}
+                  API   http://{}:{}/openapi.json
+                  Docs  http://{}:{}/docs
+                  MCP   http://{}:{}/mcp   (streamable HTTP)
+                """, options.host(), serve.grpcPort(), options.host(), serve.httpPort(),
+                options.host(), serve.httpPort(), options.host(), serve.httpPort(),
+                options.host(), serve.httpPort());
         if (serve.registryPort() >= 0) {
-            System.out.printf("  Reg   http://%s:%d (Confluent protocol, git-backed)%n",
+            LOG.info("  Reg   http://{}:{} (Confluent protocol, git-backed)",
                     options.host(), serve.registryPort());
         }
         if (options.jobs() != null) {
-            System.out.printf("  Jobs  %s (verbs: submit-chain, get-job, list-jobs, complete-step%s)%n",
+            LOG.info("  Jobs  {} (verbs: submit-chain, get-job, list-jobs, complete-step{})",
                     options.jobs().jdbcUrl(),
                     options.jobs().kafkaBootstrap() != null
                             ? "; Kafka " + options.jobs().kafkaBootstrap()
                             : ", no broker - verb submission only");
         }
         if (options.apiToken() == null) {
-            System.out.printf("  UI    http://%s:%d/console%n", options.host(), serve.httpPort());
+            LOG.info("  UI    http://{}:{}/console", options.host(), serve.httpPort());
         } else {
-            System.out.println("  Auth  api_token required on gRPC, REST, MCP"
-                    + (serve.registryPort() >= 0 ? ", and the registry" : "")
-                    + " (health, OpenAPI, and docs stay open)");
-            System.out.println("  UI    console disabled in token mode (a browser cannot "
+            LOG.info("  Auth  api_token required on gRPC, REST, MCP{}"
+                            + " (health, OpenAPI, and docs stay open)",
+                    serve.registryPort() >= 0 ? ", and the registry" : "");
+            LOG.info("  UI    console disabled in token mode (a browser cannot "
                     + "hold the shared secret)");
         }
         if (options.demo()) {
-            System.out.printf("""
-                    Demo schema seeded: subject %s (types demo.shop.v1.Order, Customer, ...)
+            LOG.info("""
+                    Demo schema seeded: subject {} (types demo.shop.v1.Order, Customer, ...)
                       Try: curl -s -H 'content-type: application/json' \\
                              -d '{"schema": {"type": "demo.shop.v1.Order"}}' \\
-                             http://%s:%d/grpc-json/ProtoMoltService/RenderJsonSchema
-                      Or open http://%s:%d/docs and call ValidateMessage on a demo.shop.v1.Order.
+                             http://{}:{}/grpc-json/ProtoMoltService/RenderJsonSchema
+                      Or open http://{}:{}/docs and call ValidateMessage on a demo.shop.v1.Order.
                     """, DemoSchemas.SHOP_SUBJECT,
                     options.host(), serve.httpPort(), options.host(), serve.httpPort());
         }

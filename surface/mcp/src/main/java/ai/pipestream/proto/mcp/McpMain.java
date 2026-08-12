@@ -21,6 +21,9 @@ import ai.pipestream.proto.registry.RegistryRecipeRepository;
 
 import java.nio.file.Path;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Stdio entry point: {@code protomolt-mcp [--registry-git <path>]
  * [--service-workspace <path>] [--recipe-workspace <path>]}.
@@ -31,6 +34,8 @@ import java.nio.file.Path;
  * diagnostics go to stderr, as the stdio transport requires.</p>
  */
 public final class McpMain {
+
+    private static final Logger LOG = LoggerFactory.getLogger(McpMain.class);
 
     private McpMain() {
     }
@@ -87,7 +92,7 @@ public final class McpMain {
             McpServer server = new McpServer(catalog,
                     serviceProfiles == null ? null : new ServiceProfileResources(serviceProfiles),
                     "protomolt", version != null ? version : "dev");
-            System.err.println("protomolt-mcp: serving " + catalog.names().size() + " tools on stdio");
+            LOG.info("protomolt-mcp: serving {} tools on stdio", catalog.names().size());
             server.run(System.in, System.out);
             return;
         }
@@ -100,8 +105,8 @@ public final class McpMain {
                     new RegistryResources(store), serviceProfiles == null
                             ? null : new ServiceProfileResources(serviceProfiles)),
                     "protomolt", version != null ? version : "dev");
-            System.err.println("protomolt-mcp: serving " + catalog.names().size()
-                    + " tools and registry resources from " + registryPath + " on stdio");
+            LOG.info("protomolt-mcp: serving {} tools and registry resources from {} on stdio",
+                    catalog.names().size(), registryPath);
             server.run(System.in, System.out);
         }
     }

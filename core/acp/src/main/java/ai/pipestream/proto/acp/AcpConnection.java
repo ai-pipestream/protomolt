@@ -22,6 +22,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Newline-delimited JSON-RPC 2.0 over a pair of byte streams, the framing ACP uses on stdio:
@@ -39,6 +41,7 @@ final class AcpConnection implements AutoCloseable {
     static final int INTERNAL_ERROR = -32603;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final Logger LOG = Logger.getLogger(AcpConnection.class.getName());
 
     /** Handles an incoming request; the return value becomes the response's {@code result}. */
     interface RequestHandler {
@@ -164,9 +167,9 @@ final class AcpConnection implements AutoCloseable {
                     notificationHandler.handle(method.asText(), message.get("params"));
                 } catch (Exception e) {
                     // Notifications are never answered; a failing listener must not kill
-                    // the connection, so the failure is reported on stderr and dropped.
-                    System.err.println("acp: notification handler failed for "
-                            + method.asText() + ": " + e);
+                    // the connection, so the failure is logged and dropped.
+                    LOG.log(Level.WARNING, e,
+                            () -> "acp: notification handler failed for " + method.asText());
                 }
             }
         } else if (id != null && (message.has("result") || message.has("error"))) {
