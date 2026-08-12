@@ -12,6 +12,7 @@ The guides below follow the repository's module layout.
 ## Core and schema
 
 - [Descriptor sources](core/descriptor-sources.md): descriptor loading and hygiene checks
+- [Cluster directory](core/cluster-directory.md): memory-resident discovery with encrypted restart persistence
 - [Core utilities](core/helpers.md): `Any`, `Struct`, conversion, and message comparison
 - [Compatibility checking](schema/compatibility.md): wire, JSON, and source compatibility
 - [JSON Schema generation](schema/json-schema.md): draft 2020-12 output from protobuf descriptors
