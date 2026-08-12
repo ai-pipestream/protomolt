@@ -169,6 +169,71 @@ class AgentHostAcceptanceTest {
         }
     }
 
+    @Test
+    void coordinatorCannotAcknowledgeAwayACompletionCandidate() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("review-workspace"));
+        Path coordinatorState = temporary.resolve("review-state/coordinator.json");
+        AckCountingProvider provider = new AckCountingProvider();
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0))) {
+            URI endpoint = URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp");
+            AgentHost coordinator = host(endpoint, AgentRole.COORDINATOR,
+                    "codex-coordinator", "codex", coordinatorState, workspace, provider);
+            try (coordinator; McpHttpClient workerSide = new McpHttpClient(endpoint,
+                    () -> null)) {
+                ObjectNode registration = MAPPER.createObjectNode()
+                        .put("workerId", WORKER).put("provider", "kimi");
+                registration.putArray("capabilities").addObject()
+                        .put("name", "structured-delegation")
+                        .put("description", "Consumes event batches and emits commands");
+                workerSide.callTool("delegation-worker-register", registration);
+                ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+                spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+                workerSide.callTool("delegation-offer", MAPPER.createObjectNode()
+                        .put("workerId", WORKER).put("taskId", TASK)
+                        .put("leaseSeconds", 300).set("spec", spec));
+                workerSide.callTool("delegation-accept", MAPPER.createObjectNode()
+                        .put("workerId", WORKER).put("taskId", TASK).put("attempt", 1));
+
+                assertThat(coordinator.pollOnce()).isTrue();
+                long acceptedCursor = coordinator.state().cursor();
+                int promptsAfterAccept = provider.prompts;
+
+                ObjectNode candidate = MAPPER.createObjectNode()
+                        .put("attempt", 1).put("revision", 1)
+                        .put("summary", "bounded implementation complete");
+                candidate.putArray("evidence").addObject()
+                        .put("checkName", "unit-tests")
+                        .put("verdict", "CHECK_VERDICT_PASSED")
+                        .put("ranAt", "2026-08-12T00:00:00Z")
+                        .put("detail", "focused tests pass");
+                candidate.putArray("commits").addObject()
+                        .put("repository", "git.rokkon.com/ai-pipestream/protomolt")
+                        .put("commit", "a".repeat(40))
+                        .put("subject", "agent host acceptance fixture");
+                workerSide.callTool("delegation-candidate", MAPPER.createObjectNode()
+                        .put("workerId", WORKER).put("taskId", TASK)
+                        .set("candidate", candidate));
+
+                assertThatThrownBy(coordinator::pollOnce)
+                        .isInstanceOf(AgentHostException.class)
+                        .hasMessageContaining("delegation-review")
+                        .hasMessageContaining(TASK);
+                assertThat(provider.prompts).isEqualTo(promptsAfterAccept + 2);
+                assertThat(provider.lastPrompt)
+                        .contains("Your previous response was rejected");
+                assertThat(coordinator.state().cursor()).isEqualTo(acceptedCursor);
+                assertThat(coordinator.state().pending()).isNull();
+
+                AgentHostState reloaded = new AgentHostStateStore(coordinatorState)
+                        .loadOrCreate("codex-coordinator", AgentRole.COORDINATOR,
+                                "codex", workspace);
+                assertThat(reloaded.cursor()).isEqualTo(acceptedCursor);
+                assertThat(reloaded.pending()).isNull();
+            }
+        }
+    }
+
     private AgentHost host(URI endpoint, AgentRole role, String identity, String providerName,
                            Path statePath, Path workspace, AgentProvider provider) {
         AgentHostStateStore store = new AgentHostStateStore(statePath);
@@ -381,6 +446,48 @@ class AgentHostAcceptanceTest {
                         + "\"reason\":\"noted\"}}]}";
             } catch (Exception e) {
                 throw new AgentHostException("ack-only provider could not read packet", e);
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class AckCountingProvider implements AgentProvider {
+        private int prompts;
+        private String lastPrompt;
+
+        @Override
+        public String name() {
+            return "codex";
+        }
+
+        @Override
+        public String sessionId() {
+            return "ack-counting-session";
+        }
+
+        @Override
+        public String prompt(String value) {
+            prompts++;
+            lastPrompt = value;
+            try {
+                ObjectNode packet = (ObjectNode) MAPPER.readTree(
+                        value.substring(value.lastIndexOf("Packet:\n") + 8));
+                StringBuilder cursors = new StringBuilder();
+                for (JsonNode event : packet.path("events")) {
+                    if (cursors.length() > 0) {
+                        cursors.append(',');
+                    }
+                    cursors.append(event.path("cursor").asLong());
+                }
+                return "{\"handledEventCursors\":[" + cursors + "],\"commands\":[{"
+                        + "\"tool\":\"host-ack\",\"arguments\":{"
+                        + "\"reason\":\"worker update observed\"}}]}";
+            } catch (Exception e) {
+                throw new AgentHostException(
+                        "ack-counting provider could not read packet", e);
             }
         }
 
