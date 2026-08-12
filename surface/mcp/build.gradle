@@ -17,6 +17,9 @@ dependencies {
     api project(':protomolt-delegation')
 
     implementation libs.slf4j.api
+    // The stdio launcher needs a real backend: SimpleLogger writes to stderr,
+    // keeping stdout clean for protocol traffic.
+    runtimeOnly libs.slf4j.simple
 
     testImplementation libs.grpc.services
 }
