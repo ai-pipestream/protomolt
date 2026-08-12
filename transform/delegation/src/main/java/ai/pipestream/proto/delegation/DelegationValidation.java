@@ -18,6 +18,8 @@ import ai.pipestream.proto.delegation.v1.Lane;
 import ai.pipestream.proto.delegation.v1.ProgressEvent;
 import ai.pipestream.proto.delegation.v1.RevisionRequested;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
+import ai.pipestream.proto.delegation.v1.TaskMessage;
+import ai.pipestream.proto.delegation.v1.TaskMessageKind;
 import ai.pipestream.proto.delegation.v1.TaskReject;
 import ai.pipestream.proto.delegation.v1.TaskSpec;
 import ai.pipestream.proto.delegation.v1.Transcript;
@@ -40,6 +42,9 @@ import java.util.regex.Pattern;
  * well-formed enough to carry and to reduce.
  */
 public final class DelegationValidation {
+
+    /** The sender/recipient identity that names the coordinator in a task message. */
+    public static final String COORDINATOR = "coordinator";
 
     /** Maximum serialized size of one frame. */
     public static final int MAX_FRAME_BYTES = 1024 * 1024;
@@ -114,6 +119,10 @@ public final class DelegationValidation {
                 requireTaskScoped(frame.getTaskId());
                 validate(frame.getCompletion());
             }
+            case TASK_MESSAGE -> {
+                requireTaskScoped(frame.getTaskId());
+                validate(frame.getTaskMessage(), frame.getTaskId());
+            }
             default -> require(false, "frame.payload must be set");
         }
     }
@@ -160,6 +169,10 @@ public final class DelegationValidation {
             case ACCEPTED -> {
                 requireTaskScoped(frame.getTaskId());
                 validate(frame.getAccepted());
+            }
+            case TASK_MESSAGE -> {
+                requireTaskScoped(frame.getTaskId());
+                validate(frame.getTaskMessage(), frame.getTaskId());
             }
             default -> require(false, "frame.payload must be set");
         }
@@ -401,6 +414,38 @@ public final class DelegationValidation {
         require(candidate.getArtifactsCount() <= MAX_REFERENCES,
                 "completion.artifacts exceeds the maximum of " + MAX_REFERENCES);
         candidate.getArtifactsList().forEach(RecipeValidation::validate);
+    }
+
+    /**
+     * Validates a task message against its envelope's task. The message is
+     * non-transitioning, so this checks structure only: identity, participants,
+     * kind, bounded text, and artifact references.
+     */
+    public static void validate(TaskMessage message, String envelopeTaskId) {
+        require(message != null, "task message must not be null");
+        require(UUID.matcher(message.getMessageId()).matches(),
+                "task_message.message_id must be a uuid: " + message.getMessageId());
+        validateName(message.getSender(), "task_message.sender");
+        validateName(message.getRecipient(), "task_message.recipient");
+        require(!message.getSender().equals(message.getRecipient()),
+                "task_message.recipient must differ from task_message.sender");
+        require(UUID.matcher(message.getTaskId()).matches(),
+                "task_message.task_id must be a uuid: " + message.getTaskId());
+        require(message.getTaskId().equals(envelopeTaskId),
+                "task_message.task_id must equal the frame's task_id");
+        require(message.getKind() != TaskMessageKind.TASK_MESSAGE_KIND_UNSPECIFIED
+                        && message.getKind() != TaskMessageKind.UNRECOGNIZED,
+                "task_message.kind must be a defined kind");
+        require(message.getReplyTo().isEmpty()
+                        || UUID.matcher(message.getReplyTo()).matches(),
+                "task_message.reply_to must be a uuid or empty: " + message.getReplyTo());
+        require(!message.getText().isBlank(), "task_message.text must not be blank");
+        bounded(message.getText(), 8_192, "task_message.text");
+        require(message.getArtifactsCount() <= MAX_NEEDS,
+                "task_message.artifacts exceeds the maximum of " + MAX_NEEDS);
+        message.getArtifactsList().forEach(RecipeValidation::validate);
+        require(message.hasSentAt(), "task_message.sent_at must be set");
+        validateTimestamp(message.getSentAt(), "task_message.sent_at");
     }
 
     /** Validates one piece of per-check evidence. */

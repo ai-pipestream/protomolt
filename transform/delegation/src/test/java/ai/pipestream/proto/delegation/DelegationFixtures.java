@@ -22,6 +22,8 @@ import ai.pipestream.proto.delegation.v1.LeaseRenewal;
 import ai.pipestream.proto.delegation.v1.ProgressEvent;
 import ai.pipestream.proto.delegation.v1.RevisionRequested;
 import ai.pipestream.proto.delegation.v1.TaskAccept;
+import ai.pipestream.proto.delegation.v1.TaskMessage;
+import ai.pipestream.proto.delegation.v1.TaskMessageKind;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
 import ai.pipestream.proto.delegation.v1.TaskReject;
 import ai.pipestream.proto.delegation.v1.TaskSpec;
@@ -126,6 +128,7 @@ final class DelegationFixtures {
         private final Map<String, Long> sequences = new HashMap<>();
         private final Map<String, Integer> currentAttempt = new HashMap<>();
         private int frameCounter;
+        private int messageCounter;
         private long tick = 1_700_000_000L;
 
         TranscriptBuilder hello(String worker) {
@@ -248,6 +251,39 @@ final class DelegationFixtures {
         TranscriptBuilder cancelledNotice(String task, String worker, int attempt) {
             return worker(worker, task, attempt, DelegateRequest.newBuilder()
                     .setCancelled(CancelledNotice.newBuilder().setAttempt(attempt)));
+        }
+
+        /** A worker-to-coordinator task message, sequenced in the attempt-0 scope. */
+        TranscriptBuilder workerMessage(String task, String worker, String text) {
+            return workerMessage(task, worker, worker, text);
+        }
+
+        /** A worker-to-coordinator task message with an explicit sender claim. */
+        TranscriptBuilder workerMessage(String task, String worker, String sender,
+                                        String text) {
+            return worker(worker, task, 0, DelegateRequest.newBuilder()
+                    .setTaskMessage(message(task, sender,
+                            DelegationValidation.COORDINATOR, text)));
+        }
+
+        /** A coordinator-to-worker task message, sequenced in the attempt-0 scope. */
+        TranscriptBuilder coordinatorMessage(String task, String worker, String text) {
+            return coordinator(worker, task, 0, DelegateResponse.newBuilder()
+                    .setTaskMessage(message(task, DelegationValidation.COORDINATOR,
+                            worker, text)));
+        }
+
+        private TaskMessage message(String task, String sender, String recipient,
+                                    String text) {
+            return TaskMessage.newBuilder()
+                    .setMessageId(uuid("message-" + (++messageCounter)))
+                    .setSender(sender)
+                    .setRecipient(recipient)
+                    .setTaskId(task)
+                    .setKind(TaskMessageKind.TASK_MESSAGE_KIND_NOTE)
+                    .setText(text)
+                    .setSentAt(nextStamp())
+                    .build();
         }
 
         TranscriptBuilder cancel(String task, String worker, int attempt,

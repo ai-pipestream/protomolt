@@ -416,6 +416,17 @@ public final class DelegationReducer {
             case COMPLETION -> {
                 reduceCompletion(workerId, frame, task, findings);
             }
+            case TASK_MESSAGE -> {
+                // Non-transitioning by contract: recorded and sequenced like any
+                // frame, but it never moves the lifecycle. The named sender must
+                // be the worker whose stream carried the frame.
+                if (!frame.getTaskMessage().getSender().equals(workerId)) {
+                    findings.add(new Finding(taskId, frameId, "session",
+                            "task message names sender '"
+                                    + frame.getTaskMessage().getSender()
+                                    + "' but the stream belongs to '" + workerId + "'"));
+                }
+            }
             default -> findings.add(new Finding(taskId, frameId, "transition",
                     "unexpected worker payload " + frame.getPayloadCase()));
         }
@@ -538,7 +549,7 @@ public final class DelegationReducer {
                             "the task is accepted; no coordinator frame may follow"));
                     return;
                 }
-                reduceCoordinatorTask(frame, task, findings);
+                reduceCoordinatorTask(workerId, frame, task, findings);
             }
         }
     }
@@ -622,8 +633,8 @@ public final class DelegationReducer {
         return true;
     }
 
-    private static void reduceCoordinatorTask(DelegateResponse frame, TaskTrack task,
-                                              List<Finding> findings) {
+    private static void reduceCoordinatorTask(String workerId, DelegateResponse frame,
+                                              TaskTrack task, List<Finding> findings) {
         String taskId = frame.getTaskId();
         String frameId = frame.getFrameId();
         switch (frame.getPayloadCase()) {
@@ -707,6 +718,18 @@ public final class DelegationReducer {
                 }
                 task.phase = Phase.ACCEPTED;
             }
+            case TASK_MESSAGE -> {
+                // Non-transitioning by contract: recorded and sequenced like any
+                // frame, but it never moves the lifecycle. The coordinator is the
+                // only sender on this lane, and the message must address the
+                // worker whose stream carried it.
+                if (!frame.getTaskMessage().getSender().equals(DelegationValidation.COORDINATOR)
+                        || !frame.getTaskMessage().getRecipient().equals(workerId)) {
+                    findings.add(new Finding(taskId, frameId, "session",
+                            "coordinator task message must name sender 'coordinator'"
+                                    + " and recipient '" + workerId + "'"));
+                }
+            }
             default -> findings.add(new Finding(taskId, frameId, "transition",
                     "unexpected coordinator payload " + frame.getPayloadCase()));
         }
@@ -764,6 +787,9 @@ public final class DelegationReducer {
                 case FAILED -> request.getFailed().getAttempt();
                 case CANCELLED -> request.getCancelled().getAttempt();
                 case COMPLETION -> request.getCompletion().getAttempt();
+                // Task messages carry no attempt; they sequence in the task's
+                // attempt-0 scope.
+                case TASK_MESSAGE -> 0;
                 default -> 0;
             };
         }
@@ -775,6 +801,7 @@ public final class DelegationReducer {
             case CANCELLATION -> response.getCancellation().getAttempt();
             case REVISION_REQUESTED -> response.getRevisionRequested().getAttempt();
             case ACCEPTED -> response.getAccepted().getAttempt();
+            case TASK_MESSAGE -> 0;
             default -> 0;
         };
     }

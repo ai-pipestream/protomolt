@@ -11,6 +11,7 @@ import ai.pipestream.proto.delegation.v1.Heartbeat;
 import ai.pipestream.proto.delegation.v1.ProgressEvent;
 import ai.pipestream.proto.delegation.v1.RevisionRequested;
 import ai.pipestream.proto.delegation.v1.TaskAccept;
+import ai.pipestream.proto.delegation.v1.TaskMessage;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
@@ -33,12 +34,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Connects a provider-neutral {@link WorkerRunner} to the delegation bidi stream. */
 public final class DelegationWorker implements AutoCloseable {
 
+    /** Maximum coordinator task messages buffered for the runner's host to drain. */
+    private static final int MAX_BUFFERED_MESSAGES = 256;
+
     private final Object lock = new Object();
     private final AgentDelegationServiceGrpc.AgentDelegationServiceStub stub;
     private final WorkerRunner runner;
     private final ExecutorService tasks = Executors.newVirtualThreadPerTaskExecutor();
     private final Map<String, ActiveTask> active = new HashMap<>();
     private final Map<String, Long> sequences = new HashMap<>();
+    private final java.util.concurrent.ConcurrentLinkedQueue<TaskMessage> messages =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final CountDownLatch admission = new CountDownLatch(1);
     private volatile StreamObserver<DelegateRequest> requests;
     private volatile boolean admitted;
@@ -75,6 +81,50 @@ public final class DelegationWorker implements AutoCloseable {
         return Optional.ofNullable(streamFailure);
     }
 
+    /**
+     * Drains the buffered coordinator task messages in arrival order. Messages are
+     * bounded at {@value MAX_BUFFERED_MESSAGES}; when the buffer is full the oldest
+     * message is dropped, so a host that never drains cannot grow memory.
+     */
+    public java.util.List<TaskMessage> drainTaskMessages() {
+        java.util.List<TaskMessage> drained = new java.util.ArrayList<>();
+        TaskMessage message;
+        while ((message = messages.poll()) != null) {
+            drained.add(message);
+        }
+        return drained;
+    }
+
+    /**
+     * Sends a non-transitioning task message to the coordinator. The message is
+     * recorded and sequenced like any other frame but never moves the lifecycle.
+     *
+     * @return the emitted message, with its generated id and timestamp
+     */
+    public TaskMessage sendMessage(String taskId,
+                                   ai.pipestream.proto.delegation.v1.TaskMessageKind kind,
+                                   String text, String replyTo,
+                                   java.util.List<ai.pipestream.proto.grpc.recipe.v1.ArtifactReference> artifacts) {
+        Objects.requireNonNull(taskId, "taskId");
+        Objects.requireNonNull(kind, "kind");
+        Objects.requireNonNull(text, "text");
+        Objects.requireNonNull(artifacts, "artifacts");
+        TaskMessage message = TaskMessage.newBuilder()
+                .setMessageId(UUID.randomUUID().toString())
+                .setSender(runner.hello().getWorkerId())
+                .setRecipient(DelegationValidation.COORDINATOR)
+                .setTaskId(taskId)
+                .setKind(kind)
+                .setReplyTo(replyTo == null ? "" : replyTo)
+                .setText(text)
+                .addAllArtifacts(artifacts)
+                .setSentAt(nowTimestamp())
+                .build();
+        // Messages sequence in the task's attempt-0 scope on both lanes.
+        send(taskId, 0, DelegateRequest.newBuilder().setTaskMessage(message));
+        return message;
+    }
+
     @Override
     public void close() {
         synchronized (lock) {
@@ -107,6 +157,14 @@ public final class DelegationWorker implements AutoCloseable {
             case ACCEPTED -> {
                 synchronized (lock) {
                     active.remove(frame.getTaskId());
+                }
+            }
+            case TASK_MESSAGE -> {
+                // Non-transitioning guidance for the runner's host; buffered, never
+                // delivered into the synchronous run loop.
+                messages.offer(frame.getTaskMessage());
+                while (messages.size() > MAX_BUFFERED_MESSAGES) {
+                    messages.poll();
                 }
             }
             default -> throw new IllegalArgumentException("unexpected coordinator payload");

@@ -14,10 +14,13 @@ import ai.pipestream.proto.delegation.v1.LeaseExpired;
 import ai.pipestream.proto.delegation.v1.LeaseRenewal;
 import ai.pipestream.proto.delegation.v1.RevisionRequested;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
+import ai.pipestream.proto.delegation.v1.TaskMessage;
+import ai.pipestream.proto.delegation.v1.TaskMessageKind;
 import ai.pipestream.proto.delegation.v1.TaskSpec;
 import ai.pipestream.proto.delegation.v1.Transcript;
 import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
+import ai.pipestream.proto.grpc.recipe.v1.ArtifactReference;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
@@ -231,6 +234,60 @@ public final class InProcessDelegationCoordinator
         }
     }
 
+    /**
+     * Sends a non-transitioning task message from the coordinator to one worker.
+     * The message is recorded and sequenced like any other frame but never moves
+     * the lifecycle; the task must exist and the worker must be admitted and
+     * connected.
+     *
+     * @return the emitted message, with its generated id and timestamp
+     */
+    public TaskMessage sendMessage(String workerId, String taskId, TaskMessageKind kind,
+                                   String text, String replyTo,
+                                   List<ArtifactReference> artifacts) {
+        Objects.requireNonNull(kind, "kind");
+        Objects.requireNonNull(text, "text");
+        Objects.requireNonNull(artifacts, "artifacts");
+        synchronized (lock) {
+            requireOpen();
+            Session session = requireAdmittedSession(workerId);
+            requireTask(taskId);
+            TaskMessage message = TaskMessage.newBuilder()
+                    .setMessageId(UUID.randomUUID().toString())
+                    .setSender(DelegationValidation.COORDINATOR)
+                    .setRecipient(workerId)
+                    .setTaskId(taskId)
+                    .setKind(kind)
+                    .setReplyTo(replyTo == null ? "" : replyTo)
+                    .setText(text)
+                    .addAllArtifacts(artifacts)
+                    .setSentAt(nowTimestamp())
+                    .build();
+            // Messages sequence in the task's attempt-0 scope on both lanes.
+            emit(session, taskId, 0, DelegateResponse.newBuilder().setTaskMessage(message));
+            return message;
+        }
+    }
+
+    /** A snapshot of one worker stream's registration state. */
+    public record WorkerView(String workerId, boolean admitted, boolean connected,
+                             WorkerHello hello) {
+        public WorkerView {
+            Objects.requireNonNull(workerId, "workerId");
+            Objects.requireNonNull(hello, "hello");
+        }
+    }
+
+    /** Returns the current worker registrations, in first-seen order. */
+    public List<WorkerView> workers() {
+        synchronized (lock) {
+            return sessions.values().stream()
+                    .map(session -> new WorkerView(session.workerId, session.admitted,
+                            session.connected, session.hello))
+                    .toList();
+        }
+    }
+
     /** Cancels the current offer or lease. */
     public void cancel(String taskId, String reason) {
         synchronized (lock) {
@@ -339,7 +396,7 @@ public final class InProcessDelegationCoordinator
     private Session openSession(WorkerHello hello,
                                 StreamObserver<DelegateResponse> responses) {
         AdmissionPolicy.Decision decision = admissionPolicy.admit(hello);
-        Session session = new Session(hello.getWorkerId(), responses);
+        Session session = new Session(hello, responses);
         session.admitted = decision.admitted();
         Session previous = sessions.put(hello.getWorkerId(), session);
         if (previous != null) {
@@ -413,6 +470,11 @@ public final class InProcessDelegationCoordinator
             }
             case CANCELLED -> {
                 // Cancellation is already terminal when the coordinator emits it.
+            }
+            case TASK_MESSAGE -> {
+                // Non-transitioning: the transcript and event feed carry the
+                // message; the lifecycle does not move. Sender authenticity is
+                // a reducer finding, so a forged frame never lands here.
             }
             case COMPLETION -> handleCandidate(task, frame.getCompletion());
             default -> throw new IllegalArgumentException("unexpected worker payload");
@@ -768,14 +830,16 @@ public final class InProcessDelegationCoordinator
 
     private static final class Session {
         private final String workerId;
+        private final WorkerHello hello;
         private final StreamObserver<DelegateResponse> responses;
         private final Map<String, Long> coordinatorSequences = new HashMap<>();
         private boolean admitted;
         private boolean connected = true;
         private AdmissionDecision pendingAdmission;
 
-        private Session(String workerId, StreamObserver<DelegateResponse> responses) {
-            this.workerId = workerId;
+        private Session(WorkerHello hello, StreamObserver<DelegateResponse> responses) {
+            this.workerId = hello.getWorkerId();
+            this.hello = hello;
             this.responses = responses;
         }
 
