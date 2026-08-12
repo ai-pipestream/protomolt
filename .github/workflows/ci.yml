@@ -47,6 +47,11 @@ jobs:
       - name: Buf lint
         run: buf lint
 
+      # Static checks for the deployment package (compose files, Dockerfiles,
+      # scripts). In-process only: no containers, GPU, or live calls.
+      - name: Deployment statics
+        run: scripts/check-deployment-statics.sh
+
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'
         run: buf breaking --against ".git#branch=origin/${{ github.base_ref }}"

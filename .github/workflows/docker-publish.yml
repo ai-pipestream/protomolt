@@ -1,5 +1,5 @@
-# Publishes the protomolt-serve (JVM) and protomolt-cli (GraalVM native) container
-# images to GHCR.
+# Publishes the protomolt-serve (JVM), protomolt-repo-service (JVM), and
+# protomolt-cli (GraalVM native) container images to GHCR.
 #
 # Called from the release workflow with the released version (tagged semver +
 # latest), or dispatched manually to publish `edge` from the chosen ref.
@@ -66,7 +66,7 @@ jobs:
           npm run build
 
       - name: Build the serve distribution
-        run: ./gradlew :protomolt-serve:installDist --no-daemon
+        run: ./gradlew :protomolt-serve:installDist :protomolt-repo-service:installDist --no-daemon
 
       - name: Build the native CLI (amd64)
         run: ./gradlew :protomolt-cli:nativeCompile --no-daemon
@@ -83,9 +83,11 @@ jobs:
         run: |
           if [ -n "${{ inputs.version }}" ]; then
             echo "serve-tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:${{ inputs.version }},ghcr.io/${{ github.repository_owner }}/protomolt-serve:latest" >> "$GITHUB_OUTPUT"
+            echo "repo-tags=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:${{ inputs.version }},ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:latest" >> "$GITHUB_OUTPUT"
             echo "cli-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-cli:${{ inputs.version }}-amd64" >> "$GITHUB_OUTPUT"
           else
             echo "serve-tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:edge" >> "$GITHUB_OUTPUT"
+            echo "repo-tags=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:edge" >> "$GITHUB_OUTPUT"
             echo "cli-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-cli:edge-amd64" >> "$GITHUB_OUTPUT"
           fi
 
@@ -98,6 +100,19 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=ProtoMolt one-process server: gRPC, REST/OpenAPI/Swagger, MCP, registry
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
+
+      - name: Build and push protomolt-repo-service
+        uses: docker/build-push-action@v6
+        with:
+          context: repo/service
+          push: true
+          tags: ${{ steps.tags.outputs.repo-tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ProtoMolt claim-check document store: DocumentService and DriveService over gRPC, S3-backed, PostgreSQL ledger
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}

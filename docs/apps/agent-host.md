@@ -31,6 +31,14 @@ The MCP endpoint must be the ProtoMolt serve endpoint, such as
 `https://protomolt.rokkon.com/mcp`. A schema registry endpoint does not expose
 the delegation tools.
 
+A container image carrying the launcher and the Codex CLI is built from
+`apps/agent-host/Dockerfile` (the distribution must be built first). The Kimi
+CLI ships inside its own configuration directory and enters the container
+through a mount; provider authentication is always mounted, never baked in.
+[deploy/krick/](../../deploy/krick/README.md) defines the workstation stack
+that runs one Kimi worker and one Codex coordinator from that image, plus the
+exact host-Java commands for the same two agents.
+
 ## Kimi worker
 
 Kimi runs as one long-lived `kimi acp` child process. Its ACP session id is
@@ -101,6 +109,9 @@ The server transcript remains the lifecycle authority. Configure the serve
 process with repository-backed delegation storage so server restarts preserve
 the cursor and worker sequence scopes. See [gRPC service](../surface/grpc-service.md)
 for the repository endpoint, object, and encryption-key reference settings.
+The NAS coordinator stack wires all of it: [deploy/portainer/](../../deploy/portainer/README.md)
+runs a repo-service beside the coordinator and documents the transcript key
+variable.
 
 If the local state has a nonzero cursor but the server no longer knows the
 worker, the host stops rather than registering a new identity against a lost

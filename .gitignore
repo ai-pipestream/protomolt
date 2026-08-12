@@ -19,3 +19,6 @@ gradle-app.setting
 .project
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
+
+# Local secrets for the Krick agent-host stack (never commit tokens)
+deploy/krick/.env

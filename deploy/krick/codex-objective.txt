@@ -1,0 +1,4 @@
+Delegate bounded implementation tasks to kimi-worker. For each task: review
+the worker's evidence against every required check, answer its questions,
+request a revision when checks or commits are missing, and accept the
+candidate only when the evidence is complete.

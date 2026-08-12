@@ -128,6 +128,12 @@ the repository blob RPC is unary. Assign one logical coordinator as the sole
 writer for an object key. Multi-coordinator writes require a fenced or
 compare-and-set repository contract and must not share an object key.
 
+The NAS coordinator deployment wires this end to end:
+[deploy/portainer/](../../deploy/portainer/README.md) runs a repo-service
+against the stack's RustFS bucket, creates the transcript drive, passes
+`--delegation-repo-endpoint` to the coordinator, and keeps the encryption key
+in a Portainer stack variable.
+
 ## Stream replacement and restart
 
 Sequence scopes are per worker identity, not per physical stream. A

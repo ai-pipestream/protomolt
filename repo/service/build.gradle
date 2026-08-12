@@ -1,3 +1,7 @@
+plugins {
+    id 'application'
+}
+
 description = 'The claim-check document store as a gRPC service set: embeddable in-JVM over the in-process transport or standalone over Netty, no framework'
 
 repositories {
@@ -42,4 +46,8 @@ dependencies {
     testImplementation project(':protomolt-registry-server')
     testImplementation libs.confluent.kafka.protobuf.serializer
     testImplementation libs.confluent.kafka.schema.registry.client
+}
+
+application {
+    mainClass = 'ai.pipestream.proto.repo.service.RepoServiceMain'
 }
