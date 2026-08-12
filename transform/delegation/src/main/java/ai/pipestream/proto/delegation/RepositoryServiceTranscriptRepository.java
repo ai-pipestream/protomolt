@@ -15,8 +15,10 @@ import io.grpc.StatusRuntimeException;
 
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /**
@@ -35,6 +37,8 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
     /** Default maximum serialized plaintext carried by the unary repository RPC. */
     public static final int DEFAULT_MAX_PLAINTEXT_BYTES =
             EncryptedRepositoryStateCodec.DEFAULT_MAX_PLAINTEXT_BYTES;
+    /** Default deadline applied independently to every repository RPC. */
+    public static final Duration DEFAULT_RPC_TIMEOUT = Duration.ofSeconds(30);
 
     private static final Pattern KEY_REFERENCE = Pattern.compile(
             "[A-Za-z][A-Za-z0-9+.-]{0,31}:[A-Za-z_][A-Za-z0-9_]{0,127}");
@@ -44,6 +48,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
     private final String objectKey;
     private final String writeKeyReference;
     private final EncryptedRepositoryStateCodec codec;
+    private final Duration rpcTimeout;
     private final DelegationReducer reducer = new DelegationReducer();
 
     /** Creates a repository using the default 8 MiB unary plaintext limit. */
@@ -52,7 +57,16 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
             String driveName, String objectKey, String keyReference,
             RepositoryStateKeyResolver keys) {
         this(documents, driveName, objectKey, keyReference,
-                new EncryptedRepositoryStateCodec(keys));
+                new EncryptedRepositoryStateCodec(keys), DEFAULT_RPC_TIMEOUT);
+    }
+
+    /** Creates a repository with an explicit per-call RPC deadline. */
+    public RepositoryServiceTranscriptRepository(
+            DocumentServiceGrpc.DocumentServiceBlockingStub documents,
+            String driveName, String objectKey, String keyReference,
+            RepositoryStateKeyResolver keys, Duration rpcTimeout) {
+        this(documents, driveName, objectKey, keyReference,
+                new EncryptedRepositoryStateCodec(keys), rpcTimeout);
     }
 
     /** Creates a fully configurable repository for embedding and deterministic tests. */
@@ -62,18 +76,20 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
             RepositoryStateKeyResolver keys, Clock clock, SecureRandom random,
             int maxPlaintextBytes) {
         this(documents, driveName, objectKey, keyReference,
-                new EncryptedRepositoryStateCodec(keys, clock, random, maxPlaintextBytes));
+                new EncryptedRepositoryStateCodec(keys, clock, random, maxPlaintextBytes),
+                DEFAULT_RPC_TIMEOUT);
     }
 
     private RepositoryServiceTranscriptRepository(
             DocumentServiceGrpc.DocumentServiceBlockingStub documents,
             String driveName, String objectKey, String keyReference,
-            EncryptedRepositoryStateCodec codec) {
+            EncryptedRepositoryStateCodec codec, Duration rpcTimeout) {
         this.documents = Objects.requireNonNull(documents, "documents");
         this.driveName = requireCoordinate(driveName, "driveName");
         this.objectKey = requireCoordinate(objectKey, "objectKey");
         this.writeKeyReference = requireCoordinate(keyReference, "keyReference");
         this.codec = Objects.requireNonNull(codec, "codec");
+        this.rpcTimeout = requireRpcTimeout(rpcTimeout);
         if (driveName.length() > 256 || objectKey.length() > 1024
                 || keyReference.length() > 256
                 || !KEY_REFERENCE.matcher(keyReference).matches()) {
@@ -85,7 +101,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
     public Optional<Transcript> load() {
         GetBlobResponse response;
         try {
-            response = documents.getBlob(GetBlobRequest.newBuilder()
+            response = callStub().getBlob(GetBlobRequest.newBuilder()
                     .setStorageRef(storageReference()).build());
         } catch (StatusRuntimeException e) {
             if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
@@ -128,7 +144,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
                 CONTENT_TYPE, transcript.getEntriesCount(), writeKeyReference,
                 storageContext());
         byte[] stored = envelope.toByteArray();
-        PutBlobResponse response = documents.putBlob(PutBlobRequest.newBuilder()
+        PutBlobResponse response = callStub().putBlob(PutBlobRequest.newBuilder()
                 .setDriveName(driveName)
                 .setObjectKey(objectKey)
                 .setData(ByteString.copyFrom(stored))
@@ -167,6 +183,20 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
 
     private String storageContext() {
         return driveName + "\n" + objectKey;
+    }
+
+    private DocumentServiceGrpc.DocumentServiceBlockingStub callStub() {
+        return documents.withDeadlineAfter(rpcTimeout.toNanos(), TimeUnit.NANOSECONDS);
+    }
+
+    private static Duration requireRpcTimeout(Duration timeout) {
+        Objects.requireNonNull(timeout, "rpcTimeout");
+        if (timeout.isZero() || timeout.isNegative()
+                || timeout.compareTo(Duration.ofHours(1)) > 0) {
+            throw new IllegalArgumentException(
+                    "rpcTimeout must be positive and no greater than one hour");
+        }
+        return timeout;
     }
 
     private static String requireCoordinate(String value, String name) {

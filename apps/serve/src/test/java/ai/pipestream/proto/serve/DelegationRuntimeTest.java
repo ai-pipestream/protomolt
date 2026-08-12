@@ -17,6 +17,7 @@ import ai.pipestream.proto.repo.v1.PutBlobResponse;
 import com.google.protobuf.ByteString;
 import io.grpc.Server;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.AfterEach;
@@ -31,6 +32,8 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -181,6 +184,46 @@ class DelegationRuntimeTest {
                 .hasMessageContaining("object key");
     }
 
+    @Test
+    void unreachableRepositoryFailsWithinTheConfiguredDeadline() {
+        documents.hangReads = true;
+
+        long started = System.nanoTime();
+        assertThatThrownBy(() -> DelegationRuntime.open(options(), KEYS,
+                Duration.ofMillis(50), DelegationRuntime::channel))
+                .isInstanceOf(StatusRuntimeException.class)
+                .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
+                .isEqualTo(Status.Code.DEADLINE_EXCEEDED);
+        assertThat(Duration.ofNanos(System.nanoTime() - started))
+                .isLessThan(Duration.ofSeconds(5));
+    }
+
+    @Test
+    void startupFailureClosesTheRepositoryChannel() throws InterruptedException {
+        AtomicReference<io.grpc.ManagedChannel> opened = new AtomicReference<>();
+
+        assertThatThrownBy(() -> DelegationRuntime.open(
+                new ProtoMoltServe.DelegationOptions(endpoint, false,
+                        ProtoMoltServe.DelegationOptions.DEFAULT_DRIVE,
+                        ProtoMoltServe.DelegationOptions.DEFAULT_OBJECT_KEY,
+                        "not-a-key-reference"),
+                KEYS, Duration.ofSeconds(1), ignored -> {
+                    io.grpc.ManagedChannel channel =
+                            io.grpc.inprocess.InProcessChannelBuilder
+                                    .forName(endpoint.substring(
+                                            DelegationRuntime.IN_PROCESS_PREFIX.length()))
+                                    .build();
+                    opened.set(channel);
+                    return channel;
+                }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("configuration is invalid");
+
+        assertThat(opened.get()).isNotNull();
+        assertThat(opened.get().isShutdown()).isTrue();
+        assertThat(opened.get().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+
     private ProtoMoltServe.DelegationOptions options() {
         return new ProtoMoltServe.DelegationOptions(endpoint, false,
                 ProtoMoltServe.DelegationOptions.DEFAULT_DRIVE,
@@ -210,6 +253,7 @@ class DelegationRuntimeTest {
             extends DocumentServiceGrpc.DocumentServiceImplBase {
         private ByteString stored;
         private PutBlobRequest lastPut;
+        private boolean hangReads;
 
         @Override
         public void putBlob(PutBlobRequest request,
@@ -229,6 +273,9 @@ class DelegationRuntimeTest {
         @Override
         public void getBlob(GetBlobRequest request,
                             StreamObserver<GetBlobResponse> observer) {
+            if (hangReads) {
+                return;
+            }
             if (stored == null) {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;

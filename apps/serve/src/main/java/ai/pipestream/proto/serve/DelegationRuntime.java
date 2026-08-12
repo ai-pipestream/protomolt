@@ -14,7 +14,9 @@ import io.grpc.ManagedChannelBuilder;
 import io.grpc.inprocess.InProcessChannelBuilder;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * The serve-process delegation runtime: one bridge over one coordinator. With no
@@ -51,19 +53,36 @@ final class DelegationRuntime implements AutoCloseable {
      */
     static DelegationRuntime open(ProtoMoltServe.DelegationOptions options,
                                   RepositoryStateKeyResolver keys) {
+        return open(options, keys,
+                RepositoryServiceTranscriptRepository.DEFAULT_RPC_TIMEOUT,
+                DelegationRuntime::channel);
+    }
+
+    /** Package-private seam for bounded-deadline and channel-cleanup tests. */
+    static DelegationRuntime open(ProtoMoltServe.DelegationOptions options,
+                                  RepositoryStateKeyResolver keys, Duration rpcTimeout,
+                                  Function<ProtoMoltServe.DelegationOptions,
+                                          ManagedChannel> channels) {
         if (options == null) {
             return new DelegationRuntime(
                     new DelegationBridge(new InProcessDelegationCoordinator()), null);
         }
         Objects.requireNonNull(keys, "keys");
-        ManagedChannel channel = channel(options);
-        TranscriptRepository transcripts = new RepositoryServiceTranscriptRepository(
-                DocumentServiceGrpc.newBlockingStub(channel), options.drive(),
-                options.objectKey(), options.keyReference(), keys);
-        InProcessDelegationCoordinator coordinator = new InProcessDelegationCoordinator(
-                AdmissionPolicy.allowAll(), CandidateReviewer.manual(), Clock.systemUTC(),
-                transcripts);
-        return new DelegationRuntime(new DelegationBridge(coordinator), channel);
+        Objects.requireNonNull(rpcTimeout, "rpcTimeout");
+        Objects.requireNonNull(channels, "channels");
+        ManagedChannel channel = channels.apply(options);
+        try {
+            TranscriptRepository transcripts = new RepositoryServiceTranscriptRepository(
+                    DocumentServiceGrpc.newBlockingStub(channel), options.drive(),
+                    options.objectKey(), options.keyReference(), keys, rpcTimeout);
+            InProcessDelegationCoordinator coordinator = new InProcessDelegationCoordinator(
+                    AdmissionPolicy.allowAll(), CandidateReviewer.manual(), Clock.systemUTC(),
+                    transcripts);
+            return new DelegationRuntime(new DelegationBridge(coordinator), channel);
+        } catch (RuntimeException | Error e) {
+            channel.shutdownNow();
+            throw e;
+        }
     }
 
     /** The live bridge the catalog verbs and MCP resources mount. */
@@ -71,7 +90,7 @@ final class DelegationRuntime implements AutoCloseable {
         return bridge;
     }
 
-    private static ManagedChannel channel(ProtoMoltServe.DelegationOptions options) {
+    static ManagedChannel channel(ProtoMoltServe.DelegationOptions options) {
         String endpoint = options.repoEndpoint();
         if (endpoint.startsWith(IN_PROCESS_PREFIX)) {
             String name = endpoint.substring(IN_PROCESS_PREFIX.length());
