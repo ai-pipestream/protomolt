@@ -36,6 +36,10 @@ option java_package = "ai.pipestream.proto.delegation.v1";
 // cancellation ends the attempt. A later offer (next attempt, optionally
 // resuming from a recorded checkpoint) is the only way a task moves again.
 //
+// Mid-task questions, answers, and guidance ride the same stream as
+// non-transitioning task messages: recorded and sequenced like any other
+// frame, but never a lifecycle transition and never a review path.
+//
 // Every field carries validate.v1 bounds and meta.v1 sensitivity metadata.
 // No field carries index annotations: transcripts are replayed, not searched,
 // so no field is genuinely searchable.
@@ -66,6 +70,11 @@ message DelegateRequest {
       id: "hello-is-session-scoped"
       message: "a hello frame leaves task_id empty; every other worker frame names its task"
       expression: "has(this.hello) ? size(this.task_id) == 0 : size(this.task_id) > 0"
+    }
+    cel: {
+      id: "task-message-matches-envelope"
+      message: "a task message must name the envelope's task"
+      expression: "has(this.task_message) ? this.task_message.task_id == this.task_id : true"
     }
   };
 
@@ -118,6 +127,9 @@ message DelegateRequest {
     CancelledNotice cancelled = 18 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
     // The reviewable result: structured evidence plus output references.
     CompletionCandidate completion = 19 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+    // A non-transitioning structured message: question, answer, or note. It is
+    // recorded and sequenced but never moves the task lifecycle.
+    TaskMessage task_message = 20 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   }
 }
 
@@ -135,6 +147,11 @@ message DelegateResponse {
       id: "admission-is-session-scoped"
       message: "an admission frame leaves task_id empty; every other coordinator frame names its task"
       expression: "has(this.admission) ? size(this.task_id) == 0 : size(this.task_id) > 0"
+    }
+    cel: {
+      id: "task-message-matches-envelope"
+      message: "a task message must name the envelope's task"
+      expression: "has(this.task_message) ? this.task_message.task_id == this.task_id : true"
     }
   };
 
@@ -178,6 +195,9 @@ message DelegateResponse {
     RevisionRequested revision_requested = 15 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
     // The candidate revision is accepted; terminal for the task.
     CompletionAccepted accepted = 16 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+    // A non-transitioning structured message: guidance, an answer, or a note.
+    // It is recorded and sequenced but never moves the task lifecycle.
+    TaskMessage task_message = 17 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   }
 }
 
@@ -677,6 +697,115 @@ message CancelledNotice {
     (ai.pipestream.proto.validate.v1.field).string.max_len = 1024,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
+}
+
+// A non-transitioning structured message carried on either lane: a worker's
+// mid-task question, the coordinator's answer or guidance, or a note either
+// side wants on the record. A task message is recorded in the transcript and
+// sequenced like any other frame, but it never changes the task lifecycle:
+// it is not a progress signal, not a checkpoint, and not a review path. The
+// coordinator relays nothing; a message between two workers is only on the
+// record, never delivered.
+message TaskMessage {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "One non-transitioning structured task message: question, answer, guidance, or note, in either direction."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "sender-differs-from-recipient"
+      message: "a task message must not be addressed to its own sender"
+      expression: "this.sender != this.recipient"
+    }
+  };
+
+  // Sender-generated uuid; the message's own identity, distinct from the
+  // carrying frame's idempotency key.
+  string message_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Who sent the message: the worker id on the worker lane, the literal
+  // "coordinator" on the coordinator lane.
+  string sender = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Who the message is for: a worker id or the literal "coordinator".
+  string recipient = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The task the message concerns; must equal the carrying frame's task_id.
+  string task_id = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What the message is: question, answer, guidance, or note; UNSPECIFIED is
+  // invalid.
+  TaskMessageKind kind = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The message this answers, when it continues a thread; empty otherwise.
+  string reply_to = 6 [
+    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The message body, bounded. Long content belongs in artifacts.
+  string text = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 8192}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Content-addressed artifacts the message refers to (logs, diffs, specs),
+  // by reference only.
+  repeated ai.pipestream.proto.grpc.recipe.v1.ArtifactReference artifacts = 8 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 32,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the sender composed the message.
+  google.protobuf.Timestamp sent_at = 9 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// What a task message is. The kind carries intent only; it never drives the
+// lifecycle.
+enum TaskMessageKind {
+  // Invalid; every message names its kind.
+  TASK_MESSAGE_KIND_UNSPECIFIED = 0;
+  // The sender asks something and expects an answer.
+  TASK_MESSAGE_KIND_QUESTION = 1;
+  // The sender answers a question; reply_to names it.
+  TASK_MESSAGE_KIND_ANSWER = 2;
+  // Coordinator direction that changes how the worker should proceed without
+  // changing the task or its lease.
+  TASK_MESSAGE_KIND_GUIDANCE = 3;
+  // Anything else either side wants on the record.
+  TASK_MESSAGE_KIND_NOTE = 4;
 }
 
 // The reviewable result of an attempt: one revision of structured completion

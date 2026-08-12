@@ -131,7 +131,31 @@ for the exact names.
 
 Chains, jobs, inference, and `emit-okf` are not in the standalone binary's
 catalog because they require host-side wiring. `protomolt-serve` mounts the
-full catalog over HTTP.
+full catalog over HTTP, plus the live delegation surface: one in-process
+coordinator per server, adapted to catalog verbs by the delegation bridge.
+
+The delegation verbs let one agent run the coordinator role and another the
+worker role over two independent MCP sessions. `delegation-watch` long-polls
+the coordinator's event feed from a caller-owned cursor, so a worker session
+that disconnects can reconnect and resume with no lost or duplicated frames.
+See [Agent delegation](../transform/delegation.md) for the lifecycle and the
+session model.
+
+| Tool | Does |
+|---|---|
+| `delegation-worker-register` | Register this agent as a worker: hello, admission decision |
+| `delegation-worker-list` | Discover registered workers and their capabilities |
+| `delegation-offer` | Offer a bounded task and lease to an admitted worker |
+| `delegation-accept` | Take the open offer for a task's current attempt |
+| `delegation-progress` | Report one monotonic progress note on the lease |
+| `delegation-checkpoint` | Record one resumable checkpoint with a resume token |
+| `delegation-candidate` | Submit an evidence-carrying completion candidate for review |
+| `delegation-review` | Accept the open candidate or request a revision with feedback |
+| `delegation-cancel` | Cancel the task's open attempt; terminal on emission |
+| `delegation-message` | Send a non-transitioning question, answer, guidance, or note |
+| `delegation-watch` | Long-poll the event feed from a cursor; returns a bounded batch and the resumption cursor |
+| `delegation-transcript` | Read the recorded transcript from a cursor, bounded per call |
+
 
 Wherever a tool takes a schema it accepts exactly one of `{"type": "fully.qualified.Name"}`
 (resolved from the registry), `{"sources": {...}}` (inline `.proto`, compiled
@@ -154,6 +178,9 @@ service contracts are resources too. These reads do not spend tool calls:
 | `protomolt://services` | Service identities, endpoint names, and descriptor fingerprints |
 | `protomolt://services/{profile}` | One connection profile plus its reflected service and method contracts |
 | `protomolt://services/{profile}/methods/{full-method}` | One method's streaming mode, request/response types, and top-level fields |
+| `protomolt://delegation/workers` | Registered delegation workers: identity, admission, capabilities (serve mount) |
+| `protomolt://delegation/tasks` | Delegation task states as the lifecycle reducer sees them (serve mount) |
+| `protomolt://delegation/tasks/{taskId}/transcript` | One task's recorded frames in cursor order, bounded (serve mount) |
 
 Subject, profile, and method names are URL-encoded in URIs. All resource
 contents are JSON. Descriptor bytes never appear in service resources.
@@ -161,7 +188,8 @@ contents are JSON. Descriptor bytes never appear in service resources.
 method URIs are addressable after reading the selected profile contract.
 
 `resources/templates/list` advertises templates for registry subjects and
-versions plus service profiles and individual methods. This lets a client form
+versions plus service profiles and individual methods, and, on the serve
+mount, delegation task transcripts. This lets a client form
 one exact URL-encoded deep link without enumerating every schema version or
 method as a separate resource.
 
@@ -244,6 +272,7 @@ nothing needs rewriting to move between hosts.
 ## Related
 
 - [Actions](actions.md): the verb catalog this server exposes
+- [Agent delegation](../transform/delegation.md): the live coordinator/worker surface on the serve mount
 - [The gRPC service](grpc-service.md): the same verbs as typed RPCs and JSON/REST
 - [The registry](../schema/registry.md): the store behind the resource URIs
 - [Operating an OpenVINO server](../tutorials/openvino.md): a full gRPC-agent walkthrough

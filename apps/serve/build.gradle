@@ -10,6 +10,8 @@ dependencies {
     implementation project(':protomolt-json')
     implementation project(':protomolt-mcp')
     implementation project(':protomolt-chain')
+    // The live delegation coordinator and its MCP verbs mount in this process.
+    implementation project(':protomolt-delegation')
     implementation project(':protomolt-grpc-service-profile')
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-protobuf-validation')

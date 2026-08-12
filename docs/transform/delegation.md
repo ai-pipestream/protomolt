@@ -165,3 +165,53 @@ scenarios without a provider, container, or GPU.
 Deployments choose their admission policy, candidate reviewer, transcript
 repository, and provider adapter. The coordinator does not grant repository,
 artifact, or provider credentials to a worker.
+
+## Task messages
+
+Questions, answers, guidance, and notes ride the same stream as lifecycle
+frames. A `TaskMessage` carries a message id, sender, recipient, task id,
+kind, an optional reply-to, bounded text, artifact references, and a
+timestamp. It is recorded in the transcript and sequenced like any other
+frame, but it never moves the lifecycle: it is not progress, not a
+checkpoint, and not a review path. The reducer still checks it: the named
+sender must be the stream's worker on the worker lane, and a coordinator
+message must address the stream's worker. A message after acceptance is a
+finding like any other post-terminal frame.
+
+Messages obey the same durability rule as lifecycle frames: a message is
+durable before it becomes visible to watchers and cursors, a failed
+repository append never publishes it, and a restart restores recorded
+messages without touching task phase.
+
+## Live MCP surface
+
+`DelegationBridge` adapts one in-process coordinator to request/response
+callers. It opens a real delegation stream per worker, keeps it open while
+MCP sessions come and go, validates every worker frame before it touches
+the stream, and mirrors the wire sequencing. It holds no lifecycle logic;
+every admission, transition, and review decision remains the coordinator's
+and the reducer's.
+
+`DelegationActions` registers the bridge as twelve catalog verbs, which the
+MCP server exposes as tools: worker registration and discovery
+(`delegation-worker-register`, `delegation-worker-list`), task offers
+(`delegation-offer`), worker responses (`delegation-accept`,
+`delegation-progress`, `delegation-checkpoint`, `delegation-candidate`),
+review and cancellation (`delegation-review`, `delegation-cancel`),
+structured messaging (`delegation-message`), event watching
+(`delegation-watch`), and transcript inspection (`delegation-transcript`).
+
+`delegation-watch` is a long poll over the coordinator's cursor-addressable
+event feed. The caller passes its last cursor and a bounded timeout; the
+call blocks on a virtual thread until an event appears or the timeout
+elapses, then returns a bounded batch and the resumption cursor. MCP
+sessions are transport state only: a worker that disconnects and reconnects
+resumes its watch from the saved cursor and sees exactly the frames after
+it, with no lost or duplicated events.
+
+`protomolt-serve` creates one in-process coordinator per server and mounts
+the verbs and the delegation resources on its `/mcp` endpoint. The
+resources are bounded and read-only: `protomolt://delegation/workers`,
+`protomolt://delegation/tasks`, and
+`protomolt://delegation/tasks/{taskId}/transcript` (addressable through the
+advertised resource template).

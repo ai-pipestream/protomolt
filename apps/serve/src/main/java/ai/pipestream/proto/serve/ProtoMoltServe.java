@@ -4,6 +4,9 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.chain.ChainRepository;
 import ai.pipestream.proto.chain.ChainRunner;
+import ai.pipestream.proto.delegation.DelegationActions;
+import ai.pipestream.proto.delegation.DelegationBridge;
+import ai.pipestream.proto.delegation.InProcessDelegationCoordinator;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
@@ -29,6 +32,7 @@ import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
 import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
 import ai.pipestream.proto.mcp.McpServer;
 import ai.pipestream.proto.mcp.CompositeResources;
+import ai.pipestream.proto.mcp.DelegationResources;
 import ai.pipestream.proto.mcp.RegistryResources;
 import ai.pipestream.proto.mcp.ServiceProfileResources;
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
@@ -493,12 +497,14 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final ChainJobDatabase jobsDatabase;
     private final ChainJobWorker jobsWorker;
     private final ChainJobEventRelay jobsRelay;
+    private final DelegationBridge delegation;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
                            McpHttpHandler mcp, int httpPort,
                            GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
                            int registryPort, ChainJobDatabase jobsDatabase,
-                           ChainJobWorker jobsWorker, ChainJobEventRelay jobsRelay) {
+                           ChainJobWorker jobsWorker, ChainJobEventRelay jobsRelay,
+                           DelegationBridge delegation) {
         this.grpc = grpc;
         this.http = http;
         this.mcp = mcp;
@@ -509,6 +515,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         this.jobsDatabase = jobsDatabase;
         this.jobsWorker = jobsWorker;
         this.jobsRelay = jobsRelay;
+        this.delegation = delegation;
     }
 
     /** Starts every configured surface; closing stops them all. */
@@ -645,10 +652,16 @@ public final class ProtoMoltServe implements AutoCloseable {
         JdkProtoRestServer http = null;
         McpHttpHandler mcpHandler = null;
         SchemaRegistryServer registry = null;
+        DelegationBridge delegation = null;
         try {
             if (options.demo()) {
                 DemoSchemas.seed(context.registry(), store);
             }
+
+            // The live delegation surface: one in-process coordinator per server,
+            // adapted to catalog verbs and MCP resources through the bridge.
+            delegation = new DelegationBridge(new InProcessDelegationCoordinator());
+            DelegationActions.register(catalog, delegation);
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
                     options.apiToken());
@@ -698,7 +711,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     CompositeResources.of(
                             store != null ? new RegistryResources(store) : null,
                             serviceProfiles != null
-                                    ? new ServiceProfileResources(serviceProfiles) : null),
+                                    ? new ServiceProfileResources(serviceProfiles) : null,
+                            new DelegationResources(delegation)),
                     "protomolt", version != null ? version : "dev");
             int boundRegistryPort = registryPort;
             int[] selfPort = {-1};
@@ -731,8 +745,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             int httpPort = http.start();
             selfPort[0] = httpPort;
             return new ProtoMoltServe(grpc, http, mcpHandler, httpPort, store, registry, registryPort,
-                    jobsDatabase, jobsWorker, jobsRelay);
+                    jobsDatabase, jobsWorker, jobsRelay, delegation);
         } catch (RuntimeException e) {
+            closeQuietly(delegation);
             closeQuietly(mcpHandler);
             if (registry != null) {
                 registry.close();
@@ -803,6 +818,11 @@ public final class ProtoMoltServe implements AutoCloseable {
         closeQuietly(jobsWorker);
         closeQuietly(jobsRelay);
         closeQuietly(jobsDatabase);
+        // Worker streams close before the coordinator so no stream dies mid-frame.
+        closeQuietly(delegation);
+        if (delegation != null) {
+            closeQuietly(delegation.coordinator());
+        }
         if (registry != null) {
             registry.close();
         }
