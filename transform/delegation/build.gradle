@@ -21,6 +21,9 @@ dependencies {
     // metadata options.
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-metadata')
+    // DelegationBridge and the delegation catalog actions implement ProtoAction
+    // from this module.
+    api project(':protomolt-actions')
 
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
