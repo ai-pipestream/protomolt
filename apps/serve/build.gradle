@@ -12,6 +12,9 @@ dependencies {
     implementation project(':protomolt-chain')
     // The live delegation coordinator and its MCP verbs mount in this process.
     implementation project(':protomolt-delegation')
+    // The delegation transcript store dials the repository service; in-process
+    // endpoints ride the same process for tests and all-in-one deployments.
+    implementation libs.grpc.inprocess
     implementation project(':protomolt-grpc-service-profile')
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-protobuf-validation')

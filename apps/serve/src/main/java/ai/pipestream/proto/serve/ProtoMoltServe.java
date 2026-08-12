@@ -6,7 +6,6 @@ import ai.pipestream.proto.chain.ChainRepository;
 import ai.pipestream.proto.chain.ChainRunner;
 import ai.pipestream.proto.delegation.DelegationActions;
 import ai.pipestream.proto.delegation.DelegationBridge;
-import ai.pipestream.proto.delegation.InProcessDelegationCoordinator;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
@@ -82,7 +81,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                           Path registryGit, int registryPort, String apiToken, boolean demo,
                           Path gatherCache, JobsOptions jobs,
                           java.util.List<String> inferenceModels, Path serviceWorkspace,
-                          OutboundChannelPolicy outboundPolicy, Path recipeWorkspace) {
+                          OutboundChannelPolicy outboundPolicy, Path recipeWorkspace,
+                          DelegationOptions delegation) {
 
         public Options {
             if (outboundPolicy == null) {
@@ -142,6 +142,17 @@ public final class ProtoMoltServe implements AutoCloseable {
                     gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy, null);
         }
 
+        /** Binary/source-compatible constructor retaining the pre-delegation options surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
+                       Path recipeWorkspace) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    recipeWorkspace, null);
+        }
+
         public static Options defaults() {
             return new Options("0.0.0.0", 9090, 8080, null, 8081, null, false, null);
         }
@@ -180,6 +191,13 @@ public final class ProtoMoltServe implements AutoCloseable {
             long maxDeadlineMs = envLong("PROTOMOLT_GRPC_MAX_DEADLINE_MS", 60_000L);
             int maxActiveChannels = envInt("PROTOMOLT_GRPC_MAX_ACTIVE_CHANNELS", 64);
             String inferenceModelsEnv = System.getenv("PROTOMOLT_INFERENCE_MODELS");
+            String delegationRepoEndpoint = System.getenv("PROTOMOLT_DELEGATION_REPO_ENDPOINT");
+            boolean delegationRepoTls = envBoolean("PROTOMOLT_DELEGATION_REPO_TLS", false);
+            boolean delegationRepoTlsSet = System.getenv("PROTOMOLT_DELEGATION_REPO_TLS") != null;
+            String delegationRepoDrive = System.getenv("PROTOMOLT_DELEGATION_REPO_DRIVE");
+            String delegationTranscriptObject =
+                    System.getenv("PROTOMOLT_DELEGATION_TRANSCRIPT_OBJECT");
+            String delegationStateKeyRef = System.getenv("PROTOMOLT_DELEGATION_STATE_KEY_REF");
             if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
                 for (String spec : inferenceModelsEnv.split(";")) {
                     if (!spec.isBlank()) {
@@ -205,6 +223,19 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--jobs-target-concurrency" ->
                             jobsTargetConcurrency = Integer.parseInt(requireValue(args, ++i));
                     case "--inference-model" -> inferenceModels.add(requireValue(args, ++i));
+                    case "--delegation-repo-endpoint" ->
+                            delegationRepoEndpoint = requireValue(args, ++i);
+                    case "--delegation-repo-tls" -> {
+                        delegationRepoTls = parseBoolean(requireValue(args, ++i),
+                                "--delegation-repo-tls");
+                        delegationRepoTlsSet = true;
+                    }
+                    case "--delegation-repo-drive" ->
+                            delegationRepoDrive = requireValue(args, ++i);
+                    case "--delegation-transcript-object" ->
+                            delegationTranscriptObject = requireValue(args, ++i);
+                    case "--delegation-state-key-ref" ->
+                            delegationStateKeyRef = requireValue(args, ++i);
                     case "--service-workspace" ->
                             serviceWorkspace = Path.of(requireValue(args, ++i));
                     case "--recipe-workspace" ->
@@ -245,7 +276,12 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--grpc-allow-plaintext <true|false>] "
                                 + "[--grpc-allow-tls <true|false>] "
                                 + "[--grpc-max-deadline-ms <n>] "
-                                + "[--grpc-max-active-channels <n>]");
+                                + "[--grpc-max-active-channels <n>] "
+                                + "[--delegation-repo-endpoint <host:port|in-process:name> "
+                                + "[--delegation-repo-tls <true|false>] "
+                                + "[--delegation-repo-drive <name>] "
+                                + "[--delegation-transcript-object <key>] "
+                                + "[--delegation-state-key-ref <ref>]]");
                         System.exit(0);
                     }
                     default -> {
@@ -271,6 +307,24 @@ public final class ProtoMoltServe implements AutoCloseable {
                         + "the job row is the truth; the broker is propagation");
                 System.exit(2);
             }
+            DelegationOptions delegation = null;
+            if (delegationRepoEndpoint != null && !delegationRepoEndpoint.isBlank()) {
+                delegation = new DelegationOptions(delegationRepoEndpoint, delegationRepoTls,
+                        delegationRepoDrive == null || delegationRepoDrive.isBlank()
+                                ? DelegationOptions.DEFAULT_DRIVE : delegationRepoDrive,
+                        delegationTranscriptObject == null || delegationTranscriptObject.isBlank()
+                                ? DelegationOptions.DEFAULT_OBJECT_KEY : delegationTranscriptObject,
+                        delegationStateKeyRef == null || delegationStateKeyRef.isBlank()
+                                ? DelegationOptions.DEFAULT_KEY_REFERENCE : delegationStateKeyRef);
+            } else if (delegationRepoTlsSet
+                    || (delegationRepoDrive != null && !delegationRepoDrive.isBlank())
+                    || (delegationTranscriptObject != null && !delegationTranscriptObject.isBlank())
+                    || (delegationStateKeyRef != null && !delegationStateKeyRef.isBlank())) {
+                System.err.println("--delegation-repo-drive/--delegation-transcript-object/"
+                        + "--delegation-state-key-ref require --delegation-repo-endpoint: "
+                        + "without a repository service the transcript stays in memory");
+                System.exit(2);
+            }
             Set<String> schemeSet = allowedSchemes == null
                     ? null : parseCsv(allowedSchemes, "grpc allowed schemes");
             Set<String> hostSet = allowedHosts == null
@@ -281,7 +335,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
-                    serviceWorkspace, outboundPolicy, recipeWorkspace);
+                    serviceWorkspace, outboundPolicy, recipeWorkspace, delegation);
         }
 
         private static int envInt(String name, int fallback) {
@@ -487,6 +541,53 @@ public final class ProtoMoltServe implements AutoCloseable {
         }
     }
 
+    /**
+     * Delegation transcript durability. {@code repoEndpoint} is the repository
+     * service gRPC target: {@code host:port} (plaintext unless {@code repoTls}), or
+     * {@code in-process:<name>} for a repository service in the same process. When
+     * the endpoint is null the coordinator keeps its transcript in memory: a
+     * restart loses it and workers re-register as new (development mode). When it
+     * is set, the transcript persists encrypted through the repository service and
+     * a restart restores tasks, cursors, and sequence scopes.
+     */
+    public record DelegationOptions(String repoEndpoint, boolean repoTls, String drive,
+                                    String objectKey, String keyReference) {
+
+        /** Default repository drive for the delegation transcript blob. */
+        public static final String DEFAULT_DRIVE = "protomolt";
+
+        /** Default object key of the delegation transcript blob. */
+        public static final String DEFAULT_OBJECT_KEY = "delegation/serve/transcript.pb.enc";
+
+        /** Default reference resolving the transcript encryption key. */
+        public static final String DEFAULT_KEY_REFERENCE = "env:PROTOMOLT_TRANSCRIPT_KEY";
+
+        public DelegationOptions {
+            if (repoEndpoint == null || repoEndpoint.isBlank()) {
+                throw new IllegalArgumentException(
+                        "the delegation repo endpoint must not be blank");
+            }
+            if (drive == null || drive.isBlank()) {
+                throw new IllegalArgumentException(
+                        "the delegation repo drive must not be blank");
+            }
+            if (objectKey == null || objectKey.isBlank()) {
+                throw new IllegalArgumentException(
+                        "the delegation transcript object key must not be blank");
+            }
+            if (keyReference == null || keyReference.isBlank()) {
+                throw new IllegalArgumentException(
+                        "the delegation state key reference must not be blank");
+            }
+        }
+
+        /** Durable transcripts on the endpoint with the default coordinates. */
+        public DelegationOptions(String repoEndpoint, boolean repoTls) {
+            this(repoEndpoint, repoTls, DEFAULT_DRIVE, DEFAULT_OBJECT_KEY,
+                    DEFAULT_KEY_REFERENCE);
+        }
+    }
+
     private final ProtoMoltGrpcServer grpc;
     private final JdkProtoRestServer http;
     private final McpHttpHandler mcp;
@@ -497,14 +598,14 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final ChainJobDatabase jobsDatabase;
     private final ChainJobWorker jobsWorker;
     private final ChainJobEventRelay jobsRelay;
-    private final DelegationBridge delegation;
+    private final DelegationRuntime delegation;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
                            McpHttpHandler mcp, int httpPort,
                            GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
                            int registryPort, ChainJobDatabase jobsDatabase,
                            ChainJobWorker jobsWorker, ChainJobEventRelay jobsRelay,
-                           DelegationBridge delegation) {
+                           DelegationRuntime delegation) {
         this.grpc = grpc;
         this.http = http;
         this.mcp = mcp;
@@ -652,16 +753,18 @@ public final class ProtoMoltServe implements AutoCloseable {
         JdkProtoRestServer http = null;
         McpHttpHandler mcpHandler = null;
         SchemaRegistryServer registry = null;
-        DelegationBridge delegation = null;
+        DelegationRuntime delegation = null;
         try {
             if (options.demo()) {
                 DemoSchemas.seed(context.registry(), store);
             }
 
-            // The live delegation surface: one in-process coordinator per server,
-            // adapted to catalog verbs and MCP resources through the bridge.
-            delegation = new DelegationBridge(new InProcessDelegationCoordinator());
-            DelegationActions.register(catalog, delegation);
+            // The live delegation surface: one coordinator per server, adapted to
+            // catalog verbs and MCP resources through the bridge. Durable when a
+            // delegation repository endpoint is configured, in-memory otherwise.
+            delegation = DelegationRuntime.open(options.delegation());
+            DelegationBridge bridge = delegation.bridge();
+            DelegationActions.register(catalog, bridge);
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
                     options.apiToken());
@@ -712,7 +815,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                             store != null ? new RegistryResources(store) : null,
                             serviceProfiles != null
                                     ? new ServiceProfileResources(serviceProfiles) : null,
-                            new DelegationResources(delegation)),
+                            new DelegationResources(bridge)),
                     "protomolt", version != null ? version : "dev");
             int boundRegistryPort = registryPort;
             int[] selfPort = {-1};
@@ -818,11 +921,9 @@ public final class ProtoMoltServe implements AutoCloseable {
         closeQuietly(jobsWorker);
         closeQuietly(jobsRelay);
         closeQuietly(jobsDatabase);
-        // Worker streams close before the coordinator so no stream dies mid-frame.
+        // Worker streams close before the coordinator so no stream dies mid-frame;
+        // the runtime closes the bridge, the coordinator, and the repository channel.
         closeQuietly(delegation);
-        if (delegation != null) {
-            closeQuietly(delegation.coordinator());
-        }
         if (registry != null) {
             registry.close();
         }
