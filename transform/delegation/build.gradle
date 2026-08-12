@@ -13,6 +13,10 @@ dependencies {
     // The contract reuses the recipe's content-addressed ArtifactReference for
     // context, checkpoint state, and completion evidence references.
     api project(':protomolt-grpc-recipe')
+    // Durable transcripts use the repository service raw-blob API. The
+    // repository service remains responsible for its S3 backing store and
+    // optional Redis cache.
+    api project(':protomolt-repo-proto')
     // Persisted delegation fields carry the house validation and sensitivity
     // metadata options.
     api project(':protomolt-protobuf-validation')

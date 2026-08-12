@@ -75,6 +75,59 @@ changes. It reports findings for:
 The reducer never repairs input. `DelegationValidation` handles structural
 contract validation before lifecycle replay.
 
+## Durable transcripts
+
+`TranscriptRepository` is the coordinator's persistence boundary.
+`InMemoryTranscriptRepository` supports tests and process-local deployments.
+`RepositoryServiceTranscriptRepository` stores an encrypted snapshot through
+the repository service `PutBlob` and `GetBlob` RPCs.
+
+The repository-service adapter:
+
+- validates and reduces the complete transcript before each write;
+- encrypts it locally with AES-256-GCM and a unique 12-byte nonce;
+- binds the drive, object key, and key reference as authenticated data;
+- verifies the repository service's returned byte count, object coordinates,
+  and SHA-256 digest before accepting a write;
+- verifies the encryption tag, plaintext digest, entry count, structural
+  validation, and lifecycle reduction on read; and
+- restores the coordinator's task projection, event cursors, duplicate-frame
+  state, and coordinator sequence counters during construction.
+
+The repository service and its S3-compatible backing store receive only the
+encrypted envelope. If repository service uses its Redis cache, the cached
+value is the same ciphertext. ProtoMolt does not depend on an S3 or Redis
+client for transcript persistence.
+
+`EnvRepositoryStateKeyResolver` accepts references such as
+`env:PROTOMOLT_TRANSCRIPT_KEY`. The environment variable contains a
+base64-encoded 32-byte key. The reference is persisted in the envelope; the
+key is resolved immediately before encryption or decryption and is never
+stored or included in an exception.
+
+```java
+TranscriptRepository transcripts = new RepositoryServiceTranscriptRepository(
+        repositoryServiceStub,
+        "protomolt",
+        "delegation/coordinator-a/transcript.pb.enc",
+        "env:PROTOMOLT_TRANSCRIPT_KEY",
+        new EnvRepositoryStateKeyResolver());
+
+InProcessDelegationCoordinator coordinator =
+        new InProcessDelegationCoordinator(
+                admissionPolicy, candidateReviewer, clock, transcripts);
+```
+
+Every accepted frame is durable before it enters the event feed or reaches a
+worker. A failed write does not consume a coordinator sequence, mutate task
+state, or expose a memory-only event. On restart, elapsed active leases expire
+when their worker reconnects; unexpired leases resume their expiry timer.
+
+The adapter writes a complete snapshot and limits plaintext to 8 MiB because
+the repository blob RPC is unary. Assign one logical coordinator as the sole
+writer for an object key. Multi-coordinator writes require a fenced or
+compare-and-set repository contract and must not share an object key.
+
 ## Security boundary
 
 Task frames carry bounded instructions, evidence, and artifact references.
@@ -110,5 +163,5 @@ Codex, Cursor, or local-model adapter only needs to implement `WorkerRunner`.
 scenarios without a provider, container, or GPU.
 
 Deployments choose their admission policy, candidate reviewer, transcript
-persistence, and provider adapter. The in-process coordinator does not grant
-repository, artifact, or provider credentials.
+repository, and provider adapter. The coordinator does not grant repository,
+artifact, or provider credentials to a worker.

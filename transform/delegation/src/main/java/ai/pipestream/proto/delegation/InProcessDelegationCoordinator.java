@@ -52,6 +52,7 @@ public final class InProcessDelegationCoordinator
     private final AdmissionPolicy admissionPolicy;
     private final CandidateReviewer reviewer;
     private final Clock clock;
+    private final TranscriptRepository transcripts;
     private final ExecutorService runtimeTasks = Executors.newVirtualThreadPerTaskExecutor();
     private final DelegationReducer reducer = new DelegationReducer();
     private final Map<String, Session> sessions = new LinkedHashMap<>();
@@ -64,21 +65,35 @@ public final class InProcessDelegationCoordinator
 
     /** Creates a coordinator that admits workers and leaves candidates for manual review. */
     public InProcessDelegationCoordinator() {
-        this(AdmissionPolicy.allowAll(), CandidateReviewer.manual(), Clock.systemUTC());
+        this(AdmissionPolicy.allowAll(), CandidateReviewer.manual(), Clock.systemUTC(),
+                new InMemoryTranscriptRepository());
     }
 
     /** Creates a coordinator with explicit admission and review policies. */
     public InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
                                           CandidateReviewer reviewer) {
-        this(admissionPolicy, reviewer, Clock.systemUTC());
+        this(admissionPolicy, reviewer, Clock.systemUTC(),
+                new InMemoryTranscriptRepository());
     }
 
     /** Creates a coordinator with an injectable clock for deterministic lease tests. */
     public InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
                                           CandidateReviewer reviewer, Clock clock) {
+        this(admissionPolicy, reviewer, clock, new InMemoryTranscriptRepository());
+    }
+
+    /**
+     * Creates a coordinator with an explicit durable transcript repository. Any transcript
+     * already present is validated and restored into the live in-memory projection.
+     */
+    public InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
+                                          CandidateReviewer reviewer, Clock clock,
+                                          TranscriptRepository transcripts) {
         this.admissionPolicy = Objects.requireNonNull(admissionPolicy, "admissionPolicy");
         this.reviewer = Objects.requireNonNull(reviewer, "reviewer");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.transcripts = Objects.requireNonNull(transcripts, "transcripts");
+        transcripts.load().ifPresent(this::restore);
     }
 
     @Override
@@ -190,15 +205,16 @@ public final class InProcessDelegationCoordinator
             TaskOffer offer = offerBuilder.build();
             DelegationValidation.validate(offer);
             TaskRuntime task = existing == null ? new TaskRuntime(taskId) : existing;
-            task.workerId = workerId;
-            task.attempt = attempt;
-            task.offer = offer;
-            task.phase = DelegationReducer.Phase.OFFERED;
-            task.expiry = expiry;
-            task.leaseGeneration++;
-            tasks.put(taskId, task);
             emit(session, taskId, attempt,
-                    DelegateResponse.newBuilder().setOffer(offer));
+                    DelegateResponse.newBuilder().setOffer(offer), () -> {
+                        task.workerId = workerId;
+                        task.attempt = attempt;
+                        task.offer = offer;
+                        task.phase = DelegationReducer.Phase.OFFERED;
+                        task.expiry = expiry;
+                        task.leaseGeneration++;
+                        tasks.put(taskId, task);
+                    });
             scheduleExpiry(taskId, attempt, task.leaseGeneration, expiry);
             return offer;
         }
@@ -335,6 +351,7 @@ public final class InProcessDelegationCoordinator
         if (decision.admitted()) {
             admission.setSessionId(UUID.randomUUID().toString());
         }
+        restoreCoordinatorSequences(session);
         // The hello is recorded by the caller before task handling. Admission must
         // therefore be emitted after recordWorkerFrame returns. A pending response is
         // held on the session for that ordering.
@@ -344,7 +361,7 @@ public final class InProcessDelegationCoordinator
 
     private boolean recordWorkerFrame(String workerId, DelegateRequest frame) {
         ByteString bytes = frame.toByteString();
-        ByteString prior = workerFrames.putIfAbsent(frame.getFrameId(), bytes);
+        ByteString prior = workerFrames.get(frame.getFrameId());
         if (prior != null) {
             if (!prior.equals(bytes)) {
                 throw new IllegalArgumentException(
@@ -357,6 +374,7 @@ public final class InProcessDelegationCoordinator
                 .setLane(Lane.LANE_WORKER)
                 .setWorkerFrame(frame)
                 .build());
+        workerFrames.put(frame.getFrameId(), bytes);
         return true;
     }
 
@@ -365,6 +383,7 @@ public final class InProcessDelegationCoordinator
             emit(session, "", 0, DelegateResponse.newBuilder()
                     .setAdmission(session.pendingAdmission));
             session.pendingAdmission = null;
+            resumeRestoredLeases(session);
             return;
         }
         if (!session.admitted) {
@@ -456,14 +475,15 @@ public final class InProcessDelegationCoordinator
         java.time.Duration lease = java.time.Duration.ofMillis(
                 Durations.toMillis(task.offer.getLeaseDuration()));
         Instant next = task.expiry.plus(lease);
-        task.expiry = next;
-        task.leaseGeneration++;
         LeaseRenewal renewal = LeaseRenewal.newBuilder()
                 .setAttempt(task.attempt)
                 .setExpiresAt(toTimestamp(next))
                 .build();
         emit(requireAdmittedSession(task.workerId), task.taskId, task.attempt,
-                DelegateResponse.newBuilder().setRenewal(renewal));
+                DelegateResponse.newBuilder().setRenewal(renewal), () -> {
+                    task.expiry = next;
+                    task.leaseGeneration++;
+                });
         scheduleExpiry(task.taskId, task.attempt, task.leaseGeneration, next);
     }
 
@@ -505,7 +525,12 @@ public final class InProcessDelegationCoordinator
 
     private void emit(Session session, String taskId, int attempt,
                       DelegateResponse.Builder payload) {
-        long seq = session.nextCoordinatorSeq(taskId, attempt);
+        emit(session, taskId, attempt, payload, () -> { });
+    }
+
+    private void emit(Session session, String taskId, int attempt,
+                      DelegateResponse.Builder payload, Runnable afterPersist) {
+        long seq = session.peekNextCoordinatorSeq(taskId, attempt);
         DelegateResponse response = payload
                 .setFrameId(UUID.randomUUID().toString())
                 .setTaskId(taskId)
@@ -518,20 +543,162 @@ public final class InProcessDelegationCoordinator
                 .setLane(Lane.LANE_COORDINATOR)
                 .setCoordinatorFrame(response)
                 .build());
+        session.commitCoordinatorSeq(taskId, attempt, seq);
+        afterPersist.run();
         session.responses.onNext(response);
     }
 
     private void append(TranscriptEntry entry) {
-        entries.add(entry);
+        Transcript candidate = Transcript.newBuilder()
+                .addAllEntries(entries)
+                .addEntries(entry)
+                .build();
         DelegationReducer.Result result = reducer.reduce(
-                Transcript.newBuilder().addAllEntries(entries).build());
+                candidate);
         if (!result.clean()) {
-            entries.removeLast();
             DelegationReducer.Finding finding = result.findings().getLast();
             throw new IllegalArgumentException(finding.kind() + ": " + finding.error());
         }
+        transcripts.save(candidate);
+        entries.add(entry);
         events.add(new Event(++cursor, entry));
         lock.notifyAll();
+    }
+
+    private void restore(Transcript transcript) {
+        DelegationValidation.validate(transcript);
+        DelegationReducer.Result result = reducer.reduce(transcript);
+        if (!result.clean()) {
+            DelegationReducer.Finding finding = result.findings().getFirst();
+            throw new IllegalArgumentException("stored transcript is invalid: "
+                    + finding.kind() + ": " + finding.error());
+        }
+        for (TranscriptEntry entry : transcript.getEntriesList()) {
+            entries.add(entry);
+            events.add(new Event(++cursor, entry));
+            if (entry.getLane() == Lane.LANE_WORKER) {
+                DelegateRequest frame = entry.getWorkerFrame();
+                workerFrames.put(frame.getFrameId(), frame.toByteString());
+            }
+            restoreRuntime(entry);
+        }
+    }
+
+    private void restoreRuntime(TranscriptEntry entry) {
+        if (entry.getLane() == Lane.LANE_WORKER) {
+            restoreWorkerRuntime(entry.getWorkerId(), entry.getWorkerFrame());
+        } else {
+            restoreCoordinatorRuntime(entry.getWorkerId(), entry.getCoordinatorFrame());
+        }
+    }
+
+    private void restoreWorkerRuntime(String workerId, DelegateRequest frame) {
+        if (frame.hasHello()) {
+            return;
+        }
+        TaskRuntime task = requireRestoredTask(frame.getTaskId(), workerId);
+        switch (frame.getPayloadCase()) {
+            case ACCEPT -> task.phase = DelegationReducer.Phase.LEASED;
+            case REJECT -> task.phase = DelegationReducer.Phase.REJECTED;
+            case BLOCKED -> task.phase = DelegationReducer.Phase.BLOCKED;
+            case FAILED -> task.phase = DelegationReducer.Phase.FAILED;
+            case COMPLETION -> {
+                task.phase = DelegationReducer.Phase.CANDIDATE;
+                task.candidate = frame.getCompletion();
+            }
+            case HEARTBEAT, PROGRESS, CHECKPOINT, CANCELLED -> {
+                // These frames do not independently change the reconstructed phase.
+            }
+            case HELLO, PAYLOAD_NOT_SET -> throw new IllegalArgumentException(
+                    "stored transcript contains an unexpected worker payload");
+        }
+    }
+
+    private void restoreCoordinatorRuntime(String workerId, DelegateResponse frame) {
+        if (frame.hasAdmission()) {
+            return;
+        }
+        String taskId = frame.getTaskId();
+        if (frame.hasOffer()) {
+            TaskOffer offer = frame.getOffer();
+            TaskRuntime task = tasks.computeIfAbsent(taskId, TaskRuntime::new);
+            task.workerId = workerId;
+            task.attempt = offer.getAttempt();
+            task.offer = offer;
+            task.phase = DelegationReducer.Phase.OFFERED;
+            task.expiry = toInstant(offer.getExpiresAt());
+            task.leaseGeneration++;
+            return;
+        }
+        TaskRuntime task = requireRestoredTask(taskId, workerId);
+        switch (frame.getPayloadCase()) {
+            case RENEWAL -> {
+                task.expiry = toInstant(frame.getRenewal().getExpiresAt());
+                task.leaseGeneration++;
+            }
+            case EXPIRED -> {
+                task.phase = DelegationReducer.Phase.EXPIRED;
+                task.leaseGeneration++;
+            }
+            case CANCELLATION -> {
+                task.phase = DelegationReducer.Phase.CANCELLED;
+                task.leaseGeneration++;
+            }
+            case REVISION_REQUESTED -> task.phase = DelegationReducer.Phase.LEASED;
+            case ACCEPTED -> {
+                task.phase = DelegationReducer.Phase.ACCEPTED;
+                task.leaseGeneration++;
+            }
+            case ADMISSION, OFFER, PAYLOAD_NOT_SET -> throw new IllegalArgumentException(
+                    "stored transcript contains an unexpected coordinator payload");
+        }
+    }
+
+    private TaskRuntime requireRestoredTask(String taskId, String workerId) {
+        TaskRuntime task = tasks.get(taskId);
+        if (task == null || !workerId.equals(task.workerId)) {
+            throw new IllegalArgumentException(
+                    "stored transcript references a task before its offer: " + taskId);
+        }
+        return task;
+    }
+
+    private void restoreCoordinatorSequences(Session session) {
+        for (TranscriptEntry entry : entries) {
+            if (entry.getLane() == Lane.LANE_COORDINATOR
+                    && entry.getWorkerId().equals(session.workerId)) {
+                DelegateResponse frame = entry.getCoordinatorFrame();
+                session.restoreCoordinatorSeq(frame.getTaskId(), attemptOf(frame),
+                        frame.getSeq());
+            }
+        }
+    }
+
+    private void resumeRestoredLeases(Session session) {
+        for (TaskRuntime task : tasks.values()) {
+            if (!task.workerId.equals(session.workerId)
+                    || (task.phase != DelegationReducer.Phase.LEASED
+                    && task.phase != DelegationReducer.Phase.CANDIDATE)) {
+                continue;
+            }
+            if (!task.expiry.isAfter(clock.instant())) {
+                expire(task, "lease deadline elapsed while the coordinator was offline");
+            } else {
+                scheduleExpiry(task.taskId, task.attempt, task.leaseGeneration, task.expiry);
+            }
+        }
+    }
+
+    private static int attemptOf(DelegateResponse frame) {
+        return switch (frame.getPayloadCase()) {
+            case OFFER -> frame.getOffer().getAttempt();
+            case RENEWAL -> frame.getRenewal().getAttempt();
+            case EXPIRED -> frame.getExpired().getAttempt();
+            case CANCELLATION -> frame.getCancellation().getAttempt();
+            case REVISION_REQUESTED -> frame.getRevisionRequested().getAttempt();
+            case ACCEPTED -> frame.getAccepted().getAttempt();
+            case ADMISSION, PAYLOAD_NOT_SET -> 0;
+        };
     }
 
     private Optional<Event> firstEvent(String taskId, long afterCursor) {
@@ -572,6 +739,10 @@ public final class InProcessDelegationCoordinator
         return Timestamps.fromMillis(instant.toEpochMilli());
     }
 
+    private static Instant toInstant(Timestamp timestamp) {
+        return Instant.ofEpochSecond(timestamp.getSeconds(), timestamp.getNanos());
+    }
+
     private static Duration toProtoDuration(java.time.Duration duration) {
         return Durations.fromNanos(duration.toNanos());
     }
@@ -608,9 +779,19 @@ public final class InProcessDelegationCoordinator
             this.responses = responses;
         }
 
-        private long nextCoordinatorSeq(String taskId, int attempt) {
+        private long peekNextCoordinatorSeq(String taskId, int attempt) {
             String key = taskId + "\n" + attempt;
-            return coordinatorSequences.merge(key, 1L, Long::sum);
+            return coordinatorSequences.getOrDefault(key, 0L) + 1L;
+        }
+
+        private void commitCoordinatorSeq(String taskId, int attempt, long seq) {
+            String key = taskId + "\n" + attempt;
+            coordinatorSequences.put(key, seq);
+        }
+
+        private void restoreCoordinatorSeq(String taskId, int attempt, long seq) {
+            String key = taskId + "\n" + attempt;
+            coordinatorSequences.merge(key, seq, Math::max);
         }
     }
 

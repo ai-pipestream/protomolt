@@ -58,7 +58,8 @@ recorded contract.
 Extend the in-process coordinator where deployments need durable or remote
 coordination:
 
-- durable transcripts and checkpoint recovery;
+- automatic reoffer from the latest valid checkpoint after restart;
+- fenced or compare-and-set transcript writes for multiple coordinators;
 - capability-based offer routing across multiple connected workers;
 - repository and artifact evidence verifiers backed by configured stores;
 - MCP resources and tools for task status, review, cancellation, and event
