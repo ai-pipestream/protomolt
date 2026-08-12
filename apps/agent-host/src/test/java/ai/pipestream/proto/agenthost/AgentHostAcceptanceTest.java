@@ -170,9 +170,9 @@ class AgentHostAcceptanceTest {
     }
 
     @Test
-    void coordinatorCannotAcknowledgeAwayACompletionCandidate() throws Exception {
-        Path workspace = Files.createDirectory(temporary.resolve("review-workspace"));
-        Path coordinatorState = temporary.resolve("review-state/coordinator.json");
+    void coordinatorCannotAcknowledgeAwayAnAccept() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("step-workspace"));
+        Path coordinatorState = temporary.resolve("step-state/coordinator.json");
         AckCountingProvider provider = new AckCountingProvider();
         try (ProtoMoltServe serve = ProtoMoltServe.start(
                 new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0))) {
@@ -181,19 +181,41 @@ class AgentHostAcceptanceTest {
                     "codex-coordinator", "codex", coordinatorState, workspace, provider);
             try (coordinator; McpHttpClient workerSide = new McpHttpClient(endpoint,
                     () -> null)) {
-                ObjectNode registration = MAPPER.createObjectNode()
-                        .put("workerId", WORKER).put("provider", "kimi");
-                registration.putArray("capabilities").addObject()
-                        .put("name", "structured-delegation")
-                        .put("description", "Consumes event batches and emits commands");
-                workerSide.callTool("delegation-worker-register", registration);
-                ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
-                spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
-                workerSide.callTool("delegation-offer", MAPPER.createObjectNode()
-                        .put("workerId", WORKER).put("taskId", TASK)
-                        .put("leaseSeconds", 300).set("spec", spec));
-                workerSide.callTool("delegation-accept", MAPPER.createObjectNode()
-                        .put("workerId", WORKER).put("taskId", TASK).put("attempt", 1));
+                registerOfferAndAccept(workerSide);
+
+                assertThatThrownBy(coordinator::pollOnce)
+                        .isInstanceOf(AgentHostException.class)
+                        .hasMessageContaining("guidance")
+                        .hasMessageContaining("cancellation")
+                        .hasMessageContaining(TASK);
+                assertThat(provider.prompts).isEqualTo(2);
+                assertThat(provider.lastPrompt)
+                        .contains("Your previous response was rejected");
+                assertThat(coordinator.state().cursor()).isZero();
+                assertThat(coordinator.state().pending()).isNull();
+
+                AgentHostState reloaded = new AgentHostStateStore(coordinatorState)
+                        .loadOrCreate("codex-coordinator", AgentRole.COORDINATOR,
+                                "codex", workspace);
+                assertThat(reloaded.cursor()).isZero();
+                assertThat(reloaded.pending()).isNull();
+            }
+        }
+    }
+
+    @Test
+    void coordinatorCannotAcknowledgeAwayACompletionCandidate() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("review-workspace"));
+        Path coordinatorState = temporary.resolve("review-state/coordinator.json");
+        GuidanceThenAckProvider provider = new GuidanceThenAckProvider();
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0))) {
+            URI endpoint = URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp");
+            AgentHost coordinator = host(endpoint, AgentRole.COORDINATOR,
+                    "codex-coordinator", "codex", coordinatorState, workspace, provider);
+            try (coordinator; McpHttpClient workerSide = new McpHttpClient(endpoint,
+                    () -> null)) {
+                registerOfferAndAccept(workerSide);
 
                 assertThat(coordinator.pollOnce()).isTrue();
                 long acceptedCursor = coordinator.state().cursor();
@@ -232,6 +254,22 @@ class AgentHostAcceptanceTest {
                 assertThat(reloaded.pending()).isNull();
             }
         }
+    }
+
+    private static void registerOfferAndAccept(McpHttpClient workerSide) {
+        ObjectNode registration = MAPPER.createObjectNode()
+                .put("workerId", WORKER).put("provider", "kimi");
+        registration.putArray("capabilities").addObject()
+                .put("name", "structured-delegation")
+                .put("description", "Consumes event batches and emits commands");
+        workerSide.callTool("delegation-worker-register", registration);
+        ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+        spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+        workerSide.callTool("delegation-offer", MAPPER.createObjectNode()
+                .put("workerId", WORKER).put("taskId", TASK)
+                .put("leaseSeconds", 300).set("spec", spec));
+        workerSide.callTool("delegation-accept", MAPPER.createObjectNode()
+                .put("workerId", WORKER).put("taskId", TASK).put("attempt", 1));
     }
 
     private AgentHost host(URI endpoint, AgentRole role, String identity, String providerName,
@@ -488,6 +526,55 @@ class AgentHostAcceptanceTest {
             } catch (Exception e) {
                 throw new AgentHostException(
                         "ack-counting provider could not read packet", e);
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class GuidanceThenAckProvider implements AgentProvider {
+        private int prompts;
+        private String lastPrompt;
+
+        @Override
+        public String name() {
+            return "codex";
+        }
+
+        @Override
+        public String sessionId() {
+            return "guidance-then-ack-session";
+        }
+
+        @Override
+        public String prompt(String value) {
+            prompts++;
+            lastPrompt = value;
+            try {
+                ObjectNode packet = (ObjectNode) MAPPER.readTree(
+                        value.substring(value.lastIndexOf("Packet:\n") + 8));
+                StringBuilder cursors = new StringBuilder();
+                for (JsonNode event : packet.path("events")) {
+                    if (cursors.length() > 0) {
+                        cursors.append(',');
+                    }
+                    cursors.append(event.path("cursor").asLong());
+                }
+                if (ScriptedProvider.hasPayload(packet, "completion")) {
+                    return "{\"handledEventCursors\":[" + cursors + "],\"commands\":[{"
+                            + "\"tool\":\"host-ack\",\"arguments\":{"
+                            + "\"reason\":\"worker update observed\"}}]}";
+                }
+                return "{\"handledEventCursors\":[" + cursors + "],\"commands\":[{"
+                        + "\"tool\":\"delegation-message\",\"arguments\":{"
+                        + "\"taskId\":\"" + TASK + "\",\"recipient\":\"" + WORKER + "\","
+                        + "\"kind\":\"TASK_MESSAGE_KIND_GUIDANCE\","
+                        + "\"text\":\"continue with the bounded implementation\"}}]}";
+            } catch (Exception e) {
+                throw new AgentHostException(
+                        "guidance-then-ack provider could not read packet", e);
             }
         }
 
