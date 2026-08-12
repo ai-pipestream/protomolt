@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -227,6 +228,14 @@ final class AgentHost implements AutoCloseable {
     }
 
     private void validateRequiredActions(ObjectNode packet, AgentTurn turn) {
+        Set<String> completionTasks = new HashSet<>();
+        if (config.role() == AgentRole.COORDINATOR) {
+            for (JsonNode event : packet.path("events")) {
+                if (event.path("entry").path("workerFrame").has("completion")) {
+                    completionTasks.add(event.path("taskId").asText());
+                }
+            }
+        }
         for (JsonNode event : packet.path("events")) {
             String taskId = event.path("taskId").asText();
             JsonNode entry = event.path("entry");
@@ -261,6 +270,10 @@ final class AgentHost implements AutoCloseable {
                     requireTaskCommand(turn, taskId, Set.of("delegation-review"),
                             "a completion candidate requires delegation-review");
                 }
+                if (frame.has("accept") || frame.has("progress")
+                        || frame.has("checkpoint")) {
+                    requireStepAction(turn, taskId, completionTasks);
+                }
                 JsonNode message = frame.path("taskMessage");
                 if (message.isObject()
                         && "TASK_MESSAGE_KIND_QUESTION".equals(
@@ -279,6 +292,34 @@ final class AgentHost implements AutoCloseable {
                         && taskId.equals(command.arguments().path("taskId").asText()));
         if (!present) {
             throw new AgentHostException(message + " for task " + taskId);
+        }
+    }
+
+    /**
+     * A worker accept, progress, or checkpoint is a short step the coordinator must steer:
+     * answer it with task guidance or a cancellation. A delegation-review also satisfies the
+     * requirement when the same batch carries the task's completion candidate, which keeps
+     * the combined end-of-task batch answerable in one turn.
+     */
+    private static void requireStepAction(AgentTurn turn, String taskId,
+                                          Set<String> completionTasks) {
+        boolean present = turn.commands().stream().anyMatch(command -> {
+            if (!taskId.equals(command.arguments().path("taskId").asText())) {
+                return false;
+            }
+            if ("delegation-cancel".equals(command.tool())) {
+                return true;
+            }
+            if ("delegation-message".equals(command.tool())) {
+                return "TASK_MESSAGE_KIND_GUIDANCE".equals(
+                        command.arguments().path("kind").asText());
+            }
+            return "delegation-review".equals(command.tool())
+                    && completionTasks.contains(taskId);
+        });
+        if (!present) {
+            throw new AgentHostException("a worker accept, progress, or checkpoint "
+                    + "requires coordinator guidance or cancellation for task " + taskId);
         }
     }
 
@@ -329,7 +370,11 @@ final class AgentHost implements AutoCloseable {
                 + "delegation-review accept={taskId,decision,verdict}; "
                 + "delegation-review revise={taskId,decision,feedback,failedChecks}; "
                 + "delegation-cancel={taskId,reason}. A completion candidate requires "
-                + "delegation-review. A question requires delegation-message. Use "
+                + "delegation-review. A question requires delegation-message. A worker "
+                + "accept, progress, or checkpoint requires guidance (a delegation-message "
+                + "of kind TASK_MESSAGE_KIND_GUIDANCE) or delegation-cancel; "
+                + "delegation-review also answers them when the same batch carries the "
+                + "task's completion candidate. Use "
                 + "exactly these field names and no others.";
     }
 
