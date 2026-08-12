@@ -4,8 +4,13 @@
 endpoint. Portainer is the sole lifecycle owner. The existing DJL stack remains
 on the GPU host and is not duplicated here.
 
-The server image is pinned by digest. Updating the coordinator is an explicit
-compose change after a new image has been built and verified from `main`.
+The serve and repo-service images default to the `edge` tag published by the
+Docker Publish workflow. Updating the coordinator is an explicit pin: after a
+new image has been built from `main` and verified, set
+`PROTOMOLT_SERVE_IMAGE` (or `PROTOMOLT_REPO_SERVICE_IMAGE`) to
+`ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:<digest>` in the Portainer
+stack variables and redeploy. To refresh `edge` itself, dispatch the Docker
+Publish workflow against `main`.
 
 The stack provides:
 
@@ -16,6 +21,8 @@ The stack provides:
 | ProtoMolt registry | `http://nas:19904` | Git-backed Confluent-compatible schema registry |
 | RustFS | `http://nas:31900` | Persistent S3-compatible artifact storage |
 | Keycloak | `http://nas:19901` | Local OIDC identity provider |
+| repo-service | internal only | Claim-check document store backing the delegation transcript |
+| repo-postgres | internal only | repo-service ledger database |
 
 Traefik terminates TLS with the NAS wildcard certificate for all externally
 named surfaces:
@@ -42,6 +49,12 @@ stored in Portainer, not committed.
 | `PROTOMOLT_RUSTFS_SECRET_KEY` | yes | RustFS secret; access key defaults to `protomolt` |
 | `PROTOMOLT_KEYCLOAK_ADMIN_PASSWORD` | yes | Keycloak bootstrap admin password |
 | `PROTOMOLT_KEYCLOAK_CLIENT_SECRET` | yes | Secret for the `protomolt-coordinator` service client |
+| `PROTOMOLT_TRANSCRIPT_KEY` | yes | Base64-encoded 32-byte AES key encrypting the delegation transcript; generate with `openssl rand -base64 32` |
+| `PROTOMOLT_REPO_DB_PASSWORD` | yes | Password for the repo-service ledger database; user and database default to `documents` |
+| `PROTOMOLT_SERVE_IMAGE` | no | Serve image override; pin with `ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:<digest>` |
+| `PROTOMOLT_REPO_SERVICE_IMAGE` | no | repo-service image override, same pinning form as `PROTOMOLT_SERVE_IMAGE` |
+| `PROTOMOLT_DELEGATION_REPO_DRIVE` | no | Repository drive of the transcript blob; defaults to `protomolt` and must match the drive repo-init creates |
+| `PROTOMOLT_REPO_DB_USER` / `PROTOMOLT_REPO_DB_NAME` | no | Ledger database user and name; both default to `documents` |
 
 The coordinator and Keycloak defaults reserve NAS ports `19901` through
 `19904`. RustFS uses `31900`, a separate host range that avoids the shared
@@ -57,11 +70,27 @@ service-profile reflection remains a bounded delegatable work item in
 `docs/transform/recipes.md`; the coordinator keeps its API token
 enabled until that host credential boundary lands.
 
+The coordinator runs with durable delegation transcripts
+(`--delegation-repo-endpoint repo-service:9090`). The serve process validates
+and encrypts each transcript snapshot locally with AES-256-GCM under the key
+that `PROTOMOLT_TRANSCRIPT_KEY` holds, then stores the ciphertext as one blob
+through the repo-service (`PutBlob`/`GetBlob`) on the drive named by
+`PROTOMOLT_DELEGATION_REPO_DRIVE` (default `protomolt`, created by the
+repo-init container against the existing `protomolt` RustFS bucket). The
+repo-service, its PostgreSQL ledger, and RustFS only ever see ciphertext. A
+coordinator restart restores every task, event cursor, and worker sequence
+scope, so a re-registering agent host resumes where the record left off.
+Losing `PROTOMOLT_TRANSCRIPT_KEY` makes the stored transcript unreadable;
+rotate it only by retiring the old transcript object.
+
 Keycloak uses its embedded development database on a persistent volume and is
 intentionally started with `start-dev`. It is suitable for this private
 development coordinator, not a public production identity service. Startup
 imports the `protomolt` realm only when it does not already exist.
 
-Back up the `protomolt-data`, `rustfs-data`, and `keycloak-data` volumes before
-upgrading or replacing the stack. The first holds the schema Git history,
-service registrations, recipes, and evidence.
+Back up the `protomolt-data`, `rustfs-data`, `keycloak-data`, and
+`repo-postgres-data` volumes before upgrading or replacing the stack. The first
+holds the schema Git history, service registrations, recipes, and evidence.
+`rustfs-data` and `repo-postgres-data` together hold the encrypted delegation
+transcript; both are useless without `PROTOMOLT_TRANSCRIPT_KEY`, so back the
+key up with the same care as the volumes.

@@ -1,0 +1,83 @@
+# Persistent agent hosts for the Krick workstation. Codex and Kimi execution
+# stays here; this stack is NOT part of the NAS Portainer coordinator stack and
+# must not be deployed there. The agents reach the coordinator over its public
+# MCP endpoint.
+#
+#   ./gradlew :protomolt-agent-host:installDist
+#   docker compose -f deploy/krick/compose.yml build
+#   docker compose -f deploy/krick/compose.yml up -d
+#   docker compose -f deploy/krick/compose.yml logs -f
+#
+# Variable interpolation reads a .env file next to this compose file. Put
+# PROTOMOLT_MCP_TOKEN there (it is gitignored) or export it in the shell.
+# Provider authentication is never part of this file: the containers mount the
+# host's ~/.kimi-code and ~/.codex directories.
+name: protomolt-krick-agents
+
+services:
+  kimi-worker:
+    build:
+      context: ../../apps/agent-host
+      dockerfile: Dockerfile
+    image: protomolt-agent-host:local
+    container_name: protomolt-kimi-worker
+    # Match the host user so the mounted worktree, state, and provider config
+    # directories stay writable and host-side file ownership is unchanged.
+    user: "${KRICK_AGENT_UID:-1000}:${KRICK_AGENT_GID:-1000}"
+    command:
+      - --endpoint
+      - ${PROTOMOLT_MCP_ENDPOINT:-https://protomolt.rokkon.com/mcp}
+      - --role
+      - worker
+      - --identity
+      - ${KRICK_KIMI_IDENTITY:-kimi-worker}
+      - --provider
+      - kimi
+      - --workspace
+      - /workspace
+      - --state
+      - /state/kimi-worker.json
+      - --token-env
+      - PROTOMOLT_MCP_TOKEN
+    environment:
+      PROTOMOLT_MCP_TOKEN: ${PROTOMOLT_MCP_TOKEN:?set PROTOMOLT_MCP_TOKEN in the shell or deploy/krick/.env}
+    volumes:
+      - ${KRICK_KIMI_WORKSPACE:-/work/worktrees/protomolt/kimi}:/workspace
+      - ${KRICK_AGENT_STATE_DIR:-~/.local/state/protomolt-agents}:/state
+      - ~/.kimi-code:/home/protomolt/.kimi-code
+    restart: unless-stopped
+
+  codex-coordinator:
+    build:
+      context: ../../apps/agent-host
+      dockerfile: Dockerfile
+    image: protomolt-agent-host:local
+    container_name: protomolt-codex-coordinator
+    user: "${KRICK_AGENT_UID:-1000}:${KRICK_AGENT_GID:-1000}"
+    command:
+      - --endpoint
+      - ${PROTOMOLT_MCP_ENDPOINT:-https://protomolt.rokkon.com/mcp}
+      - --role
+      - coordinator
+      - --identity
+      - ${KRICK_CODEX_IDENTITY:-codex-coordinator}
+      - --provider
+      - codex
+      - --workspace
+      - /workspace
+      - --state
+      - /state/codex-coordinator.json
+      - --bootstrap
+      - /bootstrap/objective.txt
+      - --token-env
+      - PROTOMOLT_MCP_TOKEN
+    environment:
+      PROTOMOLT_MCP_TOKEN: ${PROTOMOLT_MCP_TOKEN:?set PROTOMOLT_MCP_TOKEN in the shell or deploy/krick/.env}
+    volumes:
+      - ${KRICK_CODEX_WORKSPACE:-/work/worktrees/protomolt/codex}:/workspace
+      - ${KRICK_AGENT_STATE_DIR:-~/.local/state/protomolt-agents}:/state
+      - ~/.codex:/home/protomolt/.codex
+      # The objective is input, not a credential. It is processed once; the
+      # saved host state prevents it from running again on restart.
+      - ./codex-objective.txt:/bootstrap/objective.txt:ro
+    restart: unless-stopped

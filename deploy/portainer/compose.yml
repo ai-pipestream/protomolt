@@ -20,7 +20,11 @@ services:
     restart: "no"
 
   serve:
-    image: ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:5cd5ee8b4e2e7e8668ac9b5bbebcddc12fa54123ac69e083f329b7c082de99e1
+    # The delegation transcript flags below need an edge image built from a main
+    # that includes them. The default tag follows the Docker Publish workflow;
+    # pin a verified build by setting PROTOMOLT_SERVE_IMAGE to
+    # ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:<digest> in Portainer.
+    image: ${PROTOMOLT_SERVE_IMAGE:-ghcr.io/ai-pipestream/protomolt-serve:edge}
     container_name: protomolt-coordinator
     command:
       - --registry-git
@@ -29,11 +33,18 @@ services:
       - /data/services
       - --recipe-workspace
       - /data/recipes
+      - --delegation-repo-endpoint
+      - repo-service:9090
+      - --delegation-repo-drive
+      - ${PROTOMOLT_DELEGATION_REPO_DRIVE:-protomolt}
       - --demo
     environment:
       PROTOMOLT_API_TOKEN: ${PROTOMOLT_API_TOKEN:?set PROTOMOLT_API_TOKEN in Portainer}
+      PROTOMOLT_TRANSCRIPT_KEY: ${PROTOMOLT_TRANSCRIPT_KEY:?set PROTOMOLT_TRANSCRIPT_KEY in Portainer}
     depends_on:
       serve-init:
+        condition: service_completed_successfully
+      repo-init:
         condition: service_completed_successfully
     volumes:
       - protomolt-data:/data
@@ -105,6 +116,66 @@ services:
             --user "$${PROTOMOLT_RUSTFS_ACCESS_KEY}:$${PROTOMOLT_RUSTFS_SECRET_KEY}" \
             -X PUT "http://rustfs:9000/$${bucket}"
         done
+    restart: "no"
+
+  repo-postgres:
+    image: postgres:17.6-alpine
+    container_name: protomolt-repo-postgres
+    environment:
+      POSTGRES_USER: ${PROTOMOLT_REPO_DB_USER:-documents}
+      POSTGRES_PASSWORD: ${PROTOMOLT_REPO_DB_PASSWORD:?set PROTOMOLT_REPO_DB_PASSWORD in Portainer}
+      POSTGRES_DB: ${PROTOMOLT_REPO_DB_NAME:-documents}
+    volumes:
+      - repo-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    mem_limit: 512m
+    restart: unless-stopped
+
+  repo-service:
+    # Published by the Docker Publish workflow from repo/service/Dockerfile.
+    # Pin a verified build with PROTOMOLT_REPO_SERVICE_IMAGE, same procedure
+    # as PROTOMOLT_SERVE_IMAGE above.
+    image: ${PROTOMOLT_REPO_SERVICE_IMAGE:-ghcr.io/ai-pipestream/protomolt-repo-service:edge}
+    container_name: protomolt-repo-service
+    environment:
+      DOCUMENT_PLATFORM_GRPC_PORT: "9090"
+      DOCUMENT_PLATFORM_HTTP_PORT: "off"
+      DOCUMENT_PLATFORM_JDBC_URL: jdbc:postgresql://repo-postgres:5432/${PROTOMOLT_REPO_DB_NAME:-documents}
+      DOCUMENT_PLATFORM_USERNAME: ${PROTOMOLT_REPO_DB_USER:-documents}
+      DOCUMENT_PLATFORM_PASSWORD: ${PROTOMOLT_REPO_DB_PASSWORD:?set PROTOMOLT_REPO_DB_PASSWORD in Portainer}
+      DOCUMENT_PLATFORM_S3_ENDPOINT: http://rustfs:9000
+      DOCUMENT_PLATFORM_S3_REGION: us-east-1
+      DOCUMENT_PLATFORM_S3_ACCESS_KEY: ${PROTOMOLT_RUSTFS_ACCESS_KEY:-protomolt}
+      DOCUMENT_PLATFORM_S3_SECRET_KEY: ${PROTOMOLT_RUSTFS_SECRET_KEY:?set PROTOMOLT_RUSTFS_SECRET_KEY in Portainer}
+    depends_on:
+      repo-postgres:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    mem_limit: 1g
+    restart: unless-stopped
+
+  repo-init:
+    # Ensures the delegation transcript drive exists. CreateDrive is
+    # idempotent per account and name, so redeploys are safe. The drive binds
+    # the existing protomolt bucket created by rustfs-init.
+    image: fullstorydev/grpcurl:v1.9.3-alpine
+    depends_on:
+      repo-service:
+        condition: service_healthy
+    environment:
+      DELEGATION_DRIVE: ${PROTOMOLT_DELEGATION_REPO_DRIVE:-protomolt}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        grpcurl -plaintext \
+          -d "{\"name\": \"$${DELEGATION_DRIVE}\", \"account_id\": \"protomolt\", \"drive_type\": \"DRIVE_TYPE_CUSTOM\", \"bucket\": \"protomolt\"}" \
+          repo-service:9090 ai.pipestream.proto.repo.v1.DriveService/CreateDrive
     restart: "no"
 
   keycloak:
@@ -189,6 +260,7 @@ volumes:
   protomolt-data:
   rustfs-data:
   keycloak-data:
+  repo-postgres-data:
 
 networks:
   default:
