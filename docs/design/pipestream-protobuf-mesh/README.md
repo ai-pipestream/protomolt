@@ -417,6 +417,18 @@ active state from the durable record and reoffers expired work from the latest
 valid checkpoint. At-least-once delivery is safe because frames and entity
 results have idempotency keys and immutable content fingerprints.
 
+## Future features
+
+- [Encrypted shared workspace and tiered search](11-encrypted-shared-workspace.md):
+  synchronize client-encrypted, content-addressed agent artifacts through the
+  repository service and S3. Search indexes can be stored remotely, unloaded
+  locally, and hydrated by claim check when needed.
+- Durable agent-session recovery: checkpoint a live provider conversation and
+  revive it after an HTTP/2 disconnect within the advertised resume window.
+- Multi-agent workspace exchange: allow delegated workers to publish bounded
+  outputs and evidence into a shared manifest while Git remains authoritative
+  for source history.
+
 ## Surfaces
 
 The mesh is exposed through:

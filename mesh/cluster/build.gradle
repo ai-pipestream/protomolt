@@ -1,0 +1,29 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The mesh cluster directory: cluster advertisement and presence contracts, the in-memory TTL directory, and the delegation hello bridge'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    // The cluster contracts reuse the mesh core SchemaReference and
+    // ProcessorKind, and the directory builds on the contract gate's canonical
+    // digest and validation conventions.
+    api project(':protomolt-mesh-contracts')
+    // The bridge derives leased processor advertisements from delegation
+    // WorkerHello frames.
+    api project(':protomolt-delegation')
+    // Persisted cluster fields carry the house validation, sensitivity, and
+    // index-hint options.
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+    api project(':protomolt-index-spi')
+}
+
+// Messages and enums only; no services, so no protoc-gen-grpc-java here.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

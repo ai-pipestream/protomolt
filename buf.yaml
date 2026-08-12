@@ -56,6 +56,8 @@ modules:
     name: buf.build/ai-pipestream/mesh
   - path: mesh/contracts/src/test/proto
     name: buf.build/ai-pipestream/mesh-testdata
+  - path: mesh/cluster/src/main/proto
+    name: buf.build/ai-pipestream/mesh-cluster
 lint:
   use:
     - STANDARD
