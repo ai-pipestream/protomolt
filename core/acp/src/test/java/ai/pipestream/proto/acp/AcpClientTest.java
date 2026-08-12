@@ -116,4 +116,51 @@ class AcpClientTest {
             server.close();
         }
     }
+
+    @Test
+    void loadsAnExistingSessionWithItsWorkspace() {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpConnection server = AcpConnection.over(ends[1].in(), ends[1].out()).start();
+        server.onRequest((method, params) -> {
+            assertThat(method).isEqualTo("session/load");
+            assertThat(params.path("sessionId").asText()).isEqualTo("saved-session");
+            assertThat(params.path("cwd").asText()).isEqualTo("/work/project");
+            assertThat(params.path("mcpServers")).isEmpty();
+            return MAPPER.createObjectNode().put("sessionId", "saved-session");
+        });
+        try (AcpClient client = AcpClient.over(ends[0].in(), ends[0].out())) {
+            assertThat(client.loadSession("saved-session", "/work/project"))
+                    .isEqualTo("saved-session");
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    void headlessPermissionPolicyApprovesOnlyOneUnambiguousChoice() throws Exception {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpConnection server = AcpConnection.over(ends[1].in(), ends[1].out()).start();
+        try (AcpClient client = AcpClient.over(ends[0].in(), ends[0].out())
+                .withPermissionPolicy(AcpClient.PermissionPolicy.ALLOW_SINGLE)) {
+            ObjectNode params = MAPPER.createObjectNode();
+            params.putArray("options")
+                    .add(option("allow", "allow_once"))
+                    .add(option("reject", "reject_once"));
+            assertThat(server.request("session/request_permission", params)
+                    .get(30, TimeUnit.SECONDS).path("outcome").path("optionId").asText())
+                    .isEqualTo("allow");
+
+            params.withArray("options").add(option("another", "allow_once"));
+            assertThat(server.request("session/request_permission", params)
+                    .get(30, TimeUnit.SECONDS).path("outcome").path("outcome").asText())
+                    .isEqualTo("cancelled");
+        } finally {
+            server.close();
+        }
+    }
+
+    private static ObjectNode option(String id, String kind) {
+        return MAPPER.createObjectNode().put("optionId", id).put("kind", kind)
+                .put("name", id);
+    }
 }
