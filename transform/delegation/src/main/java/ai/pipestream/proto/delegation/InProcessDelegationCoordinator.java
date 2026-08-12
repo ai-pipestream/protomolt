@@ -671,6 +671,10 @@ public final class InProcessDelegationCoordinator
             case HEARTBEAT, PROGRESS, CHECKPOINT, CANCELLED -> {
                 // These frames do not independently change the reconstructed phase.
             }
+            case TASK_MESSAGE -> {
+                // Non-transitioning on the live path, so nothing to reconstruct:
+                // the restored entry is already in the transcript and event feed.
+            }
             case HELLO, PAYLOAD_NOT_SET -> throw new IllegalArgumentException(
                     "stored transcript contains an unexpected worker payload");
         }
@@ -710,6 +714,10 @@ public final class InProcessDelegationCoordinator
             case ACCEPTED -> {
                 task.phase = DelegationReducer.Phase.ACCEPTED;
                 task.leaseGeneration++;
+            }
+            case TASK_MESSAGE -> {
+                // Non-transitioning on the live path, so nothing to reconstruct:
+                // the restored entry is already in the transcript and event feed.
             }
             case ADMISSION, OFFER, PAYLOAD_NOT_SET -> throw new IllegalArgumentException(
                     "stored transcript contains an unexpected coordinator payload");
@@ -759,6 +767,9 @@ public final class InProcessDelegationCoordinator
             case CANCELLATION -> frame.getCancellation().getAttempt();
             case REVISION_REQUESTED -> frame.getRevisionRequested().getAttempt();
             case ACCEPTED -> frame.getAccepted().getAttempt();
+            // Task messages carry no attempt; they sequence in the task's
+            // attempt-0 scope, exactly as on the live path.
+            case TASK_MESSAGE -> 0;
             case ADMISSION, PAYLOAD_NOT_SET -> 0;
         };
     }
