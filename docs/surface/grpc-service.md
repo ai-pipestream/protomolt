@@ -84,6 +84,25 @@ service-workspace flags are:
 | `--recipe-workspace` | `PROTOMOLT_RECIPE_WORKSPACE` | none | Directory for content-addressed redacted fixtures and immutable run evidence |
 | `--demo` | none | off | Seed the sample schema described below |
 
+The delegation coordinator keeps its transcript in memory unless a repository
+service endpoint is configured. Durable mode restores tasks, event cursors,
+and worker sequence scopes across a server restart, so a re-registering
+worker resumes where the record left off; in-memory mode loses the transcript
+on restart and workers re-register as new.
+
+| Flag | Environment variable | Default | Meaning |
+|---|---|---|---|
+| `--delegation-repo-endpoint` | `PROTOMOLT_DELEGATION_REPO_ENDPOINT` | none (in-memory) | Repository service gRPC target (`host:port`, or `in-process:<name>`) storing the delegation transcript |
+| `--delegation-repo-tls` | `PROTOMOLT_DELEGATION_REPO_TLS` | `false` | Use TLS for the delegation repository channel |
+| `--delegation-repo-drive` | `PROTOMOLT_DELEGATION_REPO_DRIVE` | `protomolt` | Repository drive of the transcript blob |
+| `--delegation-transcript-object` | `PROTOMOLT_DELEGATION_TRANSCRIPT_OBJECT` | `delegation/serve/transcript.pb.enc` | Object key of the transcript blob |
+| `--delegation-state-key-ref` | `PROTOMOLT_DELEGATION_STATE_KEY_REF` | `env:PROTOMOLT_TRANSCRIPT_KEY` | Reference resolving the transcript encryption key (a base64 32-byte key in the named variable) |
+
+The coordinate flags require `--delegation-repo-endpoint`. The transcript is
+encrypted in the serve process before it reaches the repository service; see
+[Agent delegation](../transform/delegation.md) for the storage contract and
+the restart semantics.
+
 Outbound reflection, invocation, service refresh, and chain execution share
 one host-configured target, transport, deadline, and channel-concurrency
 boundary. See [Outbound gRPC channel policy](../operations/grpc-channel-policy.md) for its

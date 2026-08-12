@@ -131,13 +131,18 @@ for the exact names.
 
 Chains, jobs, inference, and `emit-okf` are not in the standalone binary's
 catalog because they require host-side wiring. `protomolt-serve` mounts the
-full catalog over HTTP, plus the live delegation surface: one in-process
-coordinator per server, adapted to catalog verbs by the delegation bridge.
+full catalog over HTTP, plus the live delegation surface: one coordinator per
+server, adapted to catalog verbs by the delegation bridge, in-memory by
+default and durable through the repository service when
+`--delegation-repo-endpoint` is configured.
 
 The delegation verbs let one agent run the coordinator role and another the
 worker role over two independent MCP sessions. `delegation-watch` long-polls
 the coordinator's event feed from a caller-owned cursor, so a worker session
 that disconnects can reconnect and resume with no lost or duplicated frames.
+A worker whose stream failed, or whose server restarted over a durable
+transcript, re-registers with `delegation-worker-register`: the replacement
+stream resumes the recorded sequence scopes instead of being rejected.
 See [Agent delegation](../transform/delegation.md) for the lifecycle and the
 session model.
 
