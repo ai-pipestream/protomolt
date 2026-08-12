@@ -3,8 +3,16 @@ package ai.pipestream.proto.mesh.cluster;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEventType;
+import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
+import ai.pipestream.proto.mesh.cluster.v1.Endpoint;
 import ai.pipestream.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.pipestream.proto.mesh.cluster.v1.TlsMode;
+import com.google.protobuf.Duration;
 import org.junit.jupiter.api.Test;
+
+import java.time.Clock;
+import java.time.ZoneOffset;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -95,6 +103,61 @@ class ClusterValidationTest {
     }
 
     @Test
+    void presenceExpiryMustExactlyMatchItsTtl() {
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.presenceBuilder("node-1", 1)
+                        .setExpiresAt(ClusterFixtures.ts(ClusterFixtures.T0.plusSeconds(31)))
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("presence-expiry-matches-ttl");
+    }
+
+    @Test
+    void invalidWellKnownDurationsAreRejectedBeforeCel() {
+        Duration invalid = Duration.newBuilder().setSeconds(315_576_000_001L).build();
+
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.nodeBuilder("node-1", 1, 1).setTtl(invalid).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("advertisement.ttl must be a valid protobuf Duration");
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.presenceBuilder("node-1", 1).setTtl(invalid).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("presence.ttl must be a valid protobuf Duration");
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.processorBuilder("proc-1", "node-1")
+                        .setSupportsSessionResume(true)
+                        .setMaxDisconnectGrace(invalid)
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_disconnect_grace must be a valid protobuf Duration");
+    }
+
+    @Test
+    void processorMetadataMustBeInternallyConsistent() {
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.processorBuilder("proc-1", "node-1")
+                        .setModel("gpt-example")
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("model-requires-provider");
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.processorBuilder("proc-1", "node-1")
+                        .setSupportsSessionResume(true)
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("resume-support-has-grace");
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.processorBuilder("proc-1", "node-1")
+                        .addCapabilityDetails(
+                                ai.pipestream.proto.mesh.cluster.v1.CapabilityDescription
+                                        .newBuilder().setName("llm-edit"))
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("capabilities does not contain it");
+    }
+
+    @Test
     void processorEventMustNameItsProcessor() {
         ClusterEvent unnamed = ClusterEvent.newBuilder()
                 .setSeq(1)
@@ -106,7 +169,60 @@ class ClusterValidationTest {
 
         assertThatThrownBy(() -> ClusterValidation.validate(unnamed))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("processor-events-name-processor");
+                .hasMessageContaining("event-subject-matches-detail");
+    }
+
+    @Test
+    void eventTypeAndDetailMustAgree() {
+        ClusterEvent wrongType = ClusterEvent.newBuilder()
+                .setSeq(1)
+                .setOccurredAt(ClusterFixtures.ts(ClusterFixtures.T0))
+                .setType(ClusterEventType.CLUSTER_EVENT_TYPE_CAPACITY_UPDATED)
+                .setNodeId("node-1")
+                .setNode(ClusterFixtures.node("node-1"))
+                .build();
+
+        assertThatThrownBy(() -> ClusterValidation.validate(wrongType))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("event-type-matches-detail");
+    }
+
+    @Test
+    void eventLogMustBeGapFreeAndChronological() {
+        ClusterEvent first = nodeEvent(1, ClusterFixtures.T0);
+        ClusterEvent gap = nodeEvent(3, ClusterFixtures.T0.plusSeconds(1));
+        assertThatThrownBy(() -> ClusterValidation.validateEventLog(List.of(first, gap)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("event.seq 3 does not match expected 2");
+
+        ClusterEvent backwards = nodeEvent(2, ClusterFixtures.T0.minusSeconds(1));
+        assertThatThrownBy(() -> ClusterValidation.validateEventLog(List.of(first, backwards)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("occurred_at moves backward at seq 2");
+    }
+
+    @Test
+    void snapshotRejectsUnorderedProcessorsAndCrossRecordEpochs() {
+        ClusterDirectory directory = new ClusterDirectory(ClusterFixtures.cluster(),
+                Clock.fixed(ClusterFixtures.T0, ZoneOffset.UTC));
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-a", "node-1").build());
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-b", "node-1").build());
+        ClusterSnapshot valid = directory.snapshot();
+
+        ClusterSnapshot.Builder unordered = valid.toBuilder()
+                .clearProcessors()
+                .addProcessors(valid.getProcessors(1))
+                .addProcessors(valid.getProcessors(0));
+        assertThatThrownBy(() -> ClusterValidation.validate(sign(unordered)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("strictly ordered by processor_id");
+
+        ClusterSnapshot.Builder staleEpoch = valid.toBuilder()
+                .setProcessors(0, valid.getProcessors(0).toBuilder().setNodeEpoch(2));
+        assertThatThrownBy(() -> ClusterValidation.validate(sign(staleEpoch)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("stale node_epoch");
     }
 
     @Test
@@ -124,9 +240,36 @@ class ClusterValidationTest {
                         .build()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.nodeBuilder("node-1", 1, 1)
+                        .clearEndpoints()
+                        .addEndpoints(Endpoint.newBuilder()
+                                .setEndpointId("grpc-main")
+                                .setAddress("node.example:99999")
+                                .setTlsMode(TlsMode.TLS_MODE_SYSTEM))
+                        .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("between 1 and 65535");
+        assertThatThrownBy(() -> ClusterValidation.validate(
                 ClusterFixtures.processorBuilder("proc-1", "node-1")
                         .setKind(ai.pipestream.proto.mesh.v1.ProcessorKind.PROCESSOR_KIND_UNSPECIFIED)
                         .build()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static ClusterEvent nodeEvent(long seq, java.time.Instant occurredAt) {
+        return ClusterEvent.newBuilder()
+                .setSeq(seq)
+                .setOccurredAt(ClusterFixtures.ts(occurredAt))
+                .setType(ClusterEventType.CLUSTER_EVENT_TYPE_NODE_REGISTERED)
+                .setNodeId("node-1")
+                .setNode(ClusterFixtures.node("node-1"))
+                .build();
+    }
+
+    private static ClusterSnapshot sign(ClusterSnapshot.Builder builder) {
+        ClusterSnapshot unsigned = builder.clearFingerprint().build();
+        return unsigned.toBuilder()
+                .setFingerprint(ClusterValidation.snapshotFingerprint(unsigned))
+                .build();
     }
 }

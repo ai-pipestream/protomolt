@@ -41,13 +41,19 @@ class DelegationBridgeTest {
     @Test
     void mapsHelloToLeasedAdvertisement() {
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 3, 1, LEASE, NOW);
+                hello().build(), "node-1", 7, 3, 1, LEASE, NOW);
 
         assertThat(advertisement.getProcessorId()).isEqualTo("worker-7");
         assertThat(advertisement.getNodeId()).isEqualTo("node-1");
         assertThat(advertisement.getKind()).isEqualTo(ProcessorKind.PROCESSOR_KIND_LLM);
+        assertThat(advertisement.getNodeEpoch()).isEqualTo(7);
+        assertThat(advertisement.getProvider()).isEqualTo("kimi");
+        assertThat(advertisement.getModel()).isEqualTo("kimi-k2");
         // Capability names in declaration order, deduplicated: the bridge maps a set.
         assertThat(advertisement.getCapabilitiesList())
+                .containsExactly("proto-edit", "java-build");
+        assertThat(advertisement.getCapabilityDetailsList())
+                .extracting(ai.pipestream.proto.mesh.cluster.v1.CapabilityDescription::getName)
                 .containsExactly("proto-edit", "java-build");
         // A hello declares no schemas, so the bridge invents none.
         assertThat(advertisement.getAcceptedSchemasList()).isEmpty();
@@ -62,7 +68,7 @@ class DelegationBridgeTest {
     @Test
     void providerlessWorkerMapsToDeterministic() {
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().clearProvider().clearModel().build(), "node-1", 1, 1, LEASE, NOW);
+                hello().clearProvider().clearModel().build(), "node-1", 1, 1, 1, LEASE, NOW);
 
         assertThat(advertisement.getKind()).isEqualTo(ProcessorKind.PROCESSOR_KIND_DETERMINISTIC);
     }
@@ -73,7 +79,7 @@ class DelegationBridgeTest {
                 ClusterFixtures.cluster(), new MutableClock(NOW));
         directory.register(ClusterFixtures.node("node-1"));
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 1, 1, LEASE, NOW);
+                hello().build(), "node-1", 1, 1, 1, LEASE, NOW);
 
         assertThat(directory.registerProcessor(advertisement))
                 .isEqualTo(ApplyOutcome.REGISTERED);
@@ -85,7 +91,8 @@ class DelegationBridgeTest {
     @Test
     void invalidHelloIsRejectedBeforeMapping() {
         assertThatThrownBy(() -> DelegationBridge.toProcessorAdvertisement(
-                hello().setWorkerId("not a valid id").build(), "node-1", 1, 1, LEASE, NOW))
+                hello().setWorkerId("not a valid id").build(), "node-1", 1, 1, 1,
+                LEASE, NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("hello fails the delegation contract annotations");
     }
@@ -93,11 +100,11 @@ class DelegationBridgeTest {
     @Test
     void nonPositiveLeaseIsRejected() {
         assertThatThrownBy(() -> DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 1, 1, Duration.ZERO, NOW))
+                hello().build(), "node-1", 1, 1, 1, Duration.ZERO, NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("leaseDuration must be positive");
         assertThatThrownBy(() -> DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 1, 1, Duration.ofSeconds(-1), NOW))
+                hello().build(), "node-1", 1, 1, 1, Duration.ofSeconds(-1), NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("leaseDuration must be positive");
     }
@@ -105,8 +112,9 @@ class DelegationBridgeTest {
     @Test
     void leaseEpochAndSeqPassThroughToFencingFields() {
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 9, 4, LEASE, NOW);
+                hello().build(), "node-1", 5, 9, 4, LEASE, NOW);
 
+        assertThat(advertisement.getNodeEpoch()).isEqualTo(5);
         assertThat(advertisement.getLeaseEpoch()).isEqualTo(9);
         assertThat(advertisement.getSeq()).isEqualTo(4);
     }

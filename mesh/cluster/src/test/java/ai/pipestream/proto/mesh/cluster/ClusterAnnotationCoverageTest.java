@@ -43,15 +43,18 @@ class ClusterAnnotationCoverageTest {
      */
     private static final Set<String> INDEXED_FIELDS = Set.of(
             "ClusterDescriptor.cluster_id",
+            "ClusterDescriptor.trust_domain",
             "NodeAdvertisement.node_id",
             "NodeAdvertisement.cluster_id",
             "NodePresence.node_id",
             "NodePresence.cluster_id",
             "NodePresence.state",
+            "NodePresence.expires_at",
             "ProcessorAdvertisement.processor_id",
             "ProcessorAdvertisement.node_id",
             "ProcessorAdvertisement.kind",
             "ProcessorAdvertisement.capabilities",
+            "ProcessorAdvertisement.lease_expires_at",
             "CapacityAdvertisement.node_id");
 
     /**

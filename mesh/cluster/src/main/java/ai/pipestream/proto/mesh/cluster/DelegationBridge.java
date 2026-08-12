@@ -2,6 +2,7 @@ package ai.pipestream.proto.mesh.cluster;
 
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
+import ai.pipestream.proto.mesh.cluster.v1.CapabilityDescription;
 import ai.pipestream.proto.mesh.cluster.v1.ProcessorAdvertisement;
 import ai.pipestream.proto.mesh.v1.ProcessorKind;
 import ai.pipestream.proto.validate.ProtoValidator;
@@ -10,6 +11,8 @@ import com.google.protobuf.Timestamp;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +53,7 @@ public final class DelegationBridge {
      *
      * @param hello the worker hello to map
      * @param nodeId the mesh node the worker's stream terminates on
+     * @param nodeEpoch the fencing epoch of that node incarnation
      * @param leaseEpoch the lease fencing epoch the coordinator assigned
      * @param seq the advertisement sequence inside the lease epoch
      * @param leaseDuration how long the derived lease runs; must be positive
@@ -59,27 +63,37 @@ public final class DelegationBridge {
      *     duration is not positive, or the derived advertisement fails validation
      */
     public static ProcessorAdvertisement toProcessorAdvertisement(WorkerHello hello,
-            String nodeId, long leaseEpoch, long seq, Duration leaseDuration, Instant now) {
+            String nodeId, long nodeEpoch, long leaseEpoch, long seq, Duration leaseDuration,
+            Instant now) {
         require(hello != null, "hello must not be null");
+        require(now != null, "now must not be null");
         require(leaseDuration != null && !leaseDuration.isNegative() && !leaseDuration.isZero(),
                 "leaseDuration must be positive");
         validateHello(hello);
         ProcessorKind kind = hello.getProvider().isEmpty()
                 ? ProcessorKind.PROCESSOR_KIND_DETERMINISTIC
                 : ProcessorKind.PROCESSOR_KIND_LLM;
-        ProcessorAdvertisement advertisement = ProcessorAdvertisement.newBuilder()
+        Map<String, WorkerCapability> capabilities = new LinkedHashMap<>();
+        hello.getCapabilitiesList().forEach(capability ->
+                capabilities.putIfAbsent(capability.getName(), capability));
+        ProcessorAdvertisement.Builder builder = ProcessorAdvertisement.newBuilder()
                 .setProcessorId(hello.getWorkerId())
                 .setNodeId(nodeId)
+                .setNodeEpoch(nodeEpoch)
                 .setKind(kind)
-                .addAllCapabilities(hello.getCapabilitiesList().stream()
-                        .map(WorkerCapability::getName)
-                        .distinct()
-                        .toList())
+                .addAllCapabilities(capabilities.keySet())
+                .setProvider(hello.getProvider())
+                .setModel(hello.getModel())
+                .setModelVersion(hello.getModelVersion())
                 .setLeaseEpoch(leaseEpoch)
                 .setSeq(seq)
                 .setAdvertisedAt(timestamp(now))
-                .setLeaseExpiresAt(timestamp(now.plus(leaseDuration)))
-                .build();
+                .setLeaseExpiresAt(timestamp(now.plus(leaseDuration)));
+        capabilities.values().forEach(capability -> builder.addCapabilityDetails(
+                CapabilityDescription.newBuilder()
+                        .setName(capability.getName())
+                        .setDescription(capability.getDescription())));
+        ProcessorAdvertisement advertisement = builder.build();
         ClusterValidation.validate(advertisement);
         return advertisement;
     }

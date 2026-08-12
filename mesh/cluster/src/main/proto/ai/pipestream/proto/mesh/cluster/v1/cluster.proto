@@ -35,21 +35,25 @@ option java_package = "ai.pipestream.proto.mesh.cluster.v1";
 // allowlist:
 //
 //   ClusterDescriptor.cluster_id         (find the cluster by id)
+//   ClusterDescriptor.trust_domain       (partition eligible clusters)
 //   NodeAdvertisement.node_id            (find a node by id)
 //   NodeAdvertisement.cluster_id         (list the nodes of a cluster)
 //   NodePresence.node_id                 (presence of one node)
 //   NodePresence.cluster_id              (presence across a cluster)
 //   NodePresence.state                   (list nodes by liveness state)
+//   NodePresence.expires_at              (sweep expired registrations)
 //   ProcessorAdvertisement.processor_id  (find a processor by id)
 //   ProcessorAdvertisement.node_id       (list a node's processors)
 //   ProcessorAdvertisement.kind          (list processors by kind)
 //   ProcessorAdvertisement.capabilities  (eligibility: capability Y)
+//   ProcessorAdvertisement.lease_expires_at (sweep expired leases)
 //   CapacityAdvertisement.node_id        (capacity of one node)
 //
 // Schema names resolve through the reused mesh.v1 SchemaReference, whose
 // type_name is already indexed in the core contract. Endpoint addresses,
-// TLS posture, fingerprints, epochs, sequences, timestamps, and every
-// ClusterEvent field are not search fields: events are replayed, not searched.
+// TLS posture, fingerprints, epochs, sequences, non-expiry timestamps, and
+// every ClusterEvent field are not search fields: events are replayed, not
+// searched.
 // ============================================================================
 
 // One cluster's identity. The fingerprint commits to the identity material:
@@ -81,12 +85,15 @@ message ClusterDescriptor {
   // deployment does not partition trust.
   string trust_domain = 3 [
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
   ];
   // Mesh protocol revisions the cluster accepts, preferred first.
   repeated int32 protocol_revisions = 4 [
     (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
       max_items: 16
+      unique: true
       items: {
         int32: {gte: 1}
       }
@@ -206,6 +213,7 @@ message NodeAdvertisement {
   repeated string capabilities = 3 [
     (ai.pipestream.proto.validate.v1.field).repeated = {
       max_items: 64
+      unique: true
       items: {
         string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
       }
@@ -215,7 +223,10 @@ message NodeAdvertisement {
   // Schemas the node resolves and serves to peers, with exact descriptor
   // fingerprints.
   repeated ai.pipestream.proto.mesh.v1.SchemaReference schemas_served = 4 [
-    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 256,
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      max_items: 256
+      unique: true
+    },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Endpoints the node exposes, addressing metadata only.
@@ -252,6 +263,31 @@ message NodeAdvertisement {
   ];
 }
 
+// Human-readable detail for one processor capability. Routing uses the indexed
+// capability name on ProcessorAdvertisement; this record explains it to agents
+// without changing admission semantics.
+message CapabilityDescription {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Bounded descriptive metadata for one processor capability."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Capability name, matching one entry in ProcessorAdvertisement.capabilities.
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Display-only explanation of the capability.
+  string description = 2 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 2048,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
 // One processor a node hosts, leased under an epoch and an absolute expiry.
 // Accepted schemas carry exact descriptor fingerprints, so eligibility is
 // judged against schema identity, not type names alone.
@@ -262,11 +298,23 @@ message ProcessorAdvertisement {
     sensitivity: "internal"
   };
   option (ai.pipestream.proto.validate.v1.message) = {
-    cel: {
-      id: "lease-outlives-advertisement"
-      message: "the lease expiry must fall after the advertisement time"
-      expression: "this.lease_expires_at > this.advertised_at"
-    }
+    cel: [
+      {
+        id: "lease-outlives-advertisement"
+        message: "the lease expiry must fall after the advertisement time"
+        expression: "this.lease_expires_at > this.advertised_at"
+      },
+      {
+        id: "model-requires-provider"
+        message: "model metadata requires a provider"
+        expression: "size(this.model) == 0 || size(this.provider) > 0"
+      },
+      {
+        id: "resume-support-has-grace"
+        message: "session resume support and disconnect grace must be declared together"
+        expression: "this.supports_session_resume == has(this.max_disconnect_grace)"
+      }
+    ]
   };
 
   // Stable path-safe processor identity, unique inside the cluster.
@@ -304,6 +352,7 @@ message ProcessorAdvertisement {
   repeated string capabilities = 4 [
     (ai.pipestream.proto.validate.v1.field).repeated = {
       max_items: 64
+      unique: true
       items: {
         string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
       }
@@ -313,7 +362,10 @@ message ProcessorAdvertisement {
   ];
   // The exact schemas the processor accepts as input.
   repeated ai.pipestream.proto.mesh.v1.SchemaReference accepted_schemas = 5 [
-    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 256,
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      max_items: 256
+      unique: true
+    },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // The lease fencing epoch: a processor re-leased after expiry rejoins under
@@ -326,7 +378,8 @@ message ProcessorAdvertisement {
   // expiry is not eligible and is swept from the directory.
   google.protobuf.Timestamp lease_expires_at = 7 [
     (ai.pipestream.proto.validate.v1.field).required = true,
-    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_DATE}
   ];
   // When the node emitted this advertisement.
   google.protobuf.Timestamp advertised_at = 8 [
@@ -338,6 +391,44 @@ message ProcessorAdvertisement {
     (ai.pipestream.proto.validate.v1.field).int64.gte = 1,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // Fencing epoch of the hosting node. A processor advertisement from an older
+  // node incarnation is rejected even when its own lease has not yet expired.
+  int64 node_epoch = 10 [
+    (ai.pipestream.proto.validate.v1.field).int64.gte = 1,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Provider driven by this processor, such as "codex" or "kimi". Empty for a
+  // deterministic processor.
+  string provider = 11 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 128,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Provider model identity, when configured.
+  string model = 12 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 256,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Provider-reported model version or digest, when available.
+  string model_version = 13 [
+    (ai.pipestream.proto.validate.v1.field).string.max_len = 512,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Display-only descriptions for capability names. Names must be unique and
+  // must also appear in the indexed capabilities field.
+  repeated CapabilityDescription capability_details = 14 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 64,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Whether this processor can restore a disconnected provider conversation.
+  bool supports_session_resume = 15 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Maximum time a disconnected session may remain recoverable. Present
+  // exactly when session resume is supported.
+  google.protobuf.Duration max_disconnect_grace = 16 [
+    (ai.pipestream.proto.validate.v1.field).duration.gte = {nanos: 1},
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Maximum concurrently active agent sessions; 0 means no declared limit.
+  uint32 max_active_sessions = 17 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
 // A point-in-time capacity and limits snapshot for one node, or for one
@@ -350,11 +441,18 @@ message CapacityAdvertisement {
     sensitivity: "internal"
   };
   option (ai.pipestream.proto.validate.v1.message) = {
-    cel: {
-      id: "in-flight-within-limit"
-      message: "in-flight work must fit inside a declared in-flight limit"
-      expression: "this.max_in_flight == 0u || this.in_flight <= this.max_in_flight"
-    }
+    cel: [
+      {
+        id: "in-flight-within-limit"
+        message: "in-flight work must fit inside a declared in-flight limit"
+        expression: "this.max_in_flight == 0u || this.in_flight <= this.max_in_flight"
+      },
+      {
+        id: "sessions-within-limit"
+        message: "active sessions must fit inside a declared session limit"
+        expression: "this.max_active_sessions == 0u || this.active_sessions <= this.max_active_sessions"
+      }
+    ]
   };
 
   // The node the snapshot describes.
@@ -387,6 +485,16 @@ message CapacityAdvertisement {
     (ai.pipestream.proto.validate.v1.field).int64.gte = 1,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // Fencing epoch of the source: node epoch for node-wide capacity, processor
+  // lease epoch for processor capacity.
+  int64 source_epoch = 8 [
+    (ai.pipestream.proto.validate.v1.field).int64.gte = 1,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Provider conversations currently active on the target.
+  uint32 active_sessions = 9 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  // Maximum active provider conversations; 0 means no declared limit.
+  uint32 max_active_sessions = 10 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
 // One node's liveness record: the heartbeat that keeps a registration alive.
@@ -399,11 +507,18 @@ message NodePresence {
     sensitivity: "internal"
   };
   option (ai.pipestream.proto.validate.v1.message) = {
-    cel: {
-      id: "presence-expiry-after-heartbeat"
-      message: "the presence expiry must fall after the last heartbeat"
-      expression: "this.expires_at > this.last_heartbeat_at"
-    }
+    cel: [
+      {
+        id: "presence-expiry-after-heartbeat"
+        message: "the presence expiry must fall after the last heartbeat"
+        expression: "this.expires_at > this.last_heartbeat_at"
+      },
+      {
+        id: "presence-expiry-matches-ttl"
+        message: "the presence expiry must equal the last heartbeat plus the TTL"
+        expression: "this.expires_at == this.last_heartbeat_at + this.ttl"
+      }
+    ]
   };
 
   // The node this presence belongs to.
@@ -459,6 +574,12 @@ message NodePresence {
   // The absolute liveness expiry the directory sweeps on.
   google.protobuf.Timestamp expires_at = 7 [
     (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_DATE}
+  ];
+  // Fencing epoch of the node incarnation that emitted this presence.
+  int64 node_epoch = 8 [
+    (ai.pipestream.proto.validate.v1.field).int64.gte = 1,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
 }
@@ -474,6 +595,8 @@ enum PresenceState {
   PRESENCE_STATE_SUSPECT = 2;
   // The node left or its presence expired; the next sweep removes it.
   PRESENCE_STATE_GONE = 3;
+  // The node is healthy but accepts no new work while existing work drains.
+  PRESENCE_STATE_DRAINING = 4;
 }
 
 // One node's entry in a cluster snapshot: advertisement, presence, and the
@@ -499,11 +622,12 @@ message NodeRecord {
   CapacityAdvertisement capacity = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
-// The directory's deterministic point-in-time view. Nodes order by node_id,
+// The directory's canonical point-in-time view. Nodes order by node_id,
 // processors by processor_id, and processor-level capacity snapshots by
-// (node_id, processor_id), so the same directory state always serializes to
-// the same bytes. The fingerprint commits to that view: the lowercase SHA-256
-// hex of this snapshot serialized with the fingerprint field cleared.
+// (node_id, processor_id). The same directory state captured at the same time
+// serializes to the same bytes. The fingerprint commits to that view: the
+// lowercase SHA-256 hex of this snapshot serialized with the fingerprint field
+// cleared.
 message ClusterSnapshot {
   option (ai.pipestream.proto.meta.v1.message) = {
     description: "Deterministic directory view: cluster, capture time, event position, ordered node and processor entries, fingerprint."
@@ -522,7 +646,10 @@ message ClusterSnapshot {
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // The directory event sequence at capture time; 0 before any event.
-  int64 snapshot_seq = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  int64 snapshot_seq = 3 [
+    (ai.pipestream.proto.validate.v1.field).int64.gte = 0,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
   // The live node entries, ordered by node_id.
   repeated NodeRecord nodes = 4 [
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 65536,
@@ -560,11 +687,23 @@ message ClusterEvent {
     sensitivity: "internal"
   };
   option (ai.pipestream.proto.validate.v1.message) = {
-    cel: {
-      id: "processor-events-name-processor"
-      message: "an event carrying a processor advertisement must name the processor"
-      expression: "!has(this.processor) || size(this.processor_id) > 0"
-    }
+    cel: [
+      {
+        id: "event-has-detail"
+        message: "a cluster event must carry one typed detail"
+        expression: "has(this.node) || has(this.processor) || has(this.presence) || has(this.capacity)"
+      },
+      {
+        id: "event-type-matches-detail"
+        message: "the event type must match its typed detail"
+        expression: "((this.type == 1 || this.type == 2) && has(this.node)) || ((this.type == 3 || this.type == 4) && has(this.processor)) || (this.type == 5 && has(this.presence)) || (this.type == 6 && has(this.capacity))"
+      },
+      {
+        id: "event-subject-matches-detail"
+        message: "event subject ids must match the embedded record"
+        expression: "(has(this.node) && this.node_id == this.node.node_id && size(this.processor_id) == 0) || (has(this.processor) && this.node_id == this.processor.node_id && this.processor_id == this.processor.processor_id) || (has(this.presence) && this.node_id == this.presence.node_id && size(this.processor_id) == 0) || (has(this.capacity) && this.node_id == this.capacity.node_id && this.processor_id == this.capacity.processor_id)"
+      }
+    ]
   };
 
   // 1-based, directory-global, strictly increasing.

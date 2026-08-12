@@ -95,6 +95,7 @@ final class ClusterFixtures {
                 .setKind(ProcessorKind.PROCESSOR_KIND_LLM)
                 .addCapabilities("llm-generate")
                 .addAcceptedSchemas(schema())
+                .setNodeEpoch(1)
                 .setLeaseEpoch(1)
                 .setAdvertisedAt(ts(T0))
                 .setLeaseExpiresAt(ts(T0.plusSeconds(60)))
@@ -108,6 +109,7 @@ final class ClusterFixtures {
                 .setState(PresenceState.PRESENCE_STATE_ACTIVE)
                 .setLastHeartbeatAt(ts(T0))
                 .setHeartbeatSeq(heartbeatSeq)
+                .setNodeEpoch(1)
                 .setTtl(TTL)
                 .setExpiresAt(ts(T0.plusSeconds(30)));
     }
@@ -119,6 +121,7 @@ final class ClusterFixtures {
                 .setInFlight(3)
                 .setMaxPayloadBytes(4_194_304L)
                 .setObservedAt(ts(T0))
+                .setSourceEpoch(1)
                 .setSeq(seq);
     }
 

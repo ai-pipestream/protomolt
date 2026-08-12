@@ -86,6 +86,35 @@ class ClusterDirectoryTest {
     }
 
     @Test
+    void restartedNodeResetsPresenceAndFencesTheOldIncarnation() {
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", 9).build());
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1").build());
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1).build());
+
+        clock.advance(Duration.ofSeconds(5));
+        NodeAdvertisement restarted = ClusterFixtures.nodeBuilder("node-1", 2, 1)
+                .setAdvertisedAt(ClusterFixtures.ts(clock.instant()))
+                .build();
+
+        assertThat(directory.register(restarted)).isEqualTo(ApplyOutcome.UPDATED);
+        assertThat(directory.processor("proc-1")).isEmpty();
+        assertThat(directory.nodeCapacity("node-1")).isEmpty();
+        assertThat(directory.presence("node-1").orElseThrow())
+                .satisfies(p -> {
+                    assertThat(p.getNodeEpoch()).isEqualTo(2);
+                    assertThat(p.getHeartbeatSeq()).isEqualTo(1);
+                    assertThat(p.getLastHeartbeatAt()).isEqualTo(restarted.getAdvertisedAt());
+                });
+
+        NodePresence stale = ClusterFixtures.presenceBuilder("node-1", 99).build();
+        assertThatThrownBy(() -> directory.heartbeat(stale))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("node_epoch 1")
+                .hasMessageContaining("registered epoch is 2");
+    }
+
+    @Test
     void changedAdvertisementWithStaleSeqConflicts() {
         directory.register(ClusterFixtures.nodeBuilder("node-1", 1, 2).build());
         NodeAdvertisement stale = ClusterFixtures.nodeBuilder("node-1", 1, 1)
@@ -158,7 +187,7 @@ class ClusterDirectoryTest {
                 .setState(PresenceState.PRESENCE_STATE_SUSPECT)
                 .build()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("conflicting presence for node 'node-1'");
+                .hasMessageContaining("conflicting update for presence for node 'node-1'");
     }
 
     @Test
@@ -203,6 +232,39 @@ class ClusterDirectoryTest {
                 .containsExactly(ClusterEventType.CLUSTER_EVENT_TYPE_PROCESSOR_EXPIRED);
         assertThat(directory.node("node-1")).isPresent();
         assertThat(directory.processor("proc-1")).isEmpty();
+    }
+
+    @Test
+    void expiredIdentitiesRequireAFresherIncarnationToRejoin() {
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1")
+                .setLeaseExpiresAt(ClusterFixtures.ts(ClusterFixtures.T0.plusSeconds(15)))
+                .build());
+
+        clock.advance(Duration.ofSeconds(16));
+        directory.sweep();
+        assertThatThrownBy(() -> directory.registerProcessor(
+                ClusterFixtures.processorBuilder("proc-1", "node-1").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not advance the registered epoch 1 seq 1");
+
+        ProcessorAdvertisement reLeased = ClusterFixtures.processorBuilder("proc-1", "node-1")
+                .setLeaseEpoch(2)
+                .setSeq(1)
+                .setAdvertisedAt(ClusterFixtures.ts(clock.instant()))
+                .setLeaseExpiresAt(ClusterFixtures.ts(clock.instant().plusSeconds(60)))
+                .build();
+        assertThat(directory.registerProcessor(reLeased)).isEqualTo(ApplyOutcome.REGISTERED);
+
+        clock.advance(Duration.ofSeconds(15));
+        directory.sweep();
+        assertThatThrownBy(() -> directory.register(ClusterFixtures.node("node-1")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not advance the registered epoch 1 seq 1");
+        NodeAdvertisement restarted = ClusterFixtures.nodeBuilder("node-1", 2, 1)
+                .setAdvertisedAt(ClusterFixtures.ts(clock.instant()))
+                .build();
+        assertThat(directory.register(restarted)).isEqualTo(ApplyOutcome.REGISTERED);
     }
 
     @Test
@@ -286,7 +348,7 @@ class ClusterDirectoryTest {
         CapacityAdvertisement stale = nodeWide.toBuilder().setInFlight(9).build();
         assertThatThrownBy(() -> directory.updateCapacity(stale))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("conflicting capacity for node 'node-1'");
+                .hasMessageContaining("conflicting update for capacity for node 'node-1'");
     }
 
     @Test
@@ -301,6 +363,82 @@ class ClusterDirectoryTest {
                 ClusterFixtures.capacityBuilder("node-1", 1).setProcessorId("ghost").build()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unregistered processor 'ghost'");
+    }
+
+    @Test
+    void processorCapacityMustNameItsOwningNodeAndCurrentLease() {
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.register(ClusterFixtures.node("node-2"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1").build());
+
+        CapacityAdvertisement wrongOwner = ClusterFixtures.capacityBuilder("node-2", 1)
+                .setProcessorId("proc-1")
+                .build();
+        assertThatThrownBy(() -> directory.updateCapacity(wrongOwner))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("belongs to 'node-1'");
+
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1)
+                .setProcessorId("proc-1")
+                .build());
+        ProcessorAdvertisement moved = ClusterFixtures.processorBuilder("proc-1", "node-2")
+                .setLeaseEpoch(2)
+                .setSeq(1)
+                .build();
+        directory.registerProcessor(moved);
+        assertThat(directory.processorCapacity("node-1", "proc-1")).isEmpty();
+
+        CapacityAdvertisement staleLease = ClusterFixtures.capacityBuilder("node-2", 1)
+                .setProcessorId("proc-1")
+                .build();
+        assertThatThrownBy(() -> directory.updateCapacity(staleLease))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("source_epoch 1")
+                .hasMessageContaining("current source epoch is 2");
+    }
+
+    @Test
+    void eligibilityHonorsCapacityPayloadAndDrainingState() {
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1")
+                .setMaxActiveSessions(2)
+                .build());
+
+        CapacityAdvertisement saturated = ClusterFixtures.capacityBuilder("node-1", 1)
+                .setMaxInFlight(3)
+                .setInFlight(3)
+                .build();
+        directory.updateCapacity(saturated);
+        assertThat(directory.eligibleProcessors("", "", "")).isEmpty();
+
+        directory.updateCapacity(saturated.toBuilder()
+                .setSeq(2)
+                .setInFlight(0)
+                .setMaxActiveSessions(1)
+                .setActiveSessions(0)
+                .build());
+        CapacityAdvertisement processorCapacity = ClusterFixtures.capacityBuilder("node-1", 1)
+                .setProcessorId("proc-1")
+                .setMaxActiveSessions(0)
+                .setActiveSessions(2)
+                .build();
+        directory.updateCapacity(processorCapacity);
+        assertThat(directory.eligibleProcessors("", "", "")).isEmpty();
+
+        directory.updateCapacity(processorCapacity.toBuilder()
+                .setSeq(2)
+                .setInFlight(0)
+                .setMaxActiveSessions(1)
+                .setActiveSessions(0)
+                .setMaxPayloadBytes(100)
+                .build());
+        assertThat(directory.eligibleProcessors("", "", "", 100)).hasSize(1);
+        assertThat(directory.eligibleProcessors("", "", "", 101)).isEmpty();
+
+        directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", 2)
+                .setState(PresenceState.PRESENCE_STATE_DRAINING)
+                .build());
+        assertThat(directory.eligibleProcessors("", "", "", 100)).isEmpty();
     }
 
     @Test
@@ -388,6 +526,56 @@ class ClusterDirectoryTest {
         assertThat(afterJoin.getSnapshotSeq()).isEqualTo(1);
         assertThat(afterJoin.getNodesList()).extracting(n -> n.getAdvertisement().getNodeId())
                 .containsExactly("node-1");
+    }
+
+    @Test
+    void replayRestoresStateAndFencingTombstones() {
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1").build());
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1)
+                .setProcessorId("proc-1")
+                .build());
+        clock.advance(Duration.ofSeconds(31));
+        directory.sweep();
+
+        List<ClusterEvent> log = directory.events();
+        ClusterDirectory restored = ClusterDirectory.replay(
+                ClusterFixtures.cluster(), log, clock);
+
+        assertThat(restored.events()).containsExactlyElementsOf(log);
+        assertThat(restored.snapshot().toByteArray()).isEqualTo(directory.snapshot().toByteArray());
+        assertThat(restored.node("node-1")).isEmpty();
+        assertThat(restored.processor("proc-1")).isEmpty();
+        assertThatThrownBy(() -> restored.register(ClusterFixtures.node("node-1")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not advance the registered epoch 1 seq 1");
+
+        NodeAdvertisement restarted = ClusterFixtures.nodeBuilder("node-1", 2, 1)
+                .setAdvertisedAt(ClusterFixtures.ts(clock.instant()))
+                .build();
+        assertThat(restored.register(restarted)).isEqualTo(ApplyOutcome.REGISTERED);
+    }
+
+    @Test
+    void replayRestoresActivePresenceAndCapacity() {
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1").build());
+        directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", 2)
+                .setState(PresenceState.PRESENCE_STATE_SUSPECT)
+                .build());
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1).build());
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1)
+                .setProcessorId("proc-1")
+                .build());
+
+        ClusterDirectory restored = ClusterDirectory.replay(
+                ClusterFixtures.cluster(), directory.events(), clock);
+
+        assertThat(restored.snapshot().toByteArray()).isEqualTo(directory.snapshot().toByteArray());
+        assertThat(restored.presence("node-1").orElseThrow().getState())
+                .isEqualTo(PresenceState.PRESENCE_STATE_SUSPECT);
+        assertThat(restored.nodeCapacity("node-1")).isPresent();
+        assertThat(restored.processorCapacity("node-1", "proc-1")).isPresent();
     }
 
     private ClusterSnapshot populatedSnapshot() {
