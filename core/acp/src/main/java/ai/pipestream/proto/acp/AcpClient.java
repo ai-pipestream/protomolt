@@ -25,6 +25,14 @@ import java.util.function.Consumer;
  */
 public final class AcpClient implements AutoCloseable {
 
+    /** How a headless client answers agent permission requests. */
+    public enum PermissionPolicy {
+        /** Select a reject-once option when present, otherwise cancel the request. */
+        REJECT,
+        /** Select the only allow-once option; ambiguous choices are cancelled. */
+        ALLOW_SINGLE
+    }
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(3);
 
@@ -75,6 +83,26 @@ public final class AcpClient implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Answers ACP {@code session/request_permission} requests without an interactive UI.
+     * {@link PermissionPolicy#ALLOW_SINGLE} is deliberately conservative: it approves only
+     * when the agent supplies exactly one allow-once choice, so an elicitation represented as
+     * several allow choices is never answered arbitrarily.
+     */
+    public AcpClient withPermissionPolicy(PermissionPolicy policy) {
+        if (policy == null) {
+            throw new IllegalArgumentException("permission policy is required");
+        }
+        connection.onRequest((method, params) -> {
+            if (!"session/request_permission".equals(method)) {
+                throw new AcpError(AcpConnection.METHOD_NOT_FOUND,
+                        "unknown method: " + method);
+            }
+            return permissionResponse(params, policy);
+        });
+        return this;
+    }
+
     /** Negotiates protocol version 1 and returns the agent's initialize result. */
     public JsonNode initialize() {
         ObjectNode params = MAPPER.createObjectNode();
@@ -93,6 +121,18 @@ public final class AcpClient implements AutoCloseable {
         params.put("cwd", cwd);
         params.putArray("mcpServers");
         return call("session/new", params).path("sessionId").asText();
+    }
+
+    /** Loads a persisted agent session and returns its session id. */
+    public String loadSession(String sessionId, String cwd) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("session id is required");
+        }
+        ObjectNode params = MAPPER.createObjectNode();
+        params.put("sessionId", sessionId);
+        params.put("cwd", cwd);
+        params.putArray("mcpServers");
+        return call("session/load", params).path("sessionId").asText(sessionId);
     }
 
     /** Sends one prompt turn of plain text and returns its result (the stop reason). */
@@ -121,6 +161,30 @@ public final class AcpClient implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new AcpError(AcpConnection.INTERNAL_ERROR, "interrupted waiting for " + method);
         }
+    }
+
+    private static JsonNode permissionResponse(JsonNode params, PermissionPolicy policy) {
+        java.util.List<JsonNode> options = new java.util.ArrayList<>();
+        JsonNode choices = params == null ? null : params.get("options");
+        if (choices != null && choices.isArray()) {
+            choices.forEach(options::add);
+        }
+        java.util.List<JsonNode> matching = options.stream()
+                .filter(option -> policy == PermissionPolicy.ALLOW_SINGLE
+                        ? "allow_once".equals(option.path("kind").asText())
+                        : "reject_once".equals(option.path("kind").asText()))
+                .toList();
+        ObjectNode response = MAPPER.createObjectNode();
+        ObjectNode outcome = response.putObject("outcome");
+        boolean selectable = policy == PermissionPolicy.ALLOW_SINGLE
+                ? matching.size() == 1 : !matching.isEmpty();
+        if (selectable && matching.get(0).path("optionId").isTextual()) {
+            outcome.put("outcome", "selected");
+            outcome.put("optionId", matching.get(0).path("optionId").asText());
+        } else {
+            outcome.put("outcome", "cancelled");
+        }
+        return response;
     }
 
     @Override

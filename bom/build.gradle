@@ -34,6 +34,7 @@ def supportedModules = [
         'protomolt-grpc-validation-micrometer',
         'protomolt-serve',
         'protomolt-cli',
+        'protomolt-agent-host',
         'protomolt-acp',
         'protomolt-acp-core',
         'protomolt-connector',

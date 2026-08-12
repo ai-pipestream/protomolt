@@ -59,6 +59,7 @@ built-in action exposed by the standalone and full catalogs.
 ## Applications and operations
 
 - [Command line](apps/cli.md): invoke actions from a shell or interactive console
+- [Agent host](apps/agent-host.md): attach resumable Codex and Kimi processes to delegation
 - [Docker](apps/docker.md): container images and Compose setup
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
 - [Outbound gRPC policy](operations/grpc-channel-policy.md): target, transport, deadline, and concurrency limits

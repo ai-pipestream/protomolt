@@ -1,0 +1,310 @@
+package ai.pipestream.proto.agenthost;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Long-polls one delegation feed and drives one model session. The cursor advances only after
+ * the model acknowledges every relevant event and all validated commands are accepted by MCP.
+ */
+final class AgentHost implements AutoCloseable {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final Set<String> WORKER_PAYLOADS = Set.of(
+            "offer", "expired", "cancellation", "revisionRequested", "accepted",
+            "taskMessage");
+    private static final Set<String> COORDINATOR_PAYLOADS = Set.of(
+            "accept", "reject", "progress", "checkpoint", "blocked", "failed",
+            "cancelled", "completion", "taskMessage");
+
+    record Config(AgentRole role, String identity, String model, Path workspace,
+                  Duration pollTimeout, int maxEvents) {
+        Config {
+            if (role == null || identity == null
+                    || !identity.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+                    || workspace == null || !workspace.isAbsolute()
+                    || pollTimeout == null || pollTimeout.isNegative()
+                    || pollTimeout.compareTo(Duration.ofSeconds(30)) > 0
+                    || maxEvents < 1 || maxEvents > 256) {
+                throw new IllegalArgumentException("invalid agent host configuration");
+            }
+        }
+    }
+
+    private final Config config;
+    private final McpHttpClient mcp;
+    private final AgentProvider provider;
+    private final AgentHostStateStore states;
+    private final AtomicBoolean closed = new AtomicBoolean();
+
+    private AgentHostState state;
+
+    AgentHost(Config config, McpHttpClient mcp, AgentProvider provider,
+              AgentHostStateStore states, AgentHostState state) {
+        this.config = config;
+        this.mcp = mcp;
+        this.provider = provider;
+        this.states = states;
+        this.state = state;
+        syncProviderSession();
+    }
+
+    /** Registers a worker when necessary, or verifies that its durable stream is still live. */
+    void connect() {
+        if (config.role() != AgentRole.WORKER) {
+            return;
+        }
+        ObjectNode listed = readTool("delegation-worker-list", MAPPER.createObjectNode());
+        JsonNode existing = null;
+        for (JsonNode worker : listed.path("workers")) {
+            if (config.identity().equals(worker.path("workerId").asText())) {
+                existing = worker;
+                break;
+            }
+        }
+        if (existing != null && existing.path("admitted").asBoolean()
+                && existing.path("connected").asBoolean()) {
+            return;
+        }
+        if (existing == null && state.cursor() > 0) {
+            throw new AgentHostException("coordinator no longer knows worker '"
+                    + config.identity() + "'; refusing to guess across transcript loss");
+        }
+        ObjectNode arguments = MAPPER.createObjectNode();
+        arguments.put("workerId", config.identity());
+        arguments.put("provider", provider.name());
+        if (config.model() != null) {
+            arguments.put("model", config.model());
+        }
+        ArrayNode capabilities = arguments.putArray("capabilities");
+        capabilities.addObject().put("name", "structured-delegation")
+                .put("description", "Consumes event batches and emits validated MCP commands");
+        ObjectNode registered = mcp.callTool("delegation-worker-register", arguments);
+        if (!registered.path("admitted").asBoolean()) {
+            throw new AgentHostException("worker admission was rejected: "
+                    + registered.path("reason").asText("no reason supplied"));
+        }
+    }
+
+    /**
+     * Gives the coordinator agent one durable startup turn. The bootstrap is executed once even
+     * after a process restart and must produce at least one task offer.
+     */
+    void bootstrap(String objective) {
+        if (config.role() != AgentRole.COORDINATOR) {
+            throw new AgentHostException("only a coordinator host accepts a bootstrap objective");
+        }
+        if (state.pending() != null) {
+            executePending();
+        }
+        if (state.bootstrapped()) {
+            return;
+        }
+        if (objective == null || objective.isBlank()) {
+            throw new AgentHostException("bootstrap objective is empty");
+        }
+        ObjectNode workers = readTool("delegation-worker-list", MAPPER.createObjectNode());
+        ObjectNode packet = MAPPER.createObjectNode();
+        packet.put("kind", "bootstrap");
+        packet.put("objective", objective);
+        packet.set("workers", workers.path("workers"));
+        AgentTurn turn = prompt(packet, List.of());
+        if (turn.commands().stream().noneMatch(
+                command -> "delegation-offer".equals(command.tool()))) {
+            throw new AgentHostException("coordinator bootstrap must offer at least one task");
+        }
+        state = state.withPending(new AgentHostState.PendingTurn(
+                state.cursor(), List.of(), turn.commands(), 0, true));
+        states.save(state);
+        executePending();
+    }
+
+    /** Performs one long poll and one model turn when the batch has relevant events. */
+    boolean pollOnce() {
+        if (state.pending() != null) {
+            executePending();
+            return true;
+        }
+        connect();
+        ObjectNode arguments = MAPPER.createObjectNode();
+        arguments.put("afterCursor", state.cursor());
+        arguments.put("timeoutMs", config.pollTimeout().toMillis());
+        arguments.put("maxEvents", config.maxEvents());
+        ObjectNode watched = readTool("delegation-watch", arguments);
+        ArrayNode events = watched.withArray("events");
+        if (events.isEmpty()) {
+            return false;
+        }
+        long targetCursor = watched.path("cursor").asLong(state.cursor());
+        if (targetCursor <= state.cursor()) {
+            throw new AgentHostException("delegation watch cursor did not advance");
+        }
+        ArrayNode relevant = MAPPER.createArrayNode();
+        List<Long> relevantCursors = new ArrayList<>();
+        for (JsonNode event : events) {
+            if (isRelevant(event)) {
+                relevant.add(event);
+                relevantCursors.add(event.path("cursor").asLong());
+            }
+        }
+        if (relevant.isEmpty()) {
+            state = state.withCursor(targetCursor);
+            states.save(state);
+            return true;
+        }
+        ObjectNode packet = MAPPER.createObjectNode();
+        packet.put("kind", "delegation-events");
+        packet.put("role", config.role().name().toLowerCase(java.util.Locale.ROOT));
+        packet.put("identity", config.identity());
+        packet.set("events", relevant);
+        AgentTurn turn = prompt(packet, relevantCursors);
+        state = state.withPending(new AgentHostState.PendingTurn(
+                targetCursor, relevantCursors, turn.commands(), 0, false));
+        states.save(state);
+        executePending();
+        return true;
+    }
+
+    /** Runs until closed, keeping long waits and model turns on one virtual thread. */
+    void run() {
+        int failures = 0;
+        while (!closed.get()) {
+            try {
+                pollOnce();
+                failures = 0;
+            } catch (AgentHostException e) {
+                if (closed.get()) {
+                    return;
+                }
+                failures = Math.min(failures + 1, 5);
+                System.err.println("agent-host: " + e.getMessage());
+                try {
+                    Thread.sleep(Duration.ofSeconds(1L << (failures - 1)));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
+
+    AgentHostState state() {
+        return state;
+    }
+
+    private AgentTurn prompt(ObjectNode packet, List<Long> expectedCursors) {
+        String prompt = promptText(packet, expectedCursors, null);
+        AgentHostException firstFailure;
+        try {
+            String response = provider.prompt(prompt);
+            syncProviderSession();
+            return AgentTurn.parse(response, config.role(), expectedCursors,
+                    config.identity());
+        } catch (AgentHostException e) {
+            firstFailure = e;
+            syncProviderSession();
+        }
+        String repair = promptText(packet, expectedCursors, firstFailure.getMessage());
+        String response = provider.prompt(repair);
+        syncProviderSession();
+        return AgentTurn.parse(response, config.role(), expectedCursors, config.identity());
+    }
+
+    private String promptText(ObjectNode packet, List<Long> expectedCursors, String error) {
+        String allowed = config.role() == AgentRole.WORKER
+                ? "host-ack, delegation-accept, delegation-message, delegation-progress, "
+                + "delegation-checkpoint, delegation-candidate"
+                : "host-ack, delegation-offer, delegation-message, delegation-review, "
+                + "delegation-cancel";
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("You are the ")
+                .append(config.role().name().toLowerCase(java.util.Locale.ROOT))
+                .append(" agent attached to ProtoMolt as '").append(config.identity())
+                .append("'. Process every supplied event. Return only one JSON object with "
+                        + "handledEventCursors and commands. handledEventCursors must equal ")
+                .append(expectedCursors).append(" in that order. Allowed tools: ")
+                .append(allowed).append(". Each command has tool and arguments. Use host-ack "
+                        + "with a short reason when an event needs no protocol action. Do not "
+                        + "claim completion without the required passing evidence and a commit "
+                        + "or artifact. Do not add Markdown fences or prose outside the JSON.");
+        if (error != null) {
+            prompt.append(" Your previous response was rejected: ").append(error)
+                    .append(". Correct the response for the same packet.");
+        }
+        prompt.append("\nPacket:\n").append(packet);
+        return prompt.toString();
+    }
+
+    private boolean isRelevant(JsonNode event) {
+        if (config.role() == AgentRole.WORKER
+                && !config.identity().equals(event.path("workerId").asText())) {
+            return false;
+        }
+        JsonNode entry = event.path("entry");
+        JsonNode frame = config.role() == AgentRole.WORKER
+                ? entry.path("coordinatorFrame") : entry.path("workerFrame");
+        if (!frame.isObject()) {
+            return false;
+        }
+        Set<String> payloads = config.role() == AgentRole.WORKER
+                ? WORKER_PAYLOADS : COORDINATOR_PAYLOADS;
+        for (String payload : payloads) {
+            if (frame.has(payload)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private ObjectNode readTool(String tool, ObjectNode arguments) {
+        try {
+            return mcp.callTool(tool, arguments);
+        } catch (AgentHostException first) {
+            mcp.reconnect();
+            return mcp.callTool(tool, arguments);
+        }
+    }
+
+    private void executePending() {
+        AgentHostState.PendingTurn pending = state.pending();
+        while (pending != null && pending.nextCommand() < pending.commands().size()) {
+            AgentTurn.Command command = pending.commands().get(pending.nextCommand());
+            if (!"host-ack".equals(command.tool())) {
+                mcp.callTool(command.tool(), command.arguments());
+            }
+            state = state.commandAdvanced();
+            states.save(state);
+            pending = state.pending();
+        }
+        if (state.pending() != null) {
+            state = state.completePending();
+            states.save(state);
+        }
+    }
+
+    private void syncProviderSession() {
+        String sessionId = provider.sessionId();
+        if (sessionId != null && !sessionId.isBlank()
+                && !sessionId.equals(state.providerSessionId())) {
+            state = state.withProviderSession(sessionId);
+            states.save(state);
+        }
+    }
+
+    @Override
+    public void close() {
+        if (closed.compareAndSet(false, true)) {
+            provider.close();
+            mcp.close();
+        }
+    }
+}
