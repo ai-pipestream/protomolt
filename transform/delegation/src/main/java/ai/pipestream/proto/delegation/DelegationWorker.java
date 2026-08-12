@@ -45,10 +45,11 @@ public final class DelegationWorker implements AutoCloseable {
     private final Map<String, Long> sequences = new HashMap<>();
     private final java.util.concurrent.ConcurrentLinkedQueue<TaskMessage> messages =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
-    private final CountDownLatch admission = new CountDownLatch(1);
+    private volatile CountDownLatch admission = new CountDownLatch(1);
     private volatile StreamObserver<DelegateRequest> requests;
     private volatile boolean admitted;
     private volatile Throwable streamFailure;
+    private volatile boolean streamTerminated;
     private volatile boolean closed;
 
     /** Creates a worker bridge for one async delegation stub. */
@@ -58,13 +59,31 @@ public final class DelegationWorker implements AutoCloseable {
         this.runner = Objects.requireNonNull(runner, "runner");
     }
 
-    /** Opens the stream and sends the runner's hello. */
+    /**
+     * Opens the stream and sends the runner's hello.
+     *
+     * <p>After the stream terminates (transport failure or coordinator shutdown) a
+     * worker may {@code start()} again: the replacement stream re-sends the hello and
+     * this instance's per-scope sequence counters carry over, so the re-hello and every
+     * later frame continue the transcript's scopes instead of rewinding them. The
+     * coordinator must still hold the worker's recorded transcript (a durable
+     * repository, or no restart at all); a coordinator that lost the transcript
+     * rejects the continued hello as a sequence gap, which is the honest answer when
+     * neither side can prove continuity.</p>
+     */
     public void start() {
         synchronized (lock) {
-            if (requests != null) {
+            if (closed) {
+                throw new IllegalStateException("worker is closed");
+            }
+            if (requests != null && !streamTerminated) {
                 throw new IllegalStateException("worker is already started");
             }
             requests = stub.delegate(new CoordinatorObserver());
+            streamTerminated = false;
+            streamFailure = null;
+            admitted = false;
+            admission = new CountDownLatch(1);
         }
         send("", 0, DelegateRequest.newBuilder().setHello(runner.hello()));
     }
@@ -79,6 +98,15 @@ public final class DelegationWorker implements AutoCloseable {
     /** Returns the terminal stream failure, when one occurred. */
     public Optional<Throwable> streamFailure() {
         return Optional.ofNullable(streamFailure);
+    }
+
+    /**
+     * Returns whether the delegation stream is currently open. A host that runs
+     * reconnect loops polls this after a failure or coordinator shutdown before
+     * calling {@link #start()} again.
+     */
+    public boolean streamOpen() {
+        return requests != null && !streamTerminated;
     }
 
     /**
@@ -264,6 +292,13 @@ public final class DelegationWorker implements AutoCloseable {
             if (closed) {
                 return;
             }
+            if (streamTerminated) {
+                // Fail fast without consuming the scope's next sequence: a frame
+                // that cannot be sent must not leave a gap the reducer later
+                // reports against the replacement stream.
+                throw new IllegalStateException(
+                        "worker stream is terminated; start() again to reconnect");
+            }
             long seq = nextSequence(taskId, attempt);
             frame = payload
                     .setFrameId(UUID.randomUUID().toString())
@@ -302,12 +337,18 @@ public final class DelegationWorker implements AutoCloseable {
 
         @Override
         public void onError(Throwable throwable) {
+            synchronized (lock) {
+                streamTerminated = true;
+            }
             streamFailure = throwable;
             admission.countDown();
         }
 
         @Override
         public void onCompleted() {
+            synchronized (lock) {
+                streamTerminated = true;
+            }
             admission.countDown();
         }
     }
