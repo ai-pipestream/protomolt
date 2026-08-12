@@ -207,8 +207,7 @@ final class AgentHost implements AutoCloseable {
         try {
             String response = provider.prompt(prompt);
             syncProviderSession();
-            return AgentTurn.parse(response, config.role(), expectedCursors,
-                    config.identity());
+            return parseTurn(response, packet, expectedCursors);
         } catch (AgentHostException e) {
             firstFailure = e;
             syncProviderSession();
@@ -216,7 +215,71 @@ final class AgentHost implements AutoCloseable {
         String repair = promptText(packet, expectedCursors, firstFailure.getMessage());
         String response = provider.prompt(repair);
         syncProviderSession();
-        return AgentTurn.parse(response, config.role(), expectedCursors, config.identity());
+        return parseTurn(response, packet, expectedCursors);
+    }
+
+    private AgentTurn parseTurn(String response, ObjectNode packet,
+                                List<Long> expectedCursors) {
+        AgentTurn turn = AgentTurn.parse(response, config.role(), expectedCursors,
+                config.identity());
+        validateRequiredActions(packet, turn);
+        return turn;
+    }
+
+    private void validateRequiredActions(ObjectNode packet, AgentTurn turn) {
+        for (JsonNode event : packet.path("events")) {
+            String taskId = event.path("taskId").asText();
+            JsonNode entry = event.path("entry");
+            JsonNode frame = config.role() == AgentRole.WORKER
+                    ? entry.path("coordinatorFrame") : entry.path("workerFrame");
+            if (config.role() == AgentRole.WORKER) {
+                if (frame.has("offer")) {
+                    requireTaskCommand(turn, taskId, Set.of("delegation-accept"),
+                            "a task offer requires delegation-accept");
+                }
+                if (frame.has("revisionRequested")) {
+                    requireTaskCommand(turn, taskId, Set.of(
+                                    "delegation-message", "delegation-progress",
+                                    "delegation-checkpoint", "delegation-candidate"),
+                            "a revision request requires a task action");
+                }
+                JsonNode message = frame.path("taskMessage");
+                if (message.isObject()) {
+                    String kind = message.path("kind").asText();
+                    if ("TASK_MESSAGE_KIND_QUESTION".equals(kind)) {
+                        requireTaskCommand(turn, taskId, Set.of("delegation-message"),
+                                "a task question requires delegation-message");
+                    } else if ("TASK_MESSAGE_KIND_GUIDANCE".equals(kind)) {
+                        requireTaskCommand(turn, taskId, Set.of(
+                                        "delegation-message", "delegation-progress",
+                                        "delegation-checkpoint", "delegation-candidate"),
+                                "task guidance cannot be acknowledged without a task action");
+                    }
+                }
+            } else {
+                if (frame.has("completion")) {
+                    requireTaskCommand(turn, taskId, Set.of("delegation-review"),
+                            "a completion candidate requires delegation-review");
+                }
+                JsonNode message = frame.path("taskMessage");
+                if (message.isObject()
+                        && "TASK_MESSAGE_KIND_QUESTION".equals(
+                        message.path("kind").asText())) {
+                    requireTaskCommand(turn, taskId, Set.of("delegation-message"),
+                            "a task question requires delegation-message");
+                }
+            }
+        }
+    }
+
+    private static void requireTaskCommand(AgentTurn turn, String taskId,
+                                           Set<String> tools, String message) {
+        boolean present = turn.commands().stream().anyMatch(command ->
+                tools.contains(command.tool())
+                        && taskId.equals(command.arguments().path("taskId").asText()));
+        if (!present) {
+            throw new AgentHostException(message + " for task " + taskId);
+        }
     }
 
     private String promptText(ObjectNode packet, List<Long> expectedCursors, String error) {
@@ -235,13 +298,39 @@ final class AgentHost implements AutoCloseable {
                 .append(allowed).append(". Each command has tool and arguments. Use host-ack "
                         + "with a short reason when an event needs no protocol action. Do not "
                         + "claim completion without the required passing evidence and a commit "
-                        + "or artifact. Do not add Markdown fences or prose outside the JSON.");
+                        + "or artifact. Do not add Markdown fences or prose outside the JSON. ")
+                .append(commandContract());
         if (error != null) {
             prompt.append(" Your previous response was rejected: ").append(error)
                     .append(". Correct the response for the same packet.");
         }
         prompt.append("\nPacket:\n").append(packet);
         return prompt.toString();
+    }
+
+    private String commandContract() {
+        return config.role() == AgentRole.WORKER
+                ? "Worker argument contract: host-ack={reason}; "
+                + "delegation-accept={taskId,attempt}; "
+                + "delegation-message={taskId,kind,text}; "
+                + "delegation-progress={taskId,attempt,message}; "
+                + "delegation-checkpoint={taskId,attempt,resumeToken,note}; "
+                + "delegation-candidate={taskId,candidate}, where candidate has "
+                + "attempt,revision,summary,evidence:[{checkName,verdict,ranAt,detail}],"
+                + "commits:[{repository,commit,subject}]. verdict must be "
+                + "CHECK_VERDICT_PASSED and commit must be a full 40-character SHA. "
+                + "An offer requires delegation-accept. A question requires "
+                + "delegation-message. Guidance and revision requests require a task "
+                + "action and cannot use host-ack alone. Use exactly these field names "
+                + "and no others."
+                : "Coordinator argument contract: host-ack={reason}; "
+                + "delegation-offer={workerId,taskId,leaseSeconds,spec}; "
+                + "delegation-message={taskId,recipient,kind,text}; "
+                + "delegation-review accept={taskId,decision,verdict}; "
+                + "delegation-review revise={taskId,decision,feedback,failedChecks}; "
+                + "delegation-cancel={taskId,reason}. A completion candidate requires "
+                + "delegation-review. A question requires delegation-message. Use "
+                + "exactly these field names and no others.";
     }
 
     private boolean isRelevant(JsonNode event) {

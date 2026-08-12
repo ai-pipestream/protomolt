@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Two persistent model stand-ins completing one reviewed task over the real HTTP surface. */
 class AgentHostAcceptanceTest {
@@ -71,6 +72,100 @@ class AgentHostAcceptanceTest {
                             "completion", "accepted");
                 }
             }
+        }
+    }
+
+    @Test
+    void acpPromptCarriesExactWorkerArgumentContract() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("prompt-workspace"));
+        Path workerState = temporary.resolve("prompt-state/kimi.json");
+        CapturingProvider provider = new CapturingProvider();
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0));
+             AgentHost worker = host(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     AgentRole.WORKER, WORKER, "kimi", workerState, workspace, provider);
+             McpHttpClient coordinator = new McpHttpClient(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     () -> null)) {
+            worker.connect();
+            ObjectNode spec = MAPPER.createObjectNode().put("objective", "inspect contract");
+            spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+            coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                    .put("workerId", WORKER).put("taskId", TASK)
+                    .put("leaseSeconds", 300).set("spec", spec));
+
+            assertThat(worker.pollOnce()).isTrue();
+            assertThat(provider.prompt)
+                    .contains("delegation-progress={taskId,attempt,message}")
+                    .contains("delegation-checkpoint={taskId,attempt,resumeToken,note}")
+                    .contains("evidence:[{checkName,verdict,ranAt,detail}]")
+                    .contains("Use exactly these field names and no others");
+        }
+    }
+
+    @Test
+    void workerCannotAcknowledgeAwayAnOffer() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("required-workspace"));
+        Path workerState = temporary.resolve("required-state/kimi.json");
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0));
+             AgentHost worker = host(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     AgentRole.WORKER, WORKER, "kimi", workerState, workspace,
+                     new AckOnlyProvider());
+             McpHttpClient coordinator = new McpHttpClient(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     () -> null)) {
+            worker.connect();
+            ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+            spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+            coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                    .put("workerId", WORKER).put("taskId", TASK)
+                    .put("leaseSeconds", 300).set("spec", spec));
+
+            assertThatThrownBy(worker::pollOnce)
+                    .isInstanceOf(AgentHostException.class)
+                    .hasMessageContaining("task offer requires delegation-accept")
+                    .hasMessageContaining(TASK);
+            assertThat(worker.state().cursor()).isZero();
+            assertThat(worker.state().pending()).isNull();
+        }
+    }
+
+    @Test
+    void workerCannotAcknowledgeAwayCoordinatorGuidance() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("guidance-workspace"));
+        Path workerState = temporary.resolve("guidance-state/kimi.json");
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0));
+             AgentHost worker = host(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     AgentRole.WORKER, WORKER, "kimi", workerState, workspace,
+                     new AcceptThenAckProvider());
+             McpHttpClient coordinator = new McpHttpClient(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     () -> null)) {
+            worker.connect();
+            ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+            spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+            coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                    .put("workerId", WORKER).put("taskId", TASK)
+                    .put("leaseSeconds", 300).set("spec", spec));
+            assertThat(worker.pollOnce()).isTrue();
+            long acceptedCursor = worker.state().cursor();
+            coordinator.callTool("delegation-message", MAPPER.createObjectNode()
+                    .put("taskId", TASK).put("sender", "coordinator")
+                    .put("recipient", WORKER)
+                    .put("kind", "TASK_MESSAGE_KIND_GUIDANCE")
+                    .put("text", "continue after restart"));
+
+            assertThatThrownBy(worker::pollOnce)
+                    .isInstanceOf(AgentHostException.class)
+                    .hasMessageContaining("guidance cannot be acknowledged")
+                    .hasMessageContaining(TASK);
+            assertThat(worker.state().cursor()).isEqualTo(acceptedCursor);
+            assertThat(worker.state().pending()).isNull();
         }
     }
 
@@ -224,6 +319,105 @@ class AgentHostAcceptanceTest {
             cursors.forEach(handled::add);
             reply.set("commands", commands);
             return reply;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class CapturingProvider implements AgentProvider {
+        private String prompt;
+
+        @Override
+        public String name() {
+            return "kimi";
+        }
+
+        @Override
+        public String sessionId() {
+            return "capturing-session";
+        }
+
+        @Override
+        public String prompt(String value) {
+            prompt = value;
+            try {
+                JsonNode packet = MAPPER.readTree(
+                        value.substring(value.lastIndexOf("Packet:\n") + 8));
+                long cursor = packet.path("events").get(0).path("cursor").asLong();
+                return "{\"handledEventCursors\":[" + cursor + "],\"commands\":[{"
+                        + "\"tool\":\"delegation-accept\",\"arguments\":{"
+                        + "\"taskId\":\"" + TASK + "\",\"attempt\":1}}]}";
+            } catch (Exception e) {
+                throw new AgentHostException("capturing provider could not read packet", e);
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class AckOnlyProvider implements AgentProvider {
+        @Override
+        public String name() {
+            return "kimi";
+        }
+
+        @Override
+        public String sessionId() {
+            return "ack-only-session";
+        }
+
+        @Override
+        public String prompt(String value) {
+            try {
+                JsonNode packet = MAPPER.readTree(
+                        value.substring(value.lastIndexOf("Packet:\n") + 8));
+                long cursor = packet.path("events").get(0).path("cursor").asLong();
+                return "{\"handledEventCursors\":[" + cursor + "],\"commands\":[{"
+                        + "\"tool\":\"host-ack\",\"arguments\":{"
+                        + "\"reason\":\"noted\"}}]}";
+            } catch (Exception e) {
+                throw new AgentHostException("ack-only provider could not read packet", e);
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class AcceptThenAckProvider implements AgentProvider {
+        @Override
+        public String name() {
+            return "kimi";
+        }
+
+        @Override
+        public String sessionId() {
+            return "accept-then-ack-session";
+        }
+
+        @Override
+        public String prompt(String value) {
+            try {
+                ObjectNode packet = (ObjectNode) MAPPER.readTree(
+                        value.substring(value.lastIndexOf("Packet:\n") + 8));
+                long cursor = packet.path("events").get(0).path("cursor").asLong();
+                if (ScriptedProvider.hasPayload(packet, "offer")) {
+                    return "{\"handledEventCursors\":[" + cursor + "],\"commands\":[{"
+                            + "\"tool\":\"delegation-accept\",\"arguments\":{"
+                            + "\"taskId\":\"" + TASK + "\",\"attempt\":1}}]}";
+                }
+                return "{\"handledEventCursors\":[" + cursor + "],\"commands\":[{"
+                        + "\"tool\":\"host-ack\",\"arguments\":{"
+                        + "\"reason\":\"noted\"}}]}";
+            } catch (Exception e) {
+                throw new AgentHostException(
+                        "accept-then-ack provider could not read packet", e);
+            }
         }
 
         @Override

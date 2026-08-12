@@ -8,8 +8,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /** A validated set of delegation commands acknowledging an exact event batch. */
 record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
@@ -66,7 +69,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         for (int i = 0; i < commandNodes.size(); i++) {
             JsonNode node = commandNodes.get(i);
             if (!node.isObject() || !node.path("tool").isTextual()
-                    || !node.path("arguments").isObject()) {
+                    || !node.path("arguments").isObject() || node.size() != 2) {
                 throw new AgentHostException("command " + i
                         + " must contain a tool and object arguments");
             }
@@ -80,6 +83,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                 validateAck(arguments);
             }
             enforceIdentity(role, identity, tool, arguments);
+            validateArguments(role, tool, arguments, i);
             commands.add(new Command(tool, arguments));
         }
         return new AgentTurn(List.copyOf(cursors), List.copyOf(commands));
@@ -333,6 +337,134 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                 || arguments.path("reason").asText().length() > 1_024) {
             throw new AgentHostException(
                     "host-ack arguments must contain one bounded reason");
+        }
+    }
+
+    /**
+     * Enforces the same closed command schema on provider text that is offered to
+     * structured-output capable providers. ACP providers may return ordinary JSON,
+     * so treating the advertised schema as validation rather than only a prompt hint
+     * keeps malformed commands out of durable pending state.
+     */
+    private static void validateArguments(AgentRole role, String tool,
+                                          ObjectNode arguments, int commandIndex) {
+        ObjectNode candidate = arguments.deepCopy();
+        if (role == AgentRole.WORKER) {
+            if ("delegation-message".equals(tool)) {
+                candidate.remove("sender");
+                candidate.remove("recipient");
+            } else if (!"host-ack".equals(tool)) {
+                candidate.remove("workerId");
+            }
+        } else if ("delegation-message".equals(tool)) {
+            candidate.remove("sender");
+        }
+
+        AgentHostException first = null;
+        for (ObjectNode commandSchema : commandSchemas(role, tool)) {
+            JsonNode argumentSchema = commandSchema.path("properties").path("arguments");
+            try {
+                validateNode(candidate, argumentSchema,
+                        "command " + commandIndex + " arguments");
+                return;
+            } catch (AgentHostException e) {
+                if (first == null) {
+                    first = e;
+                }
+            }
+        }
+        throw first == null
+                ? new AgentHostException("command " + commandIndex
+                        + " has no argument schema")
+                : first;
+    }
+
+    private static void validateNode(JsonNode value, JsonNode schema, String path) {
+        String type = schema.path("type").asText();
+        switch (type) {
+            case "object" -> validateObject(value, schema, path);
+            case "array" -> validateArray(value, schema, path);
+            case "string" -> validateString(value, schema, path);
+            case "integer" -> validateInteger(value, schema, path);
+            default -> throw new AgentHostException(path
+                    + " uses an unsupported internal schema type");
+        }
+    }
+
+    private static void validateObject(JsonNode value, JsonNode schema, String path) {
+        if (!value.isObject()) {
+            throw new AgentHostException(path + " must be an object");
+        }
+        JsonNode properties = schema.path("properties");
+        for (JsonNode required : schema.path("required")) {
+            String name = required.asText();
+            if (!value.has(name)) {
+                throw new AgentHostException(path + "." + name + " is required");
+            }
+        }
+        Iterator<Map.Entry<String, JsonNode>> fields = value.properties().iterator();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            JsonNode fieldSchema = properties.get(field.getKey());
+            if (fieldSchema == null) {
+                throw new AgentHostException(path + " contains unknown field '"
+                        + field.getKey() + "'");
+            }
+            validateNode(field.getValue(), fieldSchema, path + "." + field.getKey());
+        }
+    }
+
+    private static void validateArray(JsonNode value, JsonNode schema, String path) {
+        if (!value.isArray()) {
+            throw new AgentHostException(path + " must be an array");
+        }
+        int minimum = schema.path("minItems").asInt(0);
+        int maximum = schema.path("maxItems").asInt(Integer.MAX_VALUE);
+        if (value.size() < minimum || value.size() > maximum) {
+            throw new AgentHostException(path + " must contain " + minimum
+                    + " to " + maximum + " entries");
+        }
+        for (int i = 0; i < value.size(); i++) {
+            validateNode(value.get(i), schema.path("items"), path + "[" + i + "]");
+        }
+    }
+
+    private static void validateString(JsonNode value, JsonNode schema, String path) {
+        if (!value.isTextual()) {
+            throw new AgentHostException(path + " must be a string");
+        }
+        String text = value.asText();
+        int minimum = schema.path("minLength").asInt(0);
+        int maximum = schema.path("maxLength").asInt(Integer.MAX_VALUE);
+        if (text.length() < minimum || text.length() > maximum) {
+            throw new AgentHostException(path + " length must be between " + minimum
+                    + " and " + maximum);
+        }
+        if (schema.has("pattern")
+                && !Pattern.matches(schema.path("pattern").asText(), text)) {
+            throw new AgentHostException(path + " does not match its required form");
+        }
+        if (schema.has("enum")) {
+            boolean matched = false;
+            for (JsonNode choice : schema.path("enum")) {
+                matched |= choice.asText().equals(text);
+            }
+            if (!matched) {
+                throw new AgentHostException(path + " is not an allowed value");
+            }
+        }
+    }
+
+    private static void validateInteger(JsonNode value, JsonNode schema, String path) {
+        if (!value.isIntegralNumber() || !value.canConvertToLong()) {
+            throw new AgentHostException(path + " must be an integer");
+        }
+        long number = value.asLong();
+        long minimum = schema.path("minimum").asLong(Long.MIN_VALUE);
+        long maximum = schema.path("maximum").asLong(Long.MAX_VALUE);
+        if (number < minimum || number > maximum) {
+            throw new AgentHostException(path + " must be between " + minimum
+                    + " and " + maximum);
         }
     }
 }
