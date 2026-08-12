@@ -24,6 +24,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
@@ -154,6 +155,25 @@ class RepositoryServiceTranscriptRepositoryTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("invalid");
         assertThat(parseEnvelope()).isEqualTo(original);
+    }
+
+    @Test
+    void rejectsInvalidRpcTimeouts() {
+        var stub = DocumentServiceGrpc.newBlockingStub(channel);
+
+        assertThatThrownBy(() -> new RepositoryServiceTranscriptRepository(
+                stub, DRIVE, OBJECT_KEY, KEY_REF, keyResolver(), Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rpcTimeout");
+        assertThatThrownBy(() -> new RepositoryServiceTranscriptRepository(
+                stub, DRIVE, OBJECT_KEY, KEY_REF, keyResolver(),
+                Duration.ofHours(1).plusNanos(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("one hour");
+        assertThatThrownBy(() -> new RepositoryServiceTranscriptRepository(
+                stub, DRIVE, OBJECT_KEY, KEY_REF, keyResolver(), null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("rpcTimeout");
     }
 
     private RepositoryServiceTranscriptRepository repository() {

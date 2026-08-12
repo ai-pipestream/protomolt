@@ -41,7 +41,10 @@ import java.util.concurrent.TimeUnit;
  * <p>The bridge holds no lifecycle logic. Sequencing mirrors the wire contract (one
  * counter per (task, attempt) scope, task messages in the attempt-0 scope) and every
  * admission, transition, and review decision remains the coordinator's and the
- * reducer's.</p>
+ * reducer's. When a worker's stream fails or the server restarts over a durable
+ * transcript, a replacement registration seeds its counters from the recorded
+ * transcript's high-water marks, so the re-hello resumes the worker's sequence
+ * scopes instead of rewinding them.</p>
  */
 public final class DelegationBridge implements AutoCloseable {
 
@@ -73,8 +76,15 @@ public final class DelegationBridge implements AutoCloseable {
     /**
      * Opens a worker session: a real delegation stream, a validated hello, and the
      * coordinator's admission decision. One live stream per worker id: a second
-     * registration for the same id fails fast, because the transcript's sequence
-     * scopes do not allow a replacement stream to rewind them.
+     * registration while the current stream is still open fails fast, because two
+     * live senders would race the transcript's sequence scopes.
+     *
+     * <p>A worker whose previous stream failed or completed re-registers as a
+     * replacement: the new stream seeds its per-scope frame, progress, and
+     * checkpoint counters from {@link InProcessDelegationCoordinator#workerResumption},
+     * the high-water marks of the recorded transcript, so the coordinator admits the
+     * re-hello as a continuation instead of rejecting a rewind. A worker the
+     * transcript has never seen starts every scope at 1.</p>
      */
     public WorkerRegistration registerWorker(WorkerHello hello) {
         Objects.requireNonNull(hello, "hello");
@@ -82,10 +92,15 @@ public final class DelegationBridge implements AutoCloseable {
         WorkerStream stream = new WorkerStream(hello.getWorkerId());
         synchronized (lock) {
             requireOpen();
-            if (streams.containsKey(hello.getWorkerId())) {
+            WorkerStream previous = streams.get(hello.getWorkerId());
+            if (previous != null && previous.open && previous.failure == null) {
                 throw new IllegalStateException(
                         "worker is already registered: " + hello.getWorkerId());
             }
+            if (previous != null) {
+                previous.complete();
+            }
+            stream.seed(coordinator.workerResumption(hello.getWorkerId()));
             streams.put(hello.getWorkerId(), stream);
         }
         CountDownLatch admission = new CountDownLatch(1);
@@ -281,6 +296,20 @@ public final class DelegationBridge implements AutoCloseable {
 
         private WorkerStream(String workerId) {
             this.workerId = workerId;
+        }
+
+        /**
+         * Seeds the per-scope counters from the transcript's high-water marks before
+         * the stream sends its first frame, so a replacement stream continues the
+         * recorded scopes instead of rewinding them.
+         */
+        private synchronized void seed(InProcessDelegationCoordinator.WorkerResumption resumption) {
+            resumption.sequences().forEach((scope, last) ->
+                    sequences.put(scope(scope.taskId(), scope.attempt()), last));
+            resumption.progressSequences().forEach((scope, last) ->
+                    progressSequences.put(scope(scope.taskId(), scope.attempt()), last));
+            resumption.checkpointSequences().forEach((scope, last) ->
+                    checkpointSequences.put(scope(scope.taskId(), scope.attempt()), last));
         }
 
         private synchronized int sendProgress(String taskId, int attempt, String message) {

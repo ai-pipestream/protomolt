@@ -278,6 +278,87 @@ public final class InProcessDelegationCoordinator
         }
     }
 
+    /**
+     * One (task, attempt) sequence scope of a worker stream. Session frames
+     * (hello, admission) use the empty task id and attempt 0; task messages
+     * sequence in their task's attempt-0 scope.
+     */
+    public record Scope(String taskId, int attempt) {
+        public Scope {
+            Objects.requireNonNull(taskId, "taskId");
+        }
+    }
+
+    /**
+     * One worker's sender-side high-water marks, rebuilt from the recorded
+     * transcript: the last recorded frame sequence of each worker-lane scope, and
+     * the last recorded progress and checkpoint sequence of each task scope. A
+     * replacement stream for the same worker id seeds its counters from these
+     * values so it continues the scopes instead of rewinding them; a worker the
+     * transcript has never seen gets empty maps and starts every scope at 1.
+     */
+    public record WorkerResumption(Map<Scope, Long> sequences,
+                                   Map<Scope, Integer> progressSequences,
+                                   Map<Scope, Integer> checkpointSequences) {
+        public WorkerResumption {
+            sequences = Map.copyOf(Objects.requireNonNull(sequences, "sequences"));
+            progressSequences = Map.copyOf(
+                    Objects.requireNonNull(progressSequences, "progressSequences"));
+            checkpointSequences = Map.copyOf(
+                    Objects.requireNonNull(checkpointSequences, "checkpointSequences"));
+        }
+
+        /** The last recorded sequence of one scope, 0 when the scope has no frames. */
+        public long lastSequence(Scope scope) {
+            return sequences.getOrDefault(scope, 0L);
+        }
+
+        /** The last recorded progress sequence of one scope, 0 when none. */
+        public int lastProgressSequence(Scope scope) {
+            return progressSequences.getOrDefault(scope, 0);
+        }
+
+        /** The last recorded checkpoint sequence of one scope, 0 when none. */
+        public int lastCheckpointSequence(Scope scope) {
+            return checkpointSequences.getOrDefault(scope, 0);
+        }
+    }
+
+    /**
+     * Rebuilds one worker's sender-side sequence state from the recorded
+     * transcript. The transcript is the source of truth: a frame the coordinator
+     * never accepted is not in it, so a replacement stream seeded from this
+     * resumption can neither replay a recorded frame nor skip one. Seeding a
+     * replacement stream from the resumption is what lets a same-worker
+     * re-registration after a coordinator restart or a stream failure continue
+     * the transcript's sequence scopes instead of rewinding them.
+     */
+    public WorkerResumption workerResumption(String workerId) {
+        Objects.requireNonNull(workerId, "workerId");
+        synchronized (lock) {
+            Map<Scope, Long> sequences = new HashMap<>();
+            Map<Scope, Integer> progress = new HashMap<>();
+            Map<Scope, Integer> checkpoints = new HashMap<>();
+            for (TranscriptEntry entry : entries) {
+                if (entry.getLane() != Lane.LANE_WORKER
+                        || !entry.getWorkerId().equals(workerId)) {
+                    continue;
+                }
+                DelegateRequest frame = entry.getWorkerFrame();
+                Scope scope = new Scope(frame.getTaskId(), workerAttemptOf(frame));
+                sequences.merge(scope, frame.getSeq(), Math::max);
+                if (frame.hasProgress()) {
+                    progress.merge(scope, frame.getProgress().getProgressSeq(), Math::max);
+                }
+                if (frame.hasCheckpoint()) {
+                    checkpoints.merge(scope, frame.getCheckpoint().getCheckpointSeq(),
+                            Math::max);
+                }
+            }
+            return new WorkerResumption(sequences, progress, checkpoints);
+        }
+    }
+
     /** Returns the current worker registrations, in first-seen order. */
     public List<WorkerView> workers() {
         synchronized (lock) {
@@ -757,6 +838,25 @@ public final class InProcessDelegationCoordinator
                 scheduleExpiry(task.taskId, task.attempt, task.leaseGeneration, task.expiry);
             }
         }
+    }
+
+    /** The attempt a worker frame belongs to, for sequencing; mirrors the reducer. */
+    private static int workerAttemptOf(DelegateRequest frame) {
+        return switch (frame.getPayloadCase()) {
+            case ACCEPT -> frame.getAccept().getAttempt();
+            case REJECT -> frame.getReject().getAttempt();
+            case HEARTBEAT -> frame.getHeartbeat().getAttempt();
+            case PROGRESS -> frame.getProgress().getAttempt();
+            case CHECKPOINT -> frame.getCheckpoint().getAttempt();
+            case BLOCKED -> frame.getBlocked().getAttempt();
+            case FAILED -> frame.getFailed().getAttempt();
+            case CANCELLED -> frame.getCancelled().getAttempt();
+            case COMPLETION -> frame.getCompletion().getAttempt();
+            // Hellos sequence on the session scope; task messages carry no
+            // attempt and sequence in the task's attempt-0 scope.
+            case HELLO, TASK_MESSAGE -> 0;
+            default -> 0;
+        };
     }
 
     private static int attemptOf(DelegateResponse frame) {

@@ -128,6 +128,39 @@ the repository blob RPC is unary. Assign one logical coordinator as the sole
 writer for an object key. Multi-coordinator writes require a fenced or
 compare-and-set repository contract and must not share an object key.
 
+## Stream replacement and restart
+
+Sequence scopes are per worker identity, not per physical stream. A
+replacement stream for the same worker id must continue every scope from the
+recorded transcript: a stream that rewinds a scope is rejected by the
+reducer, and a scope the transcript has never seen starts at 1.
+
+The coordinator exposes `workerResumption(workerId)`, the per-scope frame,
+progress, and checkpoint high-water marks rebuilt from the recorded
+transcript. `DelegationBridge.registerWorker` seeds a replacement stream from
+it. A worker whose stream failed, or whose server restarted over a durable
+transcript, re-registers through the same verb and resumes with no reducer
+rejection, no duplicated frame, and no lost frame; a frame the dead stream
+consumed but the coordinator never recorded is legitimately re-sent under its
+original sequence. A second registration while the current stream is still
+live fails fast, because two live senders would race the scopes.
+
+`DelegationWorker` opens a replacement stream by calling `start()` again
+after the stream terminates. Its per-scope sequence counters live on the
+worker instance, so the re-hello and every later frame continue the recorded
+scopes while the coordinator still holds the transcript. Two boundaries stay
+loud rather than silently repaired:
+
+- a frame consumed by a stream that died before the coordinator recorded it
+  leaves a gap the reducer reports on the replacement stream; and
+- a coordinator that lost the transcript entirely (the in-memory store across
+  a restart) rejects the continued hello as a sequence gap. Run the durable
+  store, or restart the workers when the server restarts.
+
+A fresh worker process adopting an existing worker id cannot prove
+continuity, because the hello itself must carry the session scope's next
+sequence. It stays rejected; a new identity starts clean.
+
 ## Security boundary
 
 Task frames carry bounded instructions, evidence, and artifact references.
@@ -190,7 +223,9 @@ callers. It opens a real delegation stream per worker, keeps it open while
 MCP sessions come and go, validates every worker frame before it touches
 the stream, and mirrors the wire sequencing. It holds no lifecycle logic;
 every admission, transition, and review decision remains the coordinator's
-and the reducer's.
+and the reducer's. When a worker's stream fails or the server restarts, the
+same registration verb opens the replacement stream, seeded from the recorded
+transcript as described under stream replacement above.
 
 `DelegationActions` registers the bridge as twelve catalog verbs, which the
 MCP server exposes as tools: worker registration and discovery
@@ -209,9 +244,14 @@ sessions are transport state only: a worker that disconnects and reconnects
 resumes its watch from the saved cursor and sees exactly the frames after
 it, with no lost or duplicated events.
 
-`protomolt-serve` creates one in-process coordinator per server and mounts
+`protomolt-serve` creates one coordinator per server and mounts
 the verbs and the delegation resources on its `/mcp` endpoint. The
 resources are bounded and read-only: `protomolt://delegation/workers`,
 `protomolt://delegation/tasks`, and
 `protomolt://delegation/tasks/{taskId}/transcript` (addressable through the
-advertised resource template).
+advertised resource template). The coordinator keeps its transcript in memory
+by default; with `--delegation-repo-endpoint` it persists encrypted through
+the repository service, so a server restart restores every task, cursor, and
+sequence scope and a re-registering worker resumes where the record left off.
+See [Running everything: protomolt-serve](../surface/grpc-service.md) for the
+flag set.

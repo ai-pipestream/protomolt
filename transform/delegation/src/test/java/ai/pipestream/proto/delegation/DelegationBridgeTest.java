@@ -83,8 +83,9 @@ class DelegationBridgeTest {
         DelegationBridge.WorkerRegistration first = bridge.registerWorker(hello());
         assertTrue(first.admitted());
 
-        // A replacement stream would rewind the transcript's sequence scopes, so the
-        // bridge refuses it outright instead of failing mid-admission.
+        // A second registration while the current stream is live fails fast: two live
+        // senders would race the transcript's sequence scopes. (A dead stream may be
+        // replaced; DelegationStreamReplacementTest covers that.)
         IllegalStateException failure = assertThrows(IllegalStateException.class,
                 () -> bridge.registerWorker(hello()));
         assertTrue(failure.getMessage().contains("already registered"));
