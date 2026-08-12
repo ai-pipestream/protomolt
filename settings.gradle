@@ -369,6 +369,9 @@ project(':protomolt-serve').projectDir = file('apps/serve')
 include 'protomolt-cli'
 project(':protomolt-cli').projectDir = file('apps/cli')
 
+include 'protomolt-agent-host'
+project(':protomolt-agent-host').projectDir = file('apps/agent-host')
+
 include 'samples'
 
 include 'system-tests'
