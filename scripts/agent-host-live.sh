@@ -134,7 +134,7 @@ print(contents[0].get("text", "") if contents else "")'
 }
 
 start_agent() { # start_agent <name> <logfile> <args...>: prints the child pid
-  local name="$1" log="$2"
+  local log="$2"
   shift 2
   "$LAUNCHER" "$@" > "$log" 2>&1 < /dev/null &
   echo $!
