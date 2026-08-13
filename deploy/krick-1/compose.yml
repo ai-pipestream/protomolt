@@ -29,8 +29,9 @@ services:
     # Single B70 default: online FP8, text-only, 4096 context baseline, no
     # speculative decoding. One FP8 main plus one FP8 assistant exceeds the
     # 32 GiB card, so DFlash stays an opt-in two-GPU experiment through
-    # GLIMMER_SPECULATIVE_CONFIG (see README.md). CPU offload and swap stay
-    # at zero: inference is GPU-only with no CPU fallback.
+    # GLIMMER_SPECULATIVE_CONFIG (see README.md). CPU offload stays at zero:
+    # inference is GPU-only with no CPU fallback. This Intel vLLM build does
+    # not expose the upstream --swap-space option, so do not pass it.
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - >-
@@ -44,7 +45,6 @@ services:
         --mamba-ssm-cache-dtype=float16
         --block-size=64
         --cpu-offload-gb=0
-        --swap-space=0
         --max-model-len=${GLIMMER_MAX_MODEL_LEN:-4096}
         --max-num-batched-tokens=${GLIMMER_MAX_BATCHED_TOKENS:-4096}
         --max-num-seqs=${GLIMMER_MAX_NUM_SEQS:-1}
