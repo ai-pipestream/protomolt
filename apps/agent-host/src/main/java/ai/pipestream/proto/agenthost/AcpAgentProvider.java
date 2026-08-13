@@ -14,6 +14,12 @@ import java.util.List;
 final class AcpAgentProvider implements AgentProvider {
 
     private static final int MAX_RESPONSE_CHARS = 256 * 1024;
+    /** JSON-RPC invalid params, the code Kimi uses for a lost provider session. */
+    private static final int INVALID_PARAMS = -32602;
+    /** Anchored error shapes observed from Kimi for a lost provider session. */
+    private static final String UNKNOWN_SESSION_PREFIX = "Unknown sessionId: ";
+    private static final String UNKNOWN_SESSION_NESTED_PREFIX =
+            "Invalid params: Unknown sessionId: ";
 
     private final Path workspace;
     private final List<String> command;
@@ -77,7 +83,7 @@ final class AcpAgentProvider implements AgentProvider {
             boolean canLoad = initialized.path("agentCapabilities")
                     .path("loadSession").asBoolean();
             if (!sessionId.isBlank() && canLoad) {
-                sessionId = client.loadSession(sessionId, workspace.toString());
+                sessionId = loadOrFreshSession();
             } else {
                 sessionId = client.newSession(workspace.toString());
             }
@@ -85,6 +91,43 @@ final class AcpAgentProvider implements AgentProvider {
             closeClient();
             throw new AgentHostException("could not start Kimi ACP", e);
         }
+    }
+
+    /**
+     * Reloads the saved provider session, or starts a fresh one when the agent explicitly
+     * reports the saved id as unknown, which is how a reset session store (a container
+     * restart) surfaces. Only that report classifies as a lost provider session; every
+     * other load failure propagates. The ProtoMolt cursor, pending commands, and identity
+     * live in {@link AgentHostState} and are untouched here; {@code AgentHost} persists the
+     * replacement session id on its next sync.
+     */
+    private String loadOrFreshSession() {
+        try {
+            return client.loadSession(sessionId, workspace.toString());
+        } catch (AcpError e) {
+            if (!isUnknownSession(e, sessionId)) {
+                throw e;
+            }
+            return client.newSession(workspace.toString());
+        }
+    }
+
+    /**
+     * Only the explicit lost-session report classifies as a provider-session mismatch: the
+     * JSON-RPC invalid-params code carrying a message that equals one of the anchored Kimi
+     * forms "Unknown sessionId: <id>" or "Invalid params: Unknown sessionId: <id>" with
+     * the exact session id that session/load attempted. Another code, a different or
+     * missing session id, a prefixed unrelated sentence, or text that merely mentions the
+     * phrase is a normal load failure and propagates.
+     */
+    private static boolean isUnknownSession(AcpError error, String sessionId) {
+        if (error.code() != INVALID_PARAMS) {
+            return false;
+        }
+        String message = error.getMessage();
+        return message != null
+                && (message.equals(UNKNOWN_SESSION_PREFIX + sessionId)
+                || message.equals(UNKNOWN_SESSION_NESTED_PREFIX + sessionId));
     }
 
     private synchronized void sessionUpdate(JsonNode params) {
