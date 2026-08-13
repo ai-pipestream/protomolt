@@ -23,6 +23,18 @@ arbitrary build commands and can switch the installed SDKMAN candidates. Do
 not place workers from different trust domains in one container or share a
 writable language cache between them.
 
+See [Coding workers](../../docs/apps/coding-workers.md) for the architecture,
+state ownership, credential boundaries, and current versus planned transport.
+This file is the build and run reference.
+
+Published multi-architecture tags:
+
+- `ghcr.io/ai-pipestream/protomolt-worker-java:edge`
+- `ghcr.io/ai-pipestream/protomolt-worker-cpp:edge`
+
+Pin a deployment to a manifest digest after verifying the corresponding
+Docker Publish workflow run. Use `edge` for testing the newest `main` build.
+
 ## Build
 
 Build the agent host before either image because the Docker context consumes

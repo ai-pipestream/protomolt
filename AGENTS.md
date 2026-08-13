@@ -28,3 +28,48 @@
   `permissions: packages: write` (that grant is in the workflow anyway as
   defense in depth). If the job starts failing on auth again, the token
   needs rotation, not a workflow change.
+
+## Agent collaboration and coding workers
+
+Read these before changing the multi-agent runtime:
+
+- `docs/apps/agent-host.md` defines provider processes, roles, cursor commits,
+  and restart behavior.
+- `docs/apps/coding-workers.md` defines the worker images, state ownership,
+  credential boundaries, and current transport.
+- `docs/apps/task-console.md` defines the browser guidance surface.
+- `docs/transform/delegation.md` defines the durable task protocol.
+- `deploy/portainer/README.md` owns the NAS coordinator topology.
+- `deploy/krick-1/README.md` owns the Kimi and Muse Glimmer workstation stack.
+- `deploy/workers/README.md` owns Java and C++ worker build and run commands.
+
+Current implementation and deployment snapshot, verified 2026-08-13:
+
+- The always-on coordinator belongs on the NAS under Portainer. Its delegation
+  transcript is encrypted before repository-service and RustFS storage.
+- krick-1 runs the GPU-only Muse Glimmer inference sidecar plus Kimi and
+  Glimmer workers. Do not enable CPU inference or CPU model offload. CPU-only
+  build and test containers are allowed.
+- `https://protomolt.rokkon.com/console/tasks` is the bounded task console.
+  Its login credential is separate from the ProtoMolt API token. Do not print,
+  commit, or copy either token into task messages.
+- Durable Codex-to-Kimi delegation, worker reconnect, provider-session resume,
+  task messages, checkpoints, review, and acceptance have live proof.
+- A persistent authenticated Codex worker and the reverse Kimi-to-Codex live
+  path are not yet deployed and proven. Do not report symmetric collaboration
+  until both exist and pass a live task.
+- The Java and C++ coding worker images are published for amd64 and arm64. The
+  krick-1 Compose file still uses `protomolt-agent-host:local`; migrating it to
+  a language image is separate deployment work.
+
+The durable control plane currently uses MCP streamable HTTP over TLS. gRPC is
+the application plane for reflection, invocation, and generated clients. A
+typed local gRPC sidecar and bounded workspace-execution API are planned but
+not implemented. Never substitute a Docker socket or cluster-admin credential
+for that API.
+
+Before operating a live deployment, verify this dated snapshot against the
+running containers and the checked-in Compose files. Preserve these ownership
+boundaries: Portainer owns NAS services, `deploy/krick-1` owns workstation
+inference and workers, and provider credentials enter only through runtime
+mounts or secret injection.
