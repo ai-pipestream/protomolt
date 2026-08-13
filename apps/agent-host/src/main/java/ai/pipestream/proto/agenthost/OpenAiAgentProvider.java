@@ -46,6 +46,10 @@ final class OpenAiAgentProvider implements AgentProvider {
         this.sessionId = savedSessionId == null || savedSessionId.isBlank()
                 ? "openai-" + UUID.randomUUID() : savedSessionId;
         this.http = HttpClient.newBuilder()
+                // OpenAI-compatible local sidecars commonly expose HTTP/1.1 only.
+                // Java's cleartext HTTP/2 upgrade is rejected by Intel vLLM before
+                // the JSON request reaches the chat-completions handler.
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
     }

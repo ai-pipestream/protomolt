@@ -33,6 +33,7 @@ class OpenAiAgentProviderTest {
     private HttpServer server;
     private final List<JsonNode> requests = new ArrayList<>();
     private final List<String> authorizations = new ArrayList<>();
+    private final List<String> protocols = new ArrayList<>();
     private final AtomicInteger status = new AtomicInteger(200);
     private volatile String responseBody = completion(
             "{\"handledEventCursors\":[1],\"commands\":[]}");
@@ -61,6 +62,7 @@ class OpenAiAgentProviderTest {
         assertThat(body.path("messages").path(0).path("content").asText())
                 .isEqualTo("first packet");
         assertThat(authorizations).containsOnly((String) null);
+        assertThat(protocols).containsOnly("HTTP/1.1");
         assertThat(providerName()).isEqualTo("openai");
     }
 
@@ -185,6 +187,7 @@ class OpenAiAgentProviderTest {
         server.createContext("/v1/chat/completions", exchange -> {
             requests.add(MAPPER.readTree(exchange.getRequestBody()));
             authorizations.add(exchange.getRequestHeaders().getFirst("Authorization"));
+            protocols.add(exchange.getProtocol());
             byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("content-type", "application/json");
             exchange.sendResponseHeaders(status.get(), body.length);
