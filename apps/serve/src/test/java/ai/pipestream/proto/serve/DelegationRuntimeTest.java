@@ -119,6 +119,11 @@ class DelegationRuntimeTest {
                     .isEqualTo(entriesBeforeRestart);
             assertThat(bridge.coordinator().state().tasks().get(taskId).phase())
                     .isEqualTo(DelegationReducer.Phase.LEASED);
+            assertThat(bridge.coordinator().workers()).singleElement().satisfies(worker -> {
+                assertThat(worker.workerId()).isEqualTo(WORKER);
+                assertThat(worker.admitted()).isTrue();
+                assertThat(worker.connected()).isFalse();
+            });
 
             // The same worker re-registers and resumes its sequence scopes.
             assertThat(bridge.registerWorker(hello()).admitted()).isTrue();

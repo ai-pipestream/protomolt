@@ -122,6 +122,36 @@ class DelegationBridgeTest {
         assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
     }
 
+    @Test
+    void aRejectedTransitionFailsTheCallAndMarksTheWorkerDisconnected() throws Exception {
+        coordinator = new InProcessDelegationCoordinator();
+        bridge = new DelegationBridge(coordinator);
+        bridge.registerWorker(hello());
+        String taskId = UUID.randomUUID().toString();
+        bridge.offer("bridge-kimi", taskId, DelegationFixtures.spec("unit-tests"),
+                Duration.ofSeconds(30), null);
+        bridge.accept("bridge-kimi", taskId, 1);
+
+        var unexpectedEvidence = ai.pipestream.proto.delegation.v1.CompletionCandidate
+                .newBuilder(candidate(1, 1))
+                .addEvidence(DelegationFixtures.evidence("javadoc"))
+                .build();
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> bridge.submitCandidate("bridge-kimi", taskId, unexpectedEvidence));
+        assertTrue(failure.getMessage().contains("worker stream failed"));
+        assertFalse(coordinator.workers().getFirst().connected());
+        assertFalse(coordinator.transcript().getEntriesList().stream()
+                .anyMatch(entry -> entry.hasWorkerFrame()
+                        && entry.getWorkerFrame().hasCompletion()));
+
+        // A replacement stream resumes at the last durable sequence. The rejected
+        // candidate consumed nothing, so the valid candidate lands without a gap.
+        assertTrue(bridge.registerWorker(hello()).admitted());
+        bridge.submitCandidate("bridge-kimi", taskId, candidate(1, 1));
+        waitForPhase(taskId, DelegationReducer.Phase.CANDIDATE);
+        assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
+    }
+
     private void waitForPhase(String taskId, DelegationReducer.Phase phase)
             throws InterruptedException {
         long cursor = 0;

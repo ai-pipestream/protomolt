@@ -104,8 +104,10 @@ class DelegationStreamReplacementTest {
             // the coordinator, but the durable append fails: nothing is recorded,
             // nothing becomes visible, and the stream goes down.
             repository.failWrites = true;
-            bridge.sendWorkerMessage(WORKER, taskId, TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
-                    "never durable", "", List.of());
+            assertThrows(IllegalStateException.class,
+                    () -> bridge.sendWorkerMessage(WORKER, taskId,
+                            TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
+                            "never durable", "", List.of()));
             assertThrows(IllegalStateException.class,
                     () -> bridge.progress(WORKER, taskId, 1, "stream is down"));
             assertEquals(entriesBefore, coordinator.transcript().getEntriesCount());

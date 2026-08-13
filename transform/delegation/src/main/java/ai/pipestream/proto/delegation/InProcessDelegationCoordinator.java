@@ -51,6 +51,22 @@ public final class InProcessDelegationCoordinator
         extends AgentDelegationServiceGrpc.AgentDelegationServiceImplBase
         implements AutoCloseable {
 
+    private static final StreamObserver<DelegateResponse> DISCONNECTED_RESPONSES =
+            new StreamObserver<>() {
+                @Override
+                public void onNext(DelegateResponse value) {
+                    // Restored events remain available through the cursor-addressable feed.
+                }
+
+                @Override
+                public void onError(Throwable throwable) {
+                }
+
+                @Override
+                public void onCompleted() {
+                }
+            };
+
     private final Object lock = new Object();
     private final AdmissionPolicy admissionPolicy;
     private final CandidateReviewer reviewer;
@@ -132,10 +148,12 @@ public final class InProcessDelegationCoordinator
                     }
                 } catch (IllegalArgumentException e) {
                     ended = true;
+                    markDisconnected(session);
                     responseObserver.onError(Status.INVALID_ARGUMENT
                             .withDescription(e.getMessage()).asRuntimeException());
                 } catch (RuntimeException e) {
                     ended = true;
+                    markDisconnected(session);
                     responseObserver.onError(Status.INTERNAL
                             .withDescription("delegation coordinator failed")
                             .withCause(e).asRuntimeException());
@@ -737,6 +755,9 @@ public final class InProcessDelegationCoordinator
 
     private void restoreWorkerRuntime(String workerId, DelegateRequest frame) {
         if (frame.hasHello()) {
+            Session session = new Session(frame.getHello(), DISCONNECTED_RESPONSES);
+            session.connected = false;
+            sessions.put(workerId, session);
             return;
         }
         TaskRuntime task = requireRestoredTask(frame.getTaskId(), workerId);
@@ -763,6 +784,12 @@ public final class InProcessDelegationCoordinator
 
     private void restoreCoordinatorRuntime(String workerId, DelegateResponse frame) {
         if (frame.hasAdmission()) {
+            Session session = sessions.get(workerId);
+            if (session == null) {
+                throw new IllegalArgumentException(
+                        "stored transcript admits a worker before its hello: " + workerId);
+            }
+            session.admitted = frame.getAdmission().getAdmitted();
             return;
         }
         String taskId = frame.getTaskId();
@@ -901,6 +928,15 @@ public final class InProcessDelegationCoordinator
     private void requireOpen() {
         if (closed) {
             throw new IllegalStateException("coordinator is closed");
+        }
+    }
+
+    private void markDisconnected(Session session) {
+        if (session == null) {
+            return;
+        }
+        synchronized (lock) {
+            session.connected = false;
         }
     }
 
