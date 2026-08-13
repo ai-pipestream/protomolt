@@ -87,7 +87,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                           Path gatherCache, JobsOptions jobs,
                           java.util.List<String> inferenceModels, Path serviceWorkspace,
                           OutboundChannelPolicy outboundPolicy, Path recipeWorkspace,
-                          DelegationOptions delegation) {
+                          DelegationOptions delegation, TaskConsoleOptions taskConsole) {
 
         public Options {
             if (outboundPolicy == null) {
@@ -158,6 +158,17 @@ public final class ProtoMoltServe implements AutoCloseable {
                     recipeWorkspace, null);
         }
 
+        /** Binary/source-compatible constructor retaining the pre-console options surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
+                       Path recipeWorkspace, DelegationOptions delegation) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    recipeWorkspace, delegation, null);
+        }
+
         public static Options defaults() {
             return new Options("0.0.0.0", 9090, 8080, null, 8081, null, false, null);
         }
@@ -203,6 +214,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             String delegationTranscriptObject =
                     System.getenv("PROTOMOLT_DELEGATION_TRANSCRIPT_OBJECT");
             String delegationStateKeyRef = System.getenv("PROTOMOLT_DELEGATION_STATE_KEY_REF");
+            String taskConsoleToken = System.getenv("PROTOMOLT_TASK_CONSOLE_TOKEN");
+            long taskConsoleSessionSeconds = envLong(
+                    "PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS", 43_200L);
             if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
                 for (String spec : inferenceModelsEnv.split(";")) {
                     if (!spec.isBlank()) {
@@ -286,7 +300,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--delegation-repo-tls <true|false>] "
                                 + "[--delegation-repo-drive <name>] "
                                 + "[--delegation-transcript-object <key>] "
-                                + "[--delegation-state-key-ref <ref>]]");
+                                + "[--delegation-state-key-ref <ref>]] "
+                                + "(task console login: PROTOMOLT_TASK_CONSOLE_TOKEN; "
+                                + "session duration: PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS)");
                         System.exit(0);
                     }
                     default -> {
@@ -330,6 +346,11 @@ public final class ProtoMoltServe implements AutoCloseable {
                         + "without a repository service the transcript stays in memory");
                 System.exit(2);
             }
+            TaskConsoleOptions taskConsole = null;
+            if (taskConsoleToken != null && !taskConsoleToken.isBlank()) {
+                taskConsole = new TaskConsoleOptions(taskConsoleToken,
+                        Duration.ofSeconds(taskConsoleSessionSeconds));
+            }
             Set<String> schemeSet = allowedSchemes == null
                     ? null : parseCsv(allowedSchemes, "grpc allowed schemes");
             Set<String> hostSet = allowedHosts == null
@@ -340,7 +361,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
-                    serviceWorkspace, outboundPolicy, recipeWorkspace, delegation);
+                    serviceWorkspace, outboundPolicy, recipeWorkspace, delegation, taskConsole);
         }
 
         private static int envInt(String name, int fallback) {
@@ -449,7 +470,7 @@ public final class ProtoMoltServe implements AutoCloseable {
      * (e.g. {@code env:OPENAI_TOKEN}) resolved host-side at request time, never
      * credential material; a malformed reference fails startup. Empty specs mean
      * inference is not configured (null; the verbs answer {@code unavailable}).
-     * A bad spec or an unknown provider fails startup loud — a model the server
+     * A bad spec or an unknown provider fails startup loud. A model the server
      * cannot execute must never sit in the catalog looking runnable.
      */
     static InferenceEngines inferenceEngines(java.util.List<String> specs) {
@@ -530,7 +551,7 @@ public final class ProtoMoltServe implements AutoCloseable {
 
     /**
      * Chain-jobs launcher options. {@code kafkaBootstrap} is optional: without it the
-     * worker fleet runs verb-submitted jobs with no event relay and no request topic —
+     * worker fleet runs verb-submitted jobs with no event relay and no request topic,
      * useful for a single-box deployment; with it, lifecycle events publish to the
      * events topic and the request topic is consumed. Zero {@code workers} /
      * {@code targetConcurrency} take the jobs module's defaults.
@@ -590,6 +611,14 @@ public final class ProtoMoltServe implements AutoCloseable {
         public DelegationOptions(String repoEndpoint, boolean repoTls) {
             this(repoEndpoint, repoTls, DEFAULT_DRIVE, DEFAULT_OBJECT_KEY,
                     DEFAULT_KEY_REFERENCE);
+        }
+    }
+
+    /** Browser-only authentication settings for the bounded task console API. */
+    public record TaskConsoleOptions(String loginToken, Duration sessionTtl) {
+
+        public TaskConsoleOptions {
+            TaskConsoleSessions.validateSettings(loginToken, sessionTtl);
         }
     }
 
@@ -830,24 +859,33 @@ public final class ProtoMoltServe implements AutoCloseable {
                             "/", config.restPathPrefix()))
                     .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
                     .withContext("/mcp", mcpHandler);
-            if (options.apiToken() == null) {
+            TaskConsoleSessions taskSessions = options.taskConsole() == null
+                    ? TaskConsoleSessions.open()
+                    : TaskConsoleSessions.secured(options.taskConsole().loginToken(),
+                            options.taskConsole().sessionTtl());
+            if (options.apiToken() == null || options.taskConsole() != null) {
                 http.withContext("/console", new ConsoleHandler())
-                        .withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
-                                () -> boundRegistryPort,
-                                "no registry is running; start with --registry-git or --demo"))
-                        .withContext("/api/serve", new ApiProxyHandler("/api/serve",
-                                () -> selfPort[0], "server is still starting"));
+                        .withContext("/api/task-session",
+                                new TaskConsoleSessionHandler(taskSessions))
+                        .withContext("/api/tasks",
+                                new TaskConsoleApiHandler(bridge, taskSessions));
+            }
+            if (options.apiToken() == null) {
+                http.withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
+                            () -> boundRegistryPort,
+                            "no registry is running; start with --registry-git or --demo"))
+                    .withContext("/api/serve", new ApiProxyHandler("/api/serve",
+                            () -> selfPort[0], "server is still starting"));
             } else {
-                // A browser cannot hold the process's shared secret, so a token-mode
-                // console would be a half-open door: some calls 401, registry writes
-                // silently open. Disable the whole surface with an explicit answer
-                // instead of serving a partially secured interface.
                 DisabledSurfaceHandler disabled = new DisabledSurfaceHandler(
-                        "the console is disabled when --api-token is set; use the gRPC, "
-                                + "REST, or MCP surface with the token, or run without one "
-                                + "on a trusted network");
-                http.withContext("/console", disabled)
-                        .withContext("/api/protomolt", disabled)
+                        "this browser surface is disabled when --api-token is set; "
+                                + "use the task console or an authenticated protocol client");
+                if (options.taskConsole() == null) {
+                    http.withContext("/console", disabled)
+                            .withContext("/api/task-session", disabled)
+                            .withContext("/api/tasks", disabled);
+                }
+                http.withContext("/api/protomolt", disabled)
                         .withContext("/api/serve", disabled);
             }
             int httpPort = http.start();
@@ -914,6 +952,10 @@ public final class ProtoMoltServe implements AutoCloseable {
         return registryPort;
     }
 
+    DelegationBridge delegationBridge() {
+        return delegation.bridge();
+    }
+
     /** Blocks until the gRPC server terminates. */
     public void awaitTermination() throws InterruptedException {
         grpc.awaitTermination();
@@ -962,14 +1004,19 @@ public final class ProtoMoltServe implements AutoCloseable {
                             ? "; Kafka " + options.jobs().kafkaBootstrap()
                             : ", no broker - verb submission only");
         }
-        if (options.apiToken() == null) {
+        if (options.apiToken() == null || options.taskConsole() != null) {
             LOG.info("  UI    http://{}:{}/console", options.host(), serve.httpPort());
-        } else {
+        }
+        if (options.apiToken() != null) {
             LOG.info("  Auth  api_token required on gRPC, REST, MCP{}"
                             + " (health, OpenAPI, and docs stay open)",
                     serve.registryPort() >= 0 ? ", and the registry" : "");
-            LOG.info("  UI    console disabled in token mode (a browser cannot "
-                    + "hold the shared secret)");
+            if (options.taskConsole() == null) {
+                LOG.info("  UI    console disabled in token mode");
+            } else {
+                LOG.info("  UI    task console uses a scoped browser session; "
+                        + "registry and serve proxies stay disabled");
+            }
         }
         if (options.demo()) {
             LOG.info("""

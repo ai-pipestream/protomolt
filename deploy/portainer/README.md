@@ -46,6 +46,7 @@ stored in Portainer, not committed.
 | Variable | Required | Notes |
 |---|---|---|
 | `PROTOMOLT_API_TOKEN` | yes | Shared bearer token for operational ProtoMolt surfaces |
+| `PROTOMOLT_TASK_CONSOLE_TOKEN` | yes | Separate browser login for the bounded task console; generate with `openssl rand -base64 32` |
 | `PROTOMOLT_RUSTFS_SECRET_KEY` | yes | RustFS secret; access key defaults to `protomolt` |
 | `PROTOMOLT_KEYCLOAK_ADMIN_PASSWORD` | yes | Keycloak bootstrap admin password |
 | `PROTOMOLT_KEYCLOAK_CLIENT_SECRET` | yes | Secret for the `protomolt-coordinator` service client |
@@ -55,6 +56,7 @@ stored in Portainer, not committed.
 | `PROTOMOLT_REPO_SERVICE_IMAGE` | no | repo-service image override, same pinning form as `PROTOMOLT_SERVE_IMAGE` |
 | `PROTOMOLT_DELEGATION_REPO_DRIVE` | no | Repository drive of the transcript blob; defaults to `protomolt` and must match the drive repo-init creates |
 | `PROTOMOLT_REPO_DB_USER` / `PROTOMOLT_REPO_DB_NAME` | no | Ledger database user and name; both default to `documents` |
+| `PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS` | no | Browser session lifetime in seconds; defaults to 43200 (12 hours), maximum 604800 |
 
 The coordinator and Keycloak defaults reserve NAS ports `19901` through
 `19904`. RustFS uses `31900`, a separate host range that avoids the shared
@@ -82,6 +84,15 @@ coordinator restart restores every task, event cursor, and worker sequence
 scope, so a re-registering agent host resumes where the record left off.
 Losing `PROTOMOLT_TRANSCRIPT_KEY` makes the stored transcript unreadable;
 rotate it only by retiring the old transcript object.
+
+The task console is available at
+`https://protomolt.rokkon.com/console/tasks`. Its login token is deliberately
+different from `PROTOMOLT_API_TOKEN`. A successful login creates an
+HttpOnly, Secure, SameSite=Strict cookie held in the serve process. Browser
+JavaScript can reach only the task, worker, transcript, and task-message API.
+The general registry and serve proxies remain disabled while the coordinator
+uses its process API token. Restarting serve invalidates browser sessions but
+does not affect the repository-backed delegation transcript.
 
 Keycloak uses its embedded development database on a persistent volume and is
 intentionally started with `start-dev`. It is suitable for this private

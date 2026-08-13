@@ -4,7 +4,7 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "description": "The ProtoMolt schema-registry console: browse subjects and versions, explore types, diff schemas, check compatibility, and try messages against declared rules.",
+  "description": "The ProtoMolt console: follow durable agent tasks, guide workers, browse schemas, and exercise declared protobuf rules.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

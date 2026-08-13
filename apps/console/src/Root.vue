@@ -10,8 +10,13 @@
           </span>
         </router-link>
       </template>
+      <v-btn to="/tasks" prepend-icon="mdi-account-network" variant="text">Tasks</v-btn>
+      <v-btn to="/schema-registry" prepend-icon="mdi-source-repository" variant="text">
+        Schemas
+      </v-btn>
       <v-spacer />
       <v-chip
+        v-if="!taskRoute"
         class="text-mono mr-2"
         size="small"
         variant="tonal"
@@ -40,11 +45,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import ToastHost from './components/ToastHost.vue'
 import { registryApi } from './services/api'
 
 const theme = useTheme()
+const route = useRoute()
+const taskRoute = computed(() => route.path.startsWith('/tasks'))
 const isDark = computed(() => theme.global.current.value.dark)
 
 function toggleTheme() {
@@ -60,6 +68,7 @@ const registryLabel = computed(() =>
   registryUp.value === false ? 'registry unreachable' : '/api/protomolt')
 
 onMounted(async () => {
+  if (taskRoute.value) return
   try {
     await registryApi.listSubjects()
     registryUp.value = true
