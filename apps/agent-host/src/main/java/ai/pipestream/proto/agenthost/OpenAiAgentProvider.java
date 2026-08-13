@@ -32,20 +32,33 @@ final class OpenAiAgentProvider implements AgentProvider {
 
     private final URI chatCompletions;
     private final String model;
+    private final ObjectNode responseFormat;
     private final Duration timeout;
     private final HttpClient http;
     private final List<ObjectNode> history = new ArrayList<>();
 
     private String sessionId;
 
-    OpenAiAgentProvider(URI endpoint, String model, String savedSessionId,
+    OpenAiAgentProvider(URI endpoint, String model, AgentRole role, String savedSessionId,
                         Duration timeout) {
         this.chatCompletions = chatCompletions(validateEndpoint(endpoint));
         this.model = validateModel(model);
+        Objects.requireNonNull(role, "agent role");
+        ObjectNode jsonSchema = MAPPER.createObjectNode();
+        jsonSchema.put("name", "protomolt_agent_turn");
+        jsonSchema.put("strict", true);
+        jsonSchema.set("schema", AgentTurn.outputSchema(role));
+        this.responseFormat = MAPPER.createObjectNode();
+        responseFormat.put("type", "json_schema");
+        responseFormat.set("json_schema", jsonSchema);
         this.timeout = Objects.requireNonNull(timeout, "turn timeout");
         this.sessionId = savedSessionId == null || savedSessionId.isBlank()
                 ? "openai-" + UUID.randomUUID() : savedSessionId;
         this.http = HttpClient.newBuilder()
+                // OpenAI-compatible local sidecars commonly expose HTTP/1.1 only.
+                // Java's cleartext HTTP/2 upgrade is rejected by Intel vLLM before
+                // the JSON request reaches the chat-completions handler.
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
     }
@@ -70,7 +83,7 @@ final class OpenAiAgentProvider implements AgentProvider {
         body.put("model", model);
         body.set("messages", messages);
         body.put("stream", false);
-        body.putObject("response_format").put("type", "json_object");
+        body.set("response_format", responseFormat.deepCopy());
         HttpRequest request = HttpRequest.newBuilder(chatCompletions)
                 .timeout(timeout)
                 .header("content-type", "application/json")

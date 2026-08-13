@@ -2,7 +2,8 @@
 # Static checks for the krick-1 deployment package: no containers, no GPU, no
 # live calls. Fails when the compose file drifts from the verified single-B70
 # baseline: the read-only by-path bind and pinned model mount must be present,
-# CPU offload and swap must stay zero, and DFlash must remain opt-in only.
+# CPU offload must stay zero, the unsupported swap flag must stay absent, and
+# DFlash must remain opt-in only.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -43,8 +44,9 @@ printf '%s' "$text" | grep -q -- '--block-size=64' \
   || fail "KV block size must stay 64"
 printf '%s' "$text" | grep -q -- '--cpu-offload-gb=0' \
   || fail "cpu-offload-gb must stay zero"
-printf '%s' "$text" | grep -q -- '--swap-space=0' \
-  || fail "swap-space must stay zero"
+if printf '%s\n' "$text" | grep -Eq '^[[:space:]]+--swap-space'; then
+  fail "this Intel vLLM build does not support --swap-space"
+fi
 printf '%s' "$text" | grep -q 'GLIMMER_MAX_MODEL_LEN:-4096' \
   || fail "context baseline must default to 4096"
 printf '%s' "$text" | grep -q 'GLIMMER_MAX_BATCHED_TOKENS:-4096' \

@@ -17,8 +17,9 @@ worker on the krick-1 workstation beside the existing Kimi worker:
   block, one concurrent sequence, 4096 batched tokens, 98 percent GPU memory
   utilization, Flash Attention, and eager execution. These are the settings
   exercised by the live single-B70 service.
-  `--cpu-offload-gb` and `--swap-space` stay at zero: inference is GPU-only
-  and there is no CPU model offload or fallback.
+  `--cpu-offload-gb` stays at zero: inference is GPU-only and there is no CPU
+  model offload or fallback. This Intel vLLM build does not expose the
+  upstream `--swap-space` option, so the launch does not pass it.
 - `kimi-worker` is the existing Kimi delegation worker. Kimi authentication
   enters through the host `~/.kimi-code` mount and is never baked into an
   image or written to this package.
@@ -102,8 +103,8 @@ tailscale serve --bg --set-path /glimmer http://127.0.0.1:8011
 `deploy/krick-1/check-deployment-statics.sh` runs static checks without
 containers or a GPU and fails when the compose file drifts from the verified
 baseline: the read-only `/dev/dri/by-path` bind and pinned `/models` mount
-must be present, CPU offload and swap must stay zero, and DFlash must remain
-opt-in only.
+must be present, CPU offload must stay zero, the unsupported swap flag must
+stay absent, and DFlash must remain opt-in only.
 
 `scripts/muse-glimmer-live.sh` checks the model list and one bounded chat
 completion against the running sidecar, then requires log or metrics evidence
