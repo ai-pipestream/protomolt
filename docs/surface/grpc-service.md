@@ -50,8 +50,8 @@ configuration, never request input.
 
 When the console has been built (`cd apps/console && npm ci && npm run build`)
 before `protomolt-serve`, its bundle rides inside the jar and is served at
-`/console`: the schema-registry browser, type explorer, and
-connect-a-service wizard, same-origin with the verbs. The server bridges
+`/console`: the durable task console, schema-registry browser, type explorer,
+and connect-a-service wizard. The server bridges
 `/api/protomolt/*` to the in-process registry and `/api/serve/*` back onto
 its own REST mount, so the app needs no configuration. Docker images and
 release zips ship with the console bundled.
@@ -79,6 +79,8 @@ service-workspace flags are:
 | `--registry-git` | none | none | Git repository for the registry; mounts the registry server when set |
 | `--registry-port` | none | `8081` | Port for the registry server; used only when the registry is mounted (`--registry-git` or `--demo`) |
 | `--api-token` | `PROTOMOLT_API_TOKEN` | none | Shared secret guarding every operational surface |
+| none | `PROTOMOLT_TASK_CONSOLE_TOKEN` | none | Separate 32 to 1024 character login that enables the bounded task console in API-token mode |
+| none | `PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS` | `43200` | Task console browser session lifetime, from 1 through 604800 seconds |
 | `--gather-cache` | `PROTOMOLT_GATHER_CACHE` | the library default under the process owner's home | Directory for `gather-git`'s per-repo clone caches |
 | `--service-workspace` | `PROTOMOLT_SERVICE_WORKSPACE` | none | Directory for durable gRPC service profiles and content-addressed descriptor artifacts |
 | `--recipe-workspace` | `PROTOMOLT_RECIPE_WORKSPACE` | none | Directory for content-addressed redacted fixtures and immutable run evidence |
@@ -179,10 +181,12 @@ constant time:
   `claude mcp add --transport http protomolt http://host:8080/mcp --header "api_token: ..."`.
 - **Registry**: when mounted, every registry route requires the same
   header or bearer credential; only its `/health` stays open.
-- **Console**: disabled in token mode with a 503 response because a browser
-  cannot hold the process's shared secret, and a half-secured console
-  would be worse than none. Run without a token on a trusted network to
-  use it.
+- **Console**: disabled in token mode unless
+  `PROTOMOLT_TASK_CONSOLE_TOKEN` is set. With that separate login, static
+  console assets and the bounded task API are available while the general
+  registry and serve browser proxies stay disabled. The login creates an
+  HttpOnly, Secure, SameSite=Strict cookie and never exposes the process API
+  token to browser JavaScript. See [Task console](../apps/task-console.md).
 
 `--host` constrains every listener: HTTP, gRPC, and the registry alike.
 Documentation surfaces (`/health`, `/openapi.json`, `/docs`) stay open.

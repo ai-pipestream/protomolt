@@ -31,6 +31,14 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/serve/, ''),
       },
+      '/api/tasks': {
+        target: serve,
+        changeOrigin: true,
+      },
+      '/api/task-session': {
+        target: serve,
+        changeOrigin: true,
+      },
     },
   },
   test: {

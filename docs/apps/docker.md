@@ -148,12 +148,17 @@ survives restarts, mount a directory and point the server at it. In `docker-comp
 By default every surface is open, which suits a laptop or a trusted network. Set a shared
 secret to require it on every operational surface (gRPC, REST, MCP, and the registry); the
 documentation surfaces `/health`, `/openapi.json`, and `/docs` stay open. The browser
-console is disabled because a browser cannot hold the secret.
+console is disabled unless a separate task-console login is configured.
 
 ```yaml
     environment:
       PROTOMOLT_API_TOKEN: "change-me"
+      PROTOMOLT_TASK_CONSOLE_TOKEN: "generate-a-different-32-character-or-longer-secret"
 ```
+
+This enables `/console/tasks` and its bounded task API. The registry and
+general action proxies remain disabled. See [Task console](task-console.md)
+for the browser session boundary.
 
 MCP clients then pass it as a header:
 
