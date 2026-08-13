@@ -1,6 +1,6 @@
 # Running in Docker
 
-ProtoMolt ships two images built from this repository for Compose: the server
+ProtoMolt ships two runtime images built from this repository for Compose: the server
 (`protomolt-serve`), which exposes the whole API over the network, and the ACP agent
 (`protomolt-acp`), which an IDE drives over stdio. `docker-compose.yml` at the
 repository root builds and runs both. (The release pipeline additionally publishes a
@@ -183,3 +183,8 @@ joins them. Any verb works as the command:
 docker run --rm ghcr.io/ai-pipestream/protomolt-cli list
 echo '{"samples": [{"name": "x", "n": 1}]}' | docker run --rm -i ghcr.io/ai-pipestream/protomolt-cli infer-schema
 ```
+
+Persistent software agents use the language-specific
+[`protomolt-worker-java` and `protomolt-worker-cpp` images](../../deploy/workers/README.md).
+They share the agent host, gRPC tooling, Node, Bun, and uv, while keeping the
+large Java and C++ compiler stacks in separate images.

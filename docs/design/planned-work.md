@@ -69,6 +69,17 @@ Keep provider authentication and process lifecycle inside each adapter. The
 delegation stream carries bounded tasks, progress, checkpoints, and evidence,
 not provider credentials.
 
+### Local worker sidecar
+
+Add a typed gRPC transport between a local ProtoMolt sidecar and its coding
+worker. The sidecar should own coordinator TLS, workload identity, reconnect,
+cursor persistence, and transcript writes. The worker should expose only a
+bounded task-scoped workspace execution API on a private local endpoint.
+
+Do not use a host Docker socket or a Kubernetes administrative credential as
+the execution protocol. Image builds should go through an explicitly enabled
+rootless or remote builder with separate credentials and policy.
+
 ## Retrieval and metadata
 
 ### Retrieval evidence

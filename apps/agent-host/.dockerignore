@@ -1,0 +1,9 @@
+**
+!Dockerfile
+!Dockerfile.workers
+!build/
+build/**
+!build/install/
+build/install/**
+!build/install/protomolt-agent-host/
+!build/install/protomolt-agent-host/**
