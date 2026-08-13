@@ -31,24 +31,38 @@ services:
     # 32 GiB card, so DFlash stays an opt-in two-GPU experiment through
     # GLIMMER_SPECULATIVE_CONFIG (see README.md). CPU offload and swap stay
     # at zero: inference is GPU-only with no CPU fallback.
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: ["/bin/bash", "-lc"]
     command:
       - >-
-        exec python3 -m vllm.entrypoints.openai.api_server
-        --model=${GLIMMER_MODEL_PATH:-/models/Muse-Glimmer-30B}
+        source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1;
+        exec vllm serve ${GLIMMER_MODEL_PATH:-/models/Muse-Glimmer-30B}
         --served-model-name=${GLIMMER_SERVED_NAME:-muse-glimmer-30b}
         --host=0.0.0.0
         --port=8011
         --quantization=fp8
+        --dtype=float16
+        --mamba-ssm-cache-dtype=float16
+        --block-size=64
         --cpu-offload-gb=0
         --swap-space=0
         --max-model-len=${GLIMMER_MAX_MODEL_LEN:-4096}
-        --limit-mm-per-prompt=image=0,video=0
+        --max-num-batched-tokens=${GLIMMER_MAX_BATCHED_TOKENS:-4096}
+        --max-num-seqs=${GLIMMER_MAX_NUM_SEQS:-1}
+        --gpu-memory-utilization=${GLIMMER_GPU_MEMORY_UTILIZATION:-0.98}
         --tensor-parallel-size=1
+        --attention-backend=FLASH_ATTN
+        --chat-template=${GLIMMER_MODEL_PATH:-/models/Muse-Glimmer-30B}/chat_template.jinja
+        --limit-mm-per-prompt "$${LIMIT_MM_PER_PROMPT}"
+        --enforce-eager
+        --no-enable-prefix-caching
+        --trust-remote-code
         $${GLIMMER_SPECULATIVE_CONFIG:+--speculative-config '$${GLIMMER_SPECULATIVE_CONFIG}'}
     environment:
       ONEAPI_DEVICE_SELECTOR: ${GLIMMER_DEVICE_SELECTOR:-level_zero:0}
       HF_HUB_OFFLINE: ${GLIMMER_HF_HUB_OFFLINE:-1}
+      VLLM_WORKER_MULTIPROC_METHOD: spawn
+      VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT: "1"
+      LIMIT_MM_PER_PROMPT: '{"image":0,"video":0}'
       GLIMMER_SPECULATIVE_CONFIG: ${GLIMMER_SPECULATIVE_CONFIG:-}
     devices:
       # Explicit Intel GPU mapping: the single B70 render nodes, nothing else.

@@ -33,14 +33,36 @@ printf '%s' "$text" | grep -q 'GLIMMER_SERVED_NAME:-muse-glimmer-30b' \
   || fail "served name must default to muse-glimmer-30b"
 
 say "single-B70 baseline: no CPU offload, 4096 context, text-only"
+printf '%s' "$text" | grep -q 'source /opt/intel/oneapi/setvars.sh --force' \
+  || fail "oneAPI environment initialization must match the verified launch"
+printf '%s' "$text" | grep -q -- '--dtype=float16' \
+  || fail "model dtype must stay float16"
+printf '%s' "$text" | grep -q -- '--mamba-ssm-cache-dtype=float16' \
+  || fail "mamba cache dtype must stay float16"
+printf '%s' "$text" | grep -q -- '--block-size=64' \
+  || fail "KV block size must stay 64"
 printf '%s' "$text" | grep -q -- '--cpu-offload-gb=0' \
   || fail "cpu-offload-gb must stay zero"
 printf '%s' "$text" | grep -q -- '--swap-space=0' \
   || fail "swap-space must stay zero"
 printf '%s' "$text" | grep -q 'GLIMMER_MAX_MODEL_LEN:-4096' \
   || fail "context baseline must default to 4096"
-printf '%s' "$text" | grep -q -- '--limit-mm-per-prompt=image=0,video=0' \
+printf '%s' "$text" | grep -q 'GLIMMER_MAX_BATCHED_TOKENS:-4096' \
+  || fail "batch token baseline must default to 4096"
+printf '%s' "$text" | grep -q 'GLIMMER_MAX_NUM_SEQS:-1' \
+  || fail "sequence concurrency must default to one"
+printf '%s' "$text" | grep -q 'GLIMMER_GPU_MEMORY_UTILIZATION:-0.98' \
+  || fail "GPU memory utilization must default to the verified 0.98"
+printf '%s' "$text" | grep -q 'LIMIT_MM_PER_PROMPT.*image.*0.*video.*0' \
   || fail "text-only mode must disable both image and video prompts"
+printf '%s' "$text" | grep -q -- '--attention-backend=FLASH_ATTN' \
+  || fail "verified launch must use the Flash Attention backend"
+printf '%s' "$text" | grep -q -- '--enforce-eager' \
+  || fail "verified launch must enforce eager execution"
+printf '%s' "$text" | grep -q -- '--no-enable-prefix-caching' \
+  || fail "prefix caching must stay disabled on the verified baseline"
+printf '%s' "$text" | grep -q -- '--trust-remote-code' \
+  || fail "verified launch must retain remote model code support"
 
 say "dflash is opt-in only, never a default"
 printf '%s' "$text" | grep -q 'GLIMMER_SPECULATIVE_CONFIG:+--speculative-config' \

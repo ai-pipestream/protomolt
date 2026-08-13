@@ -13,6 +13,10 @@ worker on the krick-1 workstation beside the existing Kimi worker:
   `/dev/dri/by-path` bind that oneCCL initialization needs. The baseline is
   text-only (`--limit-mm-per-prompt=image=0,video=0`) with a 4096 context;
   larger contexts are opt-in through `GLIMMER_MAX_MODEL_LEN`.
+  The launch also pins float16 model and Mamba cache dtypes, a 64-token KV
+  block, one concurrent sequence, 4096 batched tokens, 98 percent GPU memory
+  utilization, Flash Attention, and eager execution. These are the settings
+  exercised by the live single-B70 service.
   `--cpu-offload-gb` and `--swap-space` stay at zero: inference is GPU-only
   and there is no CPU model offload or fallback.
 - `kimi-worker` is the existing Kimi delegation worker. Kimi authentication
@@ -51,6 +55,9 @@ future transport work and are not configured here.
 | `GLIMMER_SERVED_NAME` | `muse-glimmer-30b` | served model id, also passed to the Glimmer worker |
 | `GLIMMER_HOST_PORT` | `8011` | loopback host port for the sidecar |
 | `GLIMMER_MAX_MODEL_LEN` | `4096` | verified context baseline; larger values are opt-in |
+| `GLIMMER_MAX_BATCHED_TOKENS` | `4096` | verified batch-token limit |
+| `GLIMMER_MAX_NUM_SEQS` | `1` | verified single-request concurrency baseline |
+| `GLIMMER_GPU_MEMORY_UTILIZATION` | `0.98` | verified fraction of B70 memory available to vLLM |
 | `GLIMMER_SPECULATIVE_CONFIG` | empty (disabled) | opt-in DFlash experiment, see below |
 | `GLIMMER_DEVICE_SELECTOR` | `level_zero:0` | the single B70 for inference |
 | `GLIMMER_HF_HUB_OFFLINE` | `1` | serve only from the local artifacts |
