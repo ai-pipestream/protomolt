@@ -185,6 +185,6 @@ echo '{"samples": [{"name": "x", "n": 1}]}' | docker run --rm -i ghcr.io/ai-pipe
 ```
 
 Persistent software agents use the language-specific
-[`protomolt-worker-java` and `protomolt-worker-cpp` images](../../deploy/workers/README.md).
+[`protomolt-worker-java` and `protomolt-worker-cpp` images](coding-workers.md).
 They share the agent host, gRPC tooling, Node, Bun, and uv, while keeping the
 large Java and C++ compiler stacks in separate images.

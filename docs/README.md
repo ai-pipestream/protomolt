@@ -62,7 +62,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Agent host](apps/agent-host.md): attach resumable Codex and Kimi processes to delegation
 - [Task console](apps/task-console.md): inspect and guide durable multi-agent tasks in a browser
 - [Docker](apps/docker.md): container images and Compose setup
-- [Coding worker images](../deploy/workers/README.md): Java and C++ agent toolchains
+- [Coding workers](apps/coding-workers.md): Java and C++ agent environments, state, credentials, and transport boundaries
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
 - [Outbound gRPC policy](operations/grpc-channel-policy.md): target, transport, deadline, and concurrency limits
 

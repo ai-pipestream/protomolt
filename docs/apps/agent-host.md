@@ -39,6 +39,11 @@ through a mount; provider authentication is always mounted, never baked in.
 that runs one Kimi worker and one Codex coordinator from that image, plus the
 exact host-Java commands for the same two agents.
 
+Persistent coding workers can instead use the language-specific Java and C++
+images. They add compilers, build systems, gRPC generators, and common agent
+tools while preserving the same agent-host entrypoint and provider behavior.
+See [Coding workers](coding-workers.md) for the image and security boundaries.
+
 ## Kimi worker
 
 Kimi runs as one long-lived `kimi acp` child process. Its ACP session id is
