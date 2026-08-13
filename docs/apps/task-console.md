@@ -24,8 +24,8 @@ export PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS=43200
 
 The token must contain 32 to 1024 characters. Session lifetime must be from
 one second through seven days. The login endpoint exchanges the token for a
-random HttpOnly, Secure, SameSite=Strict cookie. The token is not placed in a
-URL, command-line option, browser storage, or task transcript.
+random `__Host-` scoped, HttpOnly, Secure, SameSite=Strict cookie. The token is
+not placed in a URL, command-line option, browser storage, or task transcript.
 Serve the login through HTTPS so browsers accept the Secure cookie.
 
 The console login is separate from `PROTOMOLT_API_TOKEN`. When the process API

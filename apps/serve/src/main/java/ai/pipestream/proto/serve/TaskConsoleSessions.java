@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Scoped browser sessions for the task console. */
 final class TaskConsoleSessions {
 
-    static final String COOKIE = "protomolt_task_session";
+    static final String COOKIE = "__Host-protomolt_task_session";
 
     private final byte[] loginDigest;
     private final Duration ttl;

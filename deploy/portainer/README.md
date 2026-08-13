@@ -88,7 +88,7 @@ rotate it only by retiring the old transcript object.
 The task console is available at
 `https://protomolt.rokkon.com/console/tasks`. Its login token is deliberately
 different from `PROTOMOLT_API_TOKEN`. A successful login creates an
-HttpOnly, Secure, SameSite=Strict cookie held in the serve process. Browser
+`__Host-` scoped, HttpOnly, Secure, SameSite=Strict cookie held in the serve process. Browser
 JavaScript can reach only the task, worker, transcript, and task-message API.
 The general registry and serve proxies remain disabled while the coordinator
 uses its process API token. Restarting serve invalidates browser sessions but
