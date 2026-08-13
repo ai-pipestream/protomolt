@@ -132,6 +132,10 @@ final class AgentHost implements AutoCloseable {
     /** Performs one long poll and one model turn when the batch has relevant events. */
     boolean pollOnce() {
         if (state.pending() != null) {
+            // A command remains pending across process and coordinator restarts. Re-establish
+            // the worker stream before retrying it so durable-before-visible execution does
+            // not depend on the stream that existed when the command was produced.
+            connect();
             executePending();
             return true;
         }

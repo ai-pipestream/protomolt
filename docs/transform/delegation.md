@@ -151,6 +151,12 @@ consumed but the coordinator never recorded is legitimately re-sent under its
 original sequence. A second registration while the current stream is still
 live fails fast, because two live senders would race the scopes.
 
+Restored workers remain visible in the worker directory as admitted and
+disconnected. Agent hosts use that state to re-register before retrying a
+durable pending command. If the coordinator rejects a worker frame, the MCP
+call fails, the directory changes to disconnected, and the rejected frame
+does not advance the transcript or the host's pending-command position.
+
 `DelegationWorker` opens a replacement stream by calling `start()` again
 after the stream terminates. Its per-scope sequence counters live on the
 worker instance, so the re-hello and every later frame continue the recorded

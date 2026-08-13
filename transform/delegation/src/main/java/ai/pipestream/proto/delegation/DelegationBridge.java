@@ -365,6 +365,13 @@ public final class DelegationBridge implements AutoCloseable {
             DelegationValidation.validate(frame);
             sequences.put(scope(taskId, attempt), seq);
             requests.onNext(frame);
+            if (failure != null) {
+                throw new IllegalStateException("worker stream failed for " + workerId
+                        + ": " + failureMessage(failure));
+            }
+            if (!open) {
+                throw new IllegalStateException("worker stream is closed: " + workerId);
+            }
         }
 
         private synchronized void complete() {
