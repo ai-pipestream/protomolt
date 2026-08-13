@@ -55,8 +55,16 @@ class OpenAiAgentProviderTest {
         assertThat(requests).hasSize(1);
         JsonNode body = requests.get(0);
         assertThat(body.path("model").asText()).isEqualTo(MODEL);
-        assertThat(body.path("response_format").path("type").asText())
-                .isEqualTo("json_object");
+        JsonNode responseFormat = body.path("response_format");
+        assertThat(responseFormat.path("type").asText()).isEqualTo("json_schema");
+        assertThat(responseFormat.path("json_schema").path("name").asText())
+                .isEqualTo("protomolt_agent_turn");
+        assertThat(responseFormat.path("json_schema").path("strict").asBoolean())
+                .isTrue();
+        JsonNode schema = responseFormat.path("json_schema").path("schema");
+        assertThat(schema.path("additionalProperties").asBoolean()).isFalse();
+        assertThat(schema.path("properties").path("handledEventCursors").path("type")
+                .asText()).isEqualTo("array");
         assertThat(body.path("messages")).hasSize(1);
         assertThat(body.path("messages").path(0).path("role").asText()).isEqualTo("user");
         assertThat(body.path("messages").path(0).path("content").asText())
@@ -125,18 +133,21 @@ class OpenAiAgentProviderTest {
     @Test
     void endpointAndModelValidationIsStrict() {
         try (OpenAiAgentProvider ignored = new OpenAiAgentProvider(
-                URI.create("http://127.0.0.1:8011/v1"), MODEL, "", Duration.ofMinutes(5))) {
+                URI.create("http://127.0.0.1:8011/v1"), MODEL, AgentRole.WORKER,
+                "", Duration.ofMinutes(5))) {
             assertThat(ignored.sessionId()).startsWith("openai-");
         }
         assertThatThrownBy(() -> new OpenAiAgentProvider(
-                URI.create("ftp://127.0.0.1/v1"), MODEL, "", Duration.ofMinutes(5)))
+                URI.create("ftp://127.0.0.1/v1"), MODEL, AgentRole.WORKER,
+                "", Duration.ofMinutes(5)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new OpenAiAgentProvider(
-                URI.create("http://user:pass@127.0.0.1/v1"), MODEL, "",
+                URI.create("http://user:pass@127.0.0.1/v1"), MODEL, AgentRole.WORKER, "",
                 Duration.ofMinutes(5)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new OpenAiAgentProvider(
-                URI.create("http://127.0.0.1/v1"), "  ", "", Duration.ofMinutes(5)))
+                URI.create("http://127.0.0.1/v1"), "  ", AgentRole.WORKER,
+                "", Duration.ofMinutes(5)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -179,7 +190,7 @@ class OpenAiAgentProviderTest {
     private OpenAiAgentProvider provider() {
         return new OpenAiAgentProvider(
                 URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"),
-                MODEL, "", Duration.ofMinutes(5));
+                MODEL, AgentRole.WORKER, "", Duration.ofMinutes(5));
     }
 
     private void start() throws IOException {

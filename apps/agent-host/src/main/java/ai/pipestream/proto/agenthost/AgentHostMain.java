@@ -74,7 +74,8 @@ public final class AgentHostMain {
                     state.providerSessionId(), options.role(), List.of("codex"),
                     options.model(), options.turnTimeout());
             case "openai" -> new OpenAiAgentProvider(options.providerEndpoint(),
-                    options.model(), state.providerSessionId(), options.turnTimeout());
+                    options.model(), options.role(), state.providerSessionId(),
+                    options.turnTimeout());
             default -> throw new IllegalArgumentException(
                     "provider must be 'kimi', 'codex', or 'openai'");
         };
