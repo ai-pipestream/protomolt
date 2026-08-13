@@ -170,6 +170,69 @@ class AgentHostAcceptanceTest {
     }
 
     @Test
+    void reboundProviderSessionKeepsTheCursorAndSkipsProcessedEvents() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("rebind-workspace"));
+        Path workerState = temporary.resolve("rebind-state/kimi.json");
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0))) {
+            URI endpoint = URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp");
+            AcceptThenProgressProvider first =
+                    new AcceptThenProgressProvider("kimi-session-old");
+            AgentHost worker = host(endpoint, AgentRole.WORKER, WORKER, "kimi",
+                    workerState, workspace, first);
+            try (worker; McpHttpClient coordinator = new McpHttpClient(endpoint,
+                    () -> null)) {
+                worker.connect();
+                ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+                spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+                coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                        .put("workerId", WORKER).put("taskId", TASK)
+                        .put("leaseSeconds", 300).set("spec", spec));
+                assertThat(worker.pollOnce()).isTrue();
+                assertThat(first.prompts).isEqualTo(1);
+                long savedCursor = worker.state().cursor();
+                assertThat(savedCursor).isPositive();
+                assertThat(worker.state().providerSessionId()).isEqualTo("kimi-session-old");
+                worker.close();
+
+                // A restart rebinds a fresh Kimi provider session; the durable ProtoMolt
+                // state survives with only the provider session id replaced.
+                AcceptThenProgressProvider rebound =
+                        new AcceptThenProgressProvider("kimi-session-fresh");
+                AgentHost resumed = host(endpoint, AgentRole.WORKER, WORKER, "kimi",
+                        workerState, workspace, rebound);
+                try (resumed) {
+                    assertThat(resumed.state().cursor()).isEqualTo(savedCursor);
+                    assertThat(resumed.state().providerSessionId())
+                            .isEqualTo("kimi-session-fresh");
+
+                    // The retained cursor keeps the processed offer out of later batches:
+                    // the only newer event is the worker's own accept, which is not
+                    // relevant to the worker, so no model turn runs and the offer is
+                    // never processed twice.
+                    assertThat(resumed.pollOnce()).isTrue();
+                    assertThat(rebound.prompts).isZero();
+
+                    coordinator.callTool("delegation-message", MAPPER.createObjectNode()
+                            .put("taskId", TASK).put("sender", "coordinator")
+                            .put("recipient", WORKER)
+                            .put("kind", "TASK_MESSAGE_KIND_GUIDANCE")
+                            .put("text", "continue with the bounded implementation"));
+                    assertThat(resumed.pollOnce()).isTrue();
+                    assertThat(rebound.prompts).isEqualTo(1);
+                    assertThat(resumed.state().cursor()).isGreaterThan(savedCursor);
+
+                    ObjectNode transcript = coordinator.callTool("delegation-transcript",
+                            MAPPER.createObjectNode().put("taskId", TASK)
+                                    .put("maxEntries", 100));
+                    assertThat(payloadKinds(transcript).stream()
+                            .filter("accept"::equals).count()).isEqualTo(1);
+                }
+            }
+        }
+    }
+
+    @Test
     void coordinatorCannotAcknowledgeAwayAnAccept() throws Exception {
         Path workspace = Files.createDirectory(temporary.resolve("step-workspace"));
         Path coordinatorState = temporary.resolve("step-state/coordinator.json");
@@ -575,6 +638,57 @@ class AgentHostAcceptanceTest {
             } catch (Exception e) {
                 throw new AgentHostException(
                         "guidance-then-ack provider could not read packet", e);
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class AcceptThenProgressProvider implements AgentProvider {
+        private final String session;
+        private int prompts;
+
+        private AcceptThenProgressProvider(String session) {
+            this.session = session;
+        }
+
+        @Override
+        public String name() {
+            return "kimi";
+        }
+
+        @Override
+        public String sessionId() {
+            return session;
+        }
+
+        @Override
+        public String prompt(String value) {
+            prompts++;
+            try {
+                ObjectNode packet = (ObjectNode) MAPPER.readTree(
+                        value.substring(value.lastIndexOf("Packet:\n") + 8));
+                StringBuilder cursors = new StringBuilder();
+                for (JsonNode event : packet.path("events")) {
+                    if (cursors.length() > 0) {
+                        cursors.append(',');
+                    }
+                    cursors.append(event.path("cursor").asLong());
+                }
+                if (ScriptedProvider.hasPayload(packet, "offer")) {
+                    return "{\"handledEventCursors\":[" + cursors + "],\"commands\":[{"
+                            + "\"tool\":\"delegation-accept\",\"arguments\":{"
+                            + "\"taskId\":\"" + TASK + "\",\"attempt\":1}}]}";
+                }
+                return "{\"handledEventCursors\":[" + cursors + "],\"commands\":[{"
+                        + "\"tool\":\"delegation-progress\",\"arguments\":{"
+                        + "\"taskId\":\"" + TASK + "\",\"attempt\":1,"
+                        + "\"message\":\"continued on the rebound session\"}}]}";
+            } catch (Exception e) {
+                throw new AgentHostException(
+                        "accept-then-progress provider could not read packet", e);
             }
         }
 
