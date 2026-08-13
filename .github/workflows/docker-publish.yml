@@ -1,13 +1,15 @@
 # Publishes the protomolt-serve (JVM), protomolt-repo-service (JVM), and
-# protomolt-cli (GraalVM native) container images to GHCR.
+# protomolt-cli (GraalVM native), and language-specific coding worker images
+# to GHCR.
 #
 # Called from the release workflow with the released version (tagged semver +
 # latest), or dispatched manually to publish `edge` from the chosen ref.
 #
 # protomolt-cli is multi-arch (linux/amd64 + linux/arm64): native-image does not
 # cross-compile, so each architecture builds on a matching runner and a manifest
-# job stitches the arch tags into the user-facing tag. protomolt-serve is a JVM
-# image and stays amd64-only until someone asks for more.
+# job stitches the arch tags into the user-facing tag. The worker images use
+# the same native-runner pattern. protomolt-serve is a JVM image and stays
+# amd64-only until someone asks for more.
 name: Docker Publish
 
 on:
@@ -65,8 +67,12 @@ jobs:
           npm ci
           npm run build
 
-      - name: Build the serve distribution
-        run: ./gradlew :protomolt-serve:installDist :protomolt-repo-service:installDist --no-daemon
+      - name: Build the JVM distributions
+        run: >
+          ./gradlew :protomolt-serve:installDist
+          :protomolt-repo-service:installDist
+          :protomolt-agent-host:installDist
+          --no-daemon
 
       - name: Build the native CLI (amd64)
         run: ./gradlew :protomolt-cli:nativeCompile --no-daemon
@@ -85,10 +91,14 @@ jobs:
             echo "serve-tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:${{ inputs.version }},ghcr.io/${{ github.repository_owner }}/protomolt-serve:latest" >> "$GITHUB_OUTPUT"
             echo "repo-tags=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:${{ inputs.version }},ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:latest" >> "$GITHUB_OUTPUT"
             echo "cli-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-cli:${{ inputs.version }}-amd64" >> "$GITHUB_OUTPUT"
+            echo "worker-java-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-java:${{ inputs.version }}-amd64" >> "$GITHUB_OUTPUT"
+            echo "worker-cpp-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-cpp:${{ inputs.version }}-amd64" >> "$GITHUB_OUTPUT"
           else
             echo "serve-tags=ghcr.io/${{ github.repository_owner }}/protomolt-serve:edge" >> "$GITHUB_OUTPUT"
             echo "repo-tags=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:edge" >> "$GITHUB_OUTPUT"
             echo "cli-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-cli:edge-amd64" >> "$GITHUB_OUTPUT"
+            echo "worker-java-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-java:edge-amd64" >> "$GITHUB_OUTPUT"
+            echo "worker-cpp-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-cpp:edge-amd64" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push protomolt-serve
@@ -126,6 +136,36 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=ProtoMolt CLI as a GraalVM native binary: any catalog verb from the terminal, JSON in and out
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
+
+      - name: Build and push protomolt-worker-java (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/agent-host
+          file: apps/agent-host/Dockerfile.workers
+          target: java
+          push: true
+          tags: ${{ steps.tags.outputs.worker-java-arch-tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ProtoMolt Java coding worker with JDK 21, 25, 26, GraalVM, SDKMAN, and gRPC tools
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
+
+      - name: Build and push protomolt-worker-cpp (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/agent-host
+          file: apps/agent-host/Dockerfile.workers
+          target: cpp
+          push: true
+          tags: ${{ steps.tags.outputs.worker-cpp-arch-tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ProtoMolt C++ coding worker with GCC, Clang, CMake, Conan, and gRPC tools
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
@@ -187,6 +227,73 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
 
+  publish-workers-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version != '' && inputs.version != null && format('v{0}', inputs.version) || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the agent-host distribution
+        run: ./gradlew :protomolt-agent-host:installDist --no-daemon
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve worker arch tags
+        id: tags
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "worker-java-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-java:${{ inputs.version }}-arm64" >> "$GITHUB_OUTPUT"
+            echo "worker-cpp-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-cpp:${{ inputs.version }}-arm64" >> "$GITHUB_OUTPUT"
+          else
+            echo "worker-java-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-java:edge-arm64" >> "$GITHUB_OUTPUT"
+            echo "worker-cpp-arch-tag=ghcr.io/${{ github.repository_owner }}/protomolt-worker-cpp:edge-arm64" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push protomolt-worker-java (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/agent-host
+          file: apps/agent-host/Dockerfile.workers
+          target: java
+          push: true
+          tags: ${{ steps.tags.outputs.worker-java-arch-tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ProtoMolt Java coding worker with JDK 21, 25, 26, GraalVM, SDKMAN, and gRPC tools
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
+
+      - name: Build and push protomolt-worker-cpp (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/agent-host
+          file: apps/agent-host/Dockerfile.workers
+          target: cpp
+          push: true
+          tags: ${{ steps.tags.outputs.worker-cpp-arch-tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ProtoMolt C++ coding worker with GCC, Clang, CMake, Conan, and gRPC tools
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
+
   # Stitch the per-arch images into the user-facing multi-arch tag.
   cli-manifest:
     needs: [publish, publish-cli-arm64]
@@ -214,4 +321,41 @@ jobs:
               -t ghcr.io/$OWNER/protomolt-cli:edge \
               ghcr.io/$OWNER/protomolt-cli:edge-amd64 \
               ghcr.io/$OWNER/protomolt-cli:edge-arm64
+          fi
+
+  worker-manifests:
+    needs: [publish, publish-workers-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push the multi-arch worker manifests
+        run: |
+          OWNER=${{ github.repository_owner }}
+          if [ -n "${{ inputs.version }}" ]; then
+            V=${{ inputs.version }}
+            docker buildx imagetools create \
+              -t ghcr.io/$OWNER/protomolt-worker-java:$V \
+              -t ghcr.io/$OWNER/protomolt-worker-java:latest \
+              ghcr.io/$OWNER/protomolt-worker-java:$V-amd64 \
+              ghcr.io/$OWNER/protomolt-worker-java:$V-arm64
+            docker buildx imagetools create \
+              -t ghcr.io/$OWNER/protomolt-worker-cpp:$V \
+              -t ghcr.io/$OWNER/protomolt-worker-cpp:latest \
+              ghcr.io/$OWNER/protomolt-worker-cpp:$V-amd64 \
+              ghcr.io/$OWNER/protomolt-worker-cpp:$V-arm64
+          else
+            docker buildx imagetools create \
+              -t ghcr.io/$OWNER/protomolt-worker-java:edge \
+              ghcr.io/$OWNER/protomolt-worker-java:edge-amd64 \
+              ghcr.io/$OWNER/protomolt-worker-java:edge-arm64
+            docker buildx imagetools create \
+              -t ghcr.io/$OWNER/protomolt-worker-cpp:edge \
+              ghcr.io/$OWNER/protomolt-worker-cpp:edge-amd64 \
+              ghcr.io/$OWNER/protomolt-worker-cpp:edge-arm64
           fi

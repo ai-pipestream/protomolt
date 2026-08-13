@@ -86,6 +86,7 @@ pairs = [
     ("apps/serve/Dockerfile", "build/install/protomolt-serve", "apps/serve/build.gradle", "protomolt-serve"),
     ("repo/service/Dockerfile", "build/install/protomolt-repo-service", "repo/service/build.gradle", "protomolt-repo-service"),
     ("apps/agent-host/Dockerfile", "build/install/protomolt-agent-host", "apps/agent-host/build.gradle", "protomolt-agent-host"),
+    ("apps/agent-host/Dockerfile.workers", "build/install/protomolt-agent-host", "apps/agent-host/build.gradle", "protomolt-agent-host"),
 ]
 for dockerfile, copy_source, gradle_file, distribution in pairs:
     text = open(dockerfile).read()
@@ -107,6 +108,24 @@ if "chmod 755 /home/protomolt" not in agent_host:
     print("agent-host image home must be readable by provider file watchers")
     sys.exit(1)
 print("agent-host image home is readable by provider file watchers")
+
+workers = open("apps/agent-host/Dockerfile.workers").read()
+for target in ["common", "java", "cpp"]:
+    if " AS %s" % target not in workers:
+        print("worker Dockerfile is missing target", target)
+        sys.exit(1)
+for tool in ["buf", "bun", "docker", "grpcurl", "protoc", "uv"]:
+    if tool not in workers:
+        print("worker Dockerfile is missing common tool", tool)
+        sys.exit(1)
+for version in ["21.0.12-tem", "25.0.4-tem", "26.0.2-tem", "25.2.4-graalce"]:
+    if version not in workers:
+        print("worker Java target is missing SDKMAN candidate", version)
+        sys.exit(1)
+if "protobuf-compiler-grpc" not in workers or "protoc-gen-grpc-java" not in workers:
+    print("worker language targets must carry their gRPC generators")
+    sys.exit(1)
+print("worker images carry common gRPC tools and pinned Java SDKs")
 PYEOF
 
 say "no em dashes in authored deployment files"
@@ -114,8 +133,10 @@ python3 - <<'PYEOF'
 import glob, sys
 paths = []
 for pattern in ["deploy/krick/*", "deploy/portainer/*",
+                "deploy/workers/*",
                 "scripts/agent-host-live.sh", "scripts/check-deployment-statics.sh",
-                "repo/service/Dockerfile", "apps/agent-host/Dockerfile"]:
+                "repo/service/Dockerfile", "apps/agent-host/Dockerfile",
+                "apps/agent-host/Dockerfile.workers"]:
     paths.extend(p for p in glob.glob(pattern) if not p.endswith("/"))
 bad = []
 for path in paths:
