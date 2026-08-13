@@ -1,9 +1,9 @@
 # Agent host
 
-`protomolt-agent-host` keeps a Codex or Kimi process attached to the delegation
-tools on a ProtoMolt server. The server remains the coordinator and transcript
-authority. The host owns the model process, local workspace, MCP cursor, and
-provider session.
+`protomolt-agent-host` keeps a Codex process, a Kimi process, or a local
+OpenAI-compatible model attached to the delegation tools on a ProtoMolt
+server. The server remains the coordinator and transcript authority. The host
+owns the model process, local workspace, MCP cursor, and provider session.
 
 The host long-polls `/mcp` over a pooled HTTP/2 client. A model receives only
 events relevant to its role and must return a JSON command batch. The host
@@ -93,6 +93,38 @@ The objective file is input, not a credential. Provider authentication stays
 in the normal Codex and Kimi configuration directories. The MCP bearer token
 is read from the environment named by `--token-env`; token material is not
 accepted as a command-line option or written to host state.
+
+## OpenAI-compatible local worker
+
+`--provider openai` attaches a local OpenAI-compatible chat-completions
+endpoint, such as an Intel llm-scaler-vllm sidecar on the same machine. This
+provider requires `--provider-endpoint` with the server base URL and `--model`
+with the served model id; both options are rejected for the Kimi and Codex
+providers.
+
+```shell
+apps/agent-host/build/install/protomolt-agent-host/bin/protomolt-agent-host \
+  --endpoint https://protomolt.rokkon.com/mcp \
+  --role worker \
+  --identity glimmer-worker \
+  --provider openai \
+  --provider-endpoint http://127.0.0.1:8011/v1 \
+  --model muse-glimmer-30b \
+  --workspace /work/worktrees/protomolt/glimmer \
+  --state /var/lib/protomolt/agents/glimmer-worker.json \
+  --token-env PROTOMOLT_MCP_TOKEN
+```
+
+The provider posts each turn to `<base>/chat/completions` with a JSON object
+response request, so the host-side closed command schema still validates
+every reply and a malformed reply gets the same single repair turn as the
+process providers. A bounded in-memory conversation lets the repair turn see
+the rejected answer. The client sends no bearer credential and no arbitrary
+headers, which matches a loopback sidecar; endpoint response bodies are never
+copied into error messages.
+
+[deploy/krick-1/](../../deploy/krick-1/README.md) runs a Muse Glimmer sidecar
+and one worker per provider on the krick-1 workstation.
 
 ## Recovery
 

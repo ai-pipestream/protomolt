@@ -73,7 +73,10 @@ public final class AgentHostMain {
             case "codex" -> new CodexAgentProvider(options.workspace(), options.state(),
                     state.providerSessionId(), options.role(), List.of("codex"),
                     options.model(), options.turnTimeout());
-            default -> throw new IllegalArgumentException("provider must be 'kimi' or 'codex'");
+            case "openai" -> new OpenAiAgentProvider(options.providerEndpoint(),
+                    options.model(), state.providerSessionId(), options.turnTimeout());
+            default -> throw new IllegalArgumentException(
+                    "provider must be 'kimi', 'codex', or 'openai'");
         };
     }
 
@@ -81,7 +84,7 @@ public final class AgentHostMain {
                    String model, Path workspace, Path state, String tokenEnvironment,
                    Path bootstrap, Duration pollTimeout, Duration turnTimeout,
                    int maxEvents, AcpClient.PermissionPolicy permissionPolicy,
-                   boolean once) {
+                   URI providerEndpoint, boolean once) {
 
         static Options parse(String[] args) {
             String endpoint = environment("PROTOMOLT_AGENT_MCP_ENDPOINT");
@@ -93,6 +96,7 @@ public final class AgentHostMain {
             String state = environment("PROTOMOLT_AGENT_STATE");
             String tokenEnvironment = environment("PROTOMOLT_AGENT_TOKEN_ENV");
             String bootstrap = environment("PROTOMOLT_AGENT_BOOTSTRAP");
+            String providerEndpoint = environment("PROTOMOLT_AGENT_PROVIDER_ENDPOINT");
             long pollSeconds = 30;
             long turnMinutes = 30;
             int maxEvents = 64;
@@ -110,6 +114,7 @@ public final class AgentHostMain {
                     case "--state" -> state = value(args, ++i);
                     case "--token-env" -> tokenEnvironment = value(args, ++i);
                     case "--bootstrap" -> bootstrap = value(args, ++i);
+                    case "--provider-endpoint" -> providerEndpoint = value(args, ++i);
                     case "--poll-seconds" -> pollSeconds = positiveLong(
                             value(args, ++i), "--poll-seconds");
                     case "--turn-minutes" -> turnMinutes = positiveLong(
@@ -149,6 +154,21 @@ public final class AgentHostMain {
             if (maxEvents > 256) {
                 throw new IllegalArgumentException("max events must be at most 256");
             }
+            URI providerEndpointUri = null;
+            if ("openai".equals(normalizedProvider)) {
+                if (providerEndpoint == null || providerEndpoint.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "--provider-endpoint is required with --provider openai");
+                }
+                if (model == null || model.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "--model is required with --provider openai");
+                }
+                providerEndpointUri = URI.create(providerEndpoint);
+            } else if (providerEndpoint != null && !providerEndpoint.isBlank()) {
+                throw new IllegalArgumentException(
+                        "--provider-endpoint is valid only with --provider openai");
+            }
             Path bootstrapPath = bootstrap == null ? null
                     : Path.of(bootstrap).toAbsolutePath().normalize();
             if (bootstrapPath != null && parsedRole != AgentRole.COORDINATOR) {
@@ -159,14 +179,16 @@ public final class AgentHostMain {
                     normalizedProvider, model, workspacePath,
                     Path.of(state).toAbsolutePath().normalize(), tokenEnvironment,
                     bootstrapPath, Duration.ofSeconds(pollSeconds),
-                    Duration.ofMinutes(turnMinutes), maxEvents, permissionPolicy, once);
+                    Duration.ofMinutes(turnMinutes), maxEvents, permissionPolicy,
+                    providerEndpointUri, once);
         }
 
         static String usage() {
             return "Usage: protomolt-agent-host --endpoint <https://host/mcp> "
                     + "--role <worker|coordinator> --identity <id> "
-                    + "--provider <kimi|codex> --workspace <dir> --state <file> "
-                    + "[--model <name>] [--token-env <ENV_NAME>] "
+                    + "--provider <kimi|codex|openai> --workspace <dir> --state <file> "
+                    + "[--model <name>] [--provider-endpoint <http://host:port/v1>] "
+                    + "[--token-env <ENV_NAME>] "
                     + "[--bootstrap <objective-file>] [--acp-permissions "
                     + "<allow-single|reject>]";
         }

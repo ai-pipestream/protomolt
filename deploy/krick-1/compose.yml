@@ -1,0 +1,160 @@
+# Persistent delegation workers and the Muse Glimmer sidecar for the krick-1
+# workstation. The stack runs a pinned Intel llm-scaler-vllm derivative serving
+# the verified local Muse Glimmer artifacts on one B70, a Kimi worker with
+# host Kimi auth, and a Glimmer worker that reaches the model over the Compose
+# network. The pipeline-ovms service on host ports 9000 and 9002 is not
+# managed by this stack; it is currently stopped with user approval to free
+# the B70.
+#
+#   ./gradlew :protomolt-agent-host:installDist
+#   docker compose -f deploy/krick-1/compose.yml build
+#   docker compose -f deploy/krick-1/compose.yml up -d
+#   docker compose -f deploy/krick-1/compose.yml logs -f
+#
+# Variable interpolation reads a .env file next to this compose file. Put
+# PROTOMOLT_MCP_TOKEN there (it is gitignored) or export it in the shell.
+# Kimi authentication is never part of this file: the container mounts the
+# host's ~/.kimi-code directory. The Glimmer sidecar publishes on the host
+# loopback only and takes no credential; see README.md for the Tailscale
+# Serve forwarding command and the transport work that remains.
+name: protomolt-krick-1
+
+services:
+  glimmer-vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.glimmer-vllm
+    image: ${GLIMMER_VLLM_IMAGE:-protomolt-glimmer-vllm:0.21.0-b3-transformers-5.15.0}
+    container_name: protomolt-glimmer-vllm
+    # Single B70 default: online FP8, text-only, 4096 context baseline, no
+    # speculative decoding. One FP8 main plus one FP8 assistant exceeds the
+    # 32 GiB card, so DFlash stays an opt-in two-GPU experiment through
+    # GLIMMER_SPECULATIVE_CONFIG (see README.md). CPU offload and swap stay
+    # at zero: inference is GPU-only with no CPU fallback.
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >-
+        source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1;
+        exec vllm serve ${GLIMMER_MODEL_PATH:-/models/Muse-Glimmer-30B}
+        --served-model-name=${GLIMMER_SERVED_NAME:-muse-glimmer-30b}
+        --host=0.0.0.0
+        --port=8011
+        --quantization=fp8
+        --dtype=float16
+        --mamba-ssm-cache-dtype=float16
+        --block-size=64
+        --cpu-offload-gb=0
+        --swap-space=0
+        --max-model-len=${GLIMMER_MAX_MODEL_LEN:-4096}
+        --max-num-batched-tokens=${GLIMMER_MAX_BATCHED_TOKENS:-4096}
+        --max-num-seqs=${GLIMMER_MAX_NUM_SEQS:-1}
+        --gpu-memory-utilization=${GLIMMER_GPU_MEMORY_UTILIZATION:-0.98}
+        --tensor-parallel-size=1
+        --attention-backend=FLASH_ATTN
+        --chat-template=${GLIMMER_MODEL_PATH:-/models/Muse-Glimmer-30B}/chat_template.jinja
+        --limit-mm-per-prompt "$${LIMIT_MM_PER_PROMPT}"
+        --enforce-eager
+        --no-enable-prefix-caching
+        --trust-remote-code
+        $${GLIMMER_SPECULATIVE_CONFIG:+--speculative-config '$${GLIMMER_SPECULATIVE_CONFIG}'}
+    environment:
+      ONEAPI_DEVICE_SELECTOR: ${GLIMMER_DEVICE_SELECTOR:-level_zero:0}
+      HF_HUB_OFFLINE: ${GLIMMER_HF_HUB_OFFLINE:-1}
+      VLLM_WORKER_MULTIPROC_METHOD: spawn
+      VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT: "1"
+      LIMIT_MM_PER_PROMPT: '{"image":0,"video":0}'
+      GLIMMER_SPECULATIVE_CONFIG: ${GLIMMER_SPECULATIVE_CONFIG:-}
+    devices:
+      # Explicit Intel GPU mapping: the single B70 render nodes, nothing else.
+      - /dev/dri:/dev/dri
+    ports:
+      # Host loopback only. Workers reach the model by Compose service name.
+      - 127.0.0.1:${GLIMMER_HOST_PORT:-8011}:8011
+    volumes:
+      # Pinned local artifacts verified on krick-1, mounted read-only.
+      - ${GLIMMER_MODEL_DIR:-/work/models/muse-glimmer}:/models:ro
+      # oneCCL initialization needs the by-path links next to the device nodes.
+      - /dev/dri/by-path:/dev/dri/by-path:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/v1/models', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 600s
+    restart: unless-stopped
+
+  kimi-worker:
+    build:
+      context: ../../apps/agent-host
+      dockerfile: Dockerfile
+    image: protomolt-agent-host:local
+    container_name: protomolt-krick1-kimi-worker
+    # Match the host user so the mounted worktree, state, and provider config
+    # directories stay writable and host-side file ownership is unchanged.
+    user: "${KRICK_AGENT_UID:-1000}:${KRICK_AGENT_GID:-1000}"
+    command:
+      - --endpoint
+      - ${PROTOMOLT_MCP_ENDPOINT:-https://protomolt.rokkon.com/mcp}
+      - --role
+      - worker
+      - --identity
+      - ${KRICK_KIMI_IDENTITY:-kimi-worker}
+      - --provider
+      - kimi
+      - --workspace
+      - /workspace
+      - --state
+      - /state/kimi-worker.json
+      - --token-env
+      - PROTOMOLT_MCP_TOKEN
+    environment:
+      PROTOMOLT_MCP_TOKEN: ${PROTOMOLT_MCP_TOKEN:?set PROTOMOLT_MCP_TOKEN in the shell or deploy/krick-1/.env}
+    volumes:
+      - ${KRICK_KIMI_WORKSPACE:-/work/worktrees/protomolt/kimi}:/workspace
+      # Linked worktrees point here with an absolute path. Mount the common
+      # Git metadata at that same path so local commits update the right branch.
+      - ${KRICK_PROTOMOLT_GIT_DIR:-/work/main/dev-tools/protomolt/.git}:/work/main/dev-tools/protomolt/.git
+      - ${KRICK_AGENT_STATE_DIR:-~/.local/state/protomolt-agents}:/state
+      - ~/.kimi-code:/home/protomolt/.kimi-code
+      # Git identity and non-secret client settings are needed for reviewable
+      # local commits. Push credentials are intentionally not mounted.
+      - ~/.gitconfig:/home/protomolt/.gitconfig:ro
+    restart: unless-stopped
+
+  glimmer-worker:
+    build:
+      context: ../../apps/agent-host
+      dockerfile: Dockerfile
+    image: protomolt-agent-host:local
+    container_name: protomolt-glimmer-worker
+    user: "${KRICK_AGENT_UID:-1000}:${KRICK_AGENT_GID:-1000}"
+    command:
+      - --endpoint
+      - ${PROTOMOLT_MCP_ENDPOINT:-https://protomolt.rokkon.com/mcp}
+      - --role
+      - worker
+      - --identity
+      - ${KRICK_GLIMMER_IDENTITY:-glimmer-worker}
+      - --provider
+      - openai
+      - --provider-endpoint
+      - http://glimmer-vllm:8011/v1
+      - --model
+      - ${GLIMMER_SERVED_NAME:-muse-glimmer-30b}
+      - --workspace
+      - /workspace
+      - --state
+      - /state/glimmer-worker.json
+      - --token-env
+      - PROTOMOLT_MCP_TOKEN
+    environment:
+      PROTOMOLT_MCP_TOKEN: ${PROTOMOLT_MCP_TOKEN:?set PROTOMOLT_MCP_TOKEN in the shell or deploy/krick-1/.env}
+    volumes:
+      - ${KRICK_GLIMMER_WORKSPACE:-/work/worktrees/protomolt/glimmer}:/workspace
+      - ${KRICK_PROTOMOLT_GIT_DIR:-/work/main/dev-tools/protomolt/.git}:/work/main/dev-tools/protomolt/.git
+      - ${KRICK_AGENT_STATE_DIR:-~/.local/state/protomolt-agents}:/state
+      - ~/.gitconfig:/home/protomolt/.gitconfig:ro
+    depends_on:
+      glimmer-vllm:
+        condition: service_started
+    restart: unless-stopped

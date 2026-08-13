@@ -1,0 +1,6 @@
+# Pinned derivative of intel/llm-scaler-vllm 0.21.0-b3 for Muse Glimmer. The
+# b3 image ships Transformers 5.8.0, which rejects model_type muse_glimmer.
+# Muse Glimmer support requires Transformers 5.15.0, so the derivative pins
+# exactly that release instead of tracking a moving tag.
+FROM intel/llm-scaler-vllm:0.21.0-b3
+RUN python3 -m pip install --no-cache-dir "transformers==5.15.0"
