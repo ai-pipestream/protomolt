@@ -153,9 +153,9 @@ class AcpAgentProviderTest {
      * first argument selects how an unknown session id is rejected by session/load:
      * "recoverable" and "prefixed" are the two observed Kimi lost-session reports,
      * "wrong-code", "wrong-id", "empty-suffix", and "incidental" are near-miss shapes
-     * that must not classify, and any other mode answers loads with a generic store failure. The id "session-persisted"
-     * and every id issued by session/new stay loadable, so a rebind is observable as a
-     * session id change.
+     * that must not classify, and any other mode answers loads with a generic store failure.
+     * The id "session-persisted" and every id issued by session/new stay loadable, so a
+     * rebind is observable as a session id change.
      */
     public static final class FakeLoadableAcpMain {
 
