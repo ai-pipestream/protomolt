@@ -64,6 +64,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Docker](apps/docker.md): container images and Compose setup
 - [Coding workers](apps/coding-workers.md): Java and C++ agent environments, state, credentials, and transport boundaries
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
+- [Nano1 ARM64 node](../deploy/nano1/README.md): native image builds and GPU inference boundary
 - [Outbound gRPC policy](operations/grpc-channel-policy.md): target, transport, deadline, and concurrency limits
 
 ## Tutorials

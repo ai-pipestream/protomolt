@@ -15,7 +15,10 @@ say "shell syntax: bash -n on every script"
 for script in scripts/*.sh; do
   bash -n "$script" || fail "bash -n $script"
 done
-echo "bash -n OK for scripts/*.sh"
+for script in deploy/*/*.sh; do
+  bash -n "$script" || fail "bash -n $script"
+done
+echo "bash -n OK for repository deployment scripts"
 
 if command -v shellcheck >/dev/null; then
   shellcheck -S warning scripts/*.sh || fail "shellcheck findings"
@@ -38,12 +41,34 @@ for path in [
     "docker-compose.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-publish.yml",
+    ".github/workflows/nano1-arm64-smoke.yml",
     ".forgejo/workflows/publish-registry.yml",
     ".forgejo/workflows/tei-integration.yml",
 ]:
     with open(path) as handle:
         yaml.safe_load(handle)
     print("yaml OK", path)
+PYEOF
+
+say "nano1 workflow: trusted manual dispatch only"
+python3 - <<'PYEOF'
+import re, sys
+path = ".github/workflows/nano1-arm64-smoke.yml"
+text = open(path).read()
+if not re.search(r"(?m)^on:\s*\n\s+workflow_dispatch:\s*$", text):
+    print(path, "must use workflow_dispatch as its only trigger")
+    sys.exit(1)
+for forbidden in ["pull_request:", "push:", "pull_request_target:"]:
+    if forbidden in text:
+        print(path, "contains forbidden trigger", forbidden)
+        sys.exit(1)
+if "runs-on: [self-hosted, Linux, ARM64, nano1]" not in text:
+    print(path, "must select the dedicated nano1 runner")
+    sys.exit(1)
+if "permissions:\n  contents: read" not in text:
+    print(path, "must retain read-only repository permissions")
+    sys.exit(1)
+print("nano1 workflow is manual-only with read-only repository permissions")
 PYEOF
 
 say "compose semantics: secrets use required stack variables, never literals"
@@ -132,9 +157,10 @@ say "no em dashes in authored deployment files"
 python3 - <<'PYEOF'
 import glob, sys
 paths = []
-for pattern in ["deploy/krick/*", "deploy/portainer/*",
+for pattern in ["deploy/krick/*", "deploy/portainer/*", "deploy/nano1/*",
                 "deploy/workers/*",
                 "scripts/agent-host-live.sh", "scripts/check-deployment-statics.sh",
+                "scripts/nano1-worker-build-smoke.sh",
                 "repo/service/Dockerfile", "apps/agent-host/Dockerfile",
                 "apps/agent-host/Dockerfile.workers"]:
     paths.extend(p for p in glob.glob(pattern) if not p.endswith("/"))

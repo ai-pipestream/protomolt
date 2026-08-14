@@ -1,0 +1,44 @@
+name: Nano1 ARM64 Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker:
+        description: Coding worker image to build and inspect
+        required: true
+        default: cpp
+        type: choice
+        options:
+          - cpp
+          - java
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nano1-arm64-smoke
+  cancel-in-progress: false
+
+jobs:
+  native-worker-build:
+    runs-on: [self-hosted, Linux, ARM64, nano1]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Nano1 host
+        run: deploy/nano1/check-host.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the agent-host distribution
+        run: ./gradlew :protomolt-agent-host:installDist --no-daemon --console=plain
+
+      - name: Build and inspect a native ARM64 worker
+        run: scripts/nano1-worker-build-smoke.sh "${{ inputs.worker }}"
+

@@ -109,6 +109,24 @@ can feed an embedding provider.
 
 ## Security and operations
 
+### ARM64 build and Jetson inference processors
+
+Expose native image builds through a bounded, task-scoped processor rather
+than a Docker socket. The contract should allow declared repository, commit,
+build target, resource limits, artifact destination, and required checks. It
+should reject arbitrary host mounts, privileged containers, unbounded network
+credentials, and undeclared output paths.
+
+Run the first processor on Nano1 after its manual native-build smoke is stable.
+Keep the trusted CI runner outside coding worker and model containers. Publish
+build progress, immutable artifact references, logs, checksums, and terminal
+evidence through delegation.
+
+Add a separate Nano1 DJL Serving processor using a JetPack 7.2 compatible
+ARM64 image. CPU inference and CPU model offload are prohibited. Admission must
+reserve memory independently from build work, and live acceptance must prove
+GPU execution before the processor advertises availability.
+
 ### Authorization scopes
 
 Separate authentication from authorization. Define scopes for schema reads and
