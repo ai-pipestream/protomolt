@@ -117,15 +117,19 @@ build target, resource limits, artifact destination, and required checks. It
 should reject arbitrary host mounts, privileged containers, unbounded network
 credentials, and undeclared output paths.
 
-Run the first processor on Nano1 after its manual native-build smoke is stable.
-Keep the trusted CI runner outside coding worker and model containers. Publish
-build progress, immutable artifact references, logs, checksums, and terminal
-evidence through delegation.
+Nano1 provides the native ARM64 host and a manual-only trusted runner. Its
+worker-image smoke builds are suitable for Jetson and Raspberry Pi targets
+that use compatible ARM64 bases. The remaining build processor must expose
+this capacity through a bounded task API and publish progress, immutable
+artifact references, logs, checksums, and terminal evidence through
+delegation.
 
-Add a separate Nano1 DJL Serving processor using a JetPack 7.2 compatible
-ARM64 image. CPU inference and CPU model offload are prohibited. Admission must
-reserve memory independently from build work, and live acceptance must prove
-GPU execution before the processor advertises availability.
+Nano1 also runs DJL Serving on a JetPack 7.2 compatible ARM64 TensorRT image.
+Its startup gate builds and executes a CUDA engine, and its live acceptance
+checks the returned GPU identity and result. CPU inference and CPU model
+offload are prohibited. The remaining mesh integration must reserve memory
+independently from build work and advertise the processor only after the GPU
+gate passes.
 
 ### Authorization scopes
 

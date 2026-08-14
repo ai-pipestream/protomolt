@@ -65,6 +65,11 @@ Current implementation and deployment snapshot, verified 2026-08-14:
 - Nano1 is a trusted, manual-only native ARM64 GitHub runner. Its Docker group
   authority belongs only to the runner service. Never select its labels from a
   pull-request workflow or expose its Docker socket to a coding worker.
+- Nano1 also runs a loopback-only, GPU-gated DJL Serving processor backed by
+  TensorRT. Its startup and live checks execute a real CUDA engine on the Orin
+  GPU. CPU inference and CPU model offload are prohibited. Build capacity and
+  inference capacity must be advertised separately before either joins mesh
+  scheduling.
 
 The durable control plane currently uses MCP streamable HTTP over TLS. gRPC is
 the application plane for reflection, invocation, and generated clients. A

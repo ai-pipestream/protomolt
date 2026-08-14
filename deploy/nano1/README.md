@@ -54,18 +54,51 @@ processor are separate capacities. A busy build must not silently consume the
 memory reserved for inference, and an inference container must not receive the
 runner's Docker authority.
 
-The official DJL Serving 0.36 GPU image does not publish an ARM64 manifest. A
-Nano1 deployment therefore needs a JetPack 7.2 compatible image and an engine
-that uses the installed NVIDIA stack. CPU inference and CPU model offload are
-not acceptable fallbacks. Live acceptance must prove GPU execution, bounded
-memory use, model health, and a typed request through ProtoMolt before the
-processor advertises availability to the mesh.
+The official DJL Serving 0.36 GPU image does not publish an ARM64 manifest.
+The Nano1 image combines DJL Serving's ARM64 Java distribution with NVIDIA's
+ARM64 TensorRT 26.05 container. That NVIDIA release matches the host's CUDA
+13.2 and TensorRT 10.16 line. DJL uses its Python engine so inference executes
+in NVIDIA's TensorRT runtime.
 
-Start with one small model that fits comfortably beside host services. Keep
-the model cache on Nano1's local disk. The processor advertisement should name
+The container refuses to start unless TensorRT builds and executes a CUDA
+engine. CPU inference and CPU model offload are not fallbacks. The included
+`cuda-probe` model adds two to a fixed 16-value tensor and returns the GPU
+identity, compute capability, TensorRT version, timing, and device memory.
+
+Build, start, and verify the service on Nano1 with:
+
+```shell
+sudo -u protomolt-runner -H env PROTOMOLT_NANO1_DJL_LIVE=1 \
+  scripts/nano1-djl-live.sh
+```
+
+The live check must return `backend: TensorRT`, device `Orin`, compute
+capability `8.7`, and the expected output values. The container is unhealthy
+and restart-looped if the startup CUDA engine cannot execute.
+
+The service listens on `127.0.0.1:8082` by default. Set `NANO1_DJL_BIND` to
+Nano1's Tailscale address only when direct tailnet access is needed. Do not
+bind the unauthenticated DJL management API to every interface. A public route
+should terminate TLS and authentication before forwarding to this endpoint.
+
+Stop it with:
+
+```shell
+sudo -u protomolt-runner -H docker compose \
+  -f deploy/nano1/compose.yml down
+```
+
+The CUDA probe proves the serving stack without downloading model weights.
+The first useful model should fit comfortably beside host services. Keep its
+model cache on Nano1's local disk. The processor advertisement should name
 its schema, model, provider, GPU capability, concurrency limit, and current
 in-flight count. The ARM64 build processor should publish a different
 capability and capacity record.
+
+Native `linux/arm64` images produced here run on both the Jetson and the
+Raspberry Pi fleet when their base images support ARM64. GPU images remain
+Jetson-specific. Use the manual smoke workflow to prove a build target before
+moving it into a trusted release workflow.
 
 ## Host verification
 

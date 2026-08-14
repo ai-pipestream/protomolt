@@ -38,6 +38,7 @@ except ImportError:
 for path in [
     "deploy/portainer/compose.yml",
     "deploy/krick/compose.yml",
+    "deploy/nano1/compose.yml",
     "docker-compose.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-publish.yml",
@@ -70,6 +71,9 @@ if "permissions:\n  contents: read" not in text:
     sys.exit(1)
 print("nano1 workflow is manual-only with read-only repository permissions")
 PYEOF
+
+say "nano1 deployment statics"
+deploy/nano1/check-deployment-statics.sh
 
 say "compose semantics: secrets use required stack variables, never literals"
 python3 - <<'PYEOF'
