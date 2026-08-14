@@ -44,7 +44,7 @@ Read these before changing the multi-agent runtime:
 - `deploy/workers/README.md` owns Java and C++ worker build and run commands.
 - `deploy/nano1/README.md` owns the Jetson ARM64 build and inference node.
 
-Current implementation and deployment snapshot, verified 2026-08-13:
+Current implementation and deployment snapshot, verified 2026-08-14:
 
 - The always-on coordinator belongs on the NAS under Portainer. Its delegation
   transcript is encrypted before repository-service and RustFS storage.
