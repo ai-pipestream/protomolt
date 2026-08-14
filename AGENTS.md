@@ -42,8 +42,9 @@ Read these before changing the multi-agent runtime:
 - `deploy/portainer/README.md` owns the NAS coordinator topology.
 - `deploy/krick-1/README.md` owns the Kimi and Muse Glimmer workstation stack.
 - `deploy/workers/README.md` owns Java and C++ worker build and run commands.
+- `deploy/nano1/README.md` owns the Jetson ARM64 build and inference node.
 
-Current implementation and deployment snapshot, verified 2026-08-13:
+Current implementation and deployment snapshot, verified 2026-08-14:
 
 - The always-on coordinator belongs on the NAS under Portainer. Its delegation
   transcript is encrypted before repository-service and RustFS storage.
@@ -61,6 +62,9 @@ Current implementation and deployment snapshot, verified 2026-08-13:
 - The Java and C++ coding worker images are published for amd64 and arm64. The
   krick-1 Compose file still uses `protomolt-agent-host:local`; migrating it to
   a language image is separate deployment work.
+- Nano1 is a trusted, manual-only native ARM64 GitHub runner. Its Docker group
+  authority belongs only to the runner service. Never select its labels from a
+  pull-request workflow or expose its Docker socket to a coding worker.
 
 The durable control plane currently uses MCP streamable HTTP over TLS. gRPC is
 the application plane for reflection, invocation, and generated clients. A
