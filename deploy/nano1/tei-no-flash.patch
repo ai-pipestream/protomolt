@@ -1,0 +1,21 @@
+diff --git a/Dockerfile-cuda b/Dockerfile-cuda
+index 9c08835..a9005cc 100644
+--- a/Dockerfile-cuda
++++ b/Dockerfile-cuda
+@@ -89 +89 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+-    cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
++    cargo chef cook --release --features candle-cuda-volta --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
+@@ -106 +106 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+-    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s; \
++    cargo build --release --bin text-embeddings-router -F candle-cuda-volta -F static-linking -F http --no-default-features && sccache -s; \
+@@ -135 +135 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+-    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s; \
++    cargo build --release --bin text-embeddings-router -F candle-cuda-volta -F static-linking -F grpc --no-default-features && sccache -s; \
+diff --git a/backends/candle/src/compute_cap.rs b/backends/candle/src/compute_cap.rs
+index 57684c7..ee119ce 100644
+--- a/backends/candle/src/compute_cap.rs
++++ b/backends/candle/src/compute_cap.rs
+@@ -27,0 +28 @@ fn compute_cap_matching(runtime_compute_cap: usize, compile_compute_cap: usize)
++        (runtime, compiled) if runtime == compiled => true,
+@@ -57,0 +59 @@ mod tests {
++        assert!(compute_cap_matching(87, 87));

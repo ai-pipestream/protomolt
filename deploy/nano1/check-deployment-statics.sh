@@ -28,15 +28,37 @@ if grep -Eq "torch\\.device\\([\"']cpu|cpu_offload|cpu-offload" \
   fail "CPU fallback or offload is prohibited"
 fi
 
-say "bounded local service"
+say "pinned ARM64 TEI and embedding model"
+compose="$(cat compose.yml)"
+printf '%s' "$compose" | grep -q \
+  "PROTOMOLT_TEI_SOURCE_DIR:-/var/lib/protomolt-runner/.cache/protomolt/tei-source" \
+  || fail "TEI must build from the prepared pinned source checkout"
+printf '%s' "$compose" | grep -q 'CUDA_COMPUTE_CAP: "87"' \
+  || fail "TEI must compile for the Orin compute capability"
+printf '%s' "$compose" | grep -q 'target: grpc' \
+  || fail "TEI must expose its reflected gRPC contract"
+grep -q 'candle-cuda-volta' tei-no-flash.patch \
+  || fail "the TEI build must omit unused Flash Attention kernels"
+grep -q 'compute_cap_matching(87, 87)' tei-no-flash.patch \
+  || fail "the TEI build must accept the Orin's exact compute capability"
+printf '%s' "$compose" | grep -q '5c38ec7c405ec4b44b94cc5a9bb96e735b38267a' \
+  || fail "the embedding model revision must be pinned"
+
+say "bounded local services"
 compose="$(cat compose.yml)"
 printf '%s' "$compose" | grep -q 'runtime: nvidia' \
   || fail "Compose must select the NVIDIA runtime"
 printf '%s' "$compose" | grep -q 'NANO1_DJL_BIND:-127.0.0.1' \
   || fail "DJL must bind to loopback by default"
-printf '%s' "$compose" | grep -q 'mem_limit: 6g' \
+printf '%s' "$compose" | grep -q 'NANO1_TEI_BIND:-127.0.0.1' \
+  || fail "TEI must bind to loopback by default"
+test "$(grep -c 'runtime: nvidia' compose.yml)" = 2 \
+  || fail "both inference services must select the NVIDIA runtime"
+grep -q 'mem_limit: 2g' compose.yml \
   || fail "DJL memory must be bounded"
+grep -q 'mem_limit: 3g' compose.yml \
+  || fail "TEI memory must be bounded"
 printf '%s' "$compose" | grep -q 'no-new-privileges:true' \
-  || fail "DJL must prevent privilege escalation"
+  || fail "inference services must prevent privilege escalation"
 
-say "PASS: Nano1 DJL deployment statics"
+say "PASS: Nano1 GPU deployment statics"
