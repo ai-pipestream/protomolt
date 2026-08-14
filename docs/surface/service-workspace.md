@@ -54,6 +54,11 @@ uses gRPC server reflection, fingerprints the returned `FileDescriptorSet`,
 and stores it as a content-addressed artifact. The response includes service
 and method summaries but never the descriptor bytes.
 
+ProtoMolt tries the stable `grpc.reflection.v1` protocol first. It falls back
+to `grpc.reflection.v1alpha` only when the endpoint reports that the stable
+protocol is unimplemented. Both attempts share the caller's reflection
+deadline.
+
 Profile names and endpoint names are stable identifiers. Each endpoint makes
 the transport explicit and separates `host` from `port`. TLS uses the JDK's
 normal trust configuration when no custom reference is present. Credential,

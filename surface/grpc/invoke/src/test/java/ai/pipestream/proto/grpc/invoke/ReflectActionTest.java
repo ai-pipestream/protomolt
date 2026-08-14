@@ -10,10 +10,17 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.DynamicMessage;
+import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
 import io.grpc.ServerServiceDefinition;
+import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import io.grpc.stub.ServerCalls;
 import org.junit.jupiter.api.AfterAll;
@@ -40,8 +47,12 @@ class ReflectActionTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static Server reflectiveServer;
+    private static Server legacyReflectiveServer;
+    private static Server deniedStableServer;
     private static Server bareServer;
     private static String reflectiveName;
+    private static String legacyReflectiveName;
+    private static String deniedStableName;
     private static String bareName;
     private static ReflectAction action;
 
@@ -74,6 +85,34 @@ class ReflectActionTest {
                 .build()
                 .start();
 
+        legacyReflectiveName = InProcessServerBuilder.generateName();
+        legacyReflectiveServer = InProcessServerBuilder.forName(legacyReflectiveName)
+                .addService(definition)
+                .addService(ProtoReflectionService.newInstance())
+                .build()
+                .start();
+
+        deniedStableName = InProcessServerBuilder.generateName();
+        deniedStableServer = InProcessServerBuilder.forName(deniedStableName)
+                .addService(definition)
+                .addService(ServerInterceptors.intercept(
+                        ProtoReflectionServiceV1.newInstance(),
+                        new ServerInterceptor() {
+                            @Override
+                            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                                    ServerCall<ReqT, RespT> call, Metadata headers,
+                                    ServerCallHandler<ReqT, RespT> next) {
+                                call.close(Status.PERMISSION_DENIED
+                                        .withDescription("stable reflection denied"),
+                                        new Metadata());
+                                return new ServerCall.Listener<>() {
+                                };
+                            }
+                        }))
+                .addService(ProtoReflectionService.newInstance())
+                .build()
+                .start();
+
         // A server with the same app service but no reflection registered.
         bareName = InProcessServerBuilder.generateName();
         bareServer = InProcessServerBuilder.forName(bareName)
@@ -87,6 +126,8 @@ class ReflectActionTest {
     @AfterAll
     static void stop() {
         reflectiveServer.shutdownNow();
+        legacyReflectiveServer.shutdownNow();
+        deniedStableServer.shutdownNow();
         bareServer.shutdownNow();
     }
 
@@ -105,6 +146,24 @@ class ReflectActionTest {
         assertThat(result.get("descriptorSetBase64").asText()).isNotEmpty();
         // The transitive well-known-type dependency is resolved into the set.
         assertThat(result.get("fileCount").asInt()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void fallsBackToLegacyReflectionAndResolvesDescriptorSet() throws Exception {
+        ObjectNode result = action.execute(input(legacyReflectiveName), ActionContext.create());
+
+        assertThat(result.get("ok").asBoolean()).isTrue();
+        assertThat(servicesOf(result)).contains("reflect.test.PingService");
+        assertThat(result.get("descriptorSetBase64").asText()).isNotEmpty();
+        assertThat(result.get("fileCount").asInt()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void doesNotDowngradeAfterStableReflectionPermissionFailure() throws Exception {
+        ObjectNode result = action.execute(input(deniedStableName), ActionContext.create());
+
+        assertThat(result.get("ok").asBoolean()).isFalse();
+        assertThat(result.get("error").asText()).contains("PERMISSION_DENIED");
     }
 
     @Test
