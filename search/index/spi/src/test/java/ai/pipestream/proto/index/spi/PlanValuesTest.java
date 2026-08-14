@@ -124,6 +124,34 @@ class PlanValuesTest {
     }
 
     @Test
+    void readWholeKeepsTheMapperSemanticsOnSingularPaths() throws Exception {
+        Fixtures f = Fixtures.create();
+        DynamicMessage doc = DynamicMessage.newBuilder(f.doc)
+                .setField(f.doc.findFieldByName("doc_id"), "d1")
+                .build();
+
+        assertThat(PlanValues.readWhole(f.mapper, doc, "doc_id", false)).isEqualTo("d1");
+        assertThat(PlanValues.readWhole(f.mapper, doc, "solo.label", false)).isNull();
+    }
+
+    @Test
+    void readWholeRefusesFanOutPathsRegardlessOfElementCount() throws Exception {
+        Fixtures f = Fixtures.create();
+        DynamicMessage populated = f.docWithChunks(f.chunk("alpha"), f.chunk("beta"));
+        DynamicMessage empty = DynamicMessage.newBuilder(f.doc)
+                .setField(f.doc.findFieldByName("doc_id"), "d1")
+                .build();
+
+        // Validity is a property of the path, not of this document's element count.
+        assertThatThrownBy(() -> PlanValues.readWhole(f.mapper, populated, "chunks.text", false))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("whole value");
+        assertThatThrownBy(() -> PlanValues.readWhole(f.mapper, empty, "chunks.text", false))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("whole value");
+    }
+
+    @Test
     void mapIntermediatesStayWithTheMapperError() throws Exception {
         Fixtures f = Fixtures.create();
         Descriptor entry = f.doc.findNestedTypeByName("AttrsEntry");

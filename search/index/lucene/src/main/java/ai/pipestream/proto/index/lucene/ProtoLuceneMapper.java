@@ -127,7 +127,11 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         IndexingPlan expanded = anyIndexing.expand(message, plan);
         Document document = new Document();
         for (IndexingPlan.IndexedField field : expanded.indexable()) {
-            Object value = PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
+            // A vector is one whole value; a path fanning out over a repeated ancestor
+            // has no flat projection and fails loudly (per-chunk vectors are entities).
+            Object value = field.type() == IndexFieldKind.VECTOR
+                    ? PlanValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
+                    : PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; otherwise absent stays absent
                 // (skip_if_missing=false has no Lucene shape — documents cannot hold nulls).

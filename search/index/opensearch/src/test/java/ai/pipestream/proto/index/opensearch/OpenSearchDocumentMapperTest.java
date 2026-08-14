@@ -429,6 +429,30 @@ class OpenSearchDocumentMapperTest {
         assertThat(mapper.map(message, plan)).doesNotContainKey("chunks_text");
     }
 
+    @Test
+    void aVectorUnderARepeatedAncestorFailsLoudlyInsteadOfConcatenating() throws Exception {
+        Descriptor doc = chunkedDocDescriptor();
+        Descriptor chunk = doc.findFieldByName("chunks").getMessageType();
+        FieldDescriptor chunks = doc.findFieldByName("chunks");
+        FieldDescriptor embedding = chunk.findFieldByName("embedding");
+        DynamicMessage message = DynamicMessage.newBuilder(doc)
+                .addRepeatedField(chunks, DynamicMessage.newBuilder(chunk)
+                        .addRepeatedField(embedding, 0.1f)
+                        .addRepeatedField(embedding, 0.2f)
+                        .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(doc.getFullName(), List.of(
+                new IndexingPlan.IndexedField("chunks.embedding", "chunks_embedding",
+                        ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(2).build(), true)));
+
+        // Per-chunk vectors index as their own entities (CHUNKS blocks, Qdrant points);
+        // a flat document has no meaningful projection for them.
+        assertThatThrownBy(() -> mapper.map(message, plan))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("whole value")
+                .hasMessageContaining("chunks.embedding");
+    }
+
     private static Descriptor chunkedDocDescriptor() throws Exception {
         FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                 .setName("chunked_doc.proto")
@@ -440,7 +464,12 @@ class OpenSearchDocumentMapperTest {
                                 .setName("text")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_STRING)
-                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("embedding")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_FLOAT)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")
                         .addField(FieldDescriptorProto.newBuilder()

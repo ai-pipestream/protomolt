@@ -5,6 +5,7 @@ import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.AnyPayloadValidator;
+import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
@@ -125,7 +126,11 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
         Map<String, Object> document = new LinkedHashMap<>();
         for (IndexingPlan.IndexedField field : expanded.indexable()) {
             ResolvedFieldHint hint = field.hint();
-            Object value = PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
+            // A vector is one whole value; a path fanning out over a repeated ancestor
+            // has no flat projection and fails loudly (per-chunk vectors are entities).
+            Object value = field.type() == IndexFieldKind.VECTOR
+                    ? PlanValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
+                    : PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; skip_if_missing=false emits
                 // an explicit JSON null; otherwise absent stays absent.

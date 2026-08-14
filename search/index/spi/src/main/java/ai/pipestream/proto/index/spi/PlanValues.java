@@ -61,6 +61,30 @@ public final class PlanValues {
     }
 
     /**
+     * As {@link #read}, for whole-value kinds that cannot be split per element — a KNN
+     * vector foremost. A path under a repeated ancestor has no flat single-value
+     * projection (flattening sibling elements' floats would build a meaningless vector),
+     * so it fails loudly here: per-element vectors index as their own entities instead,
+     * through a {@link BlockRole#CHUNKS} scope on a block engine or Qdrant's
+     * one-point-per-chunk mapping. Paths without a repeated intermediate read exactly
+     * like {@link #read}.
+     */
+    public static Object readWhole(
+            ProtoFieldMapper fieldMapper, Message message, String path, boolean includeDefaults)
+            throws MappingException {
+        if (fansOut(fieldMapper, message, path)) {
+            throw new MappingException(
+                    "Path '" + path + "' traverses a repeated ancestor, but the field indexes "
+                            + "as one whole value; index the elements as their own entities "
+                            + "instead (a CHUNKS block scope, or Qdrant's per-chunk points)",
+                    path);
+        }
+        return hasUnsetIntermediate(message, path)
+                ? null
+                : fieldMapper.getValue(message, path, includeDefaults);
+    }
+
+    /**
      * Whether {@code path} reaches a repeated message intermediate on this document,
      * unpacking set Any intermediates along the way. Map fields, Struct boundaries, and
      * anything that does not resolve stay with the field mapper (which reports them in

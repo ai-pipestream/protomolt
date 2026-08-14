@@ -128,6 +128,12 @@ unset) reads as missing, so `null_value` substitution applies as usual.
 Paths without a repeated intermediate keep the field mapper's exact
 semantics, Struct keys and Any unpacking included.
 
+The exception is `VECTOR`: a KNN vector is one whole value, and
+flattening sibling elements' floats would build a meaningless one, so a
+vector path under a repeated ancestor fails loudly in the flat engines.
+Per-element vectors index as their own entities instead — a `CHUNKS`
+block scope on a block engine, or Qdrant's one-point-per-chunk mapping.
+
 ### `google.protobuf.Any`
 
 Plan time cannot know a single packed type (for example
