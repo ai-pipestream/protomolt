@@ -3,16 +3,27 @@ package ai.pipestream.proto.index.spi;
 import ai.pipestream.proto.index.hints.FieldIndexHint;
 import ai.pipestream.proto.index.hints.IndexFieldType;
 import ai.pipestream.proto.index.hints.IndexingHintsProto;
+import com.google.protobuf.DescriptorProtos.FieldOptions;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.ExtensionRegistry;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.util.Optional;
 
 /**
  * Reads {@code (ai.pipestream.proto.index.hints.v1.index)} custom options from the descriptor.
- * Requires descriptors parsed/built with {@link #registerExtensions(ExtensionRegistry)}.
+ * Prefer descriptors parsed/built with {@link #registerExtensions(ExtensionRegistry)}; when a
+ * descriptor set was linked without it, the hint survives as an unknown field and is reparsed
+ * against a knowing registry rather than silently dropped — a dropped hint would not just lose
+ * an analyzer, it would revert deliberate schema decisions like {@code validate_payloads: false}.
  */
 public final class ProtoOptionsIndexingHintSource implements IndexingHintSource {
+
+    private static final ExtensionRegistry EXTENSIONS = ExtensionRegistry.newInstance();
+
+    static {
+        registerExtensions(EXTENSIONS);
+    }
 
     public static void registerExtensions(ExtensionRegistry registry) {
         IndexingHintsProto.registerAllExtensions(registry);
@@ -20,11 +31,28 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
 
     @Override
     public Optional<ResolvedFieldHint> resolve(FieldDescriptor field) {
-        var options = field.getOptions();
-        if (!options.hasExtension(IndexingHintsProto.index)) {
-            return Optional.empty();
+        FieldIndexHint hint = hint(field);
+        return hint == null ? Optional.empty() : Optional.of(toResolved(hint, field));
+    }
+
+    /** The {@code (index)} hint on the field's options, reparsing an unknown-field carrier. */
+    private static FieldIndexHint hint(FieldDescriptor field) {
+        FieldOptions options = field.getOptions();
+        if (options.hasExtension(IndexingHintsProto.index)) {
+            return options.getExtension(IndexingHintsProto.index);
         }
-        return Optional.of(toResolved(options.getExtension(IndexingHintsProto.index), field));
+        if (!options.getUnknownFields().hasField(IndexingHintsProto.index.getNumber())) {
+            return null;
+        }
+        try {
+            return FieldOptions.parseFrom(options.toByteString(), EXTENSIONS)
+                    .getExtension(IndexingHintsProto.index);
+        } catch (InvalidProtocolBufferException e) {
+            throw new IndexingPlanException(
+                    "cannot reparse field options carrying "
+                            + "(ai.pipestream.proto.index.hints.v1.index): " + e.getMessage(),
+                    field.getFullName());
+        }
     }
 
     static ResolvedFieldHint toResolved(FieldIndexHint hint, FieldDescriptor field) {
@@ -49,7 +77,8 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
                 .dateFormat(hint.getDateFormat())
                 .dateResolution(toResolution(hint.getDateResolution()))
                 .engineParams(hint.getEngineParamsMap())
-                .blockRole(toBlockRole(hint.getBlockRole()));
+                .blockRole(toBlockRole(hint.getBlockRole()))
+                .validatePayloads(hint.hasValidatePayloads() ? hint.getValidatePayloads() : true);
         if (hint.hasNullValue()) {
             builder.nullValue(hint.getNullValue());
         }

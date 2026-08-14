@@ -41,6 +41,7 @@ The guides below follow the repository's module layout.
 - [Emitting bundles](sink/emitting.md): directory, Git, zip, OKF, and Parquet sinks
 - [Apache Iceberg](sink/iceberg.md): descriptor-driven tables and snapshot appends
 - [Kafka Connect](sink/kafka-connect.md): gRPC source, sink, and protobuf transforms
+- [Kafka Connect: OpenSearch](sink/kafka-connect-opensearch.md): hint-driven documents from topic records
 - [Kafka serde](sink/kafka-serde.md): Confluent wire format with schema enforcement
 
 ## Surfaces

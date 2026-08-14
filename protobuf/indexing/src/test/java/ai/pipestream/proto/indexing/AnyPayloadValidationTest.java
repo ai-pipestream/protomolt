@@ -78,6 +78,23 @@ class AnyPayloadValidationTest {
     }
 
     @Test
+    void schemaOptOutSuspendsTheGateOnTheExpansionPathToo() throws Exception {
+        AnyIndexing anyIndexing = anyIndexing();
+        AnyEnvelope envelope = AnyEnvelope.newBuilder()
+                .setDocId("doc-1")
+                .setUnchecked(Any.pack(ValidatedPayload.newBuilder()
+                        .setTitle("x")
+                        .setPageCount(-1)
+                        .build()))
+                .build();
+
+        // An invalid payload behind validate_payloads: false expands instead of failing.
+        IndexingPlan expanded = anyIndexing.expand(envelope, plan());
+
+        assertThat(expanded.find("unchecked.title")).isPresent();
+    }
+
+    @Test
     void payloadTypesWithoutRulesPassUntouched() {
         // The gate itself: a payload type declaring no rules validates clean.
         assertThatCode(() -> new DeclaredRulesAnyPayloadValidator()

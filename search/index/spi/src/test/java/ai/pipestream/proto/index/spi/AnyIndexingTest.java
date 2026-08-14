@@ -287,6 +287,46 @@ class AnyIndexingTest {
     }
 
     @Test
+    void validatePayloadsFalseExpandsWithoutOfferingPayloadsToValidators() throws Exception {
+        AnyFixtures fixtures = AnyFixtures.create();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put(fixtures.envelope.getFullName(), "payload",
+                        ResolvedFieldHint.builder(IndexFieldKind.ANY).validatePayloads(false).build())
+                .put(fixtures.innerType.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
+        IndexingPlanFactory factory = IndexingPlanFactory.defaults(catalog);
+        List<String> offered = new ArrayList<>();
+        AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory,
+                List.of((unpacked, path) -> offered.add(path)));
+
+        IndexingPlan expanded = anyIndexing.expand(
+                fixtures.packedEnvelope(), factory.create(fixtures.envelope));
+
+        assertThat(offered).isEmpty();
+        assertThat(expanded.find("payload.title")).get()
+                .extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.KEYWORD);
+    }
+
+    @Test
+    void validatePayloadsFalseStillFailsUnknownTypeUrls() throws Exception {
+        AnyFixtures fixtures = AnyFixtures.create();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put(fixtures.envelope.getFullName(), "payload",
+                        ResolvedFieldHint.builder(IndexFieldKind.ANY).validatePayloads(false).build());
+        IndexingPlanFactory factory = IndexingPlanFactory.defaults(catalog);
+        AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory,
+                List.of((unpacked, path) -> { }));
+        DynamicMessage message = fixtures.envelope(Any.newBuilder()
+                .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                .setValue(ByteString.copyFromUtf8("x"))
+                .build());
+
+        assertThatThrownBy(() -> anyIndexing.expand(message, factory.create(fixtures.envelope)))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("unknown type URL");
+    }
+
+    @Test
     void unsetAnyIsNotOfferedToValidators() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
         List<String> paths = new ArrayList<>();

@@ -20,7 +20,9 @@
  * receiving the shared {@link ai.pipestream.proto.mapper.ProtoFieldMapper} and
  * {@link ai.pipestream.proto.descriptors.DescriptorRegistry} by way of {@link IndexerContext}.
  * {@link AnyIndexing} unpacks {@code google.protobuf.Any} at write time against that registry
- * and offers every payload to the {@link AnyPayloadValidator}s on the classpath.
+ * and offers every payload to the {@link AnyPayloadValidator}s on the classpath; for output
+ * paths that render whole messages instead of plan entries, {@link AnyPayloadGate} walks the
+ * message instance and applies the same validators.
  * The Lucene, OpenSearch, and Solr modules are such plugins; NDJSON output is not an engine
  * and ignores the plan entirely.
  *

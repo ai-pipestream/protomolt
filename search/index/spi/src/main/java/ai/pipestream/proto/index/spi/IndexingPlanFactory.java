@@ -43,9 +43,18 @@ public final class IndexingPlanFactory {
         return new IndexingPlanFactory(new InferringIndexingHintSource());
     }
 
+    /**
+     * The hint chain this factory plans with, so companions resolve per-field settings
+     * consistently with the plan — {@link AnyPayloadGate} reads
+     * {@code validate_payloads} opt-outs through it.
+     */
+    public IndexingHintSource hints() {
+        return hints;
+    }
+
     public IndexingPlan create(Descriptor descriptor) {
         List<IndexingPlan.IndexedField> fields = new ArrayList<>();
-        walk(descriptor, "", "", 0, fields, new HashSet<>());
+        walk(descriptor, "", "", 0, fields, new HashSet<>(), false);
         return new IndexingPlan(descriptor.getFullName(), fields);
     }
 
@@ -55,7 +64,8 @@ public final class IndexingPlanFactory {
             String namePrefix,
             int depth,
             List<IndexingPlan.IndexedField> out,
-            Set<String> visiting) {
+            Set<String> visiting,
+            boolean underRepeated) {
         if (depth > maxDepth || !visiting.add(descriptor.getFullName())) {
             return;
         }
@@ -74,20 +84,26 @@ public final class IndexingPlanFactory {
             String qualified = namePrefix.isEmpty() ? segment : namePrefix + "_" + segment;
             String fieldName = hint.nameOverride().orElse(qualified);
 
+            // A child under any repeated ancestor is multi-valued at write time (the engines
+            // fan out over the elements), whatever the child's own cardinality.
+            boolean childUnderRepeated = underRepeated || field.isRepeated();
             if (shouldExpand(field, hint) && depth < maxDepth) {
                 // A name override on an expanded message replaces that segment's contribution to
                 // every child name, which is what an override does on a leaf as well: it stands in
                 // for the qualified name the walk would otherwise have built.
-                walk(field.getMessageType(), path, fieldName, depth + 1, out, new HashSet<>(visiting));
+                walk(field.getMessageType(), path, fieldName, depth + 1, out,
+                        new HashSet<>(visiting), childUnderRepeated);
                 continue;
             }
-            out.add(new IndexingPlan.IndexedField(path, fieldName, hint, field.isRepeated()));
+            out.add(new IndexingPlan.IndexedField(
+                    path, fieldName, hint, field.isRepeated() || underRepeated));
             if (hint.blockRole() == BlockRole.CHUNKS && depth < maxDepth) {
                 // The chunk scope keeps its container entry (block engines key on it) AND
                 // expands its children into dotted paths, unlike plain NESTED which stays
                 // a single entry. Child names are unprefixed: within a block the children
                 // are their own documents, not properties of the parent.
-                walk(field.getMessageType(), path, "", depth + 1, out, new HashSet<>(visiting));
+                walk(field.getMessageType(), path, "", depth + 1, out,
+                        new HashSet<>(visiting), childUnderRepeated);
             }
         }
         visiting.remove(descriptor.getFullName());

@@ -1,0 +1,32 @@
+description = 'Kafka Connect OpenSearch sink: descriptor indexing hints drive topic records into OpenSearch through the search-index SPI, google.protobuf.Any expansion and declared-rule payload validation included'
+
+dependencies {
+    api project(':protomolt-index-spi')
+
+    // The Connect worker provides the framework at runtime; plugins must not bundle it.
+    compileOnly libs.kafka.connect.api
+
+    implementation project(':protomolt-index-opensearch')
+    implementation project(':protomolt-kafka-wire')
+    // Registers the hint + validation extensions for descriptor-set parsing and turns on
+    // the declared-rules gate for unpacked Any payloads (ServiceLoader).
+    implementation project(':protomolt-protobuf-indexing')
+    // Linking a descriptor set with the metadata extensions readable (json_name).
+    implementation project(':protomolt-protobuf-metadata')
+    implementation libs.protobuf.java.util
+    implementation libs.slf4j.api
+
+    testImplementation libs.kafka.connect.api
+    testImplementation project(':protomolt-proto-sources')
+}
+
+// One plugin.path directory: the connector jar plus its runtime dependencies
+// (the Connect framework itself is compileOnly and stays out).
+tasks.register('connectPluginZip', Zip) {
+    description = 'Packages the Kafka Connect OpenSearch plugin as a plugin.path-ready zip'
+    group = 'distribution'
+    archiveBaseName = 'protomolt-connect-opensearch-plugin'
+    from tasks.named('jar')
+    from configurations.runtimeClasspath
+    into 'protomolt-connect-opensearch'
+}

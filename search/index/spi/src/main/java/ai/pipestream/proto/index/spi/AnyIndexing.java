@@ -36,8 +36,9 @@ import java.util.ServiceLoader;
  * {@link ServiceLoader} before its fields are planned. With
  * {@code protomolt-protobuf-indexing} on the classpath, packed messages carrying declared
  * validation rules are therefore validated on the same write path as everything else.
- * Payloads that pack further Anys expand recursively, up to
- * {@value #MAX_EXPANSION_DEPTH} levels.
+ * A hint with {@code validate_payloads: false} opts that one field out of the gate —
+ * its payloads still expand and malformed or unknown-type Anys still fail. Payloads that
+ * pack further Anys expand recursively, up to {@value #MAX_EXPANSION_DEPTH} levels.
  */
 public final class AnyIndexing {
 
@@ -48,6 +49,7 @@ public final class AnyIndexing {
     static final int MAX_EXPANSION_DEPTH = 8;
 
     private final AnyHandler anyHandler;
+    private final DescriptorRegistry registry;
     private final IndexingPlanFactory planFactory;
     private final List<AnyPayloadValidator> payloadValidators;
 
@@ -60,7 +62,8 @@ public final class AnyIndexing {
             DescriptorRegistry registry,
             IndexingPlanFactory planFactory,
             List<AnyPayloadValidator> payloadValidators) {
-        this.anyHandler = new AnyHandler(Objects.requireNonNull(registry, "registry"));
+        this.registry = Objects.requireNonNull(registry, "registry");
+        this.anyHandler = new AnyHandler(registry);
         this.planFactory = Objects.requireNonNull(planFactory, "planFactory");
         this.payloadValidators = List.copyOf(payloadValidators);
     }
@@ -123,8 +126,10 @@ public final class AnyIndexing {
                 continue;
             }
             Message unpacked = unpack(any, absolutePath);
-            for (AnyPayloadValidator validator : payloadValidators) {
-                validator.validate(unpacked, absolutePath);
+            if (field.hint().validatePayloads()) {
+                for (AnyPayloadValidator validator : payloadValidators) {
+                    validator.validate(unpacked, absolutePath);
+                }
             }
             IndexingPlan inner = expand(
                     unpacked,
@@ -139,20 +144,46 @@ public final class AnyIndexing {
     }
 
     private Message unpack(Any any, String absolutePath) throws MappingException {
+        return unpack(anyHandler, registry, any, absolutePath);
+    }
+
+    /**
+     * Unpacks with three distinct failures: a type URL without the {@code '/'} the Any spec
+     * (and every renderer) requires, a type the registry does not know, and value bytes
+     * that do not parse as the registered type — each named so the operator fixes the
+     * right thing.
+     */
+    static Message unpack(
+            AnyHandler anyHandler, DescriptorRegistry registry, Any any, String absolutePath)
+            throws MappingException {
+        String typeUrl = any.getTypeUrl();
+        int slash = typeUrl.lastIndexOf('/');
+        if (slash < 0) {
+            throw new MappingException(
+                    "google.protobuf.Any type URL '" + typeUrl
+                            + "' has no '/'; the Any contract requires 'host/fully.qualified.TypeName'",
+                    absolutePath);
+        }
+        String typeName = typeUrl.substring(slash + 1);
+        if (registry.findDescriptorByFullName(typeName) == null) {
+            throw new MappingException(
+                    "Cannot unpack google.protobuf.Any: unknown type URL '" + typeUrl
+                            + "'; register the packed type with the DescriptorRegistry",
+                    absolutePath);
+        }
         try {
             return anyHandler.unpack(any);
         } catch (InvalidProtocolBufferException e) {
             throw new MappingException(
-                    "Cannot unpack google.protobuf.Any: unknown type URL '" + any.getTypeUrl()
-                            + "'; register the packed type with the DescriptorRegistry",
+                    "google.protobuf.Any value bytes do not parse as '" + typeName + "'",
                     e,
                     absolutePath);
         }
     }
 
     /** A default-instance Any is unset in all but presence; value bytes without a type URL are malformed. */
-    private static boolean isEmpty(Any any, String absolutePath) throws MappingException {
-        if (!any.getTypeUrl().isBlank()) {
+    static boolean isEmpty(Any any, String absolutePath) throws MappingException {
+        if (!any.getTypeUrl().isEmpty()) {
             return false;
         }
         if (!any.getValue().isEmpty()) {
@@ -246,7 +277,7 @@ public final class AnyIndexing {
     }
 
     /** Dynamic messages hold Any fields as {@link com.google.protobuf.DynamicMessage}; reserialize those. */
-    private static Any toAny(Object value, String absolutePath) throws MappingException {
+    static Any toAny(Object value, String absolutePath) throws MappingException {
         if (value instanceof Any any) {
             return any;
         }
@@ -261,7 +292,7 @@ public final class AnyIndexing {
         }
     }
 
-    private static List<AnyPayloadValidator> discoverValidators() {
+    static List<AnyPayloadValidator> discoverValidators() {
         List<AnyPayloadValidator> validators = new ArrayList<>();
         for (AnyPayloadValidator validator : ServiceLoader.load(AnyPayloadValidator.class)) {
             validators.add(validator);

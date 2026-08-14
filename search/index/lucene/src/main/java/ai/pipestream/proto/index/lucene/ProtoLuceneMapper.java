@@ -6,6 +6,7 @@ import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
+import ai.pipestream.proto.index.spi.PlanValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
@@ -16,15 +17,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.MessageOrBuilder;
-import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import org.apache.lucene.document.Document;
@@ -129,9 +127,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         IndexingPlan expanded = anyIndexing.expand(message, plan);
         Document document = new Document();
         for (IndexingPlan.IndexedField field : expanded.indexable()) {
-            Object value = hasUnsetIntermediate(message, field.path())
-                    ? null // unset optional parent: no value for this field, not a mapping error
-                    : fieldMapper.getValue(message, field.path(), includeDefaults);
+            Object value = PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; otherwise absent stays absent
                 // (skip_if_missing=false has no Lucene shape — documents cannot hold nulls).
@@ -203,8 +199,14 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
             // scalar-hinted map without an explicit mode: fall through to per-entry handling
         }
         if (value instanceof List<?> values) {
+            // Lucene allows a single-valued doc-values field once per document, so a
+            // multi-valued read (repeated leaf or fan-out) sorts and facets through the
+            // SORTED_SET / SORTED_NUMERIC forms; the choosers pick those via facetable.
+            ResolvedFieldHint elementHint = hint.sortable() && !hint.facetable()
+                    ? hint.toBuilder().facetable(true).build()
+                    : hint;
             for (Object element : values) {
-                add(document, name, path, hint, element);
+                add(document, name, path, elementHint, element);
             }
             return;
         }
@@ -718,39 +720,6 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         long seconds = ((Number) value.getField(descriptor.findFieldByName("seconds"))).longValue();
         long nanos = ((Number) value.getField(descriptor.findFieldByName("nanos"))).longValue();
         return seconds * 1000L + nanos / 1_000_000L;
-    }
-
-    /**
-     * True when a dotted {@code path} traverses a singular message field that is not set,
-     * meaning the leaf simply has no value. Anything the walk cannot positively resolve
-     * (unknown field, repeated/non-message segment, Struct keys, Any unpacking) is left to
-     * the field mapper so genuine path errors still surface as {@link MappingException}s.
-     */
-    private static boolean hasUnsetIntermediate(Message message, String path) {
-        if (path.indexOf('.') < 0) {
-            return false;
-        }
-        MessageOrBuilder current = message;
-        String[] parts = path.split("\\.");
-        for (int i = 0; i < parts.length - 1; i++) {
-            Descriptor descriptor = current.getDescriptorForType();
-            if (descriptor.getFullName().equals(Struct.getDescriptor().getFullName())) {
-                return false;
-            }
-            FieldDescriptor fd = descriptor.findFieldByName(parts[i]);
-            if (fd == null || fd.isRepeated() || fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                return false;
-            }
-            if (!current.hasField(fd)) {
-                return true;
-            }
-            if (!(current.getField(fd) instanceof MessageOrBuilder next)
-                    || next.getDescriptorForType().getFullName().equals(Any.getDescriptor().getFullName())) {
-                return false;
-            }
-            current = next;
-        }
-        return false;
     }
 
     private record ResolvedLegacy(FieldProjection projection) {

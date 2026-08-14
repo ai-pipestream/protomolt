@@ -15,6 +15,7 @@ and does not interpret hints at all.
 | `protomolt-index-solr` | Solr document-map mapping |
 | `protomolt-index-qdrant` | Qdrant point mapping (repo Document semantic chunks → named vectors), a gRPC sink, and collection-schema generation; validates declared rules on write |
 | `protomolt-protobuf-indexing` | Facade chaining optional validation → plan → NDJSON; registers the declared-rules gate for unpacked Any payloads |
+| `protomolt-connect-opensearch` | Kafka Connect sink over this write path ([guide](../sink/kafka-connect-opensearch.md)) |
 
 ## Indexing hints
 
@@ -115,6 +116,18 @@ new ProtoNdjsonWriter().writeBulkIndex(bulk, "docs", id, message);
 As with the other descriptor-option standards, register the hint extensions
 before parsing descriptor sets, or the options arrive as unknown fields.
 
+### Paths under repeated ancestors
+
+A plan path may traverse a repeated message field — a `CHUNKS` block scope
+expands its children (`chunks.text`), and an explicit hint can expand any
+repeated message. On the write path every engine reads plan entries through
+`PlanValues`, which fans out over repeated intermediates depth-first and
+emits the flattened leaf values as one multi-valued field, in document
+order. An empty repeated ancestor (or an element whose singular parent is
+unset) reads as missing, so `null_value` substitution applies as usual.
+Paths without a repeated intermediate keep the field mapper's exact
+semantics, Struct keys and Any unpacking included.
+
 ### `google.protobuf.Any`
 
 Plan time cannot know a single packed type (for example
@@ -130,9 +143,10 @@ rendering). Inner fields are planned with the parent hint chain and emitted
 under `any_field.inner_path` (proto field names; engine names prefixed with
 the Any field's engine name). Payloads that pack further Anys expand
 recursively, bounded at 8 levels. An empty or unset Any contributes no inner
-fields. An unknown type URL, a descriptor the registry cannot unpack, or
-value bytes without a type URL is an error that names the field path (and
-type URL) — never a silent skip. Repeated Any fields, and Any fields under a
+fields. An unknown type URL, a type URL without the `/` the Any contract
+requires, value bytes that do not parse as the registered type, or value
+bytes without a type URL is an error that names the field path (and type
+URL) — never a silent skip, and each failure names its actual cause. Repeated Any fields, and Any fields under a
 repeated ancestor (a `CHUNKS` block), have no single packed type per path
 and keep their inert plan entry instead. Schema generation does not invent
 inner mappings for Any; those appear only when a concrete packed type is
@@ -147,6 +161,24 @@ aborts the document — violation paths are reported under the Any field's
 path. Payload types declaring no rules validate clean at no cost, and the
 standard's own escape hatches (`skip_when`, per-field `ignore`) apply
 unchanged.
+
+The schema can also opt a single field out: `validate_payloads: false` on
+the field's `(index)` hint indexes and renders that Any exactly as before
+but keeps the validators off for payloads unpacked from it — on both the
+engine and NDJSON write paths. Malformed Anys and unknown type URLs still
+fail, and Anys nested inside the payload are gated under their own fields'
+settings. The default is `true`.
+
+The NDJSON path runs the same gate. A `ProtobufIndexer` whose writer carries
+a `DescriptorRegistry` walks each outgoing message with `AnyPayloadGate`
+before rendering: every set Any — singular, repeated elements, map values,
+payloads packing further Anys (same 8-level bound) — is unpacked against
+that registry and offered to the same validators. Because the walk follows
+message values rather than plan paths, repeated Anys and Anys under repeated
+ancestors — inert on the expansion path — are validated here element by
+element, with paths like `attachments[1].title` or `extras[cover].title`.
+A registry-less writer cannot render packed Anys at all, so no gate runs
+there.
 
 ## The validate-then-index facade
 

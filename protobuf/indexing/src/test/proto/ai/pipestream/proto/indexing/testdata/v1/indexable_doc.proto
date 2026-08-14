@@ -82,6 +82,19 @@ message AnyEnvelope {
 
   // Late-bound payload; the packed type is only known on the write path.
   google.protobuf.Any payload = 2;
+
+  // Repeated late-bound payloads: inert on the plan-expansion path (no single packed
+  // type per plan path), but rendered by NDJSON and validated by the payload gate.
+  repeated google.protobuf.Any attachments = 3;
+
+  // Keyed late-bound payloads: exercises the payload gate's map-value walk.
+  map<string, google.protobuf.Any> extras = 4;
+
+  // Late-bound payload the schema opts out of payload validation: expanded and
+  // rendered like any other Any, but the declared-rules gate stays off for it.
+  google.protobuf.Any unchecked = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = { validate_payloads: false }
+  ];
 }
 
 // Payload type packed into AnyEnvelope.payload: declared validation rules plus the
@@ -107,6 +120,59 @@ message ValidatedPayload {
 
   // When true, the declared field rules above are suspended (skip_when).
   bool draft = 3;
+}
+
+// Envelope carrying BOTH a declared rule of its own and a late-bound payload, so tests
+// can pin the facade's ordering: top-level validation runs before the Any payload gate.
+message GatedEnvelope {
+  // Required document id (minimum length 1).
+  string doc_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: { min_len: 1 }
+    }
+  ];
+
+  // Late-bound payload, gated only after the top-level rules above pass.
+  google.protobuf.Any payload = 2;
+}
+
+// Envelope whose repeated and keyed payloads are opted out of validation by the
+// schema. The annotation sits on the map field itself — a synthetic MapEntry value
+// field cannot carry one — so this pins where the opt-out is resolved.
+message OptedOutEnvelope {
+  // Document id, indexed as an exact-match keyword.
+  string doc_id = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+
+  // Repeated late-bound payloads, every element opted out of the declared-rules gate.
+  repeated google.protobuf.Any attachments = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { validate_payloads: false }
+  ];
+
+  // Keyed late-bound payloads, every value opted out of the declared-rules gate.
+  map<string, google.protobuf.Any> extras = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = { validate_payloads: false }
+  ];
+
+  // Control: a sibling Any the opt-out must not reach.
+  google.protobuf.Any payload = 4;
+}
+
+// Payload that itself packs late-bound payloads, one field opted out and one not:
+// the gate resolves validate_payloads on the unpacked payload's own fields.
+message NestedAnyPayload {
+  // Free-text title; the payload type itself declares no validation rules.
+  string title = 1;
+
+  // Nested payload the schema opts out of validation.
+  google.protobuf.Any unchecked_inner = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = { validate_payloads: false }
+  ];
+
+  // Nested payload still gated by the declared-rules validator.
+  google.protobuf.Any checked_inner = 3;
 }
 
 // Bounds message for INT_RANGE hints: the (gte, lte) pair resolves as the range bounds.

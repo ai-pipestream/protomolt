@@ -33,11 +33,19 @@ public final class DeclaredRulesAnyPayloadValidator implements AnyPayloadValidat
         List<ValidationResult.Violation> prefixed = new ArrayList<>(result.violations().size());
         for (ValidationResult.Violation violation : result.violations()) {
             prefixed.add(new ValidationResult.Violation(
-                    violation.path().isEmpty() ? path : path + "." + violation.path(),
+                    joinPath(path, violation.path()),
                     violation.ruleId(),
                     violation.message(),
                     violation.rulePath()));
         }
         throw new ValidationResult.ValidationException(ValidationResult.failed(prefixed));
+    }
+
+    /** A root-level Any has an empty path; either side empty leaves the other unprefixed. */
+    private static String joinPath(String anyPath, String violationPath) {
+        if (anyPath.isEmpty()) {
+            return violationPath;
+        }
+        return violationPath.isEmpty() ? anyPath : anyPath + "." + violationPath;
     }
 }

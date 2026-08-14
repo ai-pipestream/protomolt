@@ -250,6 +250,11 @@ message FieldIndexHint {
   BlockRole block_role = 20;
   // Server-side chunk-and-embed derivation from this field's text.
   ChunkRecipe chunk_recipe = 21;
+  // Applies to google.protobuf.Any fields: when false, payloads unpacked from this
+  // field are indexed and rendered without running the AnyPayloadValidators
+  // (the declared-rules gate stays off for this field only). Malformed Anys and
+  // unknown type URLs still fail. Default true: payloads are validated.
+  optional bool validate_payloads = 22;
 }
 
 extend google.protobuf.FieldOptions {

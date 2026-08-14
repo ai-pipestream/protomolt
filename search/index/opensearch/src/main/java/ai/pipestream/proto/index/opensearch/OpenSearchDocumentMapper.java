@@ -4,21 +4,19 @@ import ai.pipestream.proto.helpers.TypeConverter;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import ai.pipestream.proto.index.spi.AnyIndexing;
+import ai.pipestream.proto.index.spi.AnyPayloadValidator;
 import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
+import ai.pipestream.proto.index.spi.PlanValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
-import com.google.protobuf.MessageOrBuilder;
-import com.google.protobuf.Struct;
 import com.google.protobuf.util.JsonFormat;
 
 import java.util.ArrayList;
@@ -89,6 +87,23 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
     }
 
     /**
+     * As {@link #OpenSearchDocumentMapper(IndexerContext, boolean)} with an explicit list
+     * of {@code google.protobuf.Any} payload validators instead of the ServiceLoader
+     * discovery — an empty list turns the payload gate off (expansion, unknown-type
+     * failures and the depth cap still apply). Hosts with an operator-level validation
+     * switch (e.g. the Kafka Connect sink) use this to make that switch cover payloads.
+     */
+    public OpenSearchDocumentMapper(
+            IndexerContext context,
+            boolean includeDefaults,
+            List<AnyPayloadValidator> payloadValidators) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.includeDefaults = includeDefaults;
+        this.anyIndexing = new AnyIndexing(
+                context.descriptorRegistry(), context.planFactory(), payloadValidators);
+    }
+
+    /**
      * @deprecated nested message conversion now goes through {@link JsonFormat}; the
      *             {@code typeConverter} argument is ignored. Use
      *             {@link #OpenSearchDocumentMapper(ProtoFieldMapper)}.
@@ -110,9 +125,7 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
         Map<String, Object> document = new LinkedHashMap<>();
         for (IndexingPlan.IndexedField field : expanded.indexable()) {
             ResolvedFieldHint hint = field.hint();
-            Object value = hasUnsetIntermediate(message, field.path())
-                    ? null // unset optional parent: no value for this field, not a mapping error
-                    : fieldMapper.getValue(message, field.path(), includeDefaults);
+            Object value = PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; skip_if_missing=false emits
                 // an explicit JSON null; otherwise absent stays absent.
@@ -206,39 +219,6 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
                 && !values.isEmpty()
                 && values.get(0) instanceof Message message
                 && message.getDescriptorForType().getOptions().getMapEntry();
-    }
-
-    /**
-     * True when a dotted {@code path} traverses a singular message field that is not set,
-     * meaning the leaf simply has no value. Anything the walk cannot positively resolve
-     * (unknown field, repeated/non-message segment, Struct keys, Any unpacking) is left to
-     * the field mapper so genuine path errors still surface as {@link MappingException}s.
-     */
-    private static boolean hasUnsetIntermediate(Message message, String path) {
-        if (path.indexOf('.') < 0) {
-            return false;
-        }
-        MessageOrBuilder current = message;
-        String[] parts = path.split("\\.");
-        for (int i = 0; i < parts.length - 1; i++) {
-            Descriptor descriptor = current.getDescriptorForType();
-            if (descriptor.getFullName().equals(Struct.getDescriptor().getFullName())) {
-                return false;
-            }
-            FieldDescriptor fd = descriptor.findFieldByName(parts[i]);
-            if (fd == null || fd.isRepeated() || fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                return false;
-            }
-            if (!current.hasField(fd)) {
-                return true;
-            }
-            if (!(current.getField(fd) instanceof MessageOrBuilder next)
-                    || next.getDescriptorForType().getFullName().equals(Any.getDescriptor().getFullName())) {
-                return false;
-            }
-            current = next;
-        }
-        return false;
     }
 
     /** Legacy projection API (explicit paths). Prefer {@link #map(Message, IndexingPlan)}. */

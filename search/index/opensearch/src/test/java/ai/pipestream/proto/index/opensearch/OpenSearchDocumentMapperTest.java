@@ -389,6 +389,76 @@ class OpenSearchDocumentMapperTest {
                 .doesNotContainKey("payload");
     }
 
+    @Test
+    void pathsUnderARepeatedAncestorFanOutIntoMultiValuedFields() throws Exception {
+        Descriptor doc = chunkedDocDescriptor();
+        Descriptor chunk = doc.findFieldByName("chunks").getMessageType();
+        FieldDescriptor chunks = doc.findFieldByName("chunks");
+        DynamicMessage message = DynamicMessage.newBuilder(doc)
+                .setField(doc.findFieldByName("doc_id"), "d1")
+                .addRepeatedField(chunks, DynamicMessage.newBuilder(chunk)
+                        .setField(chunk.findFieldByName("text"), "alpha")
+                        .build())
+                .addRepeatedField(chunks, DynamicMessage.newBuilder(chunk)
+                        .setField(chunk.findFieldByName("text"), "beta")
+                        .build())
+                .build();
+        IndexingPlan plan = new IndexingPlan(doc.getFullName(), List.of(
+                new IndexingPlan.IndexedField("doc_id", "doc_id",
+                        ResolvedFieldHint.of(IndexFieldKind.KEYWORD), false),
+                new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+                        ResolvedFieldHint.of(IndexFieldKind.TEXT), true)));
+
+        Map<String, Object> document = mapper.map(message, plan);
+
+        assertThat(document)
+                .containsEntry("doc_id", "d1")
+                .containsEntry("chunks_text", List.of("alpha", "beta"));
+    }
+
+    @Test
+    void emptyRepeatedAncestorReadsAsMissing() throws Exception {
+        Descriptor doc = chunkedDocDescriptor();
+        DynamicMessage message = DynamicMessage.newBuilder(doc)
+                .setField(doc.findFieldByName("doc_id"), "d1")
+                .build();
+        IndexingPlan plan = new IndexingPlan(doc.getFullName(), List.of(
+                new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+                        ResolvedFieldHint.of(IndexFieldKind.TEXT), true)));
+
+        assertThat(mapper.map(message, plan)).doesNotContainKey("chunks_text");
+    }
+
+    private static Descriptor chunkedDocDescriptor() throws Exception {
+        FileDescriptorProto proto = FileDescriptorProto.newBuilder()
+                .setName("chunked_doc.proto")
+                .setPackage("ai.pipestream.test.chunked")
+                .setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Chunk")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("text")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Doc")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("doc_id")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("chunks")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".ai.pipestream.test.chunked.Chunk")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
+                .build();
+        return FileDescriptor.buildFrom(proto, new FileDescriptor[]{})
+                .findMessageTypeByName("Doc");
+    }
+
     private record AnyEnvelope(
             Descriptor envelope,
             Descriptor inner,
