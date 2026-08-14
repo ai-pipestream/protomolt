@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Encodes protobuf messages as NDJSON using the message descriptor (via {@link JsonFormat}).
@@ -26,6 +27,7 @@ public final class ProtoNdjsonWriter {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final JsonFormat.Printer printer;
+    private final DescriptorRegistry descriptorRegistry;
 
     public ProtoNdjsonWriter() {
         this(NdjsonOptions.defaults(), null);
@@ -62,6 +64,17 @@ public final class ProtoNdjsonWriter {
         // Unconditional: the guard above has already rejected omitWhitespace(false).
         p = p.omittingInsignificantWhitespace();
         this.printer = p;
+        this.descriptorRegistry = descriptorRegistry;
+    }
+
+    /**
+     * The registry {@code google.protobuf.Any} payloads are rendered against, when one
+     * was supplied. Callers layering validation over this writer (e.g. the indexing
+     * facade's Any payload gate) unpack against the same registry, so rendering and
+     * validation cannot disagree about which packed types are known.
+     */
+    public Optional<DescriptorRegistry> descriptorRegistry() {
+        return Optional.ofNullable(descriptorRegistry);
     }
 
     /**

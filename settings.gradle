@@ -214,6 +214,9 @@ project(':protomolt-connect').projectDir = file('sink/kafka/connect')
 include 'protomolt-connect-iceberg'
 project(':protomolt-connect-iceberg').projectDir = file('sink/kafka/connect-iceberg')
 
+include 'protomolt-connect-opensearch'
+project(':protomolt-connect-opensearch').projectDir = file('sink/kafka/connect-opensearch')
+
 include 'protomolt-serde'
 project(':protomolt-serde').projectDir = file('sink/kafka/serde')
 

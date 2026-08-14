@@ -45,6 +45,9 @@ public final class OpenSearchMappingGenerator {
         Objects.requireNonNull(plan, "plan");
         Map<String, Object> properties = new LinkedHashMap<>();
         for (IndexingPlan.IndexedField field : plan.indexable()) {
+            if (field.type() == IndexFieldKind.ANY) {
+                continue;
+            }
             properties.put(field.fieldName(), property(field.hint()));
         }
         Map<String, Object> mappings = new LinkedHashMap<>();
@@ -142,7 +145,7 @@ public final class OpenSearchMappingGenerator {
             case DATE_RANGE -> "date_range";
             // UNSPECIFIED reaches here only in hand-built plans; treat it like OBJECT.
             case OBJECT, UNSPECIFIED -> "object";
-            case VECTOR, SKIP -> throw new IllegalArgumentException("no direct mapping type for " + kind);
+            case VECTOR, SKIP, ANY -> throw new IllegalArgumentException("no direct mapping type for " + kind);
         };
     }
 }

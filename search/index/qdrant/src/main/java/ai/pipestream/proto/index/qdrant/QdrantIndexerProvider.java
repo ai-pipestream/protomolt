@@ -13,6 +13,6 @@ public final class QdrantIndexerProvider implements SearchEngineIndexerProvider 
 
     @Override
     public SearchEngineIndexer create(IndexerContext context) {
-        return new QdrantPointMapper(context.fieldMapper());
+        return new QdrantPointMapper(context);
     }
 }

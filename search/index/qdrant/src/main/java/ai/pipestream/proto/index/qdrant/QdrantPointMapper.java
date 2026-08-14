@@ -1,7 +1,10 @@
 package ai.pipestream.proto.index.qdrant;
 
+import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.PlanValues;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
@@ -12,13 +15,8 @@ import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.SemanticChunk;
 import ai.pipestream.proto.repo.v1.SemanticProcessingResult;
 import ai.pipestream.proto.validate.ValidationResult;
-import com.google.protobuf.Any;
-import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
-import com.google.protobuf.MessageOrBuilder;
-import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
 import qdrant.Collections.Distance;
@@ -83,9 +81,16 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     private static final String SEMANTIC_RESULTS_PREFIX = "search_metadata.semantic_results";
 
     private final ProtoFieldMapper fieldMapper;
+    private final AnyIndexing anyIndexing;
 
     public QdrantPointMapper(ProtoFieldMapper fieldMapper) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
+        this.anyIndexing = AnyIndexing.from(fieldMapper);
+    }
+
+    public QdrantPointMapper(IndexerContext context) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.anyIndexing = AnyIndexing.from(context);
     }
 
     @Override
@@ -113,7 +118,8 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                     + Document.getDescriptor().getFullName() + ") but got "
                     + message.getDescriptorForType().getFullName(), null);
         }
-        Map<String, Value> documentPayload = documentPayload(document, plan);
+        IndexingPlan expanded = anyIndexing.expand(document, plan);
+        Map<String, Value> documentPayload = documentPayload(document, expanded);
         Optional<ResolvedFieldHint> vectorHint = vectorHint(plan);
         List<PointStruct> points = new ArrayList<>();
         for (SemanticProcessingResult result : document.getSearchMetadata().getSemanticResultsList()) {
@@ -277,9 +283,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                     || field.path().startsWith(SEMANTIC_RESULTS_PREFIX + ".")) {
                 continue;
             }
-            Object value = hasUnsetIntermediate(document, field.path())
-                    ? null
-                    : fieldMapper.getValue(document, field.path(), false);
+            Object value = PlanValues.read(fieldMapper, document, field.path(), false);
             if (value == null) {
                 continue;
             }
@@ -321,7 +325,11 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                     listValue.addValues(converted);
                 }
             }
-            return Value.newBuilder().setListValue(listValue).build();
+            // Every element unrepresentable: skip the field like the singular case does,
+            // instead of writing an empty list.
+            return listValue.getValuesCount() == 0
+                    ? null
+                    : Value.newBuilder().setListValue(listValue).build();
         }
         if (value instanceof Timestamp timestamp) {
             return stringValue(Timestamps.toString(timestamp));
@@ -333,36 +341,4 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
         return Value.newBuilder().setStringValue(string).build();
     }
 
-    /**
-     * True when a dotted {@code path} traverses a singular message field that is not set,
-     * meaning the leaf simply has no value (same rule the OpenSearch mapper applies). Anything
-     * the walk cannot positively resolve is left to the field mapper so genuine path errors
-     * still surface as {@link MappingException}s.
-     */
-    private static boolean hasUnsetIntermediate(Message message, String path) {
-        if (path.indexOf('.') < 0) {
-            return false;
-        }
-        MessageOrBuilder current = message;
-        String[] parts = path.split("\\.");
-        for (int i = 0; i < parts.length - 1; i++) {
-            Descriptor descriptor = current.getDescriptorForType();
-            if (descriptor.getFullName().equals(Struct.getDescriptor().getFullName())) {
-                return false;
-            }
-            FieldDescriptor fd = descriptor.findFieldByName(parts[i]);
-            if (fd == null || fd.isRepeated() || fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                return false;
-            }
-            if (!current.hasField(fd)) {
-                return true;
-            }
-            if (!(current.getField(fd) instanceof MessageOrBuilder next)
-                    || next.getDescriptorForType().getFullName().equals(Any.getDescriptor().getFullName())) {
-                return false;
-            }
-            current = next;
-        }
-        return false;
-    }
 }

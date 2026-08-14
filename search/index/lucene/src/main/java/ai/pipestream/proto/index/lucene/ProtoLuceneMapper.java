@@ -1,9 +1,12 @@
 package ai.pipestream.proto.index.lucene;
 
+import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.DateResolution;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
+import ai.pipestream.proto.index.spi.PlanValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
@@ -14,15 +17,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.MessageOrBuilder;
-import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import org.apache.lucene.document.Document;
@@ -90,9 +90,14 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
 
     private final ProtoFieldMapper fieldMapper;
     private final boolean includeDefaults;
+    private final AnyIndexing anyIndexing;
 
     public ProtoLuceneMapper(ProtoFieldMapper fieldMapper) {
         this(fieldMapper, false);
+    }
+
+    public ProtoLuceneMapper(IndexerContext context) {
+        this(context, false);
     }
 
     /**
@@ -102,6 +107,13 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     public ProtoLuceneMapper(ProtoFieldMapper fieldMapper, boolean includeDefaults) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
         this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(fieldMapper);
+    }
+
+    public ProtoLuceneMapper(IndexerContext context, boolean includeDefaults) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(context);
     }
 
     @Override
@@ -112,11 +124,14 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     @Override
     public Document map(Message message, IndexingPlan plan) throws MappingException {
         Objects.requireNonNull(plan, "plan");
+        IndexingPlan expanded = anyIndexing.expand(message, plan);
         Document document = new Document();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
-            Object value = hasUnsetIntermediate(message, field.path())
-                    ? null // unset optional parent: no value for this field, not a mapping error
-                    : fieldMapper.getValue(message, field.path(), includeDefaults);
+        for (IndexingPlan.IndexedField field : expanded.indexable()) {
+            // A vector is one whole value; a path fanning out over a repeated ancestor
+            // has no flat projection and fails loudly (per-chunk vectors are entities).
+            Object value = field.type() == IndexFieldKind.VECTOR
+                    ? PlanValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
+                    : PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; otherwise absent stays absent
                 // (skip_if_missing=false has no Lucene shape — documents cannot hold nulls).
@@ -188,8 +203,14 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
             // scalar-hinted map without an explicit mode: fall through to per-entry handling
         }
         if (value instanceof List<?> values) {
+            // Lucene allows a single-valued doc-values field once per document, so a
+            // multi-valued read (repeated leaf or fan-out) sorts and facets through the
+            // SORTED_SET / SORTED_NUMERIC forms; the choosers pick those via facetable.
+            ResolvedFieldHint elementHint = hint.sortable() && !hint.facetable()
+                    ? hint.toBuilder().facetable(true).build()
+                    : hint;
             for (Object element : values) {
-                add(document, name, path, hint, element);
+                add(document, name, path, elementHint, element);
             }
             return;
         }
@@ -335,8 +356,8 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                         : String.valueOf(value);
                 addJsonText(document, name, text, stored, indexed);
             }
-            case VECTOR, SKIP, INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> {
-                // VECTOR and ranges are handled above; SKIP fields are filtered out of the plan.
+            case VECTOR, SKIP, ANY, INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> {
+                // VECTOR and ranges are handled above; SKIP/ANY are filtered or expanded first.
             }
         }
     }
@@ -703,39 +724,6 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         long seconds = ((Number) value.getField(descriptor.findFieldByName("seconds"))).longValue();
         long nanos = ((Number) value.getField(descriptor.findFieldByName("nanos"))).longValue();
         return seconds * 1000L + nanos / 1_000_000L;
-    }
-
-    /**
-     * True when a dotted {@code path} traverses a singular message field that is not set,
-     * meaning the leaf simply has no value. Anything the walk cannot positively resolve
-     * (unknown field, repeated/non-message segment, Struct keys, Any unpacking) is left to
-     * the field mapper so genuine path errors still surface as {@link MappingException}s.
-     */
-    private static boolean hasUnsetIntermediate(Message message, String path) {
-        if (path.indexOf('.') < 0) {
-            return false;
-        }
-        MessageOrBuilder current = message;
-        String[] parts = path.split("\\.");
-        for (int i = 0; i < parts.length - 1; i++) {
-            Descriptor descriptor = current.getDescriptorForType();
-            if (descriptor.getFullName().equals(Struct.getDescriptor().getFullName())) {
-                return false;
-            }
-            FieldDescriptor fd = descriptor.findFieldByName(parts[i]);
-            if (fd == null || fd.isRepeated() || fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                return false;
-            }
-            if (!current.hasField(fd)) {
-                return true;
-            }
-            if (!(current.getField(fd) instanceof MessageOrBuilder next)
-                    || next.getDescriptorForType().getFullName().equals(Any.getDescriptor().getFullName())) {
-                return false;
-            }
-            current = next;
-        }
-        return false;
     }
 
     private record ResolvedLegacy(FieldProjection projection) {

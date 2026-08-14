@@ -22,6 +22,12 @@ Everything is configured with a serialized
 generation, no rebuild when the schema changes. The classes live in
 `ai.pipestream.proto.kafka.connect`.
 
+Two sibling plugins land records in storage instead of gRPC: the
+[Iceberg sink](iceberg.md) (`protomolt-connect-iceberg`) and the
+[OpenSearch sink](kafka-connect-opensearch.md)
+(`protomolt-connect-opensearch`), which indexes documents shaped by the
+schema's declared indexing hints.
+
 ## Getting the descriptor set
 
 Any of ProtoMolt's surfaces produces the base64 descriptor set the

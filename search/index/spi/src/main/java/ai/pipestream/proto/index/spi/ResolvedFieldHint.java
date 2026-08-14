@@ -21,7 +21,10 @@ import java.util.Optional;
  * keeps its documented default); {@code hnswParams} is {@code null} when absent (engine
  * tuning defaults apply); {@code chunkRecipe} is {@code null} when absent (no server-side
  * derivation). Analyzer names, {@code dateFormat}, and {@code name} use the empty string
- * for "unset"; {@code blockRole} uses {@link BlockRole#UNSPECIFIED}.
+ * for "unset"; {@code blockRole} uses {@link BlockRole#UNSPECIFIED};
+ * {@code validatePayloads} defaults to {@code true} (payloads unpacked from a
+ * {@code google.protobuf.Any} field run the {@link AnyPayloadValidator} gate unless the
+ * hint opts the field out).
  */
 public record ResolvedFieldHint(
         IndexFieldKind type,
@@ -44,7 +47,8 @@ public record ResolvedFieldHint(
         DateResolution dateResolution,
         Map<String, String> engineParams,
         BlockRole blockRole,
-        ChunkRecipe chunkRecipe) {
+        ChunkRecipe chunkRecipe,
+        boolean validatePayloads) {
 
     public ResolvedFieldHint {
         Objects.requireNonNull(type, "type");
@@ -67,7 +71,7 @@ public record ResolvedFieldHint(
     public ResolvedFieldHint(IndexFieldKind type, boolean stored, boolean indexed, String name, int vectorDims) {
         this(type, stored, indexed, name, vectorDims,
                 null, null, null, null, "", "", null, true, false, false, null, "", null, null,
-                null, null);
+                null, null, true);
     }
 
     public static ResolvedFieldHint of(IndexFieldKind type) {
@@ -194,7 +198,7 @@ public record ResolvedFieldHint(
         }
     }
 
-    /** Mutable companion for the 19-component record. */
+    /** Mutable companion for the many-component record. */
     public static final class Builder {
         private IndexFieldKind type;
         private boolean stored;
@@ -217,6 +221,7 @@ public record ResolvedFieldHint(
         private Map<String, String> engineParams;
         private BlockRole blockRole;
         private ChunkRecipe chunkRecipe;
+        private boolean validatePayloads;
 
         private Builder(ResolvedFieldHint hint) {
             this.type = hint.type;
@@ -240,6 +245,7 @@ public record ResolvedFieldHint(
             this.engineParams = hint.engineParams;
             this.blockRole = hint.blockRole;
             this.chunkRecipe = hint.chunkRecipe;
+            this.validatePayloads = hint.validatePayloads;
         }
 
         public Builder type(IndexFieldKind type) {
@@ -353,11 +359,17 @@ public record ResolvedFieldHint(
             return this;
         }
 
+        public Builder validatePayloads(boolean validatePayloads) {
+            this.validatePayloads = validatePayloads;
+            return this;
+        }
+
         public ResolvedFieldHint build() {
             return new ResolvedFieldHint(type, stored, indexed, name, vectorDims,
                     vectorSimilarity, vectorElementType, hnswParams, subFields,
                     analyzer, searchAnalyzer, nullValue, skipIfMissing, sortable, facetable,
-                    mapMode, dateFormat, dateResolution, engineParams, blockRole, chunkRecipe);
+                    mapMode, dateFormat, dateResolution, engineParams, blockRole, chunkRecipe,
+                    validatePayloads);
         }
     }
 }

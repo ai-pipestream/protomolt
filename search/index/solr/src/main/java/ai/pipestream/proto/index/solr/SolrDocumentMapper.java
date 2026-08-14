@@ -1,7 +1,11 @@
 package ai.pipestream.proto.index.solr;
 
+import ai.pipestream.proto.index.spi.AnyIndexing;
+import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
+import ai.pipestream.proto.index.spi.PlanValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
@@ -10,13 +14,9 @@ import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
-import com.google.protobuf.MessageOrBuilder;
-import com.google.protobuf.Struct;
 import com.google.protobuf.util.JsonFormat;
 
 import java.util.ArrayList;
@@ -62,9 +62,14 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
 
     private final ProtoFieldMapper fieldMapper;
     private final boolean includeDefaults;
+    private final AnyIndexing anyIndexing;
 
     public SolrDocumentMapper(ProtoFieldMapper fieldMapper) {
         this(fieldMapper, false);
+    }
+
+    public SolrDocumentMapper(IndexerContext context) {
+        this(context, false);
     }
 
     /**
@@ -74,6 +79,13 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
     public SolrDocumentMapper(ProtoFieldMapper fieldMapper, boolean includeDefaults) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
         this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(fieldMapper);
+    }
+
+    public SolrDocumentMapper(IndexerContext context, boolean includeDefaults) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(context);
     }
 
     @Override
@@ -84,12 +96,15 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
     @Override
     public Map<String, Object> map(Message message, IndexingPlan plan) throws MappingException {
         Objects.requireNonNull(plan, "plan");
+        IndexingPlan expanded = anyIndexing.expand(message, plan);
         Map<String, Object> document = new LinkedHashMap<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexingPlan.IndexedField field : expanded.indexable()) {
             ResolvedFieldHint hint = field.hint();
-            Object value = hasUnsetIntermediate(message, field.path())
-                    ? null // unset optional parent: no value for this field, not a mapping error
-                    : fieldMapper.getValue(message, field.path(), includeDefaults);
+            // A vector is one whole value; a path fanning out over a repeated ancestor
+            // has no flat projection and fails loudly (per-chunk vectors are entities).
+            Object value = field.type() == IndexFieldKind.VECTOR
+                    ? PlanValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
+                    : PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; Solr documents cannot hold
                 // explicit nulls, so anything else absent stays absent.
@@ -175,39 +190,6 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
                 && !values.isEmpty()
                 && values.get(0) instanceof Message message
                 && message.getDescriptorForType().getOptions().getMapEntry();
-    }
-
-    /**
-     * True when a dotted {@code path} traverses a singular message field that is not set,
-     * meaning the leaf simply has no value. Anything the walk cannot positively resolve
-     * (unknown field, repeated/non-message segment, Struct keys, Any unpacking) is left to
-     * the field mapper so genuine path errors still surface as {@link MappingException}s.
-     */
-    private static boolean hasUnsetIntermediate(Message message, String path) {
-        if (path.indexOf('.') < 0) {
-            return false;
-        }
-        MessageOrBuilder current = message;
-        String[] parts = path.split("\\.");
-        for (int i = 0; i < parts.length - 1; i++) {
-            Descriptor descriptor = current.getDescriptorForType();
-            if (descriptor.getFullName().equals(Struct.getDescriptor().getFullName())) {
-                return false;
-            }
-            FieldDescriptor fd = descriptor.findFieldByName(parts[i]);
-            if (fd == null || fd.isRepeated() || fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                return false;
-            }
-            if (!current.hasField(fd)) {
-                return true;
-            }
-            if (!(current.getField(fd) instanceof MessageOrBuilder next)
-                    || next.getDescriptorForType().getFullName().equals(Any.getDescriptor().getFullName())) {
-                return false;
-            }
-            current = next;
-        }
-        return false;
     }
 
     /** Legacy projection API. Prefer {@link #map(Message, IndexingPlan)}. */

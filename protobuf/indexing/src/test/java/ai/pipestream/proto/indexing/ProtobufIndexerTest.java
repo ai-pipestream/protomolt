@@ -60,7 +60,7 @@ class ProtobufIndexerTest {
     }
 
     @Test
-    void writesNdjsonWithoutValidation() {
+    void writesNdjsonWithoutValidation() throws Exception {
         ProtobufIndexer indexer = ProtobufIndexer.create();
         IndexableDoc doc = IndexableDoc.newBuilder()
                 .setDocId("d1")
@@ -73,7 +73,7 @@ class ProtobufIndexerTest {
     }
 
     @Test
-    void chainsValidationBeforeNdjson() {
+    void chainsValidationBeforeNdjson() throws Exception {
         ProtoValidator validator = ProtoValidator.forMessageType(IndexableDoc.getDescriptor());
         ProtobufIndexer indexer = ProtobufIndexer.defaults(validator);
 
@@ -91,7 +91,7 @@ class ProtobufIndexerTest {
     }
 
     @Test
-    void writeBulkIndexProducesTwoLines() {
+    void writeBulkIndexProducesTwoLines() throws Exception {
         ProtoValidator validator = ProtoValidator.forMessageType(IndexableDoc.getDescriptor());
         ProtobufIndexer indexer = ProtobufIndexer.defaults(validator);
         IndexableDoc doc = IndexableDoc.newBuilder()

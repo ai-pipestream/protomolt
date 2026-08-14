@@ -36,6 +36,9 @@ public record LuceneFieldSpecs(String messageFullName, List<FieldSpec> fields) {
         Objects.requireNonNull(plan, "plan");
         List<FieldSpec> specs = new ArrayList<>();
         for (IndexingPlan.IndexedField field : plan.indexable()) {
+            if (field.type() == IndexFieldKind.ANY) {
+                continue;
+            }
             ResolvedFieldHint hint = field.hint();
             specs.add(new FieldSpec(
                     field.fieldName(),

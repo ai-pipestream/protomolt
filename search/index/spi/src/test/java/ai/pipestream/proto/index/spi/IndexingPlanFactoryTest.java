@@ -6,6 +6,7 @@ import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
+import com.google.protobuf.AnyProto;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Struct;
@@ -122,6 +123,32 @@ class IndexingPlanFactoryTest {
         IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(Struct.getDescriptor());
         assertThat(plan.fields()).isNotEmpty();
         assertThat(plan.find("fields")).isPresent();
+    }
+
+    @Test
+    void infersAnyForGoogleProtobufAnyAndDoesNotExpandInnerFields() throws Exception {
+        Descriptor descriptor = anyEnvelopeDescriptor();
+        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(descriptor);
+
+        assertThat(plan.find("payload")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.ANY);
+        assertThat(plan.find("payload.title")).isEmpty();
+        assertThat(plan.find("doc_id")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.KEYWORD);
+    }
+
+    @Test
+    void skipHintOnAnyKeepsSkipAndDoesNotExpand() throws Exception {
+        Descriptor descriptor = anyEnvelopeDescriptor();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                .put(descriptor.getFullName(), "payload", ResolvedFieldHint.skipped());
+        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+
+        assertThat(plan.find("payload")).get().extracting(IndexingPlan.IndexedField::type)
+                .isEqualTo(IndexFieldKind.SKIP);
+        assertThat(plan.indexable()).extracting(IndexingPlan.IndexedField::path)
+                .doesNotContain("payload");
+        assertThat(plan.find("payload.title")).isEmpty();
     }
 
     @Test
@@ -606,6 +633,42 @@ class IndexingPlanFactoryTest {
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Profile");
+    }
+
+    private static Descriptor anyEnvelopeDescriptor() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("any_envelope.proto")
+                .setPackage("ai.pipestream.test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/any.proto")
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("InnerPayload")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("title")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("page_count")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_INT32)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Envelope")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("doc_id")
+                                .setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("payload")
+                                .setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Any")
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        return FileDescriptor.buildFrom(file, new FileDescriptor[]{AnyProto.getDescriptor()})
+                .findMessageTypeByName("Envelope");
     }
 
     private static Descriptor sampleDescriptor() throws Exception {

@@ -11,6 +11,8 @@ import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
 import ai.pipestream.proto.repo.v1.SemanticChunk;
 import ai.pipestream.proto.repo.v1.SemanticProcessingResult;
+import com.google.protobuf.Any;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import org.junit.jupiter.api.Test;
 import qdrant.Common.PointId;
@@ -18,6 +20,7 @@ import qdrant.JsonWithInt.Value;
 import qdrant.Points.PointStruct;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -124,6 +127,51 @@ class QdrantPointMapperTest {
                 .containsOnlyKeys(MINILM_VECTOR);
         assertThat(points.get(1).getPayloadMap().get("chunk_text").getStringValue())
                 .isEqualTo("the second chunk");
+    }
+
+    @Test
+    void expandsRegistryKnownStructuredDataIntoEveryPointPayload() throws Exception {
+        DescriptorRegistry registry = new DescriptorRegistry();
+        registry.register(ChunkEmbedding.getDescriptor());
+        QdrantPointMapper anyMapper = new QdrantPointMapper(new ProtoFieldMapperImpl(registry));
+        Document document = document().toBuilder()
+                .setStructuredData(Any.pack(ChunkEmbedding.newBuilder()
+                        .setEmbeddingId("emb-9")
+                        .setModel("m1")
+                        .setDimensions(2)
+                        .build()))
+                .build();
+        List<IndexingPlan.IndexedField> fields = new ArrayList<>(plan().fields());
+        fields.add(new IndexingPlan.IndexedField("structured_data", "structured_data",
+                ResolvedFieldHint.of(IndexFieldKind.ANY)));
+        IndexingPlan planWithAny = new IndexingPlan("ai.pipestream.proto.repo.v1.Document", fields);
+
+        List<PointStruct> points = anyMapper.map(document, planWithAny);
+
+        assertThat(points).hasSize(2);
+        Map<String, Value> payload = points.get(0).getPayloadMap();
+        assertThat(payload.get("structured_data_model").getStringValue()).isEqualTo("m1");
+        assertThat(payload.get("structured_data_dimensions").getIntegerValue()).isEqualTo(2);
+        assertThat(payload).doesNotContainKey("structured_data");
+    }
+
+    @Test
+    void unknownStructuredDataTypeUrlFailsInsteadOfUpserting() throws Exception {
+        Document document = document().toBuilder()
+                .setStructuredData(Any.newBuilder()
+                        .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                        .setValue(ByteString.copyFromUtf8("x"))
+                        .build())
+                .build();
+        List<IndexingPlan.IndexedField> fields = new ArrayList<>(plan().fields());
+        fields.add(new IndexingPlan.IndexedField("structured_data", "structured_data",
+                ResolvedFieldHint.of(IndexFieldKind.ANY)));
+        IndexingPlan planWithAny = new IndexingPlan("ai.pipestream.proto.repo.v1.Document", fields);
+
+        assertThatThrownBy(() -> mapper.map(document, planWithAny))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("structured_data")
+                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
     }
 
     @Test

@@ -13,6 +13,6 @@ public final class SolrIndexerProvider implements SearchEngineIndexerProvider {
 
     @Override
     public SearchEngineIndexer create(IndexerContext context) {
-        return new SolrDocumentMapper(context.fieldMapper());
+        return new SolrDocumentMapper(context);
     }
 }

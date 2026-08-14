@@ -43,6 +43,9 @@ public final class SolrSchemaGenerator {
         List<Map<String, Object>> fields = new ArrayList<>();
         List<Map<String, Object>> copyFields = new ArrayList<>();
         for (IndexingPlan.IndexedField field : plan.indexable()) {
+            if (field.type() == IndexFieldKind.ANY) {
+                continue;
+            }
             ResolvedFieldHint hint = field.hint();
             // A DenseVectorField holds the whole vector in a single value, and Solr rejects the
             // type outright when the field declares multiValued.

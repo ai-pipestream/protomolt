@@ -1,5 +1,8 @@
 package ai.pipestream.proto.index.ndjson;
 
+import ai.pipestream.proto.descriptors.DescriptorRegistry;
+import com.google.protobuf.Any;
+import com.google.protobuf.AnyProto;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
@@ -164,6 +167,49 @@ class ProtoNdjsonWriterTest {
         assertThatThrownBy(() -> writer.writeBulkDelete(out, "docs", ""))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(out).isEmpty();
+    }
+
+    @Test
+    void registryKnownAnyRendersInnerFieldsAsProto3Json() throws Exception {
+        FileDescriptor file = FileDescriptor.buildFrom(
+                FileDescriptorProto.newBuilder()
+                        .setName("any_ndjson.proto")
+                        .setPackage("ai.pipestream.test")
+                        .setSyntax("proto3")
+                        .addDependency("google/protobuf/any.proto")
+                        .addMessageType(DescriptorProto.newBuilder()
+                                .setName("InnerPayload")
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("title")
+                                        .setNumber(1)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                        .addMessageType(DescriptorProto.newBuilder()
+                                .setName("Envelope")
+                                .addField(FieldDescriptorProto.newBuilder()
+                                        .setName("payload")
+                                        .setNumber(1)
+                                        .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                        .setTypeName(".google.protobuf.Any")
+                                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                        .build(),
+                new FileDescriptor[]{AnyProto.getDescriptor()});
+        Descriptor envelope = file.findMessageTypeByName("Envelope");
+        Descriptor inner = file.findMessageTypeByName("InnerPayload");
+        DynamicMessage packed = DynamicMessage.newBuilder(inner)
+                .setField(inner.findFieldByName("title"), "Opinion")
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(envelope)
+                .setField(envelope.findFieldByName("payload"), Any.pack(packed))
+                .build();
+
+        DescriptorRegistry registry = new DescriptorRegistry();
+        registry.register(inner);
+        ProtoNdjsonWriter resolving = new ProtoNdjsonWriter(NdjsonOptions.defaults(), registry);
+
+        assertThat(resolving.toJsonLine(message))
+                .contains("\"@type\":\"type.googleapis.com/ai.pipestream.test.InnerPayload\"")
+                .contains("\"title\":\"Opinion\"");
     }
 
     @Test
