@@ -70,6 +70,11 @@ Current implementation and deployment snapshot, verified 2026-08-14:
   GPU. CPU inference and CPU model offload are prohibited. Build capacity and
   inference capacity must be advertised separately before either joins mesh
   scheduling.
+- Nano1's TEI service uses a CUDA-only native ARM64 build and a pinned
+  `BAAI/bge-small-en-v1.5` revision for 384-dimensional embeddings. It binds to
+  loopback by default and may bind to Nano1's Tailscale address for tailnet
+  access. Do not replace it with the published CPU ARM64 image, enable a CPU
+  fallback, or expose its unauthenticated port to the Internet.
 
 The durable control plane currently uses MCP streamable HTTP over TLS. gRPC is
 the application plane for reflection, invocation, and generated clients. A

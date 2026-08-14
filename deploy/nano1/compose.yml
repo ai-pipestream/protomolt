@@ -12,9 +12,65 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     ports:
       - "${NANO1_DJL_BIND:-127.0.0.1}:${NANO1_DJL_PORT:-8082}:8080"
-    mem_limit: 6g
+    mem_limit: 2g
     shm_size: 1g
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  tei-gpu:
+    build:
+      context: "${PROTOMOLT_TEI_SOURCE_DIR:-/var/lib/protomolt-runner/.cache/protomolt/tei-source}"
+      dockerfile: Dockerfile-cuda
+      target: grpc
+      args:
+        CUDA_COMPUTE_CAP: "87"
+        CARGO_BUILD_JOBS: "1"
+        CARGO_BUILD_INCREMENTAL: "false"
+        DOCKER_LABEL: protomolt-nano1-sm87
+        GIT_SHA: 0d124dc9773be6ac5a9a57d8439aba9bbbf33273
+        RAYON_NUM_THREADS: "1"
+    image: protomolt-tei-jetson-grpc:0d124dc
+    container_name: protomolt-tei-jetson
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      USE_FLASH_ATTENTION: "False"
+    command:
+      - --model-id
+      - BAAI/bge-small-en-v1.5
+      - --revision
+      - 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a
+      - --dtype
+      - float16
+      - --max-concurrent-requests
+      - "4"
+      - --max-client-batch-size
+      - "8"
+      - --max-batch-tokens
+      - "2048"
+    ports:
+      - "${NANO1_TEI_BIND:-127.0.0.1}:${NANO1_TEI_PORT:-8083}:80"
+    volumes:
+      - tei-model-cache:/data
+    mem_limit: 3g
+    shm_size: 1g
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: [CMD-SHELL, "timeout 2 bash -c '</dev/tcp/127.0.0.1/80'"]
+      interval: 15s
+      timeout: 5s
+      start_period: 180s
+      retries: 20
+
+volumes:
+  tei-model-cache:

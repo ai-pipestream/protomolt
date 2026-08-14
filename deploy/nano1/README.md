@@ -49,10 +49,10 @@ promotion review.
 
 ## Inference role
 
-Nano1 can also host a DJL Serving processor, but the build runner and inference
-processor are separate capacities. A busy build must not silently consume the
-memory reserved for inference, and an inference container must not receive the
-runner's Docker authority.
+Nano1 hosts DJL Serving and text-embeddings-inference, but the build runner and
+inference processors are separate capacities. A busy build must not silently
+consume the memory reserved for inference, and an inference container must not
+receive the runner's Docker authority.
 
 The official DJL Serving 0.36 GPU image does not publish an ARM64 manifest.
 The Nano1 image combines DJL Serving's ARM64 Java distribution with NVIDIA's
@@ -76,10 +76,51 @@ The live check must return `backend: TensorRT`, device `Orin`, compute
 capability `8.7`, and the expected output values. The container is unhealthy
 and restart-looped if the startup CUDA engine cannot execute.
 
-The service listens on `127.0.0.1:8082` by default. Set `NANO1_DJL_BIND` to
-Nano1's Tailscale address only when direct tailnet access is needed. Do not
-bind the unauthenticated DJL management API to every interface. A public route
-should terminate TLS and authentication before forwarding to this endpoint.
+## Embeddings
+
+The `tei-gpu` service provides normalized 384-dimensional embeddings from
+`BAAI/bge-small-en-v1.5`. The model is small enough to coexist with the DJL
+probe and useful for agent memory, source-code retrieval, and local search.
+Both its public model revision and the TEI source revision are pinned.
+
+TEI is compiled natively for the Orin's `sm_87` CUDA capability. The build uses
+the CUDA-only Candle backend, so an unavailable GPU is a startup failure. CPU
+inference is not compiled into this image. Flash Attention is disabled because
+this small BERT model does not need it and the simpler CUDA path is easier to
+verify on Jetson. The source patch also adds TEI's missing exact `8.7` runtime
+compatibility case. The service uses TEI's gRPC build, including server
+reflection, unary embeddings, bidirectional streaming embeddings, health, and
+per-request timing metadata. ProtoMolt can therefore register the endpoint
+without translating an HTTP-only API.
+
+Build, start, and verify TEI on Nano1 with:
+
+```shell
+sudo -u protomolt-runner -H env PROTOMOLT_NANO1_TEI_LIVE=1 \
+  scripts/nano1-tei-live.sh
+```
+
+The first native build compiles TEI and takes much longer than later cached
+builds. Model files persist in the `tei-model-cache` volume. The live check
+uses a pinned ARM64 grpcurl container to verify reflection, gRPC health, model
+identity, vector dimensions, finite values, normalization, and semantic
+ordering for related and unrelated sentences.
+
+DJL listens on `127.0.0.1:8082` and TEI listens on `127.0.0.1:8083` by default.
+Set `NANO1_DJL_BIND` or `NANO1_TEI_BIND` to Nano1's Tailscale address only when
+direct tailnet access is needed. Do not bind either unauthenticated API to every
+interface. A public route should terminate TLS and authentication before
+forwarding to these endpoints.
+
+With `NANO1_TEI_BIND` set to the host's Tailscale IPv4 address, tailnet members
+can reflect and invoke `nano1:8083` with grpcurl or register it directly in
+ProtoMolt. Tailscale encrypts that route and applies tailnet identity policy.
+Internet exposure still requires an authenticated proxy.
+
+The verified tailnet deployment uses `nano1:8083`. With DJL and TEI healthy,
+DJL used about 1 GiB and TEI used about 677 MiB of host memory at idle. Treat
+those observations as deployment evidence, not scheduling limits. The hard
+container limits remain 2 GiB and 3 GiB respectively.
 
 Stop it with:
 
@@ -88,12 +129,12 @@ sudo -u protomolt-runner -H docker compose \
   -f deploy/nano1/compose.yml down
 ```
 
-The CUDA probe proves the serving stack without downloading model weights.
-The first useful model should fit comfortably beside host services. Keep its
-model cache on Nano1's local disk. The processor advertisement should name
-its schema, model, provider, GPU capability, concurrency limit, and current
-in-flight count. The ARM64 build processor should publish a different
-capability and capacity record.
+The CUDA probe proves the DJL serving stack without downloading model weights.
+TEI provides the first useful model while keeping its cache on Nano1's local
+disk. Its processor advertisement should identify the pinned model, embedding
+dimensions, CUDA capability, concurrency limit, and current in-flight count.
+DJL and the ARM64 build processor should publish different capability and
+capacity records.
 
 Native `linux/arm64` images produced here run on both the Jetson and the
 Raspberry Pi fleet when their base images support ARM64. GPU images remain
