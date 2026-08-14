@@ -1,5 +1,6 @@
 package ai.pipestream.proto.index.spi;
 
+import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Timestamp;
@@ -38,6 +39,10 @@ public final class InferringIndexingHintSource implements IndexingHintSource {
         Descriptor type = field.getMessageType();
         if (Timestamp.getDescriptor().getFullName().equals(type.getFullName())) {
             return ResolvedFieldHint.of(IndexFieldKind.DATE);
+        }
+        if (Any.getDescriptor().getFullName().equals(type.getFullName())) {
+            // Write-time unpack; not an opaque OBJECT and not a BINARY blob.
+            return ResolvedFieldHint.of(IndexFieldKind.ANY);
         }
         if ("google.protobuf.Struct".equals(type.getFullName())
                 || "google.protobuf.Value".equals(type.getFullName())) {

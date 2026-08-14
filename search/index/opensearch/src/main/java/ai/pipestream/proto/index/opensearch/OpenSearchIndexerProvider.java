@@ -13,6 +13,6 @@ public final class OpenSearchIndexerProvider implements SearchEngineIndexerProvi
 
     @Override
     public SearchEngineIndexer create(IndexerContext context) {
-        return new OpenSearchDocumentMapper(context.fieldMapper());
+        return new OpenSearchDocumentMapper(context);
     }
 }

@@ -1,6 +1,8 @@
 package ai.pipestream.proto.index.qdrant;
 
+import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
@@ -83,9 +85,16 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     private static final String SEMANTIC_RESULTS_PREFIX = "search_metadata.semantic_results";
 
     private final ProtoFieldMapper fieldMapper;
+    private final AnyIndexing anyIndexing;
 
     public QdrantPointMapper(ProtoFieldMapper fieldMapper) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
+        this.anyIndexing = AnyIndexing.from(fieldMapper);
+    }
+
+    public QdrantPointMapper(IndexerContext context) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.anyIndexing = AnyIndexing.from(context);
     }
 
     @Override
@@ -113,7 +122,8 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                     + Document.getDescriptor().getFullName() + ") but got "
                     + message.getDescriptorForType().getFullName(), null);
         }
-        Map<String, Value> documentPayload = documentPayload(document, plan);
+        IndexingPlan expanded = anyIndexing.expand(document, plan);
+        Map<String, Value> documentPayload = documentPayload(document, expanded);
         Optional<ResolvedFieldHint> vectorHint = vectorHint(plan);
         List<PointStruct> points = new ArrayList<>();
         for (SemanticProcessingResult result : document.getSearchMetadata().getSemanticResultsList()) {

@@ -3,6 +3,8 @@ package ai.pipestream.proto.index.opensearch;
 import ai.pipestream.proto.helpers.TypeConverter;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
+import ai.pipestream.proto.index.spi.AnyIndexing;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
 import ai.pipestream.proto.index.spi.RangeBounds;
@@ -60,9 +62,14 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
 
     private final ProtoFieldMapper fieldMapper;
     private final boolean includeDefaults;
+    private final AnyIndexing anyIndexing;
 
     public OpenSearchDocumentMapper(ProtoFieldMapper fieldMapper) {
         this(fieldMapper, false);
+    }
+
+    public OpenSearchDocumentMapper(IndexerContext context) {
+        this(context, false);
     }
 
     /**
@@ -72,6 +79,13 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
     public OpenSearchDocumentMapper(ProtoFieldMapper fieldMapper, boolean includeDefaults) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
         this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(fieldMapper);
+    }
+
+    public OpenSearchDocumentMapper(IndexerContext context, boolean includeDefaults) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(context);
     }
 
     /**
@@ -92,8 +106,9 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
     @Override
     public Map<String, Object> map(Message message, IndexingPlan plan) throws MappingException {
         Objects.requireNonNull(plan, "plan");
+        IndexingPlan expanded = anyIndexing.expand(message, plan);
         Map<String, Object> document = new LinkedHashMap<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexingPlan.IndexedField field : expanded.indexable()) {
             ResolvedFieldHint hint = field.hint();
             Object value = hasUnsetIntermediate(message, field.path())
                     ? null // unset optional parent: no value for this field, not a mapping error

@@ -13,6 +13,6 @@ public final class LuceneIndexerProvider implements SearchEngineIndexerProvider 
 
     @Override
     public SearchEngineIndexer create(IndexerContext context) {
-        return new ProtoLuceneMapper(context.fieldMapper());
+        return new ProtoLuceneMapper(context);
     }
 }

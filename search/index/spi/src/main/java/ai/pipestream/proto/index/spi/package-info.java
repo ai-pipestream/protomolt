@@ -17,9 +17,12 @@
  *
  * <p>Engine plugins implement {@link SearchEngineIndexer} and register a
  * {@link SearchEngineIndexerProvider} for discovery through {@link SearchEngineIndexers},
- * receiving the shared {@link ai.pipestream.proto.mapper.ProtoFieldMapper} by way of
- * {@link IndexerContext}. The Lucene, OpenSearch, and Solr modules are such plugins; NDJSON
- * output is not an engine and ignores the plan entirely.
+ * receiving the shared {@link ai.pipestream.proto.mapper.ProtoFieldMapper} and
+ * {@link ai.pipestream.proto.descriptors.DescriptorRegistry} by way of {@link IndexerContext}.
+ * {@link AnyIndexing} unpacks {@code google.protobuf.Any} at write time against that registry
+ * and offers every payload to the {@link AnyPayloadValidator}s on the classpath.
+ * The Lucene, OpenSearch, and Solr modules are such plugins; NDJSON output is not an engine
+ * and ignores the plan entirely.
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for the hint surface and end-to-end usage.

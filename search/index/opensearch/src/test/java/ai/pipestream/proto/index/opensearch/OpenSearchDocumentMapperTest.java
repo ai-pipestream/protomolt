@@ -1,11 +1,16 @@
 package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
+import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexingPlanFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
+import com.google.protobuf.Any;
+import com.google.protobuf.AnyProto;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.EnumDescriptorProto;
 import com.google.protobuf.DescriptorProtos.EnumValueDescriptorProto;
@@ -315,6 +320,167 @@ class OpenSearchDocumentMapperTest {
 
         // resolution applies only where dates are emitted numerically; documents stay ISO-8601
         assertThat(mapper.map(message, plan)).containsEntry("created", "2023-11-14T22:13:20Z");
+    }
+
+    @Test
+    void unpacksRegistryKnownAnyIntoPrefixedInnerFields() throws Exception {
+        AnyEnvelope env = AnyEnvelope.create();
+        OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
+        IndexingPlan plan = env.factory.create(env.envelope);
+
+        Map<String, Object> doc = opensearch.map(env.packed("Opinion", 12), plan);
+
+        assertThat(doc)
+                .containsEntry("doc_id", "doc-1")
+                .containsEntry("payload_title", "Opinion")
+                .containsEntry("payload_page_count", 12)
+                .doesNotContainKey("payload");
+    }
+
+    @Test
+    void unknownAnyTypeUrlFailsWithPathAndTypeUrl() throws Exception {
+        AnyEnvelope env = AnyEnvelope.create();
+        OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
+        IndexingPlan plan = env.factory.create(env.envelope);
+
+        assertThatThrownBy(() -> opensearch.map(env.unknownType(), plan))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("payload")
+                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
+    }
+
+    @Test
+    void unsetAnyDoesNotFailAndOmitsInnerFields() throws Exception {
+        AnyEnvelope env = AnyEnvelope.create();
+        OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
+        IndexingPlan plan = env.factory.create(env.envelope);
+        DynamicMessage message = DynamicMessage.newBuilder(env.envelope)
+                .setField(env.envelope.findFieldByName("doc_id"), "doc-1")
+                .build();
+
+        Map<String, Object> doc = opensearch.map(message, plan);
+
+        assertThat(doc).containsEntry("doc_id", "doc-1")
+                .doesNotContainKey("payload_title")
+                .doesNotContainKey("payload");
+    }
+
+    @Test
+    void unpacksNestedAnyThroughIntermediateAnyPaths() throws Exception {
+        AnyEnvelope env = AnyEnvelope.create();
+        OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
+        IndexingPlan plan = env.factory().create(env.envelope());
+        DynamicMessage middle = DynamicMessage.newBuilder(env.middle())
+                .setField(env.middle().findFieldByName("label"), "mid")
+                .setField(env.middle().findFieldByName("next"),
+                        Any.pack(env.innerMessage("Opinion", 12)))
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(env.envelope())
+                .setField(env.envelope().findFieldByName("doc_id"), "doc-1")
+                .setField(env.envelope().findFieldByName("payload"), Any.pack(middle))
+                .build();
+
+        Map<String, Object> doc = opensearch.map(message, plan);
+
+        assertThat(doc)
+                .containsEntry("payload_label", "mid")
+                .containsEntry("payload_next_title", "Opinion")
+                .containsEntry("payload_next_page_count", 12)
+                .doesNotContainKey("payload");
+    }
+
+    private record AnyEnvelope(
+            Descriptor envelope,
+            Descriptor inner,
+            Descriptor middle,
+            IndexingPlanFactory factory,
+            DescriptorRegistry registry) {
+
+        static AnyEnvelope create() throws Exception {
+            FileDescriptor file = FileDescriptor.buildFrom(
+                    FileDescriptorProto.newBuilder()
+                            .setName("any_opensearch.proto")
+                            .setPackage("ai.pipestream.test")
+                            .setSyntax("proto3")
+                            .addDependency("google/protobuf/any.proto")
+                            .addMessageType(DescriptorProto.newBuilder()
+                                    .setName("Middle")
+                                    .addField(FieldDescriptorProto.newBuilder()
+                                            .setName("label")
+                                            .setNumber(1)
+                                            .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                            .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                    .addField(FieldDescriptorProto.newBuilder()
+                                            .setName("next")
+                                            .setNumber(2)
+                                            .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                            .setTypeName(".google.protobuf.Any")
+                                            .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                            .addMessageType(DescriptorProto.newBuilder()
+                                    .setName("InnerPayload")
+                                    .addField(FieldDescriptorProto.newBuilder()
+                                            .setName("title")
+                                            .setNumber(1)
+                                            .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                            .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                    .addField(FieldDescriptorProto.newBuilder()
+                                            .setName("page_count")
+                                            .setNumber(2)
+                                            .setType(FieldDescriptorProto.Type.TYPE_INT32)
+                                            .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                            .addMessageType(DescriptorProto.newBuilder()
+                                    .setName("Envelope")
+                                    .addField(FieldDescriptorProto.newBuilder()
+                                            .setName("doc_id")
+                                            .setNumber(1)
+                                            .setType(FieldDescriptorProto.Type.TYPE_STRING)
+                                            .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                    .addField(FieldDescriptorProto.newBuilder()
+                                            .setName("payload")
+                                            .setNumber(2)
+                                            .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                            .setTypeName(".google.protobuf.Any")
+                                            .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                            .build(),
+                    new FileDescriptor[]{AnyProto.getDescriptor()});
+            Descriptor envelope = file.findMessageTypeByName("Envelope");
+            Descriptor inner = file.findMessageTypeByName("InnerPayload");
+            Descriptor middle = file.findMessageTypeByName("Middle");
+            DescriptorRegistry registry = new DescriptorRegistry();
+            registry.register(inner);
+            registry.register(middle);
+            CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
+                    .put(inner.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
+            return new AnyEnvelope(envelope, inner, middle, IndexingPlanFactory.defaults(catalog), registry);
+        }
+
+        IndexerContext context() {
+            return new IndexerContext(new ProtoFieldMapperImpl(registry), registry, factory);
+        }
+
+        DynamicMessage innerMessage(String title, int pageCount) {
+            return DynamicMessage.newBuilder(inner)
+                    .setField(inner.findFieldByName("title"), title)
+                    .setField(inner.findFieldByName("page_count"), pageCount)
+                    .build();
+        }
+
+        DynamicMessage packed(String title, int pageCount) {
+            return DynamicMessage.newBuilder(envelope)
+                    .setField(envelope.findFieldByName("doc_id"), "doc-1")
+                    .setField(envelope.findFieldByName("payload"), Any.pack(innerMessage(title, pageCount)))
+                    .build();
+        }
+
+        DynamicMessage unknownType() {
+            return DynamicMessage.newBuilder(envelope)
+                    .setField(envelope.findFieldByName("doc_id"), "doc-1")
+                    .setField(envelope.findFieldByName("payload"), Any.newBuilder()
+                            .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                            .setValue(com.google.protobuf.ByteString.copyFromUtf8("x"))
+                            .build())
+                    .build();
+        }
     }
 
     private IndexingPlan mapPlan(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {

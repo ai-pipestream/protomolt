@@ -131,7 +131,7 @@ public final class IndexingPlanFactory {
             return false;
         }
         return switch (hint.type()) {
-            case DATE, SKIP, VECTOR, BINARY, OBJECT, NESTED,
+            case DATE, SKIP, VECTOR, BINARY, OBJECT, NESTED, ANY,
                     INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> false;
             default -> true;
         };

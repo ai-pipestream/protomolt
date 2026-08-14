@@ -14,7 +14,7 @@ and does not interpret hints at all.
 | `protomolt-index-opensearch` | OpenSearch document-map mapping |
 | `protomolt-index-solr` | Solr document-map mapping |
 | `protomolt-index-qdrant` | Qdrant point mapping (repo Document semantic chunks → named vectors), a gRPC sink, and collection-schema generation; validates declared rules on write |
-| `protomolt-protobuf-indexing` | Facade chaining optional validation → plan → NDJSON |
+| `protomolt-protobuf-indexing` | Facade chaining optional validation → plan → NDJSON; registers the declared-rules gate for unpacked Any payloads |
 
 ## Indexing hints
 
@@ -114,6 +114,39 @@ new ProtoNdjsonWriter().writeBulkIndex(bulk, "docs", id, message);
 
 As with the other descriptor-option standards, register the hint extensions
 before parsing descriptor sets, or the options arrive as unknown fields.
+
+### `google.protobuf.Any`
+
+Plan time cannot know a single packed type (for example
+`Document.structured_data`), so inference treats `google.protobuf.Any` as a
+well-known kind (`ANY`), not a silent `OBJECT`. A hint that resolves the
+field to any other kind — `SKIP` included — has said otherwise and wins;
+only `ANY` entries expand. `blob_bag` bytes stay out of the index; Any is
+not a blob.
+
+At write time the indexer unpacks a set Any through the `DescriptorRegistry`
+on `IndexerContext` (the same registry NDJSON already accepts for proto3 JSON
+rendering). Inner fields are planned with the parent hint chain and emitted
+under `any_field.inner_path` (proto field names; engine names prefixed with
+the Any field's engine name). Payloads that pack further Anys expand
+recursively, bounded at 8 levels. An empty or unset Any contributes no inner
+fields. An unknown type URL, a descriptor the registry cannot unpack, or
+value bytes without a type URL is an error that names the field path (and
+type URL) — never a silent skip. Repeated Any fields, and Any fields under a
+repeated ancestor (a `CHUNKS` block), have no single packed type per path
+and keep their inert plan entry instead. Schema generation does not invent
+inner mappings for Any; those appear only when a concrete packed type is
+seen on the write path.
+
+Unpacked payloads pass through every `AnyPayloadValidator` discovered via
+`ServiceLoader` before their fields are planned. `protomolt-protobuf-indexing`
+registers the declared-rules validation standard, so with that module on the
+classpath a payload carrying `ai.pipestream.proto.validate.v1` (or, with the
+optional reader, `buf.validate`) rules is validated on unpack and a violation
+aborts the document — violation paths are reported under the Any field's
+path. Payload types declaring no rules validate clean at no cost, and the
+standard's own escape hatches (`skip_when`, per-field `ignore`) apply
+unchanged.
 
 ## The validate-then-index facade
 

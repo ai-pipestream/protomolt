@@ -1,7 +1,9 @@
 package ai.pipestream.proto.index.lucene;
 
+import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.DateResolution;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
 import ai.pipestream.proto.index.spi.RangeBounds;
@@ -90,9 +92,14 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
 
     private final ProtoFieldMapper fieldMapper;
     private final boolean includeDefaults;
+    private final AnyIndexing anyIndexing;
 
     public ProtoLuceneMapper(ProtoFieldMapper fieldMapper) {
         this(fieldMapper, false);
+    }
+
+    public ProtoLuceneMapper(IndexerContext context) {
+        this(context, false);
     }
 
     /**
@@ -102,6 +109,13 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     public ProtoLuceneMapper(ProtoFieldMapper fieldMapper, boolean includeDefaults) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
         this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(fieldMapper);
+    }
+
+    public ProtoLuceneMapper(IndexerContext context, boolean includeDefaults) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(context);
     }
 
     @Override
@@ -112,8 +126,9 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     @Override
     public Document map(Message message, IndexingPlan plan) throws MappingException {
         Objects.requireNonNull(plan, "plan");
+        IndexingPlan expanded = anyIndexing.expand(message, plan);
         Document document = new Document();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexingPlan.IndexedField field : expanded.indexable()) {
             Object value = hasUnsetIntermediate(message, field.path())
                     ? null // unset optional parent: no value for this field, not a mapping error
                     : fieldMapper.getValue(message, field.path(), includeDefaults);
@@ -335,8 +350,8 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                         : String.valueOf(value);
                 addJsonText(document, name, text, stored, indexed);
             }
-            case VECTOR, SKIP, INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> {
-                // VECTOR and ranges are handled above; SKIP fields are filtered out of the plan.
+            case VECTOR, SKIP, ANY, INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> {
+                // VECTOR and ranges are handled above; SKIP/ANY are filtered or expanded first.
             }
         }
     }

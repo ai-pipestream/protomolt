@@ -1,5 +1,7 @@
 package ai.pipestream.proto.index.solr;
 
+import ai.pipestream.proto.index.spi.AnyIndexing;
+import ai.pipestream.proto.index.spi.IndexerContext;
 import ai.pipestream.proto.index.spi.IndexingPlan;
 import ai.pipestream.proto.index.spi.MapMode;
 import ai.pipestream.proto.index.spi.RangeBounds;
@@ -62,9 +64,14 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
 
     private final ProtoFieldMapper fieldMapper;
     private final boolean includeDefaults;
+    private final AnyIndexing anyIndexing;
 
     public SolrDocumentMapper(ProtoFieldMapper fieldMapper) {
         this(fieldMapper, false);
+    }
+
+    public SolrDocumentMapper(IndexerContext context) {
+        this(context, false);
     }
 
     /**
@@ -74,6 +81,13 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
     public SolrDocumentMapper(ProtoFieldMapper fieldMapper, boolean includeDefaults) {
         this.fieldMapper = Objects.requireNonNull(fieldMapper, "fieldMapper");
         this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(fieldMapper);
+    }
+
+    public SolrDocumentMapper(IndexerContext context, boolean includeDefaults) {
+        this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
+        this.includeDefaults = includeDefaults;
+        this.anyIndexing = AnyIndexing.from(context);
     }
 
     @Override
@@ -84,8 +98,9 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
     @Override
     public Map<String, Object> map(Message message, IndexingPlan plan) throws MappingException {
         Objects.requireNonNull(plan, "plan");
+        IndexingPlan expanded = anyIndexing.expand(message, plan);
         Map<String, Object> document = new LinkedHashMap<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexingPlan.IndexedField field : expanded.indexable()) {
             ResolvedFieldHint hint = field.hint();
             Object value = hasUnsetIntermediate(message, field.path())
                     ? null // unset optional parent: no value for this field, not a mapping error
