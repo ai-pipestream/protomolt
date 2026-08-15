@@ -174,6 +174,13 @@ A release also publishes the server image on its own, for a one-line run without
 docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
 ```
 
+The document platform publishes as `protomolt-document-platform` (JRE 25 — the
+search door links the Lucene 11 line, which ships Java 25 bytecode). It needs its
+PostgreSQL databases and an S3-compatible store alongside;
+[`deploy/document-platform/compose.yml`](../../deploy/document-platform/compose.yml)
+is the worked example, and `repo-service` publishes standalone as
+`protomolt-repo-service` for split topologies.
+
 The CLI ships as a third image, `protomolt-cli`: the GraalVM native binary on a thin
 Debian base, no JRE inside. It is multi-arch (linux/amd64 + linux/arm64): native-image
 does not cross-compile, so each architecture builds on a matching runner and a manifest
