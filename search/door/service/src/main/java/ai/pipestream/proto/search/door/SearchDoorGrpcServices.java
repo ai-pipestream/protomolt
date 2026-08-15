@@ -3,6 +3,8 @@ package ai.pipestream.proto.search.door;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.search.v1.IndexDocumentRequest;
 import ai.pipestream.proto.search.v1.IndexDocumentResponse;
+import ai.pipestream.proto.search.v1.ListSubjectsRequest;
+import ai.pipestream.proto.search.v1.ListSubjectsResponse;
 import ai.pipestream.proto.search.v1.SearchIndexServiceGrpc;
 import ai.pipestream.proto.search.v1.SearchRequest;
 import ai.pipestream.proto.search.v1.SearchResponse;
@@ -101,6 +103,15 @@ final class SearchDoorGrpcServices {
                 observer.onError(Status.INTERNAL.withDescription(e.getMessage())
                         .asRuntimeException());
             }
+        }
+
+        @Override
+        public void listSubjects(ListSubjectsRequest request,
+                StreamObserver<ListSubjectsResponse> observer) {
+            observer.onNext(ListSubjectsResponse.newBuilder()
+                    .addAllSubjects(store.describeSubjects())
+                    .build());
+            observer.onCompleted();
         }
     }
 }

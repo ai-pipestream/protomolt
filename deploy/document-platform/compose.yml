@@ -7,7 +7,8 @@
 #   ./gradlew :protomolt-document-platform:installDist
 #   docker compose -f deploy/document-platform/compose.yml up --build
 #
-# Then: playground http://localhost:8095, registry http://localhost:8081,
+# Then: search console http://localhost:8096, playground http://localhost:8095,
+# registry http://localhost:8081,
 # intake gRPC localhost:9092 (demo key: demo-key -> account demo).
 name: protomolt-document-platform
 
@@ -83,6 +84,7 @@ services:
       - "9094:9094"   # search gRPC
       - "8081:8081"   # registry HTTP (+ jobs verbs on /protomolt/actions)
       - "8095:8095"   # parser playground
+      - "8096:8096"   # search console
     volumes:
       - platform-registry:/data
 

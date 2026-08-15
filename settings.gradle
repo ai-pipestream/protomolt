@@ -155,6 +155,9 @@ project(':protomolt-search-proto').projectDir = file('search/door/proto')
 include 'protomolt-search-door'
 project(':protomolt-search-door').projectDir = file('search/door/service')
 
+include 'protomolt-search-console'
+project(':protomolt-search-console').projectDir = file('search/console')
+
 include 'protomolt-index-ndjson'
 project(':protomolt-index-ndjson').projectDir = file('search/index/ndjson')
 

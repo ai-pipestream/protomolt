@@ -15,6 +15,7 @@ dependencies {
     implementation project(':protomolt-parse-playground')
     implementation project(':protomolt-jobs-service')
     implementation project(':protomolt-search-door')
+    implementation project(':protomolt-search-console')
     implementation project(':protomolt-search-proto')
     implementation project(':protomolt-index-spi')
     implementation project(':protomolt-chunker')

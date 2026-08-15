@@ -12,6 +12,7 @@ import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.search.v1.SearchHit;
 import ai.pipestream.proto.search.v1.SearchLane;
 import ai.pipestream.proto.search.v1.SearchRequest;
+import ai.pipestream.proto.search.v1.SubjectInfo;
 import com.google.protobuf.Message;
 import java.io.Closeable;
 import java.io.IOException;
@@ -129,6 +130,24 @@ public final class LuceneSearchStore implements Closeable {
     /** The served subject names, in configuration order. */
     public Set<String> subjectNames() {
         return Set.copyOf(subjects.keySet());
+    }
+
+    /** The served surface described for callers, in configuration order. */
+    public List<SubjectInfo> describeSubjects() {
+        List<SubjectInfo> described = new ArrayList<>();
+        for (Map.Entry<String, Subject> entry : subjects.entrySet()) {
+            ServedMapping served = entry.getValue().served();
+            SubjectInfo.Builder info = SubjectInfo.newBuilder()
+                    .setSubject(entry.getKey())
+                    .setDocIdField(served.docIdField())
+                    .addAllTextFields(textFields(served.mapping()));
+            if (served.chunkLane() != null) {
+                info.setHasVectorLane(true)
+                        .setPolicyDigest(served.chunkLane().policy().digest());
+            }
+            described.add(info.build());
+        }
+        return List.copyOf(described);
     }
 
     /**

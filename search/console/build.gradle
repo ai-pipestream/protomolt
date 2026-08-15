@@ -1,0 +1,13 @@
+description = 'The search console: a framework-free product page over the search door (subjects, lanes, hits) with an operations panel riding the actions route'
+
+dependencies {
+    api project(':protomolt-composer')
+    implementation project(':protomolt-search-proto')
+    implementation libs.protobuf.java.util
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.inprocess
+    implementation libs.slf4j.api
+
+    testImplementation libs.grpc.inprocess
+    testRuntimeOnly libs.slf4j.simple
+}

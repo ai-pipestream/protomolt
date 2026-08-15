@@ -38,7 +38,7 @@ The guides below follow the repository's module layout.
 - [Search indexing](search/indexing.md): index mappings and Lucene, OpenSearch, and Solr output
 - [Chunking](search/chunking.md): deterministic chunking policies executed by the sentence-packed chunker
 - [Text embeddings](search/embeddings.md): Model2Vec, TEI, and OVMS providers
-- [The search door](search/door.md): the query surface and its workflow-driven indexing RPC
+- [The search door](search/door.md): the query surface, its workflow-driven indexing RPC, and the console page
 - [Reranking](search/rerank.md): TEI and OVMS rerank providers
 - [Emitting bundles](sink/emitting.md): directory, Git, zip, OKF, and Parquet sinks
 - [Apache Iceberg](sink/iceberg.md): descriptor-driven tables and snapshot appends
@@ -65,7 +65,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Agent host](apps/agent-host.md): attach resumable Codex and Kimi processes to delegation
 - [Task console](apps/task-console.md): inspect and guide durable multi-agent tasks in a browser
 - [Docker](apps/docker.md): container images and Compose setup
-- [Document platform](apps/document-platform.md): the one-container document pipeline (repo, intake, parse, jobs, registry, search, playground)
+- [Document platform](apps/document-platform.md): the one-container document pipeline (repo, intake, parse, jobs, registry, search, console, playground)
 - [Coding workers](apps/coding-workers.md): Java and C++ agent environments, state, credentials, and transport boundaries
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
 - [Nano1 ARM64 node](../deploy/nano1/README.md): native image builds and GPU inference boundary

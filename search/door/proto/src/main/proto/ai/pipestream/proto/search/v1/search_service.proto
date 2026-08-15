@@ -111,8 +111,38 @@ service SearchIndexService {
   rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
 }
 
+// Asks the door what it serves. Deliberately empty: the served surface is
+// the door's configuration, not a query.
+message ListSubjectsRequest {
+}
+
+// One served mapping subject, described for callers: a UI's subject and
+// field pickers, or a client validating before it queries.
+message SubjectInfo {
+  // The subject name.
+  string subject = 1;
+  // The index field carrying the document identity.
+  string doc_id_field = 2;
+  // The text fields the lexical lane matches, by index field name.
+  repeated string text_fields = 3;
+  // Whether the subject serves a vector (and therefore hybrid) lane.
+  bool has_vector_lane = 4;
+  // The chunking-policy digest the vector lane derives under; empty when
+  // the subject has no vector lane.
+  string policy_digest = 5;
+}
+
+// The door's served surface.
+message ListSubjectsResponse {
+  // Every served subject, in configuration order.
+  repeated SubjectInfo subjects = 1;
+}
+
 // The query half of the door.
 service SearchService {
   // Runs one query against a mapping subject.
   rpc Search(SearchRequest) returns (SearchResponse);
+
+  // Describes the served mapping subjects.
+  rpc ListSubjects(ListSubjectsRequest) returns (ListSubjectsResponse);
 }

@@ -77,3 +77,18 @@ and a different chunk generation, and the door's atomic
 replace-by-identity means replays re-derive and never duplicate
 (`PolicyChangeReindexTest` pins the generation swap; the platform smoke IT
 replays the corpus and asserts a single hit survives).
+
+## The console
+
+`protomolt-search-console` is the product page over the door: one pure-JDK
+HTTP server, one page, no build step (the playground idiom). The page's
+subject and lane pickers are populated from the door's `ListSubjects` RPC,
+so what the page offers is exactly what the door serves, and refusals from
+the door render verbatim — the door writes them for humans. The server
+bridges `POST /search` (proto3-JSON `SearchRequest` in, hits out) and
+`GET /subjects` onto the door's gRPC surface, and proxies
+`POST /actions/<name>` same-origin onto the registry's actions route, which
+gives the operations panel replay (`replay-documents`), job inspection
+(`list-jobs`), and connector pulls without CORS. Mounted as the
+`search-console` role (requires `search`); the platform serves it on port
+8096 by default (`DOCUMENT_PLATFORM_SEARCH_CONSOLE_PORT`).

@@ -3,7 +3,8 @@
 The document platform is the one-container deployment of the document
 pipeline: `apps/document-platform` wires repo-service, the authenticated
 intake door, the parsing coordinator, the durable jobs worker, the schema
-registry, the search door, and the streaming parser playground into one JVM
+registry, the search door with its console page, and the streaming parser
+playground into one JVM
 over the in-process transport. It is the productized form of what
 `GoldenPathSystemTest` proves.
 
@@ -25,6 +26,7 @@ the jobs store) and RustFS for object storage. Ports:
 | 9094 | search door gRPC (`SearchService`, `SearchIndexService`) |
 | 8081 | schema registry HTTP, with the jobs verbs on `/protomolt/actions` |
 | 8095 | parser playground |
+| 8096 | search console (the search page + operations panel) |
 
 ## What first boot does
 
@@ -76,4 +78,6 @@ compose file is the worked example.
 `DocumentPlatformSmokeIT` drives every external surface over real TCP:
 registry subjects, authenticated ingest, submit-workflow to completion, the
 parsed result read back, parse-and-index to a lexical search hit on the
-search port, and the playground page.
+search port, replay without duplication, the playground page, and the
+search console (page, subjects, a search hit through the JSON bridge, and
+the operations proxy).
