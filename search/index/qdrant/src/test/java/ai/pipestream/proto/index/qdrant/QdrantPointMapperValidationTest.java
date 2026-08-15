@@ -19,7 +19,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import org.junit.jupiter.api.Test;
 
@@ -40,8 +40,8 @@ class QdrantPointMapperValidationTest {
     private final QdrantPointMapper mapper =
             new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
 
-    private static final IndexingPlan EMPTY_PLAN =
-            new IndexingPlan("it.validate.Ruled", List.of());
+    private static final IndexMapping EMPTY_MAPPING =
+            new IndexMapping("it.validate.Ruled", List.of());
 
     private static Descriptor ruledDescriptor() {
         try {
@@ -77,7 +77,7 @@ class QdrantPointMapperValidationTest {
                 .setField(descriptor.findFieldByName("name"), "ab")
                 .build();
 
-        assertThatThrownBy(() -> mapper.map(invalid, EMPTY_PLAN))
+        assertThatThrownBy(() -> mapper.map(invalid, EMPTY_MAPPING))
                 .isInstanceOf(ValidationResult.ValidationException.class)
                 .hasMessageContaining("[name]");
     }
@@ -90,7 +90,7 @@ class QdrantPointMapperValidationTest {
                 .build();
 
         // Validation passed; only the Document-type check remains to fail.
-        assertThatThrownBy(() -> mapper.map(valid, EMPTY_PLAN))
+        assertThatThrownBy(() -> mapper.map(valid, EMPTY_MAPPING))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("ai.pipestream.proto.repo.v1.Document");
     }
@@ -108,10 +108,10 @@ class QdrantPointMapperValidationTest {
                                         .setChunkNumber(0)
                                         .setText("chunk text"))))
                 .build();
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.proto.repo.v1.Document", List.of(
-                new IndexingPlan.IndexedField("doc_id", "doc_id",
+        IndexMapping mapping = new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+                new IndexMapping.IndexedField("doc_id", "doc_id",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        assertThat(mapper.map(document, plan)).isEmpty(); // no embeddings, but no rejection either
+        assertThat(mapper.map(document, mapping)).isEmpty(); // no embeddings, but no rejection either
     }
 }

@@ -7,8 +7,8 @@ import java.util.List;
  * ServiceLoader SPI: one implementation per embedding model or runtime.
  *
  * <p>Providers turn text into fixed-length float vectors for VECTOR index fields.
- * Discovery goes through {@link EmbeddingProviders}; {@link PlanEmbedder} applies a
- * provider to engine-neutral mapped documents using the shared indexing plan.
+ * Discovery goes through {@link EmbeddingProviders}; {@link MappingEmbedder} applies a
+ * provider to engine-neutral mapped documents using the shared index mapping.
  *
  * <p>Remote providers hold network resources, so the SPI is {@link AutoCloseable}
  * and lookups hand lifecycle to the caller: {@link EmbeddingProviders} builds a fresh

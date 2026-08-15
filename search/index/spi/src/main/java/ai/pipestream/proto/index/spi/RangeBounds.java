@@ -12,7 +12,7 @@ import java.util.Optional;
  * require the exact matching scalar type; DATE_RANGE accepts {@code google.protobuf.Timestamp}
  * or {@code int64} (epoch) bounds.
  *
- * <p>{@link IndexingPlanFactory} validates resolution at planning time; engine mappers use
+ * <p>{@link IndexMappingFactory} validates resolution at mapping time; engine mappers use
  * the same resolution to extract bound values at document time.
  */
 public record RangeBounds(FieldDescriptor lower, FieldDescriptor upper) {

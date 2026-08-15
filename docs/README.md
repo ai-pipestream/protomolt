@@ -35,7 +35,7 @@ The guides below follow the repository's module layout.
 
 ## Search and sinks
 
-- [Search indexing](search/indexing.md): index plans and Lucene, OpenSearch, and Solr output
+- [Search indexing](search/indexing.md): index mappings and Lucene, OpenSearch, and Solr output
 - [Text embeddings](search/embeddings.md): Model2Vec, TEI, and OVMS providers
 - [Reranking](search/rerank.md): TEI and OVMS rerank providers
 - [Emitting bundles](sink/emitting.md): directory, Git, zip, OKF, and Parquet sinks

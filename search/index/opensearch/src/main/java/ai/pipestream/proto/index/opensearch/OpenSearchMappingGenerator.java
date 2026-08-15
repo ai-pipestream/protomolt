@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.MapMode;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorElementType;
@@ -13,7 +13,7 @@ import java.util.Objects;
 
 /**
  * Generates OpenSearch index mappings JSON (as {@code Map<String,Object>}) from an
- * {@link IndexingPlan}. Serialize the result with any JSON library and PUT it as the
+ * {@link IndexMapping}. Serialize the result with any JSON library and PUT it as the
  * index {@code mappings} body.
  *
  * <p>Per-field output: the mapping {@code type} for each {@link IndexFieldKind} (ranges
@@ -41,10 +41,10 @@ import java.util.Objects;
 public final class OpenSearchMappingGenerator {
 
     /** Mappings body: {@code {"properties": {field: {...}}}}. */
-    public Map<String, Object> generate(IndexingPlan plan) {
-        Objects.requireNonNull(plan, "plan");
+    public Map<String, Object> generate(IndexMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
         Map<String, Object> properties = new LinkedHashMap<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
             if (field.type() == IndexFieldKind.ANY) {
                 continue;
             }
@@ -143,7 +143,7 @@ public final class OpenSearchMappingGenerator {
             case FLOAT_RANGE -> "float_range";
             case DOUBLE_RANGE -> "double_range";
             case DATE_RANGE -> "date_range";
-            // UNSPECIFIED reaches here only in hand-built plans; treat it like OBJECT.
+            // UNSPECIFIED reaches here only in hand-built mappings; treat it like OBJECT.
             case OBJECT, UNSPECIFIED -> "object";
             case VECTOR, SKIP, ANY -> throw new IllegalArgumentException("no direct mapping type for " + kind);
         };

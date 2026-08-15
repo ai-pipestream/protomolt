@@ -2,7 +2,7 @@ package ai.pipestream.proto.index.qdrant;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
@@ -36,20 +36,20 @@ class QdrantPointMapperTest {
     private final QdrantPointMapper mapper =
             new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
 
-    private static IndexingPlan plan() {
-        return new IndexingPlan("ai.pipestream.proto.repo.v1.Document", List.of(
-                new IndexingPlan.IndexedField("search_metadata.title", "title",
+    private static IndexMapping mapping() {
+        return new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+                new IndexMapping.IndexedField("search_metadata.title", "title",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexingPlan.IndexedField("search_metadata.source_uri", "source_uri",
+                new IndexMapping.IndexedField("search_metadata.source_uri", "source_uri",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 // Unset on every fixture: proves missing values are skipped, not nulls.
-                new IndexingPlan.IndexedField("search_metadata.body", "body",
+                new IndexMapping.IndexedField("search_metadata.body", "body",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 // Chunk-level data must not be flattened onto every point's payload.
-                new IndexingPlan.IndexedField("search_metadata.semantic_results.chunks.text",
+                new IndexMapping.IndexedField("search_metadata.semantic_results.chunks.text",
                         "flattened_chunk_text", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 // Vector hints are excluded: vectors come from the embeddings.
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(2).build())));
     }
 
@@ -93,7 +93,7 @@ class QdrantPointMapperTest {
 
     @Test
     void mapsOnePointPerEmbeddedChunk() throws Exception {
-        List<PointStruct> points = mapper.map(document(), plan());
+        List<PointStruct> points = mapper.map(document(), mapping());
 
         assertThat(points).hasSize(2);
 
@@ -141,12 +141,12 @@ class QdrantPointMapperTest {
                         .setDimensions(2)
                         .build()))
                 .build();
-        List<IndexingPlan.IndexedField> fields = new ArrayList<>(plan().fields());
-        fields.add(new IndexingPlan.IndexedField("structured_data", "structured_data",
+        List<IndexMapping.IndexedField> fields = new ArrayList<>(mapping().fields());
+        fields.add(new IndexMapping.IndexedField("structured_data", "structured_data",
                 ResolvedFieldHint.of(IndexFieldKind.ANY)));
-        IndexingPlan planWithAny = new IndexingPlan("ai.pipestream.proto.repo.v1.Document", fields);
+        IndexMapping mappingWithAny = new IndexMapping("ai.pipestream.proto.repo.v1.Document", fields);
 
-        List<PointStruct> points = anyMapper.map(document, planWithAny);
+        List<PointStruct> points = anyMapper.map(document, mappingWithAny);
 
         assertThat(points).hasSize(2);
         Map<String, Value> payload = points.get(0).getPayloadMap();
@@ -163,12 +163,12 @@ class QdrantPointMapperTest {
                         .setValue(ByteString.copyFromUtf8("x"))
                         .build())
                 .build();
-        List<IndexingPlan.IndexedField> fields = new ArrayList<>(plan().fields());
-        fields.add(new IndexingPlan.IndexedField("structured_data", "structured_data",
+        List<IndexMapping.IndexedField> fields = new ArrayList<>(mapping().fields());
+        fields.add(new IndexMapping.IndexedField("structured_data", "structured_data",
                 ResolvedFieldHint.of(IndexFieldKind.ANY)));
-        IndexingPlan planWithAny = new IndexingPlan("ai.pipestream.proto.repo.v1.Document", fields);
+        IndexMapping mappingWithAny = new IndexMapping("ai.pipestream.proto.repo.v1.Document", fields);
 
-        assertThatThrownBy(() -> mapper.map(document, planWithAny))
+        assertThatThrownBy(() -> mapper.map(document, mappingWithAny))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("structured_data")
                 .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
@@ -176,8 +176,8 @@ class QdrantPointMapperTest {
 
     @Test
     void pointIdsAreDeterministic() throws Exception {
-        assertThat(mapper.map(document(), plan()))
-                .isEqualTo(mapper.map(document(), plan()));
+        assertThat(mapper.map(document(), mapping()))
+                .isEqualTo(mapper.map(document(), mapping()));
         assertThat(QdrantPointMapper.pointUuid("doc-1", "rs-1", "c-1"))
                 .isEqualTo(UUID.nameUUIDFromBytes("qdrant|doc-1|rs-1|c-1"
                         .getBytes(StandardCharsets.UTF_8)));
@@ -189,13 +189,13 @@ class QdrantPointMapperTest {
                 .setDocId("doc-2")
                 .setSearchMetadata(SearchMetadata.newBuilder().setTitle("No chunks"))
                 .build();
-        assertThat(mapper.map(bare, plan())).isEmpty();
+        assertThat(mapper.map(bare, mapping())).isEmpty();
     }
 
     @Test
     void nonDocumentMessagesAreRejected() {
         Timestamp notADocument = Timestamp.newBuilder().setSeconds(1).build();
-        assertThatThrownBy(() -> mapper.map(notADocument, plan()))
+        assertThatThrownBy(() -> mapper.map(notADocument, mapping()))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("ai.pipestream.proto.repo.v1.Document")
                 .hasMessageContaining("google.protobuf.Timestamp");
@@ -203,7 +203,7 @@ class QdrantPointMapperTest {
 
     @Test
     void vectorDimensionsComeFromThePoints() throws Exception {
-        List<PointStruct> points = mapper.map(document(), plan());
+        List<PointStruct> points = mapper.map(document(), mapping());
         assertThat(QdrantPointMapper.vectorDimensions(points))
                 .containsExactlyInAnyOrderEntriesOf(Map.of(
                         MINILM_VECTOR, 2,
@@ -213,7 +213,7 @@ class QdrantPointMapperTest {
 
     @Test
     void conflictingVectorDimensionsAreRejected() throws Exception {
-        List<PointStruct> points = mapper.map(document(), plan());
+        List<PointStruct> points = mapper.map(document(), mapping());
         PointStruct conflicting = points.get(0).toBuilder()
                 .setVectors(points.get(0).getVectors().toBuilder()
                         .setVectors(points.get(0).getVectors().getVectors().toBuilder()
@@ -238,12 +238,12 @@ class QdrantPointMapperTest {
 
     // ---------------------------------------------------------------- vector hints
 
-    private static IndexingPlan planWithVectorHint(String path, int dims,
+    private static IndexMapping mappingWithVectorHint(String path, int dims,
                                                    ai.pipestream.proto.index.spi.VectorSimilarity similarity) {
-        return new IndexingPlan("ai.pipestream.proto.repo.v1.Document", List.of(
-                new IndexingPlan.IndexedField("search_metadata.title", "title",
+        return new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+                new IndexMapping.IndexedField("search_metadata.title", "title",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexingPlan.IndexedField(path, "embedding",
+                new IndexMapping.IndexedField(path, "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(dims)
                                 .vectorSimilarity(similarity)
@@ -252,7 +252,7 @@ class QdrantPointMapperTest {
 
     @Test
     void declaredVectorDimsAreEnforcedOnWrite() {
-        IndexingPlan strict = planWithVectorHint(
+        IndexMapping strict = mappingWithVectorHint(
                 "search_metadata.semantic_results.chunks.embeddings.vector", 3,
                 ai.pipestream.proto.index.spi.VectorSimilarity.COSINE);
 
@@ -264,11 +264,11 @@ class QdrantPointMapperTest {
 
     @Test
     void vectorSpecsTakeSizeAndDistanceFromTheHint() throws Exception {
-        List<PointStruct> points = mapper.map(document(), planWithVectorHint(
+        List<PointStruct> points = mapper.map(document(), mappingWithVectorHint(
                 "search_metadata.semantic_results.chunks.embeddings.vector", 2,
                 ai.pipestream.proto.index.spi.VectorSimilarity.L2));
 
-        assertThat(QdrantPointMapper.vectorSpecs(points, planWithVectorHint(
+        assertThat(QdrantPointMapper.vectorSpecs(points, mappingWithVectorHint(
                         "search_metadata.semantic_results.chunks.embeddings.vector", 2,
                         ai.pipestream.proto.index.spi.VectorSimilarity.L2)))
                 .containsExactlyInAnyOrder(
@@ -278,14 +278,14 @@ class QdrantPointMapperTest {
 
     @Test
     void vectorSpecsFallBackToDataAndCosineWithoutAHint() throws Exception {
-        List<PointStruct> points = mapper.map(document(), plan());
+        List<PointStruct> points = mapper.map(document(), mapping());
 
-        // plan() declares its VECTOR field with dims 2 and default (COSINE) similarity.
-        assertThat(QdrantPointMapper.vectorSpecs(points, plan()))
+        // mapping() declares its VECTOR field with dims 2 and default (COSINE) similarity.
+        assertThat(QdrantPointMapper.vectorSpecs(points, mapping()))
                 .containsExactlyInAnyOrder(
                         QdrantVectorSpec.cosine(MINILM_VECTOR, 2),
                         QdrantVectorSpec.cosine("e5_small_onnx", 2));
-        // No plan at all: pure data inference.
+        // No mapping at all: pure data inference.
         assertThat(QdrantPointMapper.vectorSpecs(points, null))
                 .containsExactlyInAnyOrder(
                         QdrantVectorSpec.cosine(MINILM_VECTOR, 2),
@@ -294,13 +294,13 @@ class QdrantPointMapperTest {
 
     @Test
     void vectorHintPrefersTheSemanticResultsPath() {
-        IndexingPlan twoVectors = new IndexingPlan("ai.pipestream.proto.repo.v1.Document", List.of(
-                new IndexingPlan.IndexedField("other_embedding", "other",
+        IndexMapping twoVectors = new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+                new IndexMapping.IndexedField("other_embedding", "other",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(8)
                                 .vectorSimilarity(ai.pipestream.proto.index.spi.VectorSimilarity.L2)
                                 .build()),
-                new IndexingPlan.IndexedField(
+                new IndexMapping.IndexedField(
                         "search_metadata.semantic_results.chunks.embeddings.vector", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(2)

@@ -3,9 +3,9 @@ package ai.pipestream.proto.index.solr;
 import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.MapMode;
-import ai.pipestream.proto.index.spi.PlanValues;
+import ai.pipestream.proto.index.spi.MappingValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
@@ -27,7 +27,7 @@ import java.util.Objects;
 
 /**
  * Solr-oriented document map builder (SolrInputDocument-compatible {@link Map}).
- * Uses a shared {@link IndexingPlan} from descriptor indexing hints.
+ * Uses a shared {@link IndexMapping} from descriptor indexing hints.
  *
  * <p>Message values are rendered through {@link JsonFormat}: object-shaped messages become
  * compact JSON strings (Solr documents are flat), while well-known types that print as JSON
@@ -94,17 +94,17 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
     }
 
     @Override
-    public Map<String, Object> map(Message message, IndexingPlan plan) throws MappingException {
-        Objects.requireNonNull(plan, "plan");
-        IndexingPlan expanded = anyIndexing.expand(message, plan);
+    public Map<String, Object> map(Message message, IndexMapping mapping) throws MappingException {
+        Objects.requireNonNull(mapping, "mapping");
+        IndexMapping expanded = anyIndexing.expand(message, mapping);
         Map<String, Object> document = new LinkedHashMap<>();
-        for (IndexingPlan.IndexedField field : expanded.indexable()) {
+        for (IndexMapping.IndexedField field : expanded.indexable()) {
             ResolvedFieldHint hint = field.hint();
             // A vector is one whole value; a path fanning out over a repeated ancestor
             // has no flat projection and fails loudly (per-chunk vectors are entities).
             Object value = field.type() == IndexFieldKind.VECTOR
-                    ? PlanValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
-                    : PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
+                    ? MappingValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
+                    : MappingValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; Solr documents cannot hold
                 // explicit nulls, so anything else absent stays absent.
@@ -192,7 +192,7 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
                 && message.getDescriptorForType().getOptions().getMapEntry();
     }
 
-    /** Legacy projection API. Prefer {@link #map(Message, IndexingPlan)}. */
+    /** Legacy projection API. Prefer {@link #map(Message, IndexMapping)}. */
     public Map<String, Object> map(Message message, List<FieldProjection> projections) throws MappingException {
         Map<String, Object> document = new LinkedHashMap<>();
         if (projections == null) {

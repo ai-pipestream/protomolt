@@ -1,6 +1,6 @@
 package ai.pipestream.proto.kafka.connect.opensearch;
 
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.validate.FieldRules;
 import ai.pipestream.proto.validate.StringRules;
 import ai.pipestream.proto.validate.ValidateProto;
@@ -76,11 +76,11 @@ class OpenSearchSinkTaskTest {
     }
 
     @Test
-    void ensureIndexRunsAtStartWithThePlanAndCanBeTurnedOff() throws Exception {
+    void ensureIndexRunsAtStartWithTheMappingAndCanBeTurnedOff() throws Exception {
         RecordingClient client = new RecordingClient();
         startedTask(client, Map.of());
         assertThat(client.ensured).hasSize(1);
-        assertThat(client.ensured.get(0).plan.find("title")).isPresent();
+        assertThat(client.ensured.get(0).mapping.find("title")).isPresent();
 
         RecordingClient quiet = new RecordingClient();
         startedTask(quiet, Map.of(OpenSearchSinkConfig.ENSURE_INDEX, "false"));
@@ -237,8 +237,8 @@ class OpenSearchSinkTaskTest {
         boolean closed;
 
         @Override
-        public boolean ensureIndex(String index, IndexingPlan plan) {
-            ensured.add(new Ensure(index, plan));
+        public boolean ensureIndex(String index, IndexMapping mapping) {
+            ensured.add(new Ensure(index, mapping));
             return true;
         }
 
@@ -257,7 +257,7 @@ class OpenSearchSinkTaskTest {
         }
     }
 
-    record Ensure(String index, IndexingPlan plan) {
+    record Ensure(String index, IndexMapping mapping) {
     }
 
     record BulkWrite(String index, Map<String, Map<String, Object>> documents, boolean refresh) {

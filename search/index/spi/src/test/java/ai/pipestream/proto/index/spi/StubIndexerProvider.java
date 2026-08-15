@@ -39,8 +39,8 @@ public final class StubIndexerProvider implements SearchEngineIndexerProvider {
         }
 
         @Override
-        public Object map(Message message, IndexingPlan plan) {
-            return plan.messageFullName() + "/" + message.getDescriptorForType().getFullName();
+        public Object map(Message message, IndexMapping mapping) {
+            return mapping.messageFullName() + "/" + message.getDescriptorForType().getFullName();
         }
     }
 }

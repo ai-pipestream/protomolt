@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.lucene;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorElementType;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
@@ -19,18 +19,18 @@ class LuceneFieldSpecsTest {
 
     @Test
     void carriesAnalyzersDocValuesAndEngineParams() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
-                new IndexingPlan.IndexedField("title", "title",
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .analyzer("english")
                                 .searchAnalyzer("english_search")
                                 .sortable(true)
                                 .engineParams(Map.of("lucene.norms", "false", "solr.omitNorms", "true"))
                                 .build()),
-                new IndexingPlan.IndexedField("count", "count",
+                new IndexMapping.IndexedField("count", "count",
                         ResolvedFieldHint.builder(IndexFieldKind.INT64).facetable(true).build())));
 
-        LuceneFieldSpecs specs = LuceneFieldSpecs.from(plan);
+        LuceneFieldSpecs specs = LuceneFieldSpecs.from(mapping);
 
         assertThat(specs.messageFullName()).isEqualTo("ai.pipestream.test.Doc");
         LuceneFieldSpecs.FieldSpec title = specs.find("title").orElseThrow();
@@ -51,19 +51,19 @@ class LuceneFieldSpecsTest {
      */
     @Test
     void sortableAndFacetableFieldsReportTheMultiValuedDocValuesType() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
-                new IndexingPlan.IndexedField("title", "title",
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .sortable(true)
                                 .facetable(true)
                                 .build()),
-                new IndexingPlan.IndexedField("count", "count",
+                new IndexMapping.IndexedField("count", "count",
                         ResolvedFieldHint.builder(IndexFieldKind.INT64)
                                 .sortable(true)
                                 .facetable(true)
                                 .build())));
 
-        LuceneFieldSpecs specs = LuceneFieldSpecs.from(plan);
+        LuceneFieldSpecs specs = LuceneFieldSpecs.from(mapping);
 
         assertThat(specs.find("title").orElseThrow().docValuesType())
                 .isEqualTo(DocValuesType.SORTED_SET);
@@ -73,15 +73,15 @@ class LuceneFieldSpecsTest {
 
     @Test
     void vectorSpecExposesLuceneSimilarityAndEncoding() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(768)
                                 .vectorSimilarity(VectorSimilarity.MAX_INNER_PRODUCT)
                                 .vectorElementType(VectorElementType.BYTE)
                                 .build())));
 
-        LuceneFieldSpecs.FieldSpec spec = LuceneFieldSpecs.from(plan).find("embedding").orElseThrow();
+        LuceneFieldSpecs.FieldSpec spec = LuceneFieldSpecs.from(mapping).find("embedding").orElseThrow();
 
         assertThat(spec.vectorDims()).isEqualTo(768);
         assertThat(spec.similarityFunction()).isEqualTo(VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT);
@@ -90,14 +90,14 @@ class LuceneFieldSpecsTest {
 
     @Test
     void subFieldsBecomeIndexedOnlyCompanionSpecs() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
-                new IndexingPlan.IndexedField("title", "title",
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .addSubField(new ResolvedFieldHint.SubField(
                                         IndexFieldKind.KEYWORD, "raw", "keyword_analyzer"))
                                 .build())));
 
-        LuceneFieldSpecs specs = LuceneFieldSpecs.from(plan);
+        LuceneFieldSpecs specs = LuceneFieldSpecs.from(mapping);
 
         assertThat(specs.fields()).hasSize(2);
         LuceneFieldSpecs.FieldSpec raw = specs.find("title.raw").orElseThrow();
@@ -109,11 +109,11 @@ class LuceneFieldSpecsTest {
 
     @Test
     void skippedFieldsAreExcluded() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
-                new IndexingPlan.IndexedField("internal", "internal", ResolvedFieldHint.skipped()),
-                new IndexingPlan.IndexedField("id", "id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+                new IndexMapping.IndexedField("internal", "internal", ResolvedFieldHint.skipped()),
+                new IndexMapping.IndexedField("id", "id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        LuceneFieldSpecs specs = LuceneFieldSpecs.from(plan);
+        LuceneFieldSpecs specs = LuceneFieldSpecs.from(mapping);
 
         assertThat(specs.fields()).hasSize(1);
         assertThat(specs.find("internal")).isEmpty();

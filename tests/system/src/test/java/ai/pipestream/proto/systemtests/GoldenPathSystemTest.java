@@ -8,8 +8,8 @@ import ai.pipestream.proto.embeddings.EmbeddingProvider;
 import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.intake.service.IntakeServiceConfig;
 import ai.pipestream.proto.intake.service.IntakeServices;
@@ -111,12 +111,12 @@ import org.testcontainers.utility.DockerImageName;
  * authenticated intake door, a durable workflow run routes it through the
  * parsing coordinator to the reference text parser, the parsed result and
  * folded metadata persist in the repository, the document indexes into
- * Lucene under plans carrying the search standard, and search — lexical and
+ * Lucene under mappings carrying the search standard, and search — lexical and
  * vector — brings it back. The schema registry runs throughout and serves
  * the fleet document model as a published artifact.
  *
  * <p>Embeddings use a deterministic token-hashing provider: the golden path
- * proves the plan/vector wiring, not model quality (model2vec's live proof
+ * proves the mapping/vector wiring, not model quality (model2vec's live proof
  * is its own gated suite).
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -371,7 +371,7 @@ class GoldenPathSystemTest {
     @Test
     @Order(4)
     void theDocumentIndexesUnderTheStandardAndComesBackFromSearch() throws Exception {
-        // Repo-document plan: identity + searchable text.
+        // Repo-document mapping: identity + searchable text.
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource();
         catalog.put(Document.getDescriptor().getFullName(), "doc_id",
                 ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
@@ -390,8 +390,8 @@ class GoldenPathSystemTest {
             catalog.put("ai.pipestream.proto.repo.v1.SearchMetadata", skipped,
                     ResolvedFieldHint.skipped());
         }
-        IndexingPlan documentPlan =
-                IndexingPlanFactory.defaults(catalog).create(Document.getDescriptor());
+        IndexMapping documentMapping =
+                IndexMappingFactory.defaults(catalog).create(Document.getDescriptor());
 
         // Body text from the parsed result, folded onto CORE by the coordinator.
         String body = stored.getSearchMetadata().getBody();
@@ -400,7 +400,7 @@ class GoldenPathSystemTest {
                         body.isBlank() ? plainText : body))
                 .build();
 
-        // The search standard, populated from the fold, mapped by ITS plan.
+        // The search standard, populated from the fold, mapped by ITS mapping.
         SearchStandard standard = SearchStandard.newBuilder()
                 .setDublinCore(DublinCore.newBuilder()
                         .setTitle(stored.getSearchMetadata().getTitle())
@@ -409,7 +409,7 @@ class GoldenPathSystemTest {
                         .setHeadline(stored.getSearchMetadata().getTitle())
                         .setDatePublished(Timestamp.newBuilder().setSeconds(1265760000L)))
                 .build();
-        IndexingPlan seoPlan = SeoIndexing.planFor(SearchStandard.getDescriptor());
+        IndexMapping seoMapping = SeoIndexing.mappingFor(SearchStandard.getDescriptor());
 
         EmbeddingProvider embedder = new HashingEmbeddingProvider();
         Path indexDir = work.resolve("lucene");
@@ -418,9 +418,9 @@ class GoldenPathSystemTest {
                         new ai.pipestream.proto.descriptors.DescriptorRegistry()));
         try (IndexWriter writer = new IndexWriter(
                 FSDirectory.open(indexDir), new IndexWriterConfig(new StandardAnalyzer()))) {
-            org.apache.lucene.document.Document luceneDoc = mapper.map(indexable, documentPlan);
+            org.apache.lucene.document.Document luceneDoc = mapper.map(indexable, documentMapping);
             // Fold the standard's fields into the same indexed document.
-            for (var field : mapper.map(standard, seoPlan).getFields()) {
+            for (var field : mapper.map(standard, seoMapping).getFields()) {
                 luceneDoc.add(field);
             }
             // Document-level vector from the same text the searcher will embed.

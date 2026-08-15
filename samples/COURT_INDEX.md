@@ -72,7 +72,7 @@ similarity.
 
 Indexing **hints** come from a catalog (`CourtDocumentIndexSample.documentCatalog()`):
 `doc_id` KEYWORD; `title`/`body` TEXT; `language`/`source_uri`/`document_type`/`author`
-KEYWORD; everything else skipped (`search_metadata` carries a TEXT hint so the plan
+KEYWORD; everything else skipped (`search_metadata` carries a TEXT hint so the mapping
 factory expands it into dotted paths). The document-level vector lives under the
 repeated `semantic_results`, which catalog paths cannot index into yet, so the sample
 attaches the `KnnFloatVectorField` explicitly — the same vector the NDJSON projection

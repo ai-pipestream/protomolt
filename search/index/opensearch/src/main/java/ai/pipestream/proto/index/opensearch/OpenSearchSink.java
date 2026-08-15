@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -18,14 +18,14 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Thin HTTP sink for OpenSearch: creates an index from an {@link IndexingPlan} and writes
+ * Thin HTTP sink for OpenSearch: creates an index from an {@link IndexMapping} and writes
  * document maps through the {@code _bulk} endpoint. Talks plain JSON over
  * {@link java.net.http.HttpClient}; no OpenSearch client dependency.
  *
  * <p>{@link #ensureIndex} is idempotent: an existing index is left untouched (its mappings are
  * neither compared nor updated), a missing one is created with the
- * {@link OpenSearchMappingGenerator} mappings for the plan plus the {@code index.knn} setting
- * when the plan carries a {@link IndexFieldKind#VECTOR} field, which the {@code knn_vector}
+ * {@link OpenSearchMappingGenerator} output for the mapping plus the {@code index.knn} setting
+ * when the mapping carries a {@link IndexFieldKind#VECTOR} field, which the {@code knn_vector}
  * mapping requires. A create lost to a concurrent writer counts as already existing.
  *
  * <p>{@link #bulkWrite} sends one NDJSON {@code index} action per document, with
@@ -77,17 +77,17 @@ public final class OpenSearchSink implements AutoCloseable {
     }
 
     /**
-     * Creates the index for a plan if it does not exist. An existing index is left untouched.
+     * Creates the index for a mapping if it does not exist. An existing index is left untouched.
      *
      * @param index index name
-     * @param plan plan whose generated mappings (and {@code index.knn} setting, when the plan
-     *        has a vector field) define the index
+     * @param mapping the index mapping whose generated properties (and {@code index.knn}
+     *        setting, when it has a vector field) define the index
      * @return {@code true} when this call created the index, {@code false} when it already existed
      * @throws IOException when the engine refuses the create or cannot be reached
      */
-    public boolean ensureIndex(String index, IndexingPlan plan) throws IOException {
+    public boolean ensureIndex(String index, IndexMapping mapping) throws IOException {
         Objects.requireNonNull(index, "index");
-        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(mapping, "mapping");
         HttpResponse<String> head = send("HEAD", "/" + index, null, null);
         if (head.statusCode() == 200) {
             return false;
@@ -96,11 +96,11 @@ public final class OpenSearchSink implements AutoCloseable {
             throw new IOException("Checking index '" + index + "' returned HTTP " + head.statusCode());
         }
         Map<String, Object> body = new LinkedHashMap<>();
-        if (plan.indexable().stream().anyMatch(field -> field.hint().type() == IndexFieldKind.VECTOR)) {
+        if (mapping.indexable().stream().anyMatch(field -> field.hint().type() == IndexFieldKind.VECTOR)) {
             // knn_vector mappings fail the index create unless the index enables knn.
             body.put("settings", Map.of("index.knn", true));
         }
-        body.put("mappings", MAPPINGS.generate(plan));
+        body.put("mappings", MAPPINGS.generate(mapping));
         HttpResponse<String> response = send("PUT", "/" + index,
                 "application/json", JSON.writeValueAsString(body));
         if (response.statusCode() / 100 == 2) {

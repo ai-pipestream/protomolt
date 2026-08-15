@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The block-join vocabulary: CHUNKS-role expansion in the plan factory,
+ * The block-join vocabulary: CHUNKS-role expansion in the mapping factory,
  * block_role / chunk_recipe translation from proto options, recipe digest
  * identity, and the engine-id collision guard.
  */
@@ -75,42 +75,42 @@ class BlockVocabularyTest {
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Article");
     }
 
-    private static IndexingPlanFactory optionsFactory() {
-        return new IndexingPlanFactory(
+    private static IndexMappingFactory optionsFactory() {
+        return new IndexMappingFactory(
                 new ProtoOptionsIndexingHintSource().orElse(new InferringIndexingHintSource()));
     }
 
     @Test
     void chunksRoleKeepsTheContainerAndExpandsItsChildren() throws Exception {
-        IndexingPlan plan = optionsFactory().create(articleDescriptor());
+        IndexMapping mapping = optionsFactory().create(articleDescriptor());
 
-        IndexingPlan.IndexedField container = plan.find("passages").orElseThrow();
+        IndexMapping.IndexedField container = mapping.find("passages").orElseThrow();
         assertThat(container.hint().blockRole()).isEqualTo(BlockRole.CHUNKS);
         assertThat(container.repeated()).isTrue();
 
         // Children expand into dotted paths with UNPREFIXED engine names: within
         // a block the children are their own documents, not parent properties.
-        IndexingPlan.IndexedField vector = plan.find("passages.embedding").orElseThrow();
+        IndexMapping.IndexedField vector = mapping.find("passages.embedding").orElseThrow();
         assertThat(vector.fieldName()).isEqualTo("embedding");
         assertThat(vector.type()).isEqualTo(IndexFieldKind.VECTOR);
-        assertThat(plan.find("passages.text").orElseThrow().fieldName()).isEqualTo("text");
+        assertThat(mapping.find("passages.text").orElseThrow().fieldName()).isEqualTo("text");
 
-        assertThat(plan.find("doc_id").orElseThrow().hint().blockRole())
+        assertThat(mapping.find("doc_id").orElseThrow().hint().blockRole())
                 .isEqualTo(BlockRole.DOC_ID);
     }
 
     @Test
     void plainNestedStaysASingleEntry() throws Exception {
-        // Same shape, no CHUNKS role: NESTED must keep exactly one plan entry.
+        // Same shape, no CHUNKS role: NESTED must keep exactly one mapping entry.
         Descriptor descriptor = articleDescriptor();
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put(descriptor.getFullName(), "passages",
                         ResolvedFieldHint.of(IndexFieldKind.NESTED));
-        IndexingPlan plan = new IndexingPlanFactory(catalog
+        IndexMapping mapping = new IndexMappingFactory(catalog
                 .orElse(new InferringIndexingHintSource())).create(descriptor);
 
-        assertThat(plan.find("passages")).isPresent();
-        assertThat(plan.find("passages.embedding")).isEmpty();
+        assertThat(mapping.find("passages")).isPresent();
+        assertThat(mapping.find("passages.embedding")).isEmpty();
     }
 
     @Test
@@ -130,7 +130,7 @@ class BlockVocabularyTest {
                 .findMessageTypeByName("Bad");
 
         assertThatThrownBy(() -> optionsFactory().create(bad))
-                .isInstanceOf(IndexingPlanException.class)
+                .isInstanceOf(IndexMappingException.class)
                 .hasMessageContaining("repeated message");
     }
 
@@ -165,8 +165,8 @@ class BlockVocabularyTest {
         Descriptor doc = FileDescriptor.buildFrom(file, new FileDescriptor[0])
                 .findMessageTypeByName("Doc");
 
-        IndexingPlan plan = optionsFactory().create(doc);
-        ChunkRecipe recipe = plan.find("body").orElseThrow().hint().chunkRecipe();
+        IndexMapping mapping = optionsFactory().create(doc);
+        ChunkRecipe recipe = mapping.find("body").orElseThrow().hint().chunkRecipe();
         assertThat(recipe).isNotNull();
         assertThat(recipe.chunking().strategy()).isEqualTo("sentence-packed");
         assertThat(recipe.chunking().boundary()).isEqualTo("rules-v1");
@@ -174,7 +174,7 @@ class BlockVocabularyTest {
         assertThat(recipe.embedding().similarity()).isEqualTo(VectorSimilarity.COSINE);
         assertThat(recipe.storeChunkText()).isTrue();
 
-        // The same recipe on a non-string field is a planning error.
+        // The same recipe on a non-string field is a mapping error.
         FieldDescriptorProto badField = FieldDescriptorProto.newBuilder()
                 .setName("count").setNumber(1)
                 .setType(FieldDescriptorProto.Type.TYPE_INT32)
@@ -188,7 +188,7 @@ class BlockVocabularyTest {
         Descriptor bad = FileDescriptor.buildFrom(badFile, new FileDescriptor[0])
                 .findMessageTypeByName("Bad");
         assertThatThrownBy(() -> optionsFactory().create(bad))
-                .isInstanceOf(IndexingPlanException.class)
+                .isInstanceOf(IndexMappingException.class)
                 .hasMessageContaining("string field");
     }
 

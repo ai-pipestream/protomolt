@@ -1,10 +1,10 @@
 /**
  * Lucene plugin for the search-index SPI: maps protobuf messages into Lucene documents and
- * reports the per-field index settings a plan implies.
+ * reports the per-field index settings a mapping implies.
  *
  * <p>{@link ai.pipestream.proto.index.lucene.ProtoLuceneMapper} implements
  * {@link ai.pipestream.proto.index.spi.SearchEngineIndexer} and turns a message plus an
- * {@link ai.pipestream.proto.index.spi.IndexingPlan} into an
+ * {@link ai.pipestream.proto.index.spi.IndexMapping} into an
  * {@code org.apache.lucene.document.Document}, emitting KNN vector fields, point and doc-values
  * fields, and sub-fields named {@code field.sub}.
  * {@link ai.pipestream.proto.index.lucene.LuceneIndexerProvider} is the

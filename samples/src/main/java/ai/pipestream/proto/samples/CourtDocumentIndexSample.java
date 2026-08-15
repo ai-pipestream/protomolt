@@ -7,8 +7,8 @@ import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
 import ai.pipestream.proto.index.ndjson.ProtoNdjsonWriter;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.repo.v1.Document;
@@ -79,7 +79,7 @@ public final class CourtDocumentIndexSample {
         System.out.printf(Locale.ROOT, "Embedding provider '%s' ready (%d dims)%n",
                 provider.providerId(), provider.dimension());
 
-        IndexingPlan plan = IndexingPlanFactory.defaults(documentCatalog())
+        IndexMapping mapping = IndexMappingFactory.defaults(documentCatalog())
                 .create(Document.getDescriptor());
         ProtoLuceneMapper luceneMapper =
                 new ProtoLuceneMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
@@ -107,7 +107,7 @@ public final class CourtDocumentIndexSample {
 
                 ndjson.writeLine(ndjsonOut, project(document, vector));
 
-                org.apache.lucene.document.Document luceneDoc = luceneMapper.map(document, plan);
+                org.apache.lucene.document.Document luceneDoc = luceneMapper.map(document, mapping);
                 // Document-level embedding lives under repeated semantic_results; catalog
                 // paths cannot index into repeated fields yet — attach explicitly.
                 if (isNonZero(vector)) {

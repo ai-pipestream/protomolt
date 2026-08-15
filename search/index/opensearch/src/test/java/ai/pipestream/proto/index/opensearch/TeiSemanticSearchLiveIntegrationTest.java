@@ -1,10 +1,10 @@
 package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.embeddings.PlanEmbedder;
+import ai.pipestream.proto.embeddings.MappingEmbedder;
 import ai.pipestream.proto.embeddings.tei.TeiEmbeddingProvider;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.rerank.tei.TeiRerankProvider;
@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link RerankedSemanticSearch} verified live against real models: a self-provisioned
  * Testcontainers stack of OpenSearch plus two TEI CPU containers (one serving
  * sentence-transformers/all-MiniLM-L6-v2 embeddings, one serving BAAI/bge-reranker-base), with
- * nothing running but Docker. Sentences are embedded through {@link PlanEmbedder}, land through
+ * nothing running but Docker. Sentences are embedded through {@link MappingEmbedder}, land through
  * {@link OpenSearchSink}, and a semantic query is answered by the rerank head: the cross-encoder
  * must put the puppy sentence first for "a young dog", with sigmoid-normalized relevance scores
  * and positive kNN scores.
@@ -127,10 +127,10 @@ class TeiSemanticSearchLiveIntegrationTest {
         String index = "tei-reranked-" + UUID.randomUUID().toString().substring(0, 12);
 
         Descriptor descriptor = sentenceDescriptor();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("sentence", "sentence",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("sentence", "sentence",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT)),
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(384)
                                 .build())));
@@ -139,16 +139,16 @@ class TeiSemanticSearchLiveIntegrationTest {
              TeiRerankProvider rerankProvider = new TeiRerankProvider(
                 reranker.getHost() + ":" + reranker.getMappedPort(80));
              OpenSearchSink sink = new OpenSearchSink(base)) {
-            sink.ensureIndex(index, plan);
+            sink.ensureIndex(index, mapping);
             OpenSearchDocumentMapper mapper = new OpenSearchDocumentMapper(
                     new ProtoFieldMapperImpl(new DescriptorRegistry()));
-            PlanEmbedder planEmbedder = new PlanEmbedder(embedder, plan);
+            MappingEmbedder mappingEmbedder = new MappingEmbedder(embedder, mapping);
             Map<String, Map<String, Object>> documents = new LinkedHashMap<>();
             for (Map.Entry<String, String> entry : SENTENCES.entrySet()) {
                 DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                         .setField(descriptor.findFieldByName("sentence"), entry.getValue())
                         .build();
-                documents.put(entry.getKey(), planEmbedder.embed(mapper.map(message, plan)));
+                documents.put(entry.getKey(), mappingEmbedder.embed(mapper.map(message, mapping)));
             }
             sink.bulkWrite(index, documents, true);
 

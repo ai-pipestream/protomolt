@@ -48,7 +48,7 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
             return FieldOptions.parseFrom(options.toByteString(), EXTENSIONS)
                     .getExtension(IndexingHintsProto.index);
         } catch (InvalidProtocolBufferException e) {
-            throw new IndexingPlanException(
+            throw new IndexMappingException(
                     "cannot reparse field options carrying "
                             + "(ai.pipestream.proto.index.hints.v1.index): " + e.getMessage(),
                     field.getFullName());

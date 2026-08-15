@@ -25,58 +25,58 @@ class AnyIndexingTest {
     @Test
     void expandsPackedInnerFieldsUnderTheAnyPathPrefix() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
-        IndexingPlan expanded = fixtures.anyIndexing.expand(fixtures.packedEnvelope(), plan);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
+        IndexMapping expanded = fixtures.anyIndexing.expand(fixtures.packedEnvelope(), mapping);
 
         assertThat(expanded.find("payload")).isEmpty();
         assertThat(expanded.find("payload.title")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.KEYWORD);
         assertThat(expanded.find("payload.title")).get()
-                .extracting(IndexingPlan.IndexedField::fieldName)
+                .extracting(IndexMapping.IndexedField::fieldName)
                 .isEqualTo("payload_title");
         assertThat(expanded.find("payload.page_count")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.INT32);
         assertThat(expanded.find("doc_id")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.KEYWORD);
     }
 
     @Test
     void nestedAnyExpandsRecursivelyWithPrefixedPathsAndNames() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         DynamicMessage middle = DynamicMessage.newBuilder(fixtures.middle)
                 .setField(fixtures.middle.findFieldByName("label"), "mid")
                 .setField(fixtures.middle.findFieldByName("next"), Any.pack(fixtures.inner("Opinion", 12)))
                 .build();
         DynamicMessage message = fixtures.envelope(Any.pack(middle));
 
-        IndexingPlan expanded = fixtures.anyIndexing.expand(message, plan);
+        IndexMapping expanded = fixtures.anyIndexing.expand(message, mapping);
 
         assertThat(expanded.find("payload.label")).get()
-                .extracting(IndexingPlan.IndexedField::fieldName)
+                .extracting(IndexMapping.IndexedField::fieldName)
                 .isEqualTo("payload_label");
         assertThat(expanded.find("payload.next")).isEmpty();
         assertThat(expanded.find("payload.next.title")).get()
-                .extracting(IndexingPlan.IndexedField::fieldName)
+                .extracting(IndexMapping.IndexedField::fieldName)
                 .isEqualTo("payload_next_title");
         assertThat(expanded.find("payload.next.page_count")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.INT32);
     }
 
     @Test
     void unknownTypeUrlFailsWithPathAndTypeUrlAndEmitsNoInnerFields() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         DynamicMessage message = fixtures.envelope(Any.newBuilder()
                 .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
                 .setValue(ByteString.copyFromUtf8("x"))
                 .build());
 
-        assertThatThrownBy(() -> fixtures.anyIndexing.expand(message, plan))
+        assertThatThrownBy(() -> fixtures.anyIndexing.expand(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
                 .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
@@ -85,12 +85,12 @@ class AnyIndexingTest {
     @Test
     void unsetAnyDoesNotFailAndAddsNoInnerFields() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         DynamicMessage message = DynamicMessage.newBuilder(fixtures.envelope)
                 .setField(fixtures.envelope.findFieldByName("doc_id"), "doc-1")
                 .build();
 
-        IndexingPlan expanded = fixtures.anyIndexing.expand(message, plan);
+        IndexMapping expanded = fixtures.anyIndexing.expand(message, mapping);
 
         assertThat(expanded.find("payload")).isEmpty();
         assertThat(expanded.find("payload.title")).isEmpty();
@@ -100,10 +100,10 @@ class AnyIndexingTest {
     @Test
     void emptyAnyDoesNotFailAndAddsNoInnerFields() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         DynamicMessage message = fixtures.envelope(Any.getDefaultInstance());
 
-        IndexingPlan expanded = fixtures.anyIndexing.expand(message, plan);
+        IndexMapping expanded = fixtures.anyIndexing.expand(message, mapping);
 
         assertThat(expanded.find("payload")).isEmpty();
         assertThat(expanded.find("payload.title")).isEmpty();
@@ -112,12 +112,12 @@ class AnyIndexingTest {
     @Test
     void valueBytesWithoutTypeUrlAreMalformedNotEmpty() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         DynamicMessage message = fixtures.envelope(Any.newBuilder()
                 .setValue(ByteString.copyFromUtf8("x"))
                 .build());
 
-        assertThatThrownBy(() -> fixtures.anyIndexing.expand(message, plan))
+        assertThatThrownBy(() -> fixtures.anyIndexing.expand(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("no type URL")
                 .hasMessageContaining("payload");
@@ -129,14 +129,14 @@ class AnyIndexingTest {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put(fixtures.envelope.getFullName(), "payload", ResolvedFieldHint.skipped())
                 .put(fixtures.innerType.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(catalog);
-        IndexingPlan plan = factory.create(fixtures.envelope);
+        IndexMappingFactory factory = IndexMappingFactory.defaults(catalog);
+        IndexMapping mapping = factory.create(fixtures.envelope);
         AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory, List.of());
 
-        IndexingPlan expanded = anyIndexing.expand(fixtures.packedEnvelope(), plan);
+        IndexMapping expanded = anyIndexing.expand(fixtures.packedEnvelope(), mapping);
 
         assertThat(expanded.find("payload")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.SKIP);
         assertThat(expanded.find("payload.title")).isEmpty();
     }
@@ -146,14 +146,14 @@ class AnyIndexingTest {
         AnyFixtures fixtures = AnyFixtures.create();
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put(fixtures.envelope.getFullName(), "payload", ResolvedFieldHint.of(IndexFieldKind.OBJECT));
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(catalog);
-        IndexingPlan plan = factory.create(fixtures.envelope);
+        IndexMappingFactory factory = IndexMappingFactory.defaults(catalog);
+        IndexMapping mapping = factory.create(fixtures.envelope);
         AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory, List.of());
 
-        IndexingPlan expanded = anyIndexing.expand(fixtures.packedEnvelope(), plan);
+        IndexMapping expanded = anyIndexing.expand(fixtures.packedEnvelope(), mapping);
 
         assertThat(expanded.find("payload")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.OBJECT);
         assertThat(expanded.find("payload.title")).isEmpty();
     }
@@ -161,17 +161,17 @@ class AnyIndexingTest {
     @Test
     void repeatedAnyKeepsItsInertEntry() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         DynamicMessage message = DynamicMessage.newBuilder(fixtures.envelope)
                 .addRepeatedField(
                         fixtures.envelope.findFieldByName("extras"),
                         Any.pack(fixtures.inner("Opinion", 12)))
                 .build();
 
-        IndexingPlan expanded = fixtures.anyIndexing.expand(message, plan);
+        IndexMapping expanded = fixtures.anyIndexing.expand(message, mapping);
 
         assertThat(expanded.find("extras")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.ANY);
         assertThat(expanded.find("extras.title")).isEmpty();
     }
@@ -179,8 +179,8 @@ class AnyIndexingTest {
     @Test
     void anyUnderARepeatedAncestorKeepsItsInertEntry() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = new IndexingPlan(fixtures.envelope.getFullName(), List.of(
-                new IndexingPlan.IndexedField(
+        IndexMapping mapping = new IndexMapping(fixtures.envelope.getFullName(), List.of(
+                new IndexMapping.IndexedField(
                         "items.payload", "items_payload", ResolvedFieldHint.of(IndexFieldKind.ANY), false)));
         DynamicMessage item = DynamicMessage.newBuilder(fixtures.item)
                 .setField(fixtures.item.findFieldByName("payload"), Any.pack(fixtures.inner("Opinion", 12)))
@@ -189,35 +189,35 @@ class AnyIndexingTest {
                 .addRepeatedField(fixtures.envelope.findFieldByName("items"), item)
                 .build();
 
-        IndexingPlan expanded = fixtures.anyIndexing.expand(message, plan);
+        IndexMapping expanded = fixtures.anyIndexing.expand(message, mapping);
 
         assertThat(expanded.find("items.payload")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.ANY);
         assertThat(expanded.find("items.payload.title")).isEmpty();
     }
 
     @Test
-    void anyEntryOnANonAnyFieldIsAPlanErrorWithThePath() throws Exception {
+    void anyEntryOnANonAnyFieldIsAMappingErrorWithThePath() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = new IndexingPlan(fixtures.envelope.getFullName(), List.of(
-                new IndexingPlan.IndexedField(
+        IndexMapping mapping = new IndexMapping(fixtures.envelope.getFullName(), List.of(
+                new IndexMapping.IndexedField(
                         "doc_id", "doc_id", ResolvedFieldHint.of(IndexFieldKind.ANY), false)));
 
-        assertThatThrownBy(() -> fixtures.anyIndexing.expand(fixtures.packedEnvelope(), plan))
+        assertThatThrownBy(() -> fixtures.anyIndexing.expand(fixtures.packedEnvelope(), mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("not a google.protobuf.Any field")
                 .hasMessageContaining("doc_id");
     }
 
     @Test
-    void anyEntryOnAMissingFieldIsAPlanErrorWithThePath() throws Exception {
+    void anyEntryOnAMissingFieldIsAMappingErrorWithThePath() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = new IndexingPlan(fixtures.envelope.getFullName(), List.of(
-                new IndexingPlan.IndexedField(
+        IndexMapping mapping = new IndexMapping(fixtures.envelope.getFullName(), List.of(
+                new IndexMapping.IndexedField(
                         "missing", "missing", ResolvedFieldHint.of(IndexFieldKind.ANY), false)));
 
-        assertThatThrownBy(() -> fixtures.anyIndexing.expand(fixtures.packedEnvelope(), plan))
+        assertThatThrownBy(() -> fixtures.anyIndexing.expand(fixtures.packedEnvelope(), mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("does not resolve")
                 .hasMessageContaining("missing");
@@ -226,7 +226,7 @@ class AnyIndexingTest {
     @Test
     void nestingBeyondTheDepthCapFailsInsteadOfRecursingForever() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         Any chain = Any.pack(fixtures.inner("deep", 1));
         for (int i = 0; i < 12; i++) {
             chain = Any.pack(DynamicMessage.newBuilder(fixtures.middle)
@@ -235,20 +235,20 @@ class AnyIndexingTest {
         }
         DynamicMessage message = fixtures.envelope(chain);
 
-        assertThatThrownBy(() -> fixtures.anyIndexing.expand(message, plan))
+        assertThatThrownBy(() -> fixtures.anyIndexing.expand(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("nesting exceeds")
                 .hasMessageContaining("payload.next");
     }
 
     @Test
-    void plansWithoutAnyEntriesAreReturnedUnchanged() throws Exception {
+    void mappingsWithoutAnyEntriesAreReturnedUnchanged() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
-        IndexingPlan plan = new IndexingPlan(fixtures.envelope.getFullName(), List.of(
-                new IndexingPlan.IndexedField(
+        IndexMapping mapping = new IndexMapping(fixtures.envelope.getFullName(), List.of(
+                new IndexMapping.IndexedField(
                         "doc_id", "doc_id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD), false)));
 
-        assertThat(fixtures.anyIndexing.expand(fixtures.packedEnvelope(), plan)).isSameAs(plan);
+        assertThat(fixtures.anyIndexing.expand(fixtures.packedEnvelope(), mapping)).isSameAs(mapping);
     }
 
     @Test
@@ -273,15 +273,15 @@ class AnyIndexingTest {
     }
 
     @Test
-    void aThrowingValidatorAbortsTheDocumentBeforeAnyInnerFieldIsPlanned() throws Exception {
+    void aThrowingValidatorAbortsTheDocumentBeforeAnyInnerFieldIsMapped() throws Exception {
         AnyFixtures fixtures = AnyFixtures.create();
         AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, fixtures.factory,
                 List.of((unpacked, path) -> {
                     throw new IllegalStateException("declared rule violated at " + path);
                 }));
-        IndexingPlan plan = fixtures.factory.create(fixtures.envelope);
+        IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
 
-        assertThatThrownBy(() -> anyIndexing.expand(fixtures.packedEnvelope(), plan))
+        assertThatThrownBy(() -> anyIndexing.expand(fixtures.packedEnvelope(), mapping))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("payload");
     }
@@ -293,17 +293,17 @@ class AnyIndexingTest {
                 .put(fixtures.envelope.getFullName(), "payload",
                         ResolvedFieldHint.builder(IndexFieldKind.ANY).validatePayloads(false).build())
                 .put(fixtures.innerType.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(catalog);
+        IndexMappingFactory factory = IndexMappingFactory.defaults(catalog);
         List<String> offered = new ArrayList<>();
         AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory,
                 List.of((unpacked, path) -> offered.add(path)));
 
-        IndexingPlan expanded = anyIndexing.expand(
+        IndexMapping expanded = anyIndexing.expand(
                 fixtures.packedEnvelope(), factory.create(fixtures.envelope));
 
         assertThat(offered).isEmpty();
         assertThat(expanded.find("payload.title")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.KEYWORD);
     }
 
@@ -313,7 +313,7 @@ class AnyIndexingTest {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put(fixtures.envelope.getFullName(), "payload",
                         ResolvedFieldHint.builder(IndexFieldKind.ANY).validatePayloads(false).build());
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(catalog);
+        IndexMappingFactory factory = IndexMappingFactory.defaults(catalog);
         AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory,
                 List.of((unpacked, path) -> { }));
         DynamicMessage message = fixtures.envelope(Any.newBuilder()
@@ -347,7 +347,7 @@ class AnyIndexingTest {
             Descriptor middle,
             Descriptor item,
             DescriptorRegistry registry,
-            IndexingPlanFactory factory,
+            IndexMappingFactory factory,
             AnyIndexing anyIndexing) {
 
         static AnyFixtures create() throws Exception {
@@ -361,7 +361,7 @@ class AnyIndexingTest {
             registry.register(middle);
             CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                     .put(inner.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-            IndexingPlanFactory factory = IndexingPlanFactory.defaults(catalog);
+            IndexMappingFactory factory = IndexMappingFactory.defaults(catalog);
             return new AnyFixtures(envelope, inner, middle, item, registry, factory,
                     new AnyIndexing(registry, factory, List.of()));
         }

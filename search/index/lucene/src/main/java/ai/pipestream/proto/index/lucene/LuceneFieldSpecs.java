@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.lucene;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorElementType;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
@@ -16,7 +16,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Per-field Lucene specs derived from an {@link IndexingPlan} — the Lucene counterpart of
+ * Per-field Lucene specs derived from an {@link IndexMapping} — the Lucene counterpart of
  * schema generation. Lucene has no schema artifact, so instead of a mappings file consumers
  * get a typed report to apply when configuring the index: per-field analyzers (e.g. via
  * {@code PerFieldAnalyzerWrapper} — {@link ProtoLuceneMapper} cannot instantiate analyzers
@@ -32,10 +32,10 @@ public record LuceneFieldSpecs(String messageFullName, List<FieldSpec> fields) {
         fields = List.copyOf(Objects.requireNonNull(fields, "fields"));
     }
 
-    public static LuceneFieldSpecs from(IndexingPlan plan) {
-        Objects.requireNonNull(plan, "plan");
+    public static LuceneFieldSpecs from(IndexMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
         List<FieldSpec> specs = new ArrayList<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
             if (field.type() == IndexFieldKind.ANY) {
                 continue;
             }
@@ -72,7 +72,7 @@ public record LuceneFieldSpecs(String messageFullName, List<FieldSpec> fields) {
                         Map.of()));
             }
         }
-        return new LuceneFieldSpecs(plan.messageFullName(), specs);
+        return new LuceneFieldSpecs(mapping.messageFullName(), specs);
     }
 
     public Optional<FieldSpec> find(String name) {

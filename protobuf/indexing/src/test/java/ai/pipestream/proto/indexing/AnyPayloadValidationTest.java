@@ -5,8 +5,8 @@ import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.AnyPayloadValidator;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.indexing.testdata.AnyEnvelope;
 import ai.pipestream.proto.indexing.testdata.PageSpan;
 import ai.pipestream.proto.indexing.testdata.ValidatedPayload;
@@ -42,13 +42,13 @@ class AnyPayloadValidationTest {
                 .setPageCount(12)
                 .build());
 
-        IndexingPlan expanded = anyIndexing.expand(envelope, plan());
+        IndexMapping expanded = anyIndexing.expand(envelope, mapping());
 
         assertThat(expanded.find("payload.title")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.KEYWORD);
         assertThat(expanded.find("payload.title")).get()
-                .extracting(IndexingPlan.IndexedField::fieldName)
+                .extracting(IndexMapping.IndexedField::fieldName)
                 .isEqualTo("payload_title");
     }
 
@@ -60,7 +60,7 @@ class AnyPayloadValidationTest {
                 .setPageCount(-1)
                 .build());
 
-        assertThatThrownBy(() -> anyIndexing.expand(envelope, plan()))
+        assertThatThrownBy(() -> anyIndexing.expand(envelope, mapping()))
                 .isInstanceOf(ValidationResult.ValidationException.class)
                 .hasMessageContaining("payload.title")
                 .hasMessageContaining("payload.page_count");
@@ -74,7 +74,7 @@ class AnyPayloadValidationTest {
                 .setDraft(true)
                 .build());
 
-        assertThatCode(() -> anyIndexing.expand(envelope, plan())).doesNotThrowAnyException();
+        assertThatCode(() -> anyIndexing.expand(envelope, mapping())).doesNotThrowAnyException();
     }
 
     @Test
@@ -89,7 +89,7 @@ class AnyPayloadValidationTest {
                 .build();
 
         // An invalid payload behind validate_payloads: false expands instead of failing.
-        IndexingPlan expanded = anyIndexing.expand(envelope, plan());
+        IndexMapping expanded = anyIndexing.expand(envelope, mapping());
 
         assertThat(expanded.find("unchecked.title")).isPresent();
     }
@@ -117,11 +117,11 @@ class AnyPayloadValidationTest {
     private static AnyIndexing anyIndexing() {
         DescriptorRegistry registry = new DescriptorRegistry();
         registry.register(ValidatedPayload.getDescriptor());
-        return new AnyIndexing(registry, IndexingPlanFactory.defaults(new CatalogIndexingHintSource()));
+        return new AnyIndexing(registry, IndexMappingFactory.defaults(new CatalogIndexingHintSource()));
     }
 
-    private static IndexingPlan plan() {
-        return IndexingPlanFactory.defaults(new CatalogIndexingHintSource())
+    private static IndexMapping mapping() {
+        return IndexMappingFactory.defaults(new CatalogIndexingHintSource())
                 .create(AnyEnvelope.getDescriptor());
     }
 

@@ -4,8 +4,8 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
@@ -94,10 +94,10 @@ class ProtoLuceneMapperTest {
                 .addRepeatedField(values, 7L)
                 .addRepeatedField(values, 9L)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("values", "values", ResolvedFieldHint.of(IndexFieldKind.INT64))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("values", "values", ResolvedFieldHint.of(IndexFieldKind.INT64))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // one indexed point + one stored field per element
         assertThat(doc.getFields("values")).hasSize(4);
@@ -116,10 +116,10 @@ class ProtoLuceneMapperTest {
                 .addRepeatedField(tags, "alpha")
                 .addRepeatedField(tags, "beta")
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("tags", "tags", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("tags", "tags", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         List<String> keywords = Arrays.stream(doc.getFields("tags"))
                 .map(IndexableField::stringValue)
@@ -139,10 +139,10 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(created, timestamp)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // one indexed LongPoint + one stored field, both carrying epoch millis — never text-format strings
         assertThat(doc.getFields("created")).hasSize(2);
@@ -161,10 +161,10 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("created_ms"), 1_700_000_000_000L)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created_ms", "created_ms", ResolvedFieldHint.of(IndexFieldKind.DATE))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created_ms", "created_ms", ResolvedFieldHint.of(IndexFieldKind.DATE))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // one indexed LongPoint + one stored field, both numeric — not a keyword string
         assertThat(doc.getFields("created_ms")).hasSize(2);
@@ -178,29 +178,29 @@ class ProtoLuceneMapperTest {
     }
 
     @Test
-    void unsetIntermediateMessageInPlanPathSkipsField() throws Exception {
+    void unsetIntermediateMessageInMappingPathSkipsField() throws Exception {
         Descriptor descriptor = nestedDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("title"), "kept")
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("inner.name", "inner_name", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexingPlan.IndexedField("title", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("inner.name", "inner_name", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
+                new IndexMapping.IndexedField("title", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.get("title")).isEqualTo("kept");
         assertThat(doc.getFields("inner_name")).isEmpty();
     }
 
     @Test
-    void genuinelyInvalidPlanPathStillThrows() throws Exception {
+    void genuinelyInvalidMappingPathStillThrows() throws Exception {
         Descriptor descriptor = nestedDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        assertThatThrownBy(() -> mapper.map(message, plan)).isInstanceOf(MappingException.class);
+        assertThatThrownBy(() -> mapper.map(message, mapping)).isInstanceOf(MappingException.class);
     }
 
     @Test
@@ -210,11 +210,11 @@ class ProtoLuceneMapperTest {
                 .setField(descriptor.findFieldByName("digest"),
                         com.google.protobuf.ByteString.copyFrom(new byte[]{1, 2, 3}))
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("digest", "digest",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("digest", "digest",
                         new ResolvedFieldHint(IndexFieldKind.BINARY, false, true, "", 0))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // hinted indexed-only bytes must never be dropped silently
         assertThat(doc.getFields("digest")).hasSize(1);
@@ -229,11 +229,11 @@ class ProtoLuceneMapperTest {
                 .setField(descriptor.findFieldByName("digest"),
                         com.google.protobuf.ByteString.copyFrom(new byte[]{9, 8}))
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("digest", "digest",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("digest", "digest",
                         new ResolvedFieldHint(IndexFieldKind.BINARY, true, false, "", 0))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("digest")).hasSize(1);
         assertThat(doc.getFields("digest")[0].fieldType().stored()).isTrue();
@@ -250,11 +250,11 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("inner"), inner)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("inner", "inner",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("inner", "inner",
                         ResolvedFieldHint.of(IndexFieldKind.OBJECT))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // compact JsonFormat JSON, not protobuf text format
         assertThat(doc.get("inner")).isEqualTo("{\"name\":\"n1\"}");
@@ -278,10 +278,10 @@ class ProtoLuceneMapperTest {
                 .build();
 
         for (IndexFieldKind kind : List.of(IndexFieldKind.TEXT, IndexFieldKind.KEYWORD)) {
-            IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                    new IndexingPlan.IndexedField("inner", "inner", ResolvedFieldHint.of(kind))));
+            IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                    new IndexMapping.IndexedField("inner", "inner", ResolvedFieldHint.of(kind))));
 
-            Document doc = mapper.map(message, plan);
+            Document doc = mapper.map(message, mapping);
 
             assertThat(doc.get("inner")).as("%s-hinted message", kind).isEqualTo("{\"name\":\"n1\"}");
         }
@@ -304,11 +304,11 @@ class ProtoLuceneMapperTest {
                                 .setField(innerDescriptor.findFieldByName("name"), "n1")
                                 .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("inner", "inner",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("inner", "inner",
                         ResolvedFieldHint.of(IndexFieldKind.OBJECT))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // one field carrying both duties, not two fields duplicating the value on retrieval
         assertThat(doc.getFields("inner")).hasSize(1);
@@ -329,12 +329,12 @@ class ProtoLuceneMapperTest {
                                 .setField(innerDescriptor.findFieldByName("name"), "n1")
                                 .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("inner", "inner",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("inner", "inner",
                         ResolvedFieldHint.builder(IndexFieldKind.OBJECT)
                                 .stored(false).indexed(true).build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("inner")).hasSize(1);
         assertThat(doc.getFields("inner")[0].fieldType().stored()).isFalse();
@@ -352,12 +352,12 @@ class ProtoLuceneMapperTest {
                                 .setField(innerDescriptor.findFieldByName("name"), "n1")
                                 .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("inner", "inner",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("inner", "inner",
                         ResolvedFieldHint.builder(IndexFieldKind.OBJECT)
                                 .stored(true).indexed(false).build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("inner")).hasSize(1);
         assertThat(doc.getFields("inner")[0].fieldType().stored()).isTrue();
@@ -382,13 +382,13 @@ class ProtoLuceneMapperTest {
                         .setField(tsDescriptor.findFieldByName("nanos"), 500_000_000)
                         .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created",
                         ResolvedFieldHint.builder(IndexFieldKind.DATE)
                                 .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         List<Long> stored = Arrays.stream(doc.getFields("created"))
                 .filter(field -> field.fieldType().stored())
@@ -418,13 +418,13 @@ class ProtoLuceneMapperTest {
                         .setField(tsDescriptor.findFieldByName("nanos"), nanos)
                         .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created",
                         ResolvedFieldHint.builder(IndexFieldKind.DATE)
                                 .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
                                 .build())));
 
-        return Arrays.stream(mapper.map(message, plan).getFields("created"))
+        return Arrays.stream(mapper.map(message, mapping).getFields("created"))
                 .filter(field -> field.fieldType().stored())
                 .map(field -> field.numericValue().longValue())
                 .findFirst()
@@ -448,11 +448,11 @@ class ProtoLuceneMapperTest {
                 .addRepeatedField(labels, entryA)
                 .addRepeatedField(labels, entryB)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("labels", "labels",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("labels", "labels",
                         ResolvedFieldHint.of(IndexFieldKind.OBJECT))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // one JSON object string for the whole map, not one MapEntry toString per pair
         assertThat(doc.getFields("labels")).hasSize(1);
@@ -468,11 +468,11 @@ class ProtoLuceneMapperTest {
                 .addRepeatedField(embedding, 0.2f)
                 .addRepeatedField(embedding, 0.3f)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 3))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("embedding")).hasSize(1);
         assertThat(doc.getFields("embedding")[0])
@@ -489,11 +489,11 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .addRepeatedField(embedding, 0.5f)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 3))));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("embedding")).hasSize(1);
         assertThat(doc.getFields("embedding")[0].fieldType().stored()).isTrue();
@@ -506,10 +506,10 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("count"), "not-a-number")
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("count", "count", ResolvedFieldHint.of(IndexFieldKind.INT64))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("count", "count", ResolvedFieldHint.of(IndexFieldKind.INT64))));
 
-        assertThatThrownBy(() -> mapper.map(message, plan))
+        assertThatThrownBy(() -> mapper.map(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("count")
                 .hasMessageContaining("INT64")
@@ -520,16 +520,16 @@ class ProtoLuceneMapperTest {
     void includeDefaultsIndexesImplicitPresenceDefaults() throws Exception {
         Descriptor descriptor = singularFieldDescriptor("archived", FieldDescriptorProto.Type.TYPE_BOOL);
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("archived", "archived",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("archived", "archived",
                         ResolvedFieldHint.of(IndexFieldKind.BOOLEAN))));
 
         // default behaviour: fields at their default value are skipped
-        assertThat(mapper.map(message, plan).getFields("archived")).isEmpty();
+        assertThat(mapper.map(message, mapping).getFields("archived")).isEmpty();
 
         ProtoLuceneMapper withDefaults = new ProtoLuceneMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()), true);
-        Document doc = withDefaults.map(message, plan);
+        Document doc = withDefaults.map(message, mapping);
         assertThat(doc.get("archived")).isEqualTo("false");
     }
 
@@ -549,14 +549,14 @@ class ProtoLuceneMapperTest {
                 VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT);
 
         for (var entry : expected.entrySet()) {
-            IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                    new IndexingPlan.IndexedField("embedding", "embedding",
+            IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                    new IndexMapping.IndexedField("embedding", "embedding",
                             ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                     .vectorDims(2)
                                     .vectorSimilarity(entry.getKey())
                                     .build())));
 
-            Document doc = mapper.map(message, plan);
+            Document doc = mapper.map(message, mapping);
 
             assertThat(doc.getFields("embedding")).hasSize(1);
             assertThat(doc.getFields("embedding")[0].fieldType().vectorSimilarityFunction())
@@ -574,15 +574,15 @@ class ProtoLuceneMapperTest {
                 .addRepeatedField(embedding, -2)
                 .addRepeatedField(embedding, 127)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(3)
                                 .vectorElementType(ai.pipestream.proto.index.spi.VectorElementType.BYTE)
                                 .vectorSimilarity(ai.pipestream.proto.index.spi.VectorSimilarity.DOT_PRODUCT)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("embedding")).hasSize(1);
         assertThat(doc.getFields("embedding")[0])
@@ -600,14 +600,14 @@ class ProtoLuceneMapperTest {
                 .setField(descriptor.findFieldByName("embedding"),
                         com.google.protobuf.ByteString.copyFrom(new byte[]{5, 6, 7}))
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(3)
                                 .vectorElementType(ai.pipestream.proto.index.spi.VectorElementType.BYTE)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("embedding")).hasSize(1);
         var field = (org.apache.lucene.document.KnnByteVectorField) doc.getFields("embedding")[0];
@@ -645,24 +645,24 @@ class ProtoLuceneMapperTest {
     void emptyVectorIsSkipped() throws Exception {
         Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 3))));
 
-        assertThat(mapper.map(message, plan).getFields("embedding")).isEmpty();
+        assertThat(mapper.map(message, mapping).getFields("embedding")).isEmpty();
     }
 
     @Test
     void knnVectorFieldRoundTripsThroughLuceneIndexWriter(@TempDir Path dir) throws Exception {
         Descriptor descriptor = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
         FieldDescriptor embedding = descriptor.findFieldByName("embedding");
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 2))));
 
         try (LuceneIndexWriter writer = new LuceneIndexWriter(dir)) {
-            writer.add(vectorDoc(mapper, descriptor, embedding, plan, "near", 1f, 0f));
-            writer.add(vectorDoc(mapper, descriptor, embedding, plan, "far", 0f, 1f));
+            writer.add(vectorDoc(mapper, descriptor, embedding, mapping, "near", 1f, 0f));
+            writer.add(vectorDoc(mapper, descriptor, embedding, mapping, "far", 0f, 1f));
             writer.commit();
             assertThat(writer.numDocs()).isEqualTo(2);
         }
@@ -678,13 +678,13 @@ class ProtoLuceneMapperTest {
     }
 
     private static Document vectorDoc(ProtoLuceneMapper mapper, Descriptor descriptor,
-                                      FieldDescriptor embedding, IndexingPlan plan,
+                                      FieldDescriptor embedding, IndexMapping mapping,
                                       String id, float... vector) throws Exception {
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
         for (float component : vector) {
             builder.addRepeatedField(embedding, component);
         }
-        Document doc = mapper.map(builder.build(), plan);
+        Document doc = mapper.map(builder.build(), mapping);
         doc.add(new org.apache.lucene.document.StringField(
                 "id", id, org.apache.lucene.document.Field.Store.YES));
         return doc;
@@ -696,13 +696,13 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("title"), "Hello")
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("title", "title",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""))
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         // main text field plus one indexed-only keyword companion named "title.raw"
         assertThat(doc.get("title")).isEqualTo("Hello");
@@ -718,14 +718,14 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("status"), "open")
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("status", "status",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("status", "status",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .sortable(true)
                                 .facetable(true)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         List<DocValuesType> docValues = Arrays.stream(doc.getFields("status"))
                 .map(field -> field.fieldType().docValuesType())
@@ -742,14 +742,14 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("count"), 42L)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("count", "count",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("count", "count",
                         ResolvedFieldHint.builder(IndexFieldKind.INT64)
                                 .sortable(true)
                                 .facetable(true)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         List<DocValuesType> docValues = Arrays.stream(doc.getFields("count"))
                 .map(field -> field.fieldType().docValuesType())
@@ -766,13 +766,13 @@ class ProtoLuceneMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("score"), 2.5d)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("score", "score",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("score", "score",
                         ResolvedFieldHint.builder(IndexFieldKind.DOUBLE)
                                 .sortable(true)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         List<DocValuesType> docValues = Arrays.stream(doc.getFields("score"))
                 .map(field -> field.fieldType().docValuesType())
@@ -785,13 +785,13 @@ class ProtoLuceneMapperTest {
     void nullValueSubstitutesMissingField() throws Exception {
         Descriptor descriptor = singularFieldDescriptor("status", FieldDescriptorProto.Type.TYPE_STRING);
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("status", "status",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("status", "status",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .nullValue("unknown")
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.get("status")).isEqualTo("unknown");
     }
@@ -800,18 +800,18 @@ class ProtoLuceneMapperTest {
     void missingFieldWithoutNullValueStaysAbsent() throws Exception {
         Descriptor descriptor = singularFieldDescriptor("status", FieldDescriptorProto.Type.TYPE_STRING);
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("status", "status",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("status", "status",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        assertThat(mapper.map(message, plan).getFields("status")).isEmpty();
+        assertThat(mapper.map(message, mapping).getFields("status")).isEmpty();
     }
 
     @Test
     void mapModeFlattenEmitsOneFieldPerKey() throws Exception {
-        IndexingPlan plan = mapPlan(ai.pipestream.proto.index.spi.MapMode.FLATTEN);
+        IndexMapping mapping = mapModeMapping(ai.pipestream.proto.index.spi.MapMode.FLATTEN);
 
-        Document doc = mapper.map(labelsMessage(), plan);
+        Document doc = mapper.map(labelsMessage(), mapping);
 
         assertThat(doc.get("labels.env")).isEqualTo("prod");
         assertThat(doc.get("labels.team")).isEqualTo("search");
@@ -820,9 +820,9 @@ class ProtoLuceneMapperTest {
 
     @Test
     void mapModeEntriesEmitsOneJsonObjectPerEntry() throws Exception {
-        IndexingPlan plan = mapPlan(ai.pipestream.proto.index.spi.MapMode.ENTRIES);
+        IndexMapping mapping = mapModeMapping(ai.pipestream.proto.index.spi.MapMode.ENTRIES);
 
-        Document doc = mapper.map(labelsMessage(), plan);
+        Document doc = mapper.map(labelsMessage(), mapping);
 
         List<String> entries = Arrays.stream(doc.getFields("labels"))
                 .map(IndexableField::stringValue)
@@ -836,13 +836,13 @@ class ProtoLuceneMapperTest {
     void mapModeJsonEmitsWholeMapJsonEvenOnScalarHint() throws Exception {
         Descriptor descriptor = mapFieldDescriptor();
         // an explicit mode wins for any hinted kind, not just OBJECT/NESTED
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("labels", "labels",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("labels", "labels",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .mapMode(ai.pipestream.proto.index.spi.MapMode.JSON)
                                 .build())));
 
-        Document doc = mapper.map(labelsMessage(), plan);
+        Document doc = mapper.map(labelsMessage(), mapping);
 
         assertThat(doc.getFields("labels")).hasSize(1);
         assertThat(doc.get("labels")).isEqualTo("{\"env\":\"prod\",\"team\":\"search\"}");
@@ -850,9 +850,9 @@ class ProtoLuceneMapperTest {
 
     @Test
     void mapModeSkipEmitsNothing() throws Exception {
-        IndexingPlan plan = mapPlan(ai.pipestream.proto.index.spi.MapMode.SKIP);
+        IndexMapping mapping = mapModeMapping(ai.pipestream.proto.index.spi.MapMode.SKIP);
 
-        Document doc = mapper.map(labelsMessage(), plan);
+        Document doc = mapper.map(labelsMessage(), mapping);
 
         assertThat(doc.getFields()).isEmpty();
     }
@@ -861,9 +861,9 @@ class ProtoLuceneMapperTest {
     void intRangeFromGteLteBoundsBuildsIntRange() throws Exception {
         Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
         DynamicMessage message = rangeMessage(descriptor, 3, 9);
-        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.INT_RANGE);
+        IndexMapping mapping = rangeMapping(descriptor, IndexFieldKind.INT_RANGE);
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         assertThat(doc.getFields("pages")).hasSize(1);
         org.apache.lucene.document.IntRange range =
@@ -876,9 +876,9 @@ class ProtoLuceneMapperTest {
     void longRangeFromMinMaxBoundsBuildsLongRange() throws Exception {
         Descriptor descriptor = rangeDescriptor("min", "max", FieldDescriptorProto.Type.TYPE_INT64);
         DynamicMessage message = rangeMessage(descriptor, 10L, 20L);
-        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.LONG_RANGE);
+        IndexMapping mapping = rangeMapping(descriptor, IndexFieldKind.LONG_RANGE);
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         org.apache.lucene.document.LongRange range =
                 (org.apache.lucene.document.LongRange) doc.getFields("pages")[0];
@@ -890,9 +890,9 @@ class ProtoLuceneMapperTest {
     void floatRangeBuildsFloatRange() throws Exception {
         Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_FLOAT);
         DynamicMessage message = rangeMessage(descriptor, 0.5f, 1.5f);
-        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.FLOAT_RANGE);
+        IndexMapping mapping = rangeMapping(descriptor, IndexFieldKind.FLOAT_RANGE);
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         org.apache.lucene.document.FloatRange range =
                 (org.apache.lucene.document.FloatRange) doc.getFields("pages")[0];
@@ -904,9 +904,9 @@ class ProtoLuceneMapperTest {
     void doubleRangeBuildsDoubleRange() throws Exception {
         Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_DOUBLE);
         DynamicMessage message = rangeMessage(descriptor, 0.25d, 0.75d);
-        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.DOUBLE_RANGE);
+        IndexMapping mapping = rangeMapping(descriptor, IndexFieldKind.DOUBLE_RANGE);
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         org.apache.lucene.document.DoubleRange range =
                 (org.apache.lucene.document.DoubleRange) doc.getFields("pages")[0];
@@ -918,9 +918,9 @@ class ProtoLuceneMapperTest {
     void dateRangeFromTimestampBoundsBuildsLongRangeOfEpochMillis() throws Exception {
         Descriptor descriptor = timestampRangeDescriptor();
         DynamicMessage message = timestampRangeMessage(descriptor, 1_700_000_000L, 1_700_000_100L);
-        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.DATE_RANGE);
+        IndexMapping mapping = rangeMapping(descriptor, IndexFieldKind.DATE_RANGE);
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         org.apache.lucene.document.LongRange range =
                 (org.apache.lucene.document.LongRange) doc.getFields("pages")[0];
@@ -932,13 +932,13 @@ class ProtoLuceneMapperTest {
     void dateRangeHonoursSecondsResolution() throws Exception {
         Descriptor descriptor = timestampRangeDescriptor();
         DynamicMessage message = timestampRangeMessage(descriptor, 1_700_000_000L, 1_700_000_100L);
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("pages", "pages",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("pages", "pages",
                         ResolvedFieldHint.builder(IndexFieldKind.DATE_RANGE)
                                 .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         org.apache.lucene.document.LongRange range =
                 (org.apache.lucene.document.LongRange) doc.getFields("pages")[0];
@@ -950,9 +950,9 @@ class ProtoLuceneMapperTest {
     void rangeWithoutResolvableBoundsThrowsMappingException() throws Exception {
         Descriptor descriptor = rangeDescriptor("low", "high", FieldDescriptorProto.Type.TYPE_INT32);
         DynamicMessage message = rangeMessage(descriptor, 1, 2);
-        IndexingPlan plan = rangePlan(descriptor, IndexFieldKind.INT_RANGE);
+        IndexMapping mapping = rangeMapping(descriptor, IndexFieldKind.INT_RANGE);
 
-        assertThatThrownBy(() -> mapper.map(message, plan))
+        assertThatThrownBy(() -> mapper.map(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("(gte,lte) or (min,max)");
     }
@@ -968,13 +968,13 @@ class ProtoLuceneMapperTest {
                         .setField(tsDescriptor.findFieldByName("nanos"), 500_000_000)
                         .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created",
                         ResolvedFieldHint.builder(IndexFieldKind.DATE)
                                 .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
                                 .build())));
 
-        Document doc = mapper.map(message, plan);
+        Document doc = mapper.map(message, mapping);
 
         List<Long> stored = Arrays.stream(doc.getFields("created"))
                 .filter(field -> field.fieldType().stored())
@@ -988,9 +988,9 @@ class ProtoLuceneMapperTest {
         AnyEnvelope env = AnyEnvelope.create();
         DynamicMessage message = env.packed("Opinion", 12);
         ProtoLuceneMapper lucene = new ProtoLuceneMapper(env.context());
-        IndexingPlan plan = env.factory.create(env.envelope);
+        IndexMapping mapping = env.factory.create(env.envelope);
 
-        Document doc = lucene.map(message, plan);
+        Document doc = lucene.map(message, mapping);
 
         assertThat(doc.get("payload_title")).isEqualTo("Opinion");
         assertThat(doc.getField("payload_page_count").numericValue().intValue()).isEqualTo(12);
@@ -1003,9 +1003,9 @@ class ProtoLuceneMapperTest {
         AnyEnvelope env = AnyEnvelope.create();
         DynamicMessage message = env.unknownType();
         ProtoLuceneMapper lucene = new ProtoLuceneMapper(env.context());
-        IndexingPlan plan = env.factory.create(env.envelope);
+        IndexMapping mapping = env.factory.create(env.envelope);
 
-        assertThatThrownBy(() -> lucene.map(message, plan))
+        assertThatThrownBy(() -> lucene.map(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
                 .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
@@ -1018,9 +1018,9 @@ class ProtoLuceneMapperTest {
                 .setField(env.envelope.findFieldByName("doc_id"), "doc-1")
                 .build();
         ProtoLuceneMapper lucene = new ProtoLuceneMapper(env.context());
-        IndexingPlan plan = env.factory.create(env.envelope);
+        IndexMapping mapping = env.factory.create(env.envelope);
 
-        Document doc = lucene.map(message, plan);
+        Document doc = lucene.map(message, mapping);
 
         assertThat(doc.get("doc_id")).isEqualTo("doc-1");
         assertThat(doc.get("payload_title")).isNull();
@@ -1036,7 +1036,7 @@ class ProtoLuceneMapperTest {
     private record AnyEnvelope(
             Descriptor envelope,
             Descriptor inner,
-            IndexingPlanFactory factory,
+            IndexMappingFactory factory,
             DescriptorRegistry registry) {
 
         static AnyEnvelope create() throws Exception {
@@ -1079,7 +1079,7 @@ class ProtoLuceneMapperTest {
             registry.register(inner);
             CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                     .put(inner.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-            return new AnyEnvelope(envelope, inner, IndexingPlanFactory.defaults(catalog), registry);
+            return new AnyEnvelope(envelope, inner, IndexMappingFactory.defaults(catalog), registry);
         }
 
         IndexerContext context() {
@@ -1108,11 +1108,11 @@ class ProtoLuceneMapperTest {
         }
     }
 
-    /** Explicit-mode plan over {@link #mapFieldDescriptor()} with an OBJECT hint. */
-    private static IndexingPlan mapPlan(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
+    /** Explicit-mode mapping over {@link #mapFieldDescriptor()} with an OBJECT hint. */
+    private static IndexMapping mapModeMapping(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
         Descriptor descriptor = mapFieldDescriptor();
-        return new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("labels", "labels",
+        return new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("labels", "labels",
                         ResolvedFieldHint.builder(IndexFieldKind.OBJECT).mapMode(mode).build())));
     }
 
@@ -1132,9 +1132,9 @@ class ProtoLuceneMapperTest {
                 .build();
     }
 
-    private static IndexingPlan rangePlan(Descriptor descriptor, IndexFieldKind rangeKind) {
-        return new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
+    private static IndexMapping rangeMapping(Descriptor descriptor, IndexFieldKind rangeKind) {
+        return new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
     }
 
     private static DynamicMessage rangeMessage(Descriptor descriptor, Object lower, Object upper) {

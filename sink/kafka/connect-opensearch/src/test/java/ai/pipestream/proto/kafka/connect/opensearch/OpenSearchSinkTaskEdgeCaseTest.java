@@ -2,7 +2,7 @@ package ai.pipestream.proto.kafka.connect.opensearch;
 
 import ai.pipestream.proto.index.opensearch.OpenSearchMappingGenerator;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.index.hints.FieldIndexHint;
 import ai.pipestream.proto.index.hints.IndexFieldType;
@@ -341,23 +341,23 @@ class OpenSearchSinkTaskEdgeCaseTest {
                 .containsEntry("payload_label", "x");
     }
 
-    // ------------------------------------------------------------ plan / ensure index
+    // ------------------------------------------------------------ mapping / ensure index
 
-    /** The plan handed to ensureIndex is what the mapping generator renders, so a VECTOR hint
+    /** The mapping handed to ensureIndex is what the mapping generator renders, so a VECTOR hint
      * has to survive as a knn_vector property with its dimension — asserted off the captured
-     * plan, never over HTTP. */
+     * mapping, never over HTTP. */
     @Test
-    void aVectorHintReachesTheEnsureIndexPlanAsAKnnVectorMapping() throws Exception {
+    void aVectorHintReachesEnsureIndexAsAKnnVectorMapping() throws Exception {
         OpenSearchSinkTaskTest.RecordingClient client = new OpenSearchSinkTaskTest.RecordingClient();
         startedTask(client, Map.of());
 
-        IndexingPlan plan = client.ensured.get(0).plan();
-        assertThat(plan.find("embedding")).hasValueSatisfying(field -> {
+        IndexMapping mapping = client.ensured.get(0).mapping();
+        assertThat(mapping.find("embedding")).hasValueSatisfying(field -> {
             assertThat(field.type()).isEqualTo(IndexFieldKind.VECTOR);
             assertThat(field.hint().vectorDims()).isEqualTo(4);
         });
 
-        Map<String, Object> mappings = new OpenSearchMappingGenerator().generate(plan);
+        Map<String, Object> mappings = new OpenSearchMappingGenerator().generate(mapping);
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) mappings.get("properties");
         @SuppressWarnings("unchecked")
@@ -512,7 +512,7 @@ class OpenSearchSinkTaskEdgeCaseTest {
 
     private static final class FailingEnsureClient implements OpenSearchSinkTask.IndexClient {
         @Override
-        public boolean ensureIndex(String index, IndexingPlan plan) throws IOException {
+        public boolean ensureIndex(String index, IndexMapping mapping) throws IOException {
             throw new IOException("cluster unreachable");
         }
 

@@ -8,7 +8,7 @@ are no per-field connector keys; the connector is a thin Kafka Connect shell
 around the same [search indexing](../search/indexing.md) write path every
 other ProtoMolt surface uses.
 
-Because the mapping runs through the shared plan:
+Because document mapping runs through the shared index mapping:
 
 - `google.protobuf.Any` fields expand against the descriptor set, and every
   unpacked payload passes the declared-rules gate (`skip_when`, per-field
@@ -17,7 +17,7 @@ Because the mapping runs through the shared plan:
   `ai.pipestream.proto.validate.v1` rules before indexing (`validate=false`
   turns this off). Violations are data errors, routed by the worker's
   `errors.tolerance` (fail, skip, or dead-letter).
-- The target index can be created at task start from the plan-generated
+- The target index can be created at task start from the mapping-generated
   mappings, `knn_vector` fields included.
 
 Delivery is at-least-once with deterministic document ids: either a value
@@ -62,7 +62,7 @@ itself; there is no Connect schema involved).
 | `value.format` | `protobuf` | `protobuf` raw bytes, `confluent` wire format, or proto3 `json` text |
 | `opensearch.url` | required | Cluster base URL |
 | `opensearch.index` | required | Target index name |
-| `opensearch.ensure.index` | `true` | Create the index from the plan-generated mappings at task start (idempotent) |
+| `opensearch.ensure.index` | `true` | Create the index from the mapping-generated mappings at task start (idempotent) |
 | `opensearch.refresh` | `false` | Refresh on every bulk write (immediately searchable, slower) |
 | `document.id.path` | empty | Dotted proto path read as the document id; empty derives ids from topic-partition-offset |
 | `validate` | `true` | Enforce declared validation rules — packed `Any` payloads included — before indexing; `false` suspends both (the schema's `validate_payloads` opt-out stays per-field) |

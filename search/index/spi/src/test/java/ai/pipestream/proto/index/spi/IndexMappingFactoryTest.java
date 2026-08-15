@@ -17,18 +17,18 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class IndexingPlanFactoryTest {
+class IndexMappingFactoryTest {
 
     @Test
     void infersKeywordForIdAndTextForBody() throws Exception {
         Descriptor descriptor = sampleDescriptor();
-        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.inferringOnly().create(descriptor);
 
-        assertThat(plan.find("doc_id")).get().extracting(f -> f.type())
+        assertThat(mapping.find("doc_id")).get().extracting(f -> f.type())
                 .isEqualTo(IndexFieldKind.KEYWORD);
-        assertThat(plan.find("title")).get().extracting(f -> f.type())
+        assertThat(mapping.find("title")).get().extracting(f -> f.type())
                 .isEqualTo(IndexFieldKind.TEXT);
-        assertThat(plan.find("page_count")).get().extracting(f -> f.type())
+        assertThat(mapping.find("page_count")).get().extracting(f -> f.type())
                 .isEqualTo(IndexFieldKind.INT32);
     }
 
@@ -37,20 +37,20 @@ class IndexingPlanFactoryTest {
         Descriptor descriptor = sampleDescriptor();
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put(descriptor.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(descriptor);
 
-        assertThat(plan.find("title")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("title")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.KEYWORD);
     }
 
     @Test
     void protoOptionHintWithoutTypeKeepsExplicitAttributes() throws Exception {
         Descriptor descriptor = hintedDescriptor();
-        IndexingPlanFactory factory = new IndexingPlanFactory(
+        IndexMappingFactory factory = new IndexMappingFactory(
                 new ProtoOptionsIndexingHintSource().orElse(new InferringIndexingHintSource()));
-        IndexingPlan plan = factory.create(descriptor);
+        IndexMapping mapping = factory.create(descriptor);
 
-        IndexingPlan.IndexedField title = plan.find("title").orElseThrow();
+        IndexMapping.IndexedField title = mapping.find("title").orElseThrow();
         // explicit name/stored from the option survive even though type was left unset
         assertThat(title.fieldName()).isEqualTo("custom_title");
         assertThat(title.stored()).isFalse();
@@ -62,11 +62,11 @@ class IndexingPlanFactoryTest {
     @Test
     void jsonNameModeUsesJsonNamesForEveryFieldNameSegment() throws Exception {
         Descriptor descriptor = nestedSampleDescriptor();
-        IndexingPlanFactory factory = new IndexingPlanFactory(expandingHints(), false, 8);
-        IndexingPlan plan = factory.create(descriptor);
+        IndexMappingFactory factory = new IndexMappingFactory(expandingHints(), false, 8);
+        IndexMapping mapping = factory.create(descriptor);
 
         // paths stay in proto names (the field-mapper vocabulary)
-        IndexingPlan.IndexedField leaf = plan.find("user_address.display_name").orElseThrow();
+        IndexMapping.IndexedField leaf = mapping.find("user_address.display_name").orElseThrow();
         // prefix and leaf use the same naming mode: no mixed user_address_displayName
         assertThat(leaf.fieldName()).isEqualTo("userAddress_displayName");
     }
@@ -74,10 +74,10 @@ class IndexingPlanFactoryTest {
     @Test
     void protoNameModeUsesProtoNamesForEveryFieldNameSegment() throws Exception {
         Descriptor descriptor = nestedSampleDescriptor();
-        IndexingPlanFactory factory = new IndexingPlanFactory(expandingHints(), true, 8);
-        IndexingPlan plan = factory.create(descriptor);
+        IndexMappingFactory factory = new IndexMappingFactory(expandingHints(), true, 8);
+        IndexMapping mapping = factory.create(descriptor);
 
-        IndexingPlan.IndexedField leaf = plan.find("user_address.display_name").orElseThrow();
+        IndexMapping.IndexedField leaf = mapping.find("user_address.display_name").orElseThrow();
         assertThat(leaf.fieldName()).isEqualTo("user_address_display_name");
     }
 
@@ -93,22 +93,22 @@ class IndexingPlanFactoryTest {
                         ? java.util.Optional.of(
                                 ResolvedFieldHint.builder(IndexFieldKind.TEXT).name("addr").build())
                         : java.util.Optional.empty();
-        IndexingPlan plan = new IndexingPlanFactory(hints, true, 8).create(descriptor);
+        IndexMapping mapping = new IndexMappingFactory(hints, true, 8).create(descriptor);
 
-        assertThat(plan.find("user_address.display_name")).get()
-                .extracting(IndexingPlan.IndexedField::fieldName)
+        assertThat(mapping.find("user_address.display_name")).get()
+                .extracting(IndexMapping.IndexedField::fieldName)
                 .isEqualTo("addr_display_name");
     }
 
     @Test
     void repeatedProtoFieldsAreMarkedRepeated() throws Exception {
         Descriptor descriptor = inferenceDescriptor();
-        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.inferringOnly().create(descriptor);
 
-        assertThat(plan.find("embedding")).get()
-                .extracting(IndexingPlan.IndexedField::repeated).isEqualTo(true);
-        assertThat(plan.find("digest")).get()
-                .extracting(IndexingPlan.IndexedField::repeated).isEqualTo(false);
+        assertThat(mapping.find("embedding")).get()
+                .extracting(IndexMapping.IndexedField::repeated).isEqualTo(true);
+        assertThat(mapping.find("digest")).get()
+                .extracting(IndexMapping.IndexedField::repeated).isEqualTo(false);
     }
 
     /** Hints message fields with an expandable kind so nested fields become dotted paths. */
@@ -120,20 +120,20 @@ class IndexingPlanFactoryTest {
 
     @Test
     void structInfersObjectFields() {
-        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(Struct.getDescriptor());
-        assertThat(plan.fields()).isNotEmpty();
-        assertThat(plan.find("fields")).isPresent();
+        IndexMapping mapping = IndexMappingFactory.inferringOnly().create(Struct.getDescriptor());
+        assertThat(mapping.fields()).isNotEmpty();
+        assertThat(mapping.find("fields")).isPresent();
     }
 
     @Test
     void infersAnyForGoogleProtobufAnyAndDoesNotExpandInnerFields() throws Exception {
         Descriptor descriptor = anyEnvelopeDescriptor();
-        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.inferringOnly().create(descriptor);
 
-        assertThat(plan.find("payload")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("payload")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.ANY);
-        assertThat(plan.find("payload.title")).isEmpty();
-        assertThat(plan.find("doc_id")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("payload.title")).isEmpty();
+        assertThat(mapping.find("doc_id")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.KEYWORD);
     }
 
@@ -142,37 +142,37 @@ class IndexingPlanFactoryTest {
         Descriptor descriptor = anyEnvelopeDescriptor();
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put(descriptor.getFullName(), "payload", ResolvedFieldHint.skipped());
-        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(descriptor);
 
-        assertThat(plan.find("payload")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("payload")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.SKIP);
-        assertThat(plan.indexable()).extracting(IndexingPlan.IndexedField::path)
+        assertThat(mapping.indexable()).extracting(IndexMapping.IndexedField::path)
                 .doesNotContain("payload");
-        assertThat(plan.find("payload.title")).isEmpty();
+        assertThat(mapping.find("payload.title")).isEmpty();
     }
 
     @Test
     void infersDateForTimestampBinaryForBytesAndNeverVector() throws Exception {
         Descriptor descriptor = inferenceDescriptor();
-        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.inferringOnly().create(descriptor);
 
-        assertThat(plan.find("created")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("created")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.DATE);
-        assertThat(plan.find("digest")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("digest")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.BINARY);
         // VECTOR is explicit-only: a repeated float field infers FLOAT
-        assertThat(plan.find("embedding")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("embedding")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.FLOAT);
     }
 
     @Test
     void richProtoOptionHintResolvesEveryAttribute() throws Exception {
         Descriptor descriptor = richHintedDescriptor();
-        IndexingPlanFactory factory = new IndexingPlanFactory(
+        IndexMappingFactory factory = new IndexMappingFactory(
                 new ProtoOptionsIndexingHintSource().orElse(new InferringIndexingHintSource()));
-        IndexingPlan plan = factory.create(descriptor);
+        IndexMapping mapping = factory.create(descriptor);
 
-        ResolvedFieldHint hint = plan.find("embedding").orElseThrow().hint();
+        ResolvedFieldHint hint = mapping.find("embedding").orElseThrow().hint();
         assertThat(hint.type()).isEqualTo(IndexFieldKind.VECTOR);
         assertThat(hint.vectorDims()).isEqualTo(3);
         assertThat(hint.vectorSimilarity()).isEqualTo(VectorSimilarity.L2);
@@ -200,9 +200,9 @@ class IndexingPlanFactoryTest {
                         .sortable(true)
                         .engineParams(Map.of("solr.omitNorms", "true"))
                         .build());
-        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(descriptor);
 
-        IndexingPlan.IndexedField title = plan.find("title").orElseThrow();
+        IndexMapping.IndexedField title = mapping.find("title").orElseThrow();
         // catalog wins wholesale: proto-option name/stored do not leak through
         assertThat(title.fieldName()).isEqualTo("title");
         assertThat(title.type()).isEqualTo(IndexFieldKind.KEYWORD);
@@ -220,9 +220,9 @@ class IndexingPlanFactoryTest {
                                 .analyzer("english")
                                 .nullValue("n/a")
                                 .build());
-        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(descriptor);
 
-        ResolvedFieldHint hint = plan.find("title").orElseThrow().hint();
+        ResolvedFieldHint hint = mapping.find("title").orElseThrow().hint();
         // type comes from inference; the rich attributes survive the merge
         assertThat(hint.type()).isEqualTo(IndexFieldKind.TEXT);
         assertThat(hint.sortable()).isTrue();
@@ -235,12 +235,12 @@ class IndexingPlanFactoryTest {
         Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("pages", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
-        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(descriptor);
 
-        // the range field stays a single plan entry: bounds are not expanded into dotted paths
-        assertThat(plan.find("pages")).get().extracting(IndexingPlan.IndexedField::type)
+        // the range field stays a single mapping entry: bounds are not expanded into dotted paths
+        assertThat(mapping.find("pages")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.INT_RANGE);
-        assertThat(plan.find("pages.gte")).isEmpty();
+        assertThat(mapping.find("pages.gte")).isEmpty();
     }
 
     @Test
@@ -248,9 +248,9 @@ class IndexingPlanFactoryTest {
         Descriptor descriptor = rangeDescriptor("min", "max", FieldDescriptorProto.Type.TYPE_INT64);
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("pages", ResolvedFieldHint.of(IndexFieldKind.LONG_RANGE));
-        IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(descriptor);
+        IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(descriptor);
 
-        assertThat(plan.find("pages")).get().extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("pages")).get().extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.LONG_RANGE);
     }
 
@@ -261,8 +261,8 @@ class IndexingPlanFactoryTest {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("pages", ResolvedFieldHint.of(IndexFieldKind.DOUBLE_RANGE));
 
-        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
-                .isInstanceOf(IndexingPlanException.class)
+        assertThatThrownBy(() -> IndexMappingFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexMappingException.class)
                 .hasMessageContaining("DOUBLE_RANGE")
                 .hasMessageContaining("pages");
     }
@@ -273,8 +273,8 @@ class IndexingPlanFactoryTest {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("pages", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
 
-        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
-                .isInstanceOf(IndexingPlanException.class)
+        assertThatThrownBy(() -> IndexMappingFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexMappingException.class)
                 .hasMessageContaining("(gte,lte) or (min,max)")
                 .hasMessageContaining("pages");
     }
@@ -285,8 +285,8 @@ class IndexingPlanFactoryTest {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("page_count", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
 
-        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
-                .isInstanceOf(IndexingPlanException.class)
+        assertThatThrownBy(() -> IndexMappingFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexMappingException.class)
                 .hasMessageContaining("singular message field")
                 .hasMessageContaining("page_count");
     }
@@ -299,8 +299,8 @@ class IndexingPlanFactoryTest {
                 .put("inner", ResolvedFieldHint.of(IndexFieldKind.TEXT))
                 .put("pages", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE));
 
-        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
-                .isInstanceOf(IndexingPlanException.class)
+        assertThatThrownBy(() -> IndexMappingFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexMappingException.class)
                 .hasMessageContaining("inner.pages");
     }
 
@@ -312,8 +312,8 @@ class IndexingPlanFactoryTest {
                         .nullValue("not-a-number")
                         .build());
 
-        assertThatThrownBy(() -> IndexingPlanFactory.defaults(catalog).create(descriptor))
-                .isInstanceOf(IndexingPlanException.class)
+        assertThatThrownBy(() -> IndexMappingFactory.defaults(catalog).create(descriptor))
+                .isInstanceOf(IndexMappingException.class)
                 .hasMessageContaining("null_value")
                 .hasMessageContaining("page_count");
     }
@@ -325,11 +325,11 @@ class IndexingPlanFactoryTest {
     @Test
     void selfReferentialMessageStopsAtTheCycleInsteadOfRecursing() throws Exception {
         Descriptor descriptor = selfReferentialDescriptor();
-        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 8).create(descriptor);
+        IndexMapping mapping = new IndexMappingFactory(expandingHints(), true, 8).create(descriptor);
 
         // The back-reference expands into a message already on the stack, so it contributes
-        // nothing: the plan is the scalar fields reachable before the cycle closes.
-        assertThat(plan.fields()).extracting(IndexingPlan.IndexedField::path)
+        // nothing: the mapping is the scalar fields reachable before the cycle closes.
+        assertThat(mapping.fields()).extracting(IndexMapping.IndexedField::path)
                 .containsExactly("id");
     }
 
@@ -340,32 +340,32 @@ class IndexingPlanFactoryTest {
     @Test
     void mutuallyRecursiveMessagesStopAtTheCycle() throws Exception {
         Descriptor descriptor = mutuallyRecursiveDescriptor();
-        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 8).create(descriptor);
+        IndexMapping mapping = new IndexMappingFactory(expandingHints(), true, 8).create(descriptor);
 
-        assertThat(plan.fields()).extracting(IndexingPlan.IndexedField::path)
+        assertThat(mapping.fields()).extracting(IndexMapping.IndexedField::path)
                 .containsExactly("a_label", "b.b_label");
     }
 
     @Test
     void nestingBeyondMaxDepthStopsExpandingAndKeepsTheMessageAsALeaf() throws Exception {
         Descriptor descriptor = chainDescriptor(5);
-        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 2).create(descriptor);
+        IndexMapping mapping = new IndexMappingFactory(expandingHints(), true, 2).create(descriptor);
 
         // Three expansions (depths 0, 1, 2) then the cap: the fourth message stays a leaf
         // entry rather than expanding into its own children.
-        IndexingPlan.IndexedField capped = plan.find("next.next.next").orElseThrow();
+        IndexMapping.IndexedField capped = mapping.find("next.next.next").orElseThrow();
         assertThat(capped.fieldName()).isEqualTo("next_next_next");
         assertThat(capped.type()).isEqualTo(IndexFieldKind.TEXT);
-        assertThat(plan.find("next.next.next.next")).isEmpty();
-        assertThat(plan.fields()).hasSize(1);
+        assertThat(mapping.find("next.next.next.next")).isEmpty();
+        assertThat(mapping.fields()).hasSize(1);
     }
 
     @Test
     void maxDepthOfZeroKeepsEveryTopLevelMessageAsALeaf() throws Exception {
         Descriptor descriptor = chainDescriptor(5);
-        IndexingPlan plan = new IndexingPlanFactory(expandingHints(), true, 0).create(descriptor);
+        IndexMapping mapping = new IndexMappingFactory(expandingHints(), true, 0).create(descriptor);
 
-        assertThat(plan.fields()).extracting(IndexingPlan.IndexedField::path)
+        assertThat(mapping.fields()).extracting(IndexMapping.IndexedField::path)
                 .containsExactly("next");
     }
 

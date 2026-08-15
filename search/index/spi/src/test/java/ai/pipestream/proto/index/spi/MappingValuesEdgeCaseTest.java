@@ -27,11 +27,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Adversarial edge cases for {@link PlanValues}: leaf-vs-intermediate repeated fields,
+ * Adversarial edge cases for {@link MappingValues}: leaf-vs-intermediate repeated fields,
  * Any/Struct/map boundaries below a fan-out, presence rules per element, and the
- * plan flags engines size their schemas from.
+ * mapping flags engines size their schemas from.
  */
-class PlanValuesEdgeCaseTest {
+class MappingValuesEdgeCaseTest {
 
     // ------------------------------------------------------------------ shapes
 
@@ -40,7 +40,7 @@ class PlanValuesEdgeCaseTest {
         Fixtures f = Fixtures.create();
         DynamicMessage doc = f.docOf(f.leaf("alpha"), f.leaf("beta"));
 
-        Object value = PlanValues.read(f.mapper, doc, "leaves", false);
+        Object value = MappingValues.read(f.mapper, doc, "leaves", false);
 
         // No fan-out: the repeated message field IS the leaf, so its elements are the value.
         assertThat(value).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
@@ -55,7 +55,7 @@ class PlanValuesEdgeCaseTest {
         DynamicMessage doc = f.docWithGroups(
                 f.groupOf(f.leaf("a1"), f.leaf("a2")), f.groupOf(f.leaf("b1")));
 
-        Object value = PlanValues.read(f.mapper, doc, "groups.leaves", false);
+        Object value = MappingValues.read(f.mapper, doc, "groups.leaves", false);
 
         assertThat(value).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
                 .hasSize(3);
@@ -69,7 +69,7 @@ class PlanValuesEdgeCaseTest {
                 f.groupOf(),
                 f.groupOf(f.leaf("c1")));
 
-        assertThat(PlanValues.read(f.mapper, doc, "groups.leaves.text", false))
+        assertThat(MappingValues.read(f.mapper, doc, "groups.leaves.text", false))
                 .isEqualTo(List.of("a1", "a2", "c1"));
     }
 
@@ -90,9 +90,9 @@ class PlanValuesEdgeCaseTest {
                 .setField(f.doc.findFieldByName("root"), root)
                 .build();
 
-        assertThat(PlanValues.read(f.mapper, doc, "root.children.name", false))
+        assertThat(MappingValues.read(f.mapper, doc, "root.children.name", false))
                 .isEqualTo(List.of("child"));
-        assertThat(PlanValues.read(f.mapper, doc, "root.children.children.name", false))
+        assertThat(MappingValues.read(f.mapper, doc, "root.children.children.name", false))
                 .isEqualTo(List.of("leaf-1", "leaf-2"));
     }
 
@@ -103,9 +103,9 @@ class PlanValuesEdgeCaseTest {
                 .setField(f.doc.findFieldByName("solo_group"), f.groupOf(f.leaf("x"), f.leaf("y")))
                 .build();
 
-        assertThat(PlanValues.read(f.mapper, withGroup, "solo_group.leaves.text", false))
+        assertThat(MappingValues.read(f.mapper, withGroup, "solo_group.leaves.text", false))
                 .isEqualTo(List.of("x", "y"));
-        assertThat(PlanValues.read(f.mapper, f.docOf(), "solo_group.leaves.text", false)).isNull();
+        assertThat(MappingValues.read(f.mapper, f.docOf(), "solo_group.leaves.text", false)).isNull();
     }
 
     // ------------------------------------------------------------------ presence
@@ -118,9 +118,9 @@ class PlanValuesEdgeCaseTest {
                 .build();
         DynamicMessage doc = f.docOf(scored, f.leaf("no score"));
 
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.score", false)).isEqualTo(List.of(7));
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.score", false)).isEqualTo(List.of(7));
         // proto3 implicit presence: the second element's 0 only appears when asked for.
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.score", true)).isEqualTo(List.of(7, 0));
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.score", true)).isEqualTo(List.of(7, 0));
     }
 
     @Test
@@ -135,8 +135,8 @@ class PlanValuesEdgeCaseTest {
         DynamicMessage doc = f.docOf(picked, other);
 
         // Oneof members have real presence: includeDefaults must not resurrect the unset arm.
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.pick_a", true)).isEqualTo(List.of("A"));
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.pick_b", true)).isEqualTo(List.of("B"));
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.pick_a", true)).isEqualTo(List.of("A"));
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.pick_b", true)).isEqualTo(List.of("B"));
     }
 
     @Test
@@ -145,8 +145,8 @@ class PlanValuesEdgeCaseTest {
         DynamicMessage doc = f.docOf(DynamicMessage.newBuilder(f.leaf).build(),
                 DynamicMessage.newBuilder(f.leaf).build());
 
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.text", false)).isNull();
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.meta.label", false)).isNull();
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.text", false)).isNull();
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.meta.label", false)).isNull();
     }
 
     // ------------------------------------------------------------------ boundaries
@@ -161,7 +161,7 @@ class PlanValuesEdgeCaseTest {
                 .build();
         DynamicMessage doc = f.docOf(withProps, f.leaf("no props"));
 
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.props.title", false))
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.props.title", false))
                 .isEqualTo(List.of("T1"));
     }
 
@@ -170,7 +170,7 @@ class PlanValuesEdgeCaseTest {
         Fixtures f = Fixtures.create();
         DynamicMessage doc = f.docOf(f.leafWithAttr("k1", "v1"), f.leafWithAttr("k2", "v2"));
 
-        Object value = PlanValues.read(f.mapper, doc, "leaves.attrs", false);
+        Object value = MappingValues.read(f.mapper, doc, "leaves.attrs", false);
 
         // Map entries stay map entries (engines still detect the map-entry list shape).
         assertThat(value).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
@@ -184,7 +184,7 @@ class PlanValuesEdgeCaseTest {
         Fixtures f = Fixtures.create();
         DynamicMessage doc = f.docOf(f.leafWithAttr("k1", "v1"));
 
-        assertThatThrownBy(() -> PlanValues.read(f.mapper, doc, "leaves.attrs.k1", false))
+        assertThatThrownBy(() -> MappingValues.read(f.mapper, doc, "leaves.attrs.k1", false))
                 .isInstanceOf(MappingException.class);
     }
 
@@ -193,7 +193,7 @@ class PlanValuesEdgeCaseTest {
         Fixtures f = Fixtures.create();
         DynamicMessage doc = f.docOf(f.leaf("alpha"));
 
-        assertThatThrownBy(() -> PlanValues.read(f.mapper, doc, "leaves.tags.nope", false))
+        assertThatThrownBy(() -> MappingValues.read(f.mapper, doc, "leaves.tags.nope", false))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("tags");
     }
@@ -203,7 +203,7 @@ class PlanValuesEdgeCaseTest {
         Fixtures f = Fixtures.create();
         DynamicMessage doc = f.docOf(f.leaf("alpha"));
 
-        assertThatThrownBy(() -> PlanValues.read(f.mapper, doc, "bogus.text", false))
+        assertThatThrownBy(() -> MappingValues.read(f.mapper, doc, "bogus.text", false))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("bogus");
     }
@@ -216,7 +216,7 @@ class PlanValuesEdgeCaseTest {
         f.registry.register(f.inner);
         DynamicMessage doc = f.docOf(f.leafWithPayload("L1"), f.leafWithPayload("L2"));
 
-        Object value = PlanValues.read(f.mapper, doc, "leaves.payload", false);
+        Object value = MappingValues.read(f.mapper, doc, "leaves.payload", false);
 
         assertThat(value).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
                 .hasSize(2);
@@ -230,7 +230,7 @@ class PlanValuesEdgeCaseTest {
         f.registry.register(f.inner);
         DynamicMessage doc = f.docOf(f.leafWithPayload("L1"), f.leafWithPayload("L2"));
 
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.payload.label", false))
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.payload.label", false))
                 .isEqualTo(List.of("L1", "L2"));
     }
 
@@ -240,7 +240,7 @@ class PlanValuesEdgeCaseTest {
         // Inner deliberately NOT registered: an unknown type URL must never be a silent skip.
         DynamicMessage doc = f.docOf(f.leafWithPayload("L1"));
 
-        assertThatThrownBy(() -> PlanValues.read(f.mapper, doc, "leaves.payload", false))
+        assertThatThrownBy(() -> MappingValues.read(f.mapper, doc, "leaves.payload", false))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("Inner");
     }
@@ -254,10 +254,10 @@ class PlanValuesEdgeCaseTest {
         DynamicMessage doc = f.docOf(f.leafWithPayload("L1"), f.leaf("no payload"));
 
         // Singular baseline: an unset Any parent is missing, not an error.
-        assertThat(PlanValues.read(f.mapper, f.docWithSingle(f.leaf("plain")),
+        assertThat(MappingValues.read(f.mapper, f.docWithSingle(f.leaf("plain")),
                 "single.payload.label", false)).isNull();
 
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.payload.label", false))
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.payload.label", false))
                 .isEqualTo(List.of("L1"));
     }
 
@@ -271,25 +271,25 @@ class PlanValuesEdgeCaseTest {
                 .put(f.group.getFullName(), "leaves", ResolvedFieldHint.builder(IndexFieldKind.NESTED)
                         .blockRole(BlockRole.CHUNKS)
                         .build());
-        IndexingPlanFactory factory =
-                new IndexingPlanFactory(catalog.orElse(new InferringIndexingHintSource()));
+        IndexMappingFactory factory =
+                new IndexMappingFactory(catalog.orElse(new InferringIndexingHintSource()));
         DynamicMessage message = DynamicMessage.newBuilder(f.doc)
                 .setField(f.doc.findFieldByName("payload"),
                         Any.pack(f.groupOf(f.leaf("a1"), f.leaf("a2"))))
                 .build();
-        // No payload validators: this is about the plan paths, not the Any gate.
-        IndexingPlan expanded = new AnyIndexing(f.registry, factory, List.of())
+        // No payload validators: this is about the mapping paths, not the Any gate.
+        IndexMapping expanded = new AnyIndexing(f.registry, factory, List.of())
                 .expand(message, factory.create(f.doc));
 
         String path = expanded.find("payload.leaves.text").orElseThrow().path();
-        assertThat(PlanValues.read(f.mapper, message, path, false))
+        assertThat(MappingValues.read(f.mapper, message, path, false))
                 .isEqualTo(List.of("a1", "a2"));
     }
 
     // ------------------------------------------------------------------ literals
 
     @Test
-    // Plan-path segments are always field names: a leaf named "true" reads the field
+    // Mapping-path segments are always field names: a leaf named "true" reads the field
     // below a fan-out, never the mapper DSL's boolean literal.
     void aLeafSegmentNamedLikeALiteralIsStillAField() throws Exception {
         Fixtures f = Fixtures.create();
@@ -300,13 +300,13 @@ class PlanValuesEdgeCaseTest {
                 .build();
 
         // Singular baseline: non-first segments are never literal-parsed by the mapper.
-        assertThat(PlanValues.read(f.mapper, doc, "single.true", false)).isEqualTo("yes");
+        assertThat(MappingValues.read(f.mapper, doc, "single.true", false)).isEqualTo("yes");
 
-        assertThat(PlanValues.read(f.mapper, doc, "leaves.true", false))
+        assertThat(MappingValues.read(f.mapper, doc, "leaves.true", false))
                 .isEqualTo(List.of("yes", "also"));
     }
 
-    // ------------------------------------------------------------------ plan errors
+    // ------------------------------------------------------------------ mapping errors
 
     @Test
     // Path validity must not depend on the document: an unresolvable remainder fails even
@@ -314,25 +314,25 @@ class PlanValuesEdgeCaseTest {
     void unknownFieldBelowAnEmptyFanOutStillFailsLoudly() throws Exception {
         Fixtures f = Fixtures.create();
 
-        assertThatThrownBy(() -> PlanValues.read(f.mapper, f.docOf(), "leaves.missing", false))
+        assertThatThrownBy(() -> MappingValues.read(f.mapper, f.docOf(), "leaves.missing", false))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("missing");
     }
 
     @Test
     // A child expanded under a repeated ancestor is multi-valued at write time, so the
-    // plan stamps it repeated whatever the child field's own cardinality.
-    void chunkExpandedChildrenArePlannedMultiValued() throws Exception {
+    // mapping stamps it repeated whatever the child field's own cardinality.
+    void chunkExpandedChildrenAreMappedMultiValued() throws Exception {
         Fixtures f = Fixtures.create();
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put(f.doc.getFullName(), "leaves", ResolvedFieldHint.builder(IndexFieldKind.NESTED)
                         .blockRole(BlockRole.CHUNKS)
                         .build());
-        IndexingPlan plan = new IndexingPlanFactory(
+        IndexMapping mapping = new IndexMappingFactory(
                 catalog.orElse(new InferringIndexingHintSource())).create(f.doc);
 
-        assertThat(plan.find("leaves").orElseThrow().repeated()).isTrue();
-        assertThat(plan.find("leaves.text").orElseThrow().repeated()).isTrue();
+        assertThat(mapping.find("leaves").orElseThrow().repeated()).isTrue();
+        assertThat(mapping.find("leaves.text").orElseThrow().repeated()).isTrue();
     }
 
     // ------------------------------------------------------------------ fixtures
@@ -435,10 +435,10 @@ class PlanValuesEdgeCaseTest {
         }
 
         private static FileDescriptor file() throws Exception {
-            String pkg = ".ai.pipestream.test.planedge";
+            String pkg = ".ai.pipestream.test.mappingedge";
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
-                    .setName("plan_values_edge.proto")
-                    .setPackage("ai.pipestream.test.planedge")
+                    .setName("mapping_values_edge.proto")
+                    .setPackage("ai.pipestream.test.mappingedge")
                     .setSyntax("proto3")
                     .addDependency("google/protobuf/any.proto")
                     .addDependency("google/protobuf/struct.proto")

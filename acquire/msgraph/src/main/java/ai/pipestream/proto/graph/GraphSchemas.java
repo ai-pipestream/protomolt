@@ -1,7 +1,7 @@
 package ai.pipestream.proto.graph;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -21,7 +21,7 @@ import java.util.Set;
  * Microsoft 365 Search and Copilot. TEXT fields become searchable strings, KEYWORD fields
  * exact-match queryables, sortable/facetable fields refinable (never searchable at the same
  * time — Graph forbids the combination), and repeated fields the collection types Graph
- * offers. Property names come from the plan's field name — the hint's name override when one
+ * offers. Property names come from the mapping's field name — the hint's name override when one
  * is set, the qualified path otherwise — made Graph-legal (alphanumeric, 32 chars) by
  * camel-casing at the separators, with collisions numbered.
  */
@@ -34,16 +34,16 @@ public final class GraphSchemas {
     private GraphSchemas() {
     }
 
-    public static Rendered connectionSchema(Descriptor descriptor, IndexingPlan plan) {
+    public static Rendered connectionSchema(Descriptor descriptor, IndexMapping mapping) {
         Objects.requireNonNull(descriptor, "descriptor");
-        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(mapping, "mapping");
         ObjectNode schema = GraphClient.object();
         schema.put("baseType", "microsoft.graph.externalItem");
         ArrayNode properties = schema.putArray("properties");
         List<String> skipped = new ArrayList<>();
         Set<String> usedNames = new LinkedHashSet<>();
 
-        for (IndexingPlan.IndexedField field : plan.fields()) {
+        for (IndexMapping.IndexedField field : mapping.fields()) {
             ResolvedFieldHint hint = field.hint();
             if (hint.type() == IndexFieldKind.SKIP) {
                 continue;

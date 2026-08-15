@@ -14,16 +14,16 @@ import java.util.Objects;
 
 /**
  * Offers every {@code google.protobuf.Any} payload set on a message to the
- * {@link AnyPayloadValidator}s, without consulting an {@link IndexingPlan}.
+ * {@link AnyPayloadValidator}s, without consulting an {@link IndexMapping}.
  *
- * <p>{@link AnyIndexing} gates payloads on the engine write path, where plan expansion
- * already unpacks each planned Any. Output paths that render the whole message rather
- * than plan entries — the NDJSON facade foremost — still embed every packed payload, so
+ * <p>{@link AnyIndexing} gates payloads on the engine write path, where mapping expansion
+ * already unpacks each mapped Any. Output paths that render the whole message rather
+ * than mapping entries — the NDJSON facade foremost — still embed every packed payload, so
  * this gate walks the message instance itself: singular and repeated Any fields, Anys
  * reached through nested messages, repeated elements and map values, a root message that
  * is itself an Any, and payloads that pack further Anys, up to
  * {@value AnyIndexing#MAX_EXPANSION_DEPTH} unpacking levels. Because the walk follows
- * values instead of plan paths, repeated Anys and Anys under repeated ancestors — inert
+ * values instead of mapping paths, repeated Anys and Anys under repeated ancestors — inert
  * on the expansion path — are validated here, element by element.
  *
  * <p>A field whose resolved hint carries {@code validate_payloads: false} opts its own

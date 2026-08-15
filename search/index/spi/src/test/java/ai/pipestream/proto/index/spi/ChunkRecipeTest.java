@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The recipe is validated eagerly (a bad recipe must fail at plan time, not after a corpus
+ * The recipe is validated eagerly (a bad recipe must fail at mapping time, not after a corpus
  * is chunked), and the digest is a public contract: it is SHA-256 over a fixed canonical
  * rendering, so a digest computed today must match one computed by a future release for
  * the same recipe.

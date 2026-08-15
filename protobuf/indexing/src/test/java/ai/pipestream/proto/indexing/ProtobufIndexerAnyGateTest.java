@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * The NDJSON facade's {@code google.protobuf.Any} payload gate: a
  * {@link ProtobufIndexer} whose writer carries a registry unpacks every packed payload
  * on the write path and enforces its declared rules — the same gate the engine write
- * path applies during plan expansion, here covering repeated Anys and map values too.
+ * path applies during mapping expansion, here covering repeated Anys and map values too.
  */
 class ProtobufIndexerAnyGateTest {
 

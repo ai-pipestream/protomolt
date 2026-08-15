@@ -6,8 +6,8 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.lucene.LuceneIndexWriter;
 import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
 import ai.pipestream.proto.index.spi.InferringIndexingHintSource;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ProtoOptionsIndexingHintSource;
 import ai.pipestream.proto.kafka.serde.ProtoMoltProtobufDeserializer;
 import ai.pipestream.proto.kafka.serde.ProtoMoltSerdeConfig;
@@ -37,7 +37,7 @@ import java.util.Properties;
  * The Lucene projection of the change feed: consumes the
  * {@code confluence-events} topic with the protomolt deserializer, maps each
  * {@link ConfluenceChange} through {@link ProtoLuceneMapper} (the indexing
- * hints declared on events.proto drive the {@link IndexingPlan}), and writes
+ * hints declared on events.proto drive the {@link IndexMapping}), and writes
  * the documents into a local Lucene index via {@link LuceneIndexWriter}.
  *
  * <p>Environment:</p>
@@ -141,9 +141,9 @@ public final class ConfluenceLuceneProjector {
         return new KafkaConsumer<>(props, new StringDeserializer(), valueDeserializer);
     }
 
-    /** The indexing plan for the change feed: proto-option hints, then inference. */
-    static IndexingPlan indexingPlan() {
-        return new IndexingPlanFactory(new ProtoOptionsIndexingHintSource()
+    /** The index mapping for the change feed: proto-option hints, then inference. */
+    static IndexMapping indexMapping() {
+        return new IndexMappingFactory(new ProtoOptionsIndexingHintSource()
                 .orElse(new InferringIndexingHintSource()))
                 .create(ConfluenceChange.getDescriptor());
     }
@@ -157,14 +157,14 @@ public final class ConfluenceLuceneProjector {
             String topic) throws IOException, MappingException {
         ProtoLuceneMapper mapper = new ProtoLuceneMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()));
-        IndexingPlan plan = indexingPlan();
+        IndexMapping mapping = indexMapping();
         consumer.subscribe(List.of(topic));
         try {
             while (true) {
                 ConsumerRecords<String, Message> records = consumer.poll(Duration.ofSeconds(1));
                 for (ConsumerRecord<String, Message> record : records) {
                     if (record.value() instanceof ConfluenceChange change) {
-                        project(change, mapper, plan, writer);
+                        project(change, mapper, mapping, writer);
                     }
                 }
                 if (!records.isEmpty()) {
@@ -181,7 +181,7 @@ public final class ConfluenceLuceneProjector {
      * indexed-only {@value #ENTITY_ID_FIELD} keyword field; DELETEs remove
      * every document tagged with the change's entity id.
      */
-    static void project(ConfluenceChange change, ProtoLuceneMapper mapper, IndexingPlan plan,
+    static void project(ConfluenceChange change, ProtoLuceneMapper mapper, IndexMapping mapping,
             LuceneIndexWriter writer) throws IOException, MappingException {
         String entityId = change.getEntity().getEntityId();
         if (change.getOperation() == ChangeOperation.CHANGE_OPERATION_DELETE) {
@@ -191,7 +191,7 @@ public final class ConfluenceLuceneProjector {
             writer.delete(new Term(ENTITY_ID_FIELD, entityId));
             return;
         }
-        Document document = mapper.map(change, plan);
+        Document document = mapper.map(change, mapping);
         document.add(new StringField(ENTITY_ID_FIELD, entityId, Field.Store.NO));
         writer.add(document);
     }

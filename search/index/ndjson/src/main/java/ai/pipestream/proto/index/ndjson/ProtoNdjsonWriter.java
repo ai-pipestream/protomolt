@@ -18,7 +18,7 @@ import java.util.Optional;
  * Encodes protobuf messages as NDJSON using the message descriptor (via {@link JsonFormat}).
  *
  * <p>Engine-agnostic output path: one JSON object per line. Search engines (Lucene /
- * OpenSearch / Solr) are separate ServiceLoader plugins that consume {@code IndexingPlan}.
+ * OpenSearch / Solr) are separate ServiceLoader plugins that consume {@code IndexMapping}.
  */
 public final class ProtoNdjsonWriter {
 

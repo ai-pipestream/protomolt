@@ -3,8 +3,8 @@ package ai.pipestream.proto.index.qdrant;
 import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.PlanValues;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.MappingValues;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
@@ -54,10 +54,10 @@ import java.util.UUID;
  * {@link UUID#nameUUIDFromBytes} over {@code "qdrant|<doc_id>|<result_id>|<chunk_id>"}, so
  * re-indexing the same document upserts the same points instead of duplicating them.
  *
- * <p>Payload: every non-VECTOR, non-skip field of the {@link IndexingPlan} whose value is
+ * <p>Payload: every non-VECTOR, non-skip field of the {@link IndexMapping} whose value is
  * payload-representable (scalars, enums as names, lists of those, Timestamps as ISO-8601
  * strings), plus {@code doc_id}, {@code result_id}, {@code chunk_id}, {@code chunk_number},
- * {@code chunk_text}, and {@code models} (the vector names on the point). Plan paths under
+ * {@code chunk_text}, and {@code models} (the vector names on the point). Mapping paths under
  * {@code search_metadata.semantic_results} are skipped — chunk-level data is attached per
  * point, not flattened onto every one.
  *
@@ -67,8 +67,8 @@ import java.util.UUID;
  * never turned into points — the same gate the Kafka serde and {@code ProtobufIndexer}
  * apply on their write paths.
  *
- * <p>Vector hints: when the plan declares a VECTOR field for the embeddings
- * ({@code search_metadata.semantic_results.chunks.embeddings.vector}, or the plan's only
+ * <p>Vector hints: when the mapping declares a VECTOR field for the embeddings
+ * ({@code search_metadata.semantic_results.chunks.embeddings.vector}, or the mapping's only
  * VECTOR field), its {@code vector_dims} are enforced on every embedding and its
  * {@code vector_similarity} becomes the collection's distance via {@link #vectorSpecs} —
  * the same hint vocabulary OpenSearch ({@code knn_vector}/{@code space_type}) and Lucene
@@ -77,7 +77,7 @@ import java.util.UUID;
 public final class QdrantPointMapper implements SearchEngineIndexer {
     public static final String ENGINE_ID = "qdrant";
 
-    /** Plan-path prefix whose values belong to individual points, not the shared payload. */
+    /** Mapping-path prefix whose values belong to individual points, not the shared payload. */
     private static final String SEMANTIC_RESULTS_PREFIX = "search_metadata.semantic_results";
 
     private final ProtoFieldMapper fieldMapper;
@@ -104,12 +104,12 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
      * {@code ai.pipestream.proto.validate.v1} rules first.
      *
      * @throws ValidationResult.ValidationException when the document violates a declared rule
-     * @throws MappingException when {@code message} is not a {@link Document}, a plan path
-     *         cannot be read, or an embedding violates the plan's declared vector dims
+     * @throws MappingException when {@code message} is not a {@link Document}, a mapping path
+     *         cannot be read, or an embedding violates the mapping's declared vector dims
      */
     @Override
-    public List<PointStruct> map(Message message, IndexingPlan plan) throws MappingException {
-        Objects.requireNonNull(plan, "plan");
+    public List<PointStruct> map(Message message, IndexMapping mapping) throws MappingException {
+        Objects.requireNonNull(mapping, "mapping");
         // Validation on write: declared rules are enforced before anything is indexed,
         // matching the Kafka serde and ProtobufIndexer gates.
         ValidationResult.validate(message).throwIfInvalid();
@@ -118,9 +118,9 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                     + Document.getDescriptor().getFullName() + ") but got "
                     + message.getDescriptorForType().getFullName(), null);
         }
-        IndexingPlan expanded = anyIndexing.expand(document, plan);
+        IndexMapping expanded = anyIndexing.expand(document, mapping);
         Map<String, Value> documentPayload = documentPayload(document, expanded);
-        Optional<ResolvedFieldHint> vectorHint = vectorHint(plan);
+        Optional<ResolvedFieldHint> vectorHint = vectorHint(mapping);
         List<PointStruct> points = new ArrayList<>();
         for (SemanticProcessingResult result : document.getSearchMetadata().getSemanticResultsList()) {
             for (SemanticChunk chunk : result.getChunksList()) {
@@ -202,7 +202,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     }
 
     /**
-     * Named-vector specs for a batch of points, honoring the plan's VECTOR hint where
+     * Named-vector specs for a batch of points, honoring the mapping's VECTOR hint where
      * declared: size and distance come from the hint ({@code vector_dims},
      * {@code vector_similarity}); without a hint the size is read from the data and the
      * distance defaults to COSINE. Every point of one embedding model must agree on the
@@ -212,8 +212,8 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
      *         different sizes, or the data contradicts the hint
      */
     public static List<QdrantVectorSpec> vectorSpecs(Collection<PointStruct> points,
-                                                     IndexingPlan plan) {
-        Optional<ResolvedFieldHint> hint = plan == null ? Optional.empty() : vectorHint(plan);
+                                                     IndexMapping mapping) {
+        Optional<ResolvedFieldHint> hint = mapping == null ? Optional.empty() : vectorHint(mapping);
         Distance distance = hint.map(h -> distance(h.vectorSimilarity())).orElse(Distance.Cosine);
         List<QdrantVectorSpec> specs = new ArrayList<>();
         vectorDimensions(points).forEach((name, size) ->
@@ -231,15 +231,15 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     }
 
     /**
-     * The plan's vector hint for chunk embeddings: the VECTOR field under
-     * {@code search_metadata.semantic_results} when one is declared, otherwise the plan's
-     * only VECTOR field. Empty when the plan declares no usable vector hint (or several
+     * The mapping's vector hint for chunk embeddings: the VECTOR field under
+     * {@code search_metadata.semantic_results} when one is declared, otherwise the mapping's
+     * only VECTOR field. Empty when the mapping declares no usable vector hint (or several
      * ambiguous ones outside the semantic-results subtree).
      */
-    static Optional<ResolvedFieldHint> vectorHint(IndexingPlan plan) {
+    static Optional<ResolvedFieldHint> vectorHint(IndexMapping mapping) {
         List<ResolvedFieldHint> semantic = new ArrayList<>();
         List<ResolvedFieldHint> all = new ArrayList<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
             if (field.type() != IndexFieldKind.VECTOR) {
                 continue;
             }
@@ -262,7 +262,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                 && embedding.getVectorCount() != vectorHint.get().vectorDims()) {
             throw new MappingException("Embedding '" + embedding.getEmbeddingId()
                     + "' (model " + embedding.getModel() + ") has " + embedding.getVectorCount()
-                    + " dimensions but the plan's VECTOR hint declares "
+                    + " dimensions but the mapping's VECTOR hint declares "
                     + vectorHint.get().vectorDims(),
                     "search_metadata.semantic_results.chunks.embeddings.vector");
         }
@@ -271,19 +271,19 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     // ---------------------------------------------------------------- payload
 
     /**
-     * Plan-derived payload shared by every point of the document: scalar-ish values only,
+     * Mapping-derived payload shared by every point of the document: scalar-ish values only,
      * VECTOR hints and the semantic-results subtree excluded.
      */
-    private Map<String, Value> documentPayload(Document document, IndexingPlan plan)
+    private Map<String, Value> documentPayload(Document document, IndexMapping mapping)
             throws MappingException {
         Map<String, Value> payload = new LinkedHashMap<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
             if (field.type() == IndexFieldKind.VECTOR
                     || field.path().equals(SEMANTIC_RESULTS_PREFIX)
                     || field.path().startsWith(SEMANTIC_RESULTS_PREFIX + ".")) {
                 continue;
             }
-            Object value = PlanValues.read(fieldMapper, document, field.path(), false);
+            Object value = MappingValues.read(fieldMapper, document, field.path(), false);
             if (value == null) {
                 continue;
             }

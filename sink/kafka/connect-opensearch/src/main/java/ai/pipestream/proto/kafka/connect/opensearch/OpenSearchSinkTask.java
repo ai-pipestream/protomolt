@@ -4,7 +4,7 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.opensearch.OpenSearchDocumentMapper;
 import ai.pipestream.proto.index.opensearch.OpenSearchSink;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
@@ -33,7 +33,7 @@ import java.util.function.Function;
 
 /**
  * The sink task: each {@code put} batch is decoded into document messages, mapped through
- * the shared {@link IndexingPlan} (descriptor indexing hints, {@code google.protobuf.Any}
+ * the shared {@link IndexMapping} (descriptor indexing hints, {@code google.protobuf.Any}
  * expansion, and the declared-rules payload gate included), and written as one OpenSearch
  * bulk request. Document ids are deterministic — the configured {@code document.id.path}
  * or topic-partition-offset — so a redelivered batch overwrites its own documents and
@@ -49,7 +49,7 @@ public final class OpenSearchSinkTask extends SinkTask {
 
     /** The slice of {@link OpenSearchSink} the task uses; the test hook's seam. */
     interface IndexClient extends AutoCloseable {
-        boolean ensureIndex(String index, IndexingPlan plan) throws IOException;
+        boolean ensureIndex(String index, IndexMapping mapping) throws IOException;
 
         void bulkWrite(String index, Map<String, Map<String, Object>> documentsById,
                        boolean refresh) throws IOException;
@@ -66,7 +66,7 @@ public final class OpenSearchSinkTask extends SinkTask {
     private Descriptor descriptor;
     private OpenSearchDocumentMapper mapper;
     private ProtoFieldMapperImpl fieldMapper;
-    private IndexingPlan plan;
+    private IndexMapping mapping;
     private IndexClient client;
 
     @Override
@@ -84,16 +84,16 @@ public final class OpenSearchSinkTask extends SinkTask {
         mapper = config.validate()
                 ? new OpenSearchDocumentMapper(context)
                 : new OpenSearchDocumentMapper(context, false, List.of());
-        plan = context.planFactory().create(descriptor);
+        mapping = context.mappingFactory().create(descriptor);
         if (client != null) {
             client.close();
         }
         client = clientFactory.apply(config);
         if (config.ensureIndex()) {
             try {
-                boolean created = client.ensureIndex(config.index(), plan);
+                boolean created = client.ensureIndex(config.index(), mapping);
                 if (created) {
-                    LOG.info("Created OpenSearch index '{}' from the {} plan",
+                    LOG.info("Created OpenSearch index '{}' from the {} mapping",
                             config.index(), descriptor.getFullName());
                 }
             } catch (IOException e) {
@@ -101,8 +101,8 @@ public final class OpenSearchSinkTask extends SinkTask {
                         + "' failed: " + e.getMessage(), e);
             }
         }
-        LOG.info("OpenSearch sink started: {} -> index {} ({} planned field(s))",
-                descriptor.getFullName(), config.index(), plan.fields().size());
+        LOG.info("OpenSearch sink started: {} -> index {} ({} mapped field(s))",
+                descriptor.getFullName(), config.index(), mapping.fields().size());
     }
 
     @Override
@@ -137,13 +137,13 @@ public final class OpenSearchSinkTask extends SinkTask {
 
     private Map<String, Object> document(Message message, SinkRecord record) {
         try {
-            return mapper.map(message, plan);
+            return mapper.map(message, mapping);
         } catch (ValidationResult.ValidationException e) {
             throw new DataException("Record's google.protobuf.Any payload violates its "
                     + "declared rules (topic " + record.topic() + ", offset "
                     + record.kafkaOffset() + "): " + e.getMessage(), e);
         } catch (MappingException | RuntimeException e) {
-            // Malformed/unknown Any, bad plan path: properties of this record, not of the
+            // Malformed/unknown Any, bad mapping path: properties of this record, not of the
             // connector — data errors.
             throw new DataException("Record does not map to an OpenSearch document as "
                     + descriptor.getFullName() + " (topic " + record.topic() + ", offset "
@@ -249,8 +249,8 @@ public final class OpenSearchSinkTask extends SinkTask {
     private static IndexClient asClient(OpenSearchSink sink) {
         return new IndexClient() {
             @Override
-            public boolean ensureIndex(String index, IndexingPlan plan) throws IOException {
-                return sink.ensureIndex(index, plan);
+            public boolean ensureIndex(String index, IndexMapping mapping) throws IOException {
+                return sink.ensureIndex(index, mapping);
             }
 
             @Override

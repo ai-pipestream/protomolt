@@ -2,7 +2,7 @@ package ai.pipestream.proto.index.lucene;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Fan-out edge cases for the Lucene mapper: a plan path under a repeated ancestor now
+ * Fan-out edge cases for the Lucene mapper: a mapping path under a repeated ancestor now
  * yields several values for one field, so every field shape it emits has to be one Lucene
  * accepts more than once per document.
  */
@@ -41,7 +41,7 @@ class ProtoLuceneMapperFanOutTest {
     void fanOutEmitsOneIndexableFieldPerValue() throws Exception {
         Fixture f = Fixture.create();
         Document document = mapper.map(f.docOf(f.chunk("alpha", 3), f.chunk("beta", 5)),
-                f.plan(new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+                f.mapping(new IndexMapping.IndexedField("chunks.text", "chunks_text",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT), true)));
 
         assertThat(document.getValues("chunks_text")).containsExactly("alpha", "beta");
@@ -51,7 +51,7 @@ class ProtoLuceneMapperFanOutTest {
     void numericFanOutEmitsOnePointAndOneStoredValuePerElement() throws Exception {
         Fixture f = Fixture.create();
         Document document = mapper.map(f.docOf(f.chunk("alpha", 3), f.chunk("beta", 5)),
-                f.plan(new IndexingPlan.IndexedField("chunks.score", "chunks_score",
+                f.mapping(new IndexMapping.IndexedField("chunks.score", "chunks_score",
                         ResolvedFieldHint.of(IndexFieldKind.INT64), true)));
 
         assertThat(Arrays.stream(document.getFields("chunks_score"))
@@ -64,7 +64,7 @@ class ProtoLuceneMapperFanOutTest {
     void facetableFanOutUsesMultiValuedDocValues() throws Exception {
         Fixture f = Fixture.create();
         Document document = mapper.map(f.docOf(f.chunk("alpha", 3), f.chunk("beta", 5)),
-                f.plan(new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+                f.mapping(new IndexMapping.IndexedField("chunks.text", "chunks_text",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD).facetable(true).build(),
                         true)));
 
@@ -81,7 +81,7 @@ class ProtoLuceneMapperFanOutTest {
     void sortableFanOutStillProducesAnIndexableDocument() throws Exception {
         Fixture f = Fixture.create();
         Document document = mapper.map(f.docOf(f.chunk("alpha", 3), f.chunk("beta", 5)),
-                f.plan(new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+                f.mapping(new IndexMapping.IndexedField("chunks.text", "chunks_text",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD).sortable(true).build(),
                         true)));
 
@@ -105,8 +105,8 @@ class ProtoLuceneMapperFanOutTest {
                     file.findMessageTypeByName("Chunk"));
         }
 
-        IndexingPlan plan(IndexingPlan.IndexedField... fields) {
-            return new IndexingPlan(doc.getFullName(), List.of(fields));
+        IndexMapping mapping(IndexMapping.IndexedField... fields) {
+            return new IndexMapping(doc.getFullName(), List.of(fields));
         }
 
         DynamicMessage docOf(DynamicMessage... chunks) {

@@ -73,7 +73,7 @@ message IndexableDoc {
 }
 
 // Envelope whose payload arrives as a google.protobuf.Any: exercises write-time
-// plan expansion plus the declared-rules gate on unpacked payloads.
+// mapping expansion plus the declared-rules gate on unpacked payloads.
 message AnyEnvelope {
   // Document id, indexed as an exact-match keyword.
   string doc_id = 1 [
@@ -83,8 +83,8 @@ message AnyEnvelope {
   // Late-bound payload; the packed type is only known on the write path.
   google.protobuf.Any payload = 2;
 
-  // Repeated late-bound payloads: inert on the plan-expansion path (no single packed
-  // type per plan path), but rendered by NDJSON and validated by the payload gate.
+  // Repeated late-bound payloads: inert on the mapping-expansion path (no single packed
+  // type per mapping path), but rendered by NDJSON and validated by the payload gate.
   repeated google.protobuf.Any attachments = 3;
 
   // Keyed late-bound payloads: exercises the payload gate's map-value walk.

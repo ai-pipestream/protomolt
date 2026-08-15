@@ -4,8 +4,8 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
@@ -36,11 +36,11 @@ class OpenSearchDocumentMapperTest {
             new OpenSearchDocumentMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
 
     @Test
-    void mapsUsingIndexingPlan() throws Exception {
+    void mapsUsingIndexMapping() throws Exception {
         Struct message = Struct.newBuilder()
                 .putFields("title", Value.newBuilder().setStringValue("Hello").build())
                 .build();
-        // Explicit projections still work; plan over Struct's map field is engine-specific.
+        // Explicit projections still work; mapping over Struct's map field is engine-specific.
         Map<String, Object> doc = mapper.map(message, java.util.List.of(
                 new OpenSearchDocumentMapper.FieldProjection("title", "title")
         ));
@@ -106,10 +106,10 @@ class OpenSearchDocumentMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(created, timestamp)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
 
-        Map<String, Object> doc = mapper.map(message, plan);
+        Map<String, Object> doc = mapper.map(message, mapping);
 
         // ISO-8601 string (consistent with the Solr mapper), never a {seconds,nanos} object
         assertThat(doc.get("created")).isEqualTo("2023-11-14T22:13:20Z");
@@ -149,17 +149,17 @@ class OpenSearchDocumentMapperTest {
     }
 
     @Test
-    void unsetIntermediateMessageInPlanPathSkipsField() throws Exception {
+    void unsetIntermediateMessageInMappingPathSkipsField() throws Exception {
         Descriptor descriptor = docDescriptor();
         FieldDescriptor colors = descriptor.findFieldByName("colors");
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .addRepeatedField(colors, colors.getEnumType().findValueByName("RED"))
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("inner.name", "inner_name", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexingPlan.IndexedField("colors", "colors", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("inner.name", "inner_name", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
+                new IndexMapping.IndexedField("colors", "colors", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        Map<String, Object> doc = mapper.map(message, plan);
+        Map<String, Object> doc = mapper.map(message, mapping);
 
         assertThat(doc).containsEntry("colors", List.of("RED")).doesNotContainKey("inner_name");
     }
@@ -168,49 +168,49 @@ class OpenSearchDocumentMapperTest {
     void includeDefaultsWritesImplicitPresenceDefaults() throws Exception {
         Descriptor descriptor = boolDocDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("archived", "archived",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("archived", "archived",
                         ResolvedFieldHint.of(IndexFieldKind.BOOLEAN))));
 
         // default behaviour: fields at their default value are skipped
-        assertThat(mapper.map(message, plan)).doesNotContainKey("archived");
+        assertThat(mapper.map(message, mapping)).doesNotContainKey("archived");
 
         OpenSearchDocumentMapper withDefaults = new OpenSearchDocumentMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()), true);
-        assertThat(withDefaults.map(message, plan)).containsEntry("archived", false);
+        assertThat(withDefaults.map(message, mapping)).containsEntry("archived", false);
     }
 
     @Test
-    void genuinelyInvalidPlanPathStillThrows() throws Exception {
+    void genuinelyInvalidMappingPathStillThrows() throws Exception {
         Descriptor descriptor = docDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        assertThatThrownBy(() -> mapper.map(message, plan)).isInstanceOf(MappingException.class);
+        assertThatThrownBy(() -> mapper.map(message, mapping)).isInstanceOf(MappingException.class);
     }
 
     @Test
     void nullValueSubstitutesMissingField() throws Exception {
         Descriptor descriptor = boolDocDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("archived", "archived",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("archived", "archived",
                         ResolvedFieldHint.builder(IndexFieldKind.BOOLEAN).nullValue("false").build())));
 
         // the substitute is coerced to the hinted type: a boolean, not the string "false"
-        assertThat(mapper.map(message, plan)).containsEntry("archived", false);
+        assertThat(mapper.map(message, mapping)).containsEntry("archived", false);
     }
 
     @Test
     void skipIfMissingFalseEmitsExplicitNull() throws Exception {
         Descriptor descriptor = boolDocDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("archived", "archived",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("archived", "archived",
                         ResolvedFieldHint.builder(IndexFieldKind.BOOLEAN).skipIfMissing(false).build())));
 
-        Map<String, Object> doc = mapper.map(message, plan);
+        Map<String, Object> doc = mapper.map(message, mapping);
 
         assertThat(doc).containsKey("archived");
         assertThat(doc.get("archived")).isNull();
@@ -218,7 +218,7 @@ class OpenSearchDocumentMapperTest {
 
     @Test
     void mapModeDefaultsToFlattenedDynamicKeysObject() throws Exception {
-        Map<String, Object> doc = mapper.map(labelsMessage(), mapPlan(null));
+        Map<String, Object> doc = mapper.map(labelsMessage(), mapModeMapping(null));
 
         assertThat(doc.get("labels")).isEqualTo(Map.of("env", "prod", "team", "search"));
     }
@@ -226,7 +226,7 @@ class OpenSearchDocumentMapperTest {
     @Test
     void mapModeEntriesEmitsKeyValueObjects() throws Exception {
         Map<String, Object> doc = mapper.map(labelsMessage(),
-                mapPlan(ai.pipestream.proto.index.spi.MapMode.ENTRIES));
+                mapModeMapping(ai.pipestream.proto.index.spi.MapMode.ENTRIES));
 
         assertThat(doc.get("labels")).isEqualTo(List.of(
                 Map.of("key", "env", "value", "prod"),
@@ -236,7 +236,7 @@ class OpenSearchDocumentMapperTest {
     @Test
     void mapModeJsonEmitsOneJsonString() throws Exception {
         Map<String, Object> doc = mapper.map(labelsMessage(),
-                mapPlan(ai.pipestream.proto.index.spi.MapMode.JSON));
+                mapModeMapping(ai.pipestream.proto.index.spi.MapMode.JSON));
 
         assertThat(doc.get("labels")).isEqualTo("{\"env\":\"prod\",\"team\":\"search\"}");
     }
@@ -244,7 +244,7 @@ class OpenSearchDocumentMapperTest {
     @Test
     void mapModeSkipOmitsField() throws Exception {
         Map<String, Object> doc = mapper.map(labelsMessage(),
-                mapPlan(ai.pipestream.proto.index.spi.MapMode.SKIP));
+                mapModeMapping(ai.pipestream.proto.index.spi.MapMode.SKIP));
 
         assertThat(doc).isEmpty();
     }
@@ -253,7 +253,7 @@ class OpenSearchDocumentMapperTest {
     void intRangeFromGteLteBoundsEmitsRangeObject() throws Exception {
         Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
         Map<String, Object> doc = mapper.map(
-                rangeMessage(descriptor, 3, 9), rangePlan(descriptor, IndexFieldKind.INT_RANGE));
+                rangeMessage(descriptor, 3, 9), rangeMapping(descriptor, IndexFieldKind.INT_RANGE));
 
         assertThat(doc.get("pages")).isEqualTo(Map.of("gte", 3, "lte", 9));
     }
@@ -262,7 +262,7 @@ class OpenSearchDocumentMapperTest {
     void longRangeFromMinMaxBoundsStillEmitsGteLteKeys() throws Exception {
         Descriptor descriptor = rangeDescriptor("min", "max", FieldDescriptorProto.Type.TYPE_INT64);
         Map<String, Object> doc = mapper.map(
-                rangeMessage(descriptor, 10L, 20L), rangePlan(descriptor, IndexFieldKind.LONG_RANGE));
+                rangeMessage(descriptor, 10L, 20L), rangeMapping(descriptor, IndexFieldKind.LONG_RANGE));
 
         // OpenSearch range objects always use gte/lte, whatever the proto bound names
         assertThat(doc.get("pages")).isEqualTo(Map.of("gte", 10L, "lte", 20L));
@@ -272,12 +272,12 @@ class OpenSearchDocumentMapperTest {
     void floatAndDoubleRangesEmitNumericBounds() throws Exception {
         Descriptor floats = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_FLOAT);
         assertThat(mapper.map(rangeMessage(floats, 0.5f, 1.5f),
-                rangePlan(floats, IndexFieldKind.FLOAT_RANGE)).get("pages"))
+                rangeMapping(floats, IndexFieldKind.FLOAT_RANGE)).get("pages"))
                 .isEqualTo(Map.of("gte", 0.5f, "lte", 1.5f));
 
         Descriptor doubles = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_DOUBLE);
         assertThat(mapper.map(rangeMessage(doubles, 0.25d, 0.75d),
-                rangePlan(doubles, IndexFieldKind.DOUBLE_RANGE)).get("pages"))
+                rangeMapping(doubles, IndexFieldKind.DOUBLE_RANGE)).get("pages"))
                 .isEqualTo(Map.of("gte", 0.25d, "lte", 0.75d));
     }
 
@@ -286,7 +286,7 @@ class OpenSearchDocumentMapperTest {
         Descriptor descriptor = timestampRangeDescriptor();
         Map<String, Object> doc = mapper.map(
                 timestampRangeMessage(descriptor, 1_700_000_000L, 1_700_000_100L),
-                rangePlan(descriptor, IndexFieldKind.DATE_RANGE));
+                rangeMapping(descriptor, IndexFieldKind.DATE_RANGE));
 
         assertThat(doc.get("pages")).isEqualTo(
                 Map.of("gte", "2023-11-14T22:13:20Z", "lte", "2023-11-14T22:15:00Z"));
@@ -297,7 +297,7 @@ class OpenSearchDocumentMapperTest {
         Descriptor descriptor = rangeDescriptor("low", "high", FieldDescriptorProto.Type.TYPE_INT32);
 
         assertThatThrownBy(() -> mapper.map(
-                rangeMessage(descriptor, 1, 2), rangePlan(descriptor, IndexFieldKind.INT_RANGE)))
+                rangeMessage(descriptor, 1, 2), rangeMapping(descriptor, IndexFieldKind.INT_RANGE)))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("(gte,lte) or (min,max)");
     }
@@ -312,23 +312,23 @@ class OpenSearchDocumentMapperTest {
                         .setField(tsDescriptor.findFieldByName("seconds"), 1_700_000_000L)
                         .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created",
                         ResolvedFieldHint.builder(IndexFieldKind.DATE)
                                 .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
                                 .build())));
 
         // resolution applies only where dates are emitted numerically; documents stay ISO-8601
-        assertThat(mapper.map(message, plan)).containsEntry("created", "2023-11-14T22:13:20Z");
+        assertThat(mapper.map(message, mapping)).containsEntry("created", "2023-11-14T22:13:20Z");
     }
 
     @Test
     void unpacksRegistryKnownAnyIntoPrefixedInnerFields() throws Exception {
         AnyEnvelope env = AnyEnvelope.create();
         OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
-        IndexingPlan plan = env.factory.create(env.envelope);
+        IndexMapping mapping = env.factory.create(env.envelope);
 
-        Map<String, Object> doc = opensearch.map(env.packed("Opinion", 12), plan);
+        Map<String, Object> doc = opensearch.map(env.packed("Opinion", 12), mapping);
 
         assertThat(doc)
                 .containsEntry("doc_id", "doc-1")
@@ -341,9 +341,9 @@ class OpenSearchDocumentMapperTest {
     void unknownAnyTypeUrlFailsWithPathAndTypeUrl() throws Exception {
         AnyEnvelope env = AnyEnvelope.create();
         OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
-        IndexingPlan plan = env.factory.create(env.envelope);
+        IndexMapping mapping = env.factory.create(env.envelope);
 
-        assertThatThrownBy(() -> opensearch.map(env.unknownType(), plan))
+        assertThatThrownBy(() -> opensearch.map(env.unknownType(), mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
                 .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
@@ -353,12 +353,12 @@ class OpenSearchDocumentMapperTest {
     void unsetAnyDoesNotFailAndOmitsInnerFields() throws Exception {
         AnyEnvelope env = AnyEnvelope.create();
         OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
-        IndexingPlan plan = env.factory.create(env.envelope);
+        IndexMapping mapping = env.factory.create(env.envelope);
         DynamicMessage message = DynamicMessage.newBuilder(env.envelope)
                 .setField(env.envelope.findFieldByName("doc_id"), "doc-1")
                 .build();
 
-        Map<String, Object> doc = opensearch.map(message, plan);
+        Map<String, Object> doc = opensearch.map(message, mapping);
 
         assertThat(doc).containsEntry("doc_id", "doc-1")
                 .doesNotContainKey("payload_title")
@@ -369,7 +369,7 @@ class OpenSearchDocumentMapperTest {
     void unpacksNestedAnyThroughIntermediateAnyPaths() throws Exception {
         AnyEnvelope env = AnyEnvelope.create();
         OpenSearchDocumentMapper opensearch = new OpenSearchDocumentMapper(env.context());
-        IndexingPlan plan = env.factory().create(env.envelope());
+        IndexMapping mapping = env.factory().create(env.envelope());
         DynamicMessage middle = DynamicMessage.newBuilder(env.middle())
                 .setField(env.middle().findFieldByName("label"), "mid")
                 .setField(env.middle().findFieldByName("next"),
@@ -380,7 +380,7 @@ class OpenSearchDocumentMapperTest {
                 .setField(env.envelope().findFieldByName("payload"), Any.pack(middle))
                 .build();
 
-        Map<String, Object> doc = opensearch.map(message, plan);
+        Map<String, Object> doc = opensearch.map(message, mapping);
 
         assertThat(doc)
                 .containsEntry("payload_label", "mid")
@@ -403,13 +403,13 @@ class OpenSearchDocumentMapperTest {
                         .setField(chunk.findFieldByName("text"), "beta")
                         .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(doc.getFullName(), List.of(
-                new IndexingPlan.IndexedField("doc_id", "doc_id",
+        IndexMapping mapping = new IndexMapping(doc.getFullName(), List.of(
+                new IndexMapping.IndexedField("doc_id", "doc_id",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD), false),
-                new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+                new IndexMapping.IndexedField("chunks.text", "chunks_text",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT), true)));
 
-        Map<String, Object> document = mapper.map(message, plan);
+        Map<String, Object> document = mapper.map(message, mapping);
 
         assertThat(document)
                 .containsEntry("doc_id", "d1")
@@ -422,11 +422,11 @@ class OpenSearchDocumentMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(doc)
                 .setField(doc.findFieldByName("doc_id"), "d1")
                 .build();
-        IndexingPlan plan = new IndexingPlan(doc.getFullName(), List.of(
-                new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+        IndexMapping mapping = new IndexMapping(doc.getFullName(), List.of(
+                new IndexMapping.IndexedField("chunks.text", "chunks_text",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT), true)));
 
-        assertThat(mapper.map(message, plan)).doesNotContainKey("chunks_text");
+        assertThat(mapper.map(message, mapping)).doesNotContainKey("chunks_text");
     }
 
     @Test
@@ -441,13 +441,13 @@ class OpenSearchDocumentMapperTest {
                         .addRepeatedField(embedding, 0.2f)
                         .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(doc.getFullName(), List.of(
-                new IndexingPlan.IndexedField("chunks.embedding", "chunks_embedding",
+        IndexMapping mapping = new IndexMapping(doc.getFullName(), List.of(
+                new IndexMapping.IndexedField("chunks.embedding", "chunks_embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(2).build(), true)));
 
         // Per-chunk vectors index as their own entities (CHUNKS blocks, Qdrant points);
         // a flat document has no meaningful projection for them.
-        assertThatThrownBy(() -> mapper.map(message, plan))
+        assertThatThrownBy(() -> mapper.map(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("whole value")
                 .hasMessageContaining("chunks.embedding");
@@ -492,7 +492,7 @@ class OpenSearchDocumentMapperTest {
             Descriptor envelope,
             Descriptor inner,
             Descriptor middle,
-            IndexingPlanFactory factory,
+            IndexMappingFactory factory,
             DescriptorRegistry registry) {
 
         static AnyEnvelope create() throws Exception {
@@ -550,7 +550,7 @@ class OpenSearchDocumentMapperTest {
             registry.register(middle);
             CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                     .put(inner.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-            return new AnyEnvelope(envelope, inner, middle, IndexingPlanFactory.defaults(catalog), registry);
+            return new AnyEnvelope(envelope, inner, middle, IndexMappingFactory.defaults(catalog), registry);
         }
 
         IndexerContext context() {
@@ -582,10 +582,10 @@ class OpenSearchDocumentMapperTest {
         }
     }
 
-    private IndexingPlan mapPlan(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
+    private IndexMapping mapModeMapping(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
         Descriptor descriptor = mapFieldDescriptor();
-        return new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("labels", "labels",
+        return new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("labels", "labels",
                         ResolvedFieldHint.builder(IndexFieldKind.OBJECT).mapMode(mode).build())));
     }
 
@@ -605,9 +605,9 @@ class OpenSearchDocumentMapperTest {
                 .build();
     }
 
-    private static IndexingPlan rangePlan(Descriptor descriptor, IndexFieldKind rangeKind) {
-        return new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
+    private static IndexMapping rangeMapping(Descriptor descriptor, IndexFieldKind rangeKind) {
+        return new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
     }
 
     private static DynamicMessage rangeMessage(Descriptor descriptor, Object lower, Object upper) {

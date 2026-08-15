@@ -8,62 +8,62 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class IndexingPlanTest {
+class IndexMappingTest {
 
-    private static IndexingPlan.IndexedField field(String path, IndexFieldKind kind) {
-        return new IndexingPlan.IndexedField(path, path, ResolvedFieldHint.of(kind));
+    private static IndexMapping.IndexedField field(String path, IndexFieldKind kind) {
+        return new IndexMapping.IndexedField(path, path, ResolvedFieldHint.of(kind));
     }
 
     @Test
     void constructorRejectsNullComponents() {
-        assertThatThrownBy(() -> new IndexingPlan(null, List.of()))
+        assertThatThrownBy(() -> new IndexMapping(null, List.of()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("messageFullName");
-        assertThatThrownBy(() -> new IndexingPlan("ai.pipestream.test.Doc", null))
+        assertThatThrownBy(() -> new IndexMapping("ai.pipestream.test.Doc", null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("fields");
     }
 
     @Test
     void fieldsAreCopiedDefensivelyAndExposedImmutably() {
-        List<IndexingPlan.IndexedField> mutable = new ArrayList<>();
+        List<IndexMapping.IndexedField> mutable = new ArrayList<>();
         mutable.add(field("title", IndexFieldKind.TEXT));
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", mutable);
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", mutable);
 
         mutable.add(field("body", IndexFieldKind.TEXT));
-        assertThat(plan.fields()).hasSize(1);
-        assertThatThrownBy(() -> plan.fields().clear())
+        assertThat(mapping.fields()).hasSize(1);
+        assertThatThrownBy(() -> mapping.fields().clear())
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
     void findReturnsTheFirstMatchingPathAndEmptyForUnknownPaths() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc",
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc",
                 List.of(field("title", IndexFieldKind.TEXT), field("body", IndexFieldKind.TEXT)));
 
-        assertThat(plan.messageFullName()).isEqualTo("ai.pipestream.test.Doc");
-        assertThat(plan.find("title")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.messageFullName()).isEqualTo("ai.pipestream.test.Doc");
+        assertThat(mapping.find("title")).get()
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.TEXT);
-        assertThat(plan.find("zzz")).isEmpty();
+        assertThat(mapping.find("zzz")).isEmpty();
     }
 
     @Test
-    void indexableDropsSkipHintsButKeepsThemInThePlan() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc",
+    void indexableDropsSkipHintsButKeepsThemInTheMapping() {
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc",
                 List.of(field("title", IndexFieldKind.TEXT), field("secret", IndexFieldKind.SKIP)));
 
-        assertThat(plan.find("secret")).isPresent();
-        assertThat(plan.indexable())
-                .extracting(IndexingPlan.IndexedField::path)
+        assertThat(mapping.find("secret")).isPresent();
+        assertThat(mapping.indexable())
+                .extracting(IndexMapping.IndexedField::path)
                 .containsExactly("title");
     }
 
     @Test
     void singularIndexedFieldConstructorDefaultsRepeatedToFalse() {
-        IndexingPlan.IndexedField singular = field("title", IndexFieldKind.TEXT);
-        IndexingPlan.IndexedField repeated =
-                new IndexingPlan.IndexedField("tags", "tags", ResolvedFieldHint.of(IndexFieldKind.KEYWORD), true);
+        IndexMapping.IndexedField singular = field("title", IndexFieldKind.TEXT);
+        IndexMapping.IndexedField repeated =
+                new IndexMapping.IndexedField("tags", "tags", ResolvedFieldHint.of(IndexFieldKind.KEYWORD), true);
 
         assertThat(singular.repeated()).isFalse();
         assertThat(repeated.repeated()).isTrue();
@@ -72,13 +72,13 @@ class IndexingPlanTest {
     @Test
     void indexedFieldRejectsNullComponents() {
         ResolvedFieldHint hint = ResolvedFieldHint.of(IndexFieldKind.TEXT);
-        assertThatThrownBy(() -> new IndexingPlan.IndexedField(null, "title", hint))
+        assertThatThrownBy(() -> new IndexMapping.IndexedField(null, "title", hint))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("path");
-        assertThatThrownBy(() -> new IndexingPlan.IndexedField("title", null, hint))
+        assertThatThrownBy(() -> new IndexMapping.IndexedField("title", null, hint))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("fieldName");
-        assertThatThrownBy(() -> new IndexingPlan.IndexedField("title", "title", null))
+        assertThatThrownBy(() -> new IndexMapping.IndexedField("title", "title", null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("hint");
     }
@@ -89,7 +89,7 @@ class IndexingPlanTest {
                 .stored(false)
                 .indexed(false)
                 .build();
-        IndexingPlan.IndexedField field = new IndexingPlan.IndexedField("doc_id", "doc_id", hint);
+        IndexMapping.IndexedField field = new IndexMapping.IndexedField("doc_id", "doc_id", hint);
 
         assertThat(field.type()).isEqualTo(IndexFieldKind.KEYWORD);
         assertThat(field.stored()).isFalse();

@@ -1,6 +1,6 @@
 package ai.pipestream.proto.index.qdrant;
 
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
@@ -157,22 +157,22 @@ public final class QdrantSink implements AutoCloseable {
 
     /**
      * {@link #ensureCollection(String, Collection)} with the named-vector specs derived from
-     * the points about to be written, honoring the plan's VECTOR hint (declared dims and
+     * the points about to be written, honoring the mapping's VECTOR hint (declared dims and
      * similarity) where present. An empty batch creates nothing.
      *
      * @return {@code true} when this call created the collection
      */
     public boolean ensureCollectionForPoints(String collection, List<PointStruct> pointsBatch,
-                                             IndexingPlan plan) {
+                                             IndexMapping mapping) {
         Objects.requireNonNull(pointsBatch, "pointsBatch");
         if (pointsBatch.isEmpty()) {
             return false;
         }
-        return ensureCollection(collection, QdrantPointMapper.vectorSpecs(pointsBatch, plan));
+        return ensureCollection(collection, QdrantPointMapper.vectorSpecs(pointsBatch, mapping));
     }
 
     /**
-     * {@link #ensureCollectionForPoints(String, List, IndexingPlan)} with no plan: sizes from
+     * {@link #ensureCollectionForPoints(String, List, IndexMapping)} with no mapping: sizes from
      * the data, COSINE distances.
      */
     public boolean ensureCollectionForPoints(String collection, List<PointStruct> pointsBatch) {

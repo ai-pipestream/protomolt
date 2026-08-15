@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.solr;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
 import org.junit.jupiter.api.Test;
@@ -17,7 +17,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void scalarKindsMapToStockSolrTypes() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("title", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 field("id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 field("small", ResolvedFieldHint.of(IndexFieldKind.INT32)),
@@ -29,7 +29,7 @@ class SolrSchemaGeneratorTest {
                 field("payload", ResolvedFieldHint.of(IndexFieldKind.BINARY)),
                 field("inner", ResolvedFieldHint.of(IndexFieldKind.OBJECT))));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fieldTypes()).isEmpty(); // stock types need no declarations
         assertThat(schema.copyFields()).isEmpty();
@@ -50,12 +50,12 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void analyzerNameBecomesTheTextFieldType() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("title", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .analyzer("text_en")
                         .build())));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fields()).containsExactly(
                 Map.of("name", "title", "type", "text_en", "indexed", true, "stored", true));
@@ -63,11 +63,11 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void sortableOrFacetableSetsDocValues() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("status", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD).sortable(true).build()),
                 field("count", ResolvedFieldHint.builder(IndexFieldKind.INT64).facetable(true).build())));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fields()).containsExactly(
                 Map.of("name", "status", "type", "string", "indexed", true, "stored", true,
@@ -78,14 +78,14 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void everyRangeKindBecomesMinMaxFields() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("a", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE)),
                 field("b", ResolvedFieldHint.of(IndexFieldKind.LONG_RANGE)),
                 field("c", ResolvedFieldHint.of(IndexFieldKind.FLOAT_RANGE)),
                 field("d", ResolvedFieldHint.of(IndexFieldKind.DOUBLE_RANGE)),
                 field("e", ResolvedFieldHint.of(IndexFieldKind.DATE_RANGE))));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fields()).extracting(f -> f.get("name") + ":" + f.get("type"))
                 .containsExactly(
@@ -98,14 +98,14 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void vectorFieldGetsADenseVectorFieldType() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                         .vectorDims(768)
                         .vectorSimilarity(VectorSimilarity.COSINE)
                         .hnswParams(new ResolvedFieldHint.HnswParams(16, 100))
                         .build())));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fieldTypes()).containsExactly(Map.of(
                 "name", "knn_vector_768_cosine_m16_ef100",
@@ -127,10 +127,10 @@ class SolrSchemaGeneratorTest {
                 .vectorDims(4)
                 .vectorSimilarity(VectorSimilarity.L2)
                 .build();
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("embedding_a", vector), field("embedding_b", vector)));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fieldTypes()).hasSize(1);
         assertThat(schema.fieldTypes().get(0))
@@ -149,13 +149,13 @@ class SolrSchemaGeneratorTest {
                 VectorSimilarity.MAX_INNER_PRODUCT, "dot_product");
 
         for (var entry : expected.entrySet()) {
-            IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+            IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                     field("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                             .vectorDims(4)
                             .vectorSimilarity(entry.getKey())
                             .build())));
 
-            assertThat(generator.generate(plan).fieldTypes().get(0))
+            assertThat(generator.generate(mapping).fieldTypes().get(0))
                     .as("similarity %s", entry.getKey())
                     .containsEntry("similarityFunction", entry.getValue());
         }
@@ -163,13 +163,13 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void subFieldsProduceFieldsAndCopyFields() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("title", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""))
                         .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.TEXT, "en", "text_en"))
                         .build())));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fields()).containsExactly(
                 Map.of("name", "title", "type", "text_general", "indexed", true, "stored", true),
@@ -182,14 +182,14 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void engineParamsForSolrAreMergedVerbatim() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("id", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                         .engineParams(Map.of(
                                 "solr.omitNorms", "true",
                                 "opensearch.index_options", "docs"))
                         .build())));
 
-        SolrSchemaGenerator.SolrSchema schema = generator.generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
 
         assertThat(schema.fields()).containsExactly(
                 Map.of("name", "id", "type", "string", "indexed", true, "stored", true,
@@ -198,22 +198,22 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void skippedFieldsAreExcluded() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 field("internal", ResolvedFieldHint.skipped()),
                 field("id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        assertThat(generator.generate(plan).fields()).extracting(f -> f.get("name"))
+        assertThat(generator.generate(mapping).fields()).extracting(f -> f.get("name"))
                 .containsExactly("id");
     }
 
     /** Solr rejects every value after the first for a field the schema declares singular. */
     @Test
     void repeatedFieldsAreDeclaredMultiValued() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 repeatedField("tags", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 field("title", ResolvedFieldHint.of(IndexFieldKind.TEXT))));
 
-        assertThat(generator.generate(plan).fields()).containsExactly(
+        assertThat(generator.generate(mapping).fields()).containsExactly(
                 Map.of("name", "tags", "type", "string", "indexed", true, "stored", true,
                         "multiValued", true),
                 Map.of("name", "title", "type", "text_general", "indexed", true, "stored", true));
@@ -222,36 +222,36 @@ class SolrSchemaGeneratorTest {
     /** DenseVectorField carries the whole vector in one value and rejects multiValued. */
     @Test
     void repeatedVectorFieldStaysSingleValued() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 repeatedField("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                         .vectorDims(4)
                         .vectorSimilarity(VectorSimilarity.L2)
                         .build())));
 
-        assertThat(generator.generate(plan).fields()).containsExactly(Map.of(
+        assertThat(generator.generate(mapping).fields()).containsExactly(Map.of(
                 "name", "embedding", "type", "knn_vector_4_l2", "indexed", true, "stored", true));
     }
 
     /** A copyField destination has to accept every value its multiValued source produces. */
     @Test
     void subFieldsOfARepeatedFieldAreAlsoMultiValued() {
-        IndexingPlan plan = new IndexingPlan("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
                 repeatedField("tags", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""))
                         .build())));
 
-        assertThat(generator.generate(plan).fields()).containsExactly(
+        assertThat(generator.generate(mapping).fields()).containsExactly(
                 Map.of("name", "tags", "type", "text_general", "indexed", true, "stored", true,
                         "multiValued", true),
                 Map.of("name", "tags_raw", "type", "string", "indexed", true, "stored", false,
                         "multiValued", true));
     }
 
-    private static IndexingPlan.IndexedField field(String name, ResolvedFieldHint hint) {
-        return new IndexingPlan.IndexedField(name, name, hint);
+    private static IndexMapping.IndexedField field(String name, ResolvedFieldHint hint) {
+        return new IndexMapping.IndexedField(name, name, hint);
     }
 
-    private static IndexingPlan.IndexedField repeatedField(String name, ResolvedFieldHint hint) {
-        return new IndexingPlan.IndexedField(name, name, hint, true);
+    private static IndexMapping.IndexedField repeatedField(String name, ResolvedFieldHint hint) {
+        return new IndexMapping.IndexedField(name, name, hint, true);
     }
 }

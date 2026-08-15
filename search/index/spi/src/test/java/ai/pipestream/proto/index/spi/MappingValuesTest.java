@@ -18,7 +18,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class PlanValuesTest {
+class MappingValuesTest {
 
     @Test
     void singularPathsKeepTheMapperSemantics() throws Exception {
@@ -27,9 +27,9 @@ class PlanValuesTest {
                 .setField(f.doc.findFieldByName("doc_id"), "d1")
                 .build();
 
-        assertThat(PlanValues.read(f.mapper, doc, "doc_id", false)).isEqualTo("d1");
+        assertThat(MappingValues.read(f.mapper, doc, "doc_id", false)).isEqualTo("d1");
         // unset singular message parent: missing, not a mapping error
-        assertThat(PlanValues.read(f.mapper, doc, "solo.label", false)).isNull();
+        assertThat(MappingValues.read(f.mapper, doc, "solo.label", false)).isNull();
     }
 
     @Test
@@ -37,7 +37,7 @@ class PlanValuesTest {
         Fixtures f = Fixtures.create();
         DynamicMessage doc = f.docWithChunks(f.chunk("alpha"), f.chunk("beta"));
 
-        Object value = PlanValues.read(f.mapper, doc, "chunks.text", false);
+        Object value = MappingValues.read(f.mapper, doc, "chunks.text", false);
 
         assertThat(value).isEqualTo(List.of("alpha", "beta"));
     }
@@ -57,7 +57,7 @@ class PlanValuesTest {
                 .addRepeatedField(f.doc.findFieldByName("groups"), groupB)
                 .build();
 
-        assertThat(PlanValues.read(f.mapper, doc, "groups.chunks.text", false))
+        assertThat(MappingValues.read(f.mapper, doc, "groups.chunks.text", false))
                 .isEqualTo(List.of("a1", "a2", "b1"));
     }
 
@@ -73,7 +73,7 @@ class PlanValuesTest {
                 .build();
         DynamicMessage doc = f.docWithChunks(first, second);
 
-        assertThat(PlanValues.read(f.mapper, doc, "chunks.tags", false))
+        assertThat(MappingValues.read(f.mapper, doc, "chunks.tags", false))
                 .isEqualTo(List.of("t1", "t2", "t3"));
     }
 
@@ -84,7 +84,7 @@ class PlanValuesTest {
                 .setField(f.doc.findFieldByName("doc_id"), "d1")
                 .build();
 
-        assertThat(PlanValues.read(f.mapper, doc, "chunks.text", false)).isNull();
+        assertThat(MappingValues.read(f.mapper, doc, "chunks.text", false)).isNull();
     }
 
     @Test
@@ -97,7 +97,7 @@ class PlanValuesTest {
                 .build();
         DynamicMessage doc = f.docWithChunks(withMeta, f.chunk("no meta"));
 
-        assertThat(PlanValues.read(f.mapper, doc, "chunks.meta.label", false))
+        assertThat(MappingValues.read(f.mapper, doc, "chunks.meta.label", false))
                 .isEqualTo(List.of("L1"));
     }
 
@@ -107,9 +107,9 @@ class PlanValuesTest {
         DynamicMessage doc = f.docWithChunks(
                 f.chunk("alpha"), DynamicMessage.newBuilder(f.chunk).build());
 
-        assertThat(PlanValues.read(f.mapper, doc, "chunks.text", false))
+        assertThat(MappingValues.read(f.mapper, doc, "chunks.text", false))
                 .isEqualTo(List.of("alpha"));
-        assertThat(PlanValues.read(f.mapper, doc, "chunks.text", true))
+        assertThat(MappingValues.read(f.mapper, doc, "chunks.text", true))
                 .isEqualTo(List.of("alpha", ""));
     }
 
@@ -118,7 +118,7 @@ class PlanValuesTest {
         Fixtures f = Fixtures.create();
         DynamicMessage doc = f.docWithChunks(f.chunk("alpha"));
 
-        assertThatThrownBy(() -> PlanValues.read(f.mapper, doc, "chunks.missing", false))
+        assertThatThrownBy(() -> MappingValues.read(f.mapper, doc, "chunks.missing", false))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("missing");
     }
@@ -130,8 +130,8 @@ class PlanValuesTest {
                 .setField(f.doc.findFieldByName("doc_id"), "d1")
                 .build();
 
-        assertThat(PlanValues.readWhole(f.mapper, doc, "doc_id", false)).isEqualTo("d1");
-        assertThat(PlanValues.readWhole(f.mapper, doc, "solo.label", false)).isNull();
+        assertThat(MappingValues.readWhole(f.mapper, doc, "doc_id", false)).isEqualTo("d1");
+        assertThat(MappingValues.readWhole(f.mapper, doc, "solo.label", false)).isNull();
     }
 
     @Test
@@ -143,10 +143,10 @@ class PlanValuesTest {
                 .build();
 
         // Validity is a property of the path, not of this document's element count.
-        assertThatThrownBy(() -> PlanValues.readWhole(f.mapper, populated, "chunks.text", false))
+        assertThatThrownBy(() -> MappingValues.readWhole(f.mapper, populated, "chunks.text", false))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("whole value");
-        assertThatThrownBy(() -> PlanValues.readWhole(f.mapper, empty, "chunks.text", false))
+        assertThatThrownBy(() -> MappingValues.readWhole(f.mapper, empty, "chunks.text", false))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("whole value");
     }
@@ -162,7 +162,7 @@ class PlanValuesTest {
                         .build())
                 .build();
 
-        assertThatThrownBy(() -> PlanValues.read(f.mapper, doc, "attrs.k", false))
+        assertThatThrownBy(() -> MappingValues.read(f.mapper, doc, "attrs.k", false))
                 .isInstanceOf(MappingException.class);
     }
 
@@ -200,8 +200,8 @@ class PlanValuesTest {
 
         private static FileDescriptor docFile() throws Exception {
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
-                    .setName("plan_values_doc.proto")
-                    .setPackage("ai.pipestream.test.planvalues")
+                    .setName("mapping_values_doc.proto")
+                    .setPackage("ai.pipestream.test.mappingvalues")
                     .setSyntax("proto3")
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Inner")
@@ -210,22 +210,22 @@ class PlanValuesTest {
                             .setName("Chunk")
                             .addField(stringField("text", 1, FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addField(stringField("tags", 2, FieldDescriptorProto.Label.LABEL_REPEATED))
-                            .addField(messageField("meta", 3, ".ai.pipestream.test.planvalues.Inner",
+                            .addField(messageField("meta", 3, ".ai.pipestream.test.mappingvalues.Inner",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Group")
-                            .addField(messageField("chunks", 1, ".ai.pipestream.test.planvalues.Chunk",
+                            .addField(messageField("chunks", 1, ".ai.pipestream.test.mappingvalues.Chunk",
                                     FieldDescriptorProto.Label.LABEL_REPEATED)))
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Doc")
                             .addField(stringField("doc_id", 1, FieldDescriptorProto.Label.LABEL_OPTIONAL))
-                            .addField(messageField("chunks", 2, ".ai.pipestream.test.planvalues.Chunk",
+                            .addField(messageField("chunks", 2, ".ai.pipestream.test.mappingvalues.Chunk",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
-                            .addField(messageField("solo", 3, ".ai.pipestream.test.planvalues.Inner",
+                            .addField(messageField("solo", 3, ".ai.pipestream.test.mappingvalues.Inner",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL))
-                            .addField(messageField("attrs", 4, ".ai.pipestream.test.planvalues.Doc.AttrsEntry",
+                            .addField(messageField("attrs", 4, ".ai.pipestream.test.mappingvalues.Doc.AttrsEntry",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
-                            .addField(messageField("groups", 5, ".ai.pipestream.test.planvalues.Group",
+                            .addField(messageField("groups", 5, ".ai.pipestream.test.mappingvalues.Group",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addNestedType(DescriptorProto.newBuilder()
                                     .setName("AttrsEntry")

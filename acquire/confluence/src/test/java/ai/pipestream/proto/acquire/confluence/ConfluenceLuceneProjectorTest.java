@@ -8,7 +8,7 @@ import ai.pipestream.proto.acquire.confluence.v1.Page;
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.lucene.LuceneIndexWriter;
 import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.google.protobuf.Timestamp;
 import org.apache.lucene.index.DirectoryReader;
@@ -57,18 +57,18 @@ class ConfluenceLuceneProjectorTest {
     void upsertsBecomeSearchableDocumentsAndDeletesTombstoneThem() throws Exception {
         ProtoLuceneMapper mapper = new ProtoLuceneMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()));
-        IndexingPlan plan = ConfluenceLuceneProjector.indexingPlan();
+        IndexMapping mapping = ConfluenceLuceneProjector.indexMapping();
 
         try (LuceneIndexWriter writer = new LuceneIndexWriter(indexDir)) {
             ConfluenceLuceneProjector.project(
-                    pageChange("c1", "111", "Hello Lucene World"), mapper, plan, writer);
+                    pageChange("c1", "111", "Hello Lucene World"), mapper, mapping, writer);
             ConfluenceLuceneProjector.project(
-                    pageChange("c2", "222", "Another Page"), mapper, plan, writer);
+                    pageChange("c2", "222", "Another Page"), mapper, mapping, writer);
             ConfluenceLuceneProjector.project(
                     pageChange("c3", "111", "ignored").toBuilder()
                             .setOperation(ChangeOperation.CHANGE_OPERATION_DELETE)
                             .build(),
-                    mapper, plan, writer);
+                    mapper, mapping, writer);
             // buffered deletes are not reflected in numDocs(); they apply on commit
             writer.commit();
         }

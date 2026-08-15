@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.qdrant;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
 import org.junit.jupiter.api.Test;
@@ -17,25 +17,25 @@ class QdrantSchemaGeneratorTest {
 
     private final QdrantSchemaGenerator generator = new QdrantSchemaGenerator();
 
-    private static IndexingPlan plan() {
-        return new IndexingPlan("library.Book", List.of(
-                new IndexingPlan.IndexedField("title", "title",
+    private static IndexMapping mapping() {
+        return new IndexMapping("library.Book", List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT).analyzer("english").build()),
-                new IndexingPlan.IndexedField("genre", "genre",
+                new IndexMapping.IndexedField("genre", "genre",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexingPlan.IndexedField("rank", "rank",
+                new IndexMapping.IndexedField("rank", "rank",
                         ResolvedFieldHint.of(IndexFieldKind.INT64)),
-                new IndexingPlan.IndexedField("score", "score",
+                new IndexMapping.IndexedField("score", "score",
                         ResolvedFieldHint.of(IndexFieldKind.DOUBLE)),
-                new IndexingPlan.IndexedField("published", "published",
+                new IndexMapping.IndexedField("published", "published",
                         ResolvedFieldHint.of(IndexFieldKind.BOOLEAN)),
-                new IndexingPlan.IndexedField("created", "created",
+                new IndexMapping.IndexedField("created", "created",
                         ResolvedFieldHint.of(IndexFieldKind.DATE)),
-                new IndexingPlan.IndexedField("blob", "blob",
+                new IndexMapping.IndexedField("blob", "blob",
                         ResolvedFieldHint.of(IndexFieldKind.BINARY)),
-                new IndexingPlan.IndexedField("nested", "nested",
+                new IndexMapping.IndexedField("nested", "nested",
                         ResolvedFieldHint.of(IndexFieldKind.NESTED)),
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(384)
                                 .vectorSimilarity(VectorSimilarity.DOT_PRODUCT)
@@ -44,7 +44,7 @@ class QdrantSchemaGeneratorTest {
 
     @Test
     void vectorHintsBecomeNamedVectors() {
-        QdrantSchemaGenerator.QdrantSchema schema = generator.generate(plan());
+        QdrantSchemaGenerator.QdrantSchema schema = generator.generate(mapping());
 
         assertThat(schema.vectors()).containsExactly(
                 new QdrantVectorSpec("embedding", 384, Distance.Dot));
@@ -52,7 +52,7 @@ class QdrantSchemaGeneratorTest {
 
     @Test
     void scalarKindsBecomePayloadIndexes() {
-        QdrantSchemaGenerator.QdrantSchema schema = generator.generate(plan());
+        QdrantSchemaGenerator.QdrantSchema schema = generator.generate(mapping());
 
         assertThat(schema.payloadIndexes()).containsExactlyInAnyOrder(
                 new QdrantSchemaGenerator.PayloadIndex("title", FieldType.FieldTypeText),
@@ -74,8 +74,8 @@ class QdrantSchemaGeneratorTest {
      */
     @Test
     void dimensionlessVectorHintIsRejectedByName() {
-        IndexingPlan dimensionless = new IndexingPlan("library.Book", List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping dimensionless = new IndexMapping("library.Book", List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.of(IndexFieldKind.VECTOR))));
 
         assertThatThrownBy(() -> generator.generate(dimensionless))
@@ -86,11 +86,11 @@ class QdrantSchemaGeneratorTest {
 
     @Test
     void defaultSimilarityIsCosine() {
-        IndexingPlan cosinePlan = new IndexingPlan("library.Book", List.of(
-                new IndexingPlan.IndexedField("embedding", "embedding",
+        IndexMapping cosineMapping = new IndexMapping("library.Book", List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(4).build())));
 
-        assertThat(generator.generate(cosinePlan).vectors())
+        assertThat(generator.generate(cosineMapping).vectors())
                 .containsExactly(QdrantVectorSpec.cosine("embedding", 4));
     }
 }
