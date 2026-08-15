@@ -106,11 +106,16 @@ class TextParserServiceTest {
     }
 
     @Test
-    void plainProseWithoutAHeadingClaimsNoTitle() throws Exception {
+    void plainProseWithoutAHeadingClaimsNoTitleButStillClaimsTheBody() throws Exception {
         List<ParseResponse> events = parse(
                 "This is a full sentence that ends with a period.\n\nAnother paragraph.", "notes.txt");
         assertThat(events)
-                .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.CLAIMS);
+                .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.CLAIMS
+                        && e.getClaims().getClaims().containsFields("title"));
+        assertThat(events)
+                .anyMatch(e -> e.getEventCase() == ParseResponse.EventCase.CLAIMS
+                        && e.getClaims().getClaims().getFieldsOrThrow("body").getStringValue()
+                                .startsWith("This is a full sentence"));
         ParserOutput output = events.stream()
                 .filter(e -> e.getEventCase() == ParseResponse.EventCase.DOCUMENT)
                 .map(ParseResponse::getDocument)

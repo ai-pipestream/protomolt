@@ -12,6 +12,11 @@ dependencies {
     // The door rides the repo wire contract only — the DocumentServiceGrpc
     // blocking stub, never repo container/service internals.
     implementation project(':protomolt-repo-proto')
+    // SearchWorkflows builds the parse-and-index envelope over the parse wire
+    // contract; the module registers it with a co-mounted registry.
+    implementation project(':protomolt-parse-proto')
+    implementation project(':protomolt-registry')
+    implementation libs.jackson.databind
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess

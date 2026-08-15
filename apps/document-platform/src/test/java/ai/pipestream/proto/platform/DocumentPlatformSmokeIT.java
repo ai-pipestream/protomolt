@@ -26,6 +26,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.ManagedChannel;
+import ai.pipestream.proto.search.door.RepoDocumentMapping;
+import ai.pipestream.proto.search.v1.ParseAndIndexRequest;
+import ai.pipestream.proto.search.v1.SearchLane;
+import ai.pipestream.proto.search.v1.SearchRequest;
+import ai.pipestream.proto.search.v1.SearchResponse;
+import ai.pipestream.proto.search.v1.SearchServiceGrpc;
 import io.grpc.Metadata;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.MetadataUtils;
@@ -113,7 +119,9 @@ class DocumentPlatformSmokeIT {
                         0, 0, 0, 0,
                         null, null, null,
                         60L,
-                        1),
+                        1,
+                        0,
+                        work.resolve("search-index")),
                 new InMemoryApiKeyIdentityResolver()
                         .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
 
@@ -214,6 +222,56 @@ class DocumentPlatformSmokeIT {
 
     @Test
     @Order(4)
+    void parseAndIndexMakesTheDocumentSearchableOverTcp() throws Exception {
+        ObjectNode submit = MAPPER.createObjectNode();
+        submit.put("workflowName", "parse-and-index");
+        submit.set("input", MAPPER.readTree(JsonFormat.printer().print(
+                ParseAndIndexRequest.newBuilder()
+                        .setAddress(receipt.getAddress())
+                        .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                        .build())));
+        JsonNode submitted = postAction("submit-workflow", submit);
+        assertThat(submitted.path("ok").asBoolean()).as(submitted.toString()).isTrue();
+        String jobId = submitted.path("jobId").asText();
+
+        String status = "";
+        for (int i = 0; i < 120 && !"COMPLETED".equals(status); i++) {
+            ObjectNode get = MAPPER.createObjectNode();
+            get.put("jobId", jobId);
+            JsonNode job = postAction("get-job", get);
+            status = job.path("job").path("status").asText(job.path("status").asText());
+            if ("FAILED".equals(status) || "DEAD".equals(status)) {
+                throw new AssertionError("parse-and-index job " + status + ": " + job);
+            }
+            if (!"COMPLETED".equals(status)) {
+                Thread.sleep(500);
+            }
+        }
+        assertThat(status).isEqualTo("COMPLETED");
+
+        ManagedChannel searchChannel = NettyChannelBuilder
+                .forAddress("127.0.0.1", platform.searchPort())
+                .usePlaintext()
+                .build();
+        try {
+            SearchResponse hits = SearchServiceGrpc.newBlockingStub(searchChannel)
+                    .search(SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("container works")
+                            .setK(3)
+                            .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                            .build());
+            assertThat(hits.getHitsList()).isNotEmpty();
+            assertThat(hits.getHits(0).getDocId()).isEqualTo(receipt.getDocId());
+            assertThat(hits.getHits(0).getStoredMap())
+                    .containsEntry("search_metadata_title", "Platform Smoke");
+        } finally {
+            searchChannel.shutdownNow();
+        }
+    }
+
+    @Test
+    @Order(5)
     void thePlaygroundServes() throws Exception {
         HttpResponse<String> page = HTTP.send(
                 HttpRequest.newBuilder(

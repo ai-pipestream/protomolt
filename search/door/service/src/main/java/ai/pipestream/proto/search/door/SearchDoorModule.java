@@ -3,8 +3,10 @@ package ai.pipestream.proto.search.door;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
 import ai.pipestream.proto.composer.ServiceMount;
+import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import io.grpc.Server;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -66,7 +68,10 @@ public final class SearchDoorModule implements ServiceModule {
 
     @Override
     public Set<String> requires() {
-        return Set.of("repo");
+        // parse and registry are optional at runtime (workflow registration
+        // is skipped when either is absent) but must wire first when
+        // co-mounted, so the parse-and-index workflow can register.
+        return Set.of("repo", "parse", "registry");
     }
 
     @Override
@@ -77,6 +82,22 @@ public final class SearchDoorModule implements ServiceModule {
         String name = ROLE + "-" + context.nodeId();
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
+
+        // With a co-mounted registry and parse coordinator, register the
+        // parse-and-index workflow so operators can submit it by name. A
+        // standalone search node skips this: the workflow spans roles it
+        // does not have.
+        List<GitSchemaRegistryStore> stores =
+                context.contributions().all(GitSchemaRegistryStore.class);
+        if (!stores.isEmpty() && context.channels().isLocal("parse")) {
+            stores.getFirst().putWorkflow(
+                    SearchWorkflows.PARSE_AND_INDEX_WORKFLOW,
+                    SearchWorkflows.parseAndIndexWorkflow(
+                                    context.channels().targetOf("parse"),
+                                    context.channels().targetOf(ROLE),
+                                    60_000)
+                            .toString());
+        }
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
