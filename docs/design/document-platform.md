@@ -118,7 +118,7 @@ events or start relay loops.
 | Repository | `repo/proto`, `repo/container`, `repo/service` |
 | Accounts | `account/proto`, `account/service` |
 | Intake | `intake/proto`, `intake/service` |
-| Parsing | `parse/proto`, `parse/document` |
+| Parsing | `parse/proto`, `parse/document`, `parse/service`, `parse/text` |
 
 Repository and account services support in-process transports for tests and
 embedding, plus standalone Netty gRPC servers with health and reflection.
