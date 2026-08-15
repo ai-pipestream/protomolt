@@ -127,16 +127,16 @@ delegation.
 Nano1 also runs DJL Serving on a JetPack 7.2 compatible ARM64 TensorRT image.
 Its startup gate builds and executes a CUDA engine, and its live acceptance
 checks the returned GPU identity and result. CPU inference and CPU model
-offload are prohibited. The remaining mesh integration must reserve memory
-independently from build work and advertise the processor only after the GPU
-gate passes.
+offload are prohibited. GPU memory reservation across multiple inference
+processors still needs a scheduler-owned budget instead of independent static
+container limits.
 
 Nano1 also exposes a reflected TEI gRPC service over its Tailscale address. It
 serves a pinned `BAAI/bge-small-en-v1.5` model through a CUDA-only ARM64 build
 and has live evidence for model identity, 384-dimensional normalized vectors,
-semantic ordering, and coexistence with DJL. Mesh registration should publish
-the endpoint, schema identity, model revision, dimensions, CUDA capability,
-concurrency limit, and current load only after the live gate succeeds.
+semantic ordering, and coexistence with DJL. Future capacity work should read
+provider queue depth instead of treating the publisher's scheduler-owned
+in-flight count as the complete device load.
 
 ### Authorization scopes
 

@@ -92,6 +92,11 @@ for name in required:
         print("missing required stack variable placeholder:", name)
         sys.exit(1)
 print("portainer compose requires", len(required), "secret stack variables")
+for flag in ["--mesh-cluster-id", "--mesh-created-at"]:
+    if flag not in text:
+        print("portainer compose is missing mesh option", flag)
+        sys.exit(1)
+print("portainer compose enables the durable mesh directory")
 
 krick = open("deploy/krick/compose.yml").read()
 if "${PROTOMOLT_MCP_TOKEN:?" not in krick:
