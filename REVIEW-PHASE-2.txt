@@ -1,0 +1,148 @@
+PHASE 2 REVIEW PACKET
+=====================
+Scope: the Phase 2 "Search Product" train, all merged to main on
+2026-08-15, ending at merge commit fa667b3 (GitHub and Forgejo are in
+sync). This is a post-merge review: main is PR-only fleet-wide, so every
+suggested change comes back as a new PR.
+
+THE PRs, IN MERGE ORDER
+-----------------------
+All on github.com/ai-pipestream/protomolt. Each is a real merge commit,
+CI-green on all five required checks (build 21, build 25, conformance,
+console, integration).
+
+Vocabulary train (ADR-001) -- review first, it renames everything
+downstream:
+
+  #164  V2: LLM directive -> instruction
+  #165  V1: recipe/chain -> workflow/run (the big one, 216 files)
+  #167  V3: index plan -> mapping
+  #169  V4: docs sweep + AGENTS.md vocabulary table
+
+Feature train:
+
+  #166  Composer SPI core (host/composer: ServiceModule, ServiceMount,
+        NodeContext, Channels, Contributions, two-phase lifecycle)
+  #168  Seven services as role modules (repo, parser-text, registry,
+        parse, jobs, intake, playground) + document-platform rebuilt as
+        a preset over the composer + RoleNodeIT split-topology proof
+  #170  buf breaking waiver on main -- turned out to be INERT, see the
+        buf note below
+  #171  Chunking policies: ChunkingPolicy (digest-identified derivation),
+        SentencePackedChunker (strategy sentence-packed v1 over pinned
+        boundary rules rules-v1), PolicyDerivation
+  #172  Embedding lane: EmbeddingProviders.forSpec +
+        PolicyDerivation.discover (ServiceLoader resolution, model2vec
+        default); golden path chunks+embeds the court corpus with the
+        real provider over a corpus-vocabulary fixture, Lucene block
+        children, KNN ranks the source chunk first. ALSO completes the
+        ChunkRecipe -> ChunkingPolicy WIRE rename that #171 lost (see
+        review note 1) and drops the dead waivers.
+  #173  Search door library/service/role: search.v1 wire surface
+        (SearchService + SearchIndexService), ServedMapping
+        membership-gated subjects, LuceneSearchStore
+        (atomic replace-by-identity blocks), SearchDoorModule
+  #174  Door in the product: ParseAndIndexRequest + SearchWorkflows
+        (durable parse-and-index), platform mounts the search role
+        (port 9094), text parser now claims body (review note 3),
+        smoke IT proves ingest -> parse-and-index -> search hit over TCP
+  #175  gRParse previews: fleet-rendered page images
+        (PageData.page_meta.image data URIs) forwarded live as
+        PagePreview; emits_previews becomes a configured deployment
+        fact (PARSE_GRPARSE_EMITS_PREVIEWS); DataUri parser
+  #176  Replay: replay-documents action (pages ListDocuments, one
+        durable run per document via submit-workflow), chunk-generation
+        swap proof under a changed policy digest, smoke IT replay leg
+        proving replays never duplicate
+
+REVIEW NOTES (things a reviewer should know going in)
+-----------------------------------------------------
+1. #171 vs #172: #171 as merged is INCOMPLETE. A stash accident
+   silently reverted its proto rename and the mapping-pipeline sweep
+   before the final push, leaving main briefly with BOTH java records
+   (ChunkRecipe still wired into the mapping pipeline, ChunkingPolicy
+   wired into the chunker). #172 completes the rename for real,
+   including the wire (deliberate pre-GA break: message ChunkRecipe ->
+   ChunkingPolicy, field chunk_recipe -> chunking_policy, tag 21
+   unchanged). Review them as a pair.
+
+2. buf breaking waivers: path-based breaking.ignore NEVER matches in
+   this multi-module v2 workspace (proven empirically on buf 1.70 with
+   a real wire break present; tried current side, against side,
+   module-relative paths, --exclude-path). #170's waiver was inert and
+   #171 passed CI only because its wire break was missing. What works:
+   a rule-level `breaking.except` block naming the tripped rule IDs,
+   carried IN the breaking PR itself (buf reads breaking config from
+   the input side), dropped in the next PR. buf.yaml keeps a standing
+   note. While an except block exists it is workspace-wide, so a
+   breaking PR's proto diff must touch only the intended files
+   (verify: git diff main --stat -- '*.proto').
+
+3. Body fold gap (found by the door, fixed in #174): the coordinator's
+   fold accepted a `body` claim that NO parser ever made, so indexed
+   documents had no searchable text; the golden path had been papering
+   over it with a fallback. The reference text parser now claims body
+   (the non-title text blocks). Worth a look: is this the right
+   long-term source of body text for non-text parsers (gRParse et al.)?
+
+4. Previews are forwarded, not requested: gRParse's streaming wire
+   (DocumentChunk) carries no processing options, so the adapter cannot
+   ask for page renders. It forwards them when the fleet is built to
+   produce them; emits_previews is therefore deployment config, not a
+   detected capability. PreviewSpec parameters are ignored (the plugin
+   contract allows this). If the fleet later accepts options on the
+   stream, the adapter should start honoring PreviewSpec.
+
+5. Known CI flake: WorkflowWorkbenchMcpTest in apps/serve (hit #175
+   build 25, and two unrelated PRs before that). Unrelated to this
+   train; owned by the serve track.
+
+6. Stale-branch gotcha (bit #175): a PR opened before a proto-adding PR
+   merges will fail buf breaking on RERUN with "message deleted",
+   because the rerun re-fetches a moved origin/main. Rebase onto fresh
+   main and push; never just rerun.
+
+WHERE TO START READING
+----------------------
+Behavior-first entry points (read the tests, then the code):
+  tests/system/.../GoldenPathSystemTest.java      the whole pipeline in
+                                                  one JVM incl. the
+                                                  chunk+embed KNN leg
+  apps/document-platform/.../DocumentPlatformSmokeIT.java
+                                                  the PRODUCT over real
+                                                  TCP: ingest, durable
+                                                  parse-and-index,
+                                                  search hit, replay
+                                                  without duplication
+  search/door/service/src/test/...                door behavior: lanes,
+                                                  refusals, generation
+                                                  swap (PolicyChange-
+                                                  ReindexTest), replay
+                                                  action
+
+Key code by area:
+  host/composer/                                  the SPI (#166)
+  search/chunk/                                   chunker + derivation
+  search/embeddings/core/EmbeddingProviders.java  forSpec resolution
+  search/index/spi/ChunkingPolicy.java            digest contract
+  search/door/proto/.../search_service.proto      the new wire surface
+  search/door/service/                            store, module, replay
+  parse/grparse/GrparseParserAdapter.java         preview forwarding
+  parse/text/TextParserService.java               title+body claims
+  apps/document-platform/DocumentPlatform.java    the preset
+  docs/search/{chunking,embeddings,door}.md       the written contracts
+  docs/apps/document-platform.md                  ports, env, workflows
+
+HOW TO SUBMIT REVIEW CHANGES
+----------------------------
+- Main is PR-only (GitHub is a live mirror of canonical Forgejo
+  git.rokkon.com). Branch off fresh main, open a PR; either
+  findings-as-comments on the merged PRs first, or a direct fix PR
+  whose diff carries the conversation.
+- Real merge commits only (no squash/rebase merges). Push Forgejo
+  first, then GitHub. No em dashes in commit messages, no AI
+  attribution footers, no hand-cut v* tags.
+- Rebase onto fresh main immediately before opening the PR (see note
+  6); main moved 13 PRs in one day during this train.
+- Wire breaks are still sanctioned pre-GA (nothing in production), but
+  carry a breaking.except block per note 2.
