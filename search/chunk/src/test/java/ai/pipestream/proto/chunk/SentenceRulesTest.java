@@ -69,4 +69,31 @@ class SentenceRulesTest {
         assertThat(text.substring(sentences.get(1).start(), sentences.get(1).end()))
                 .isEqualTo("Next one.");
     }
+
+    @Test
+    void supplementaryPlaneCharactersAreTokenCharacters() {
+        // An emoji is a surrogate pair; neither half is whitespace, so it
+        // joins the token run and the span stays char-faithful.
+        List<SentenceRules.Sentence> sentences = SentenceRules.segment("Party 🎉 time.");
+        assertThat(sentences).hasSize(1);
+        assertThat(sentences.getFirst().tokens()).isEqualTo(3);
+    }
+
+    @Test
+    void cjkFullStopIsNotABoundaryUnderRulesV1() {
+        // rules-v1 is Latin-oriented and pinned: '。' never ends a sentence.
+        // CJK-aware segmentation would be a new rule-set id, not an edit here.
+        assertThat(SentenceRules.segment("彼は来た。彼女は来た。")).hasSize(1);
+    }
+
+    @Test
+    void anAbbreviationFollowedByWhitespaceSplits() {
+        // The pinned rule has no abbreviation lexicon: a terminator followed
+        // by whitespace ends the sentence, even after "Mr.". Documented so a
+        // future fix is a deliberate rule-set bump, not a silent edit.
+        String text = "Mr. Smith left. He returned.";
+        List<SentenceRules.Sentence> sentences = SentenceRules.segment(text);
+        assertThat(sentences).extracting(s -> text.substring(s.start(), s.end()))
+                .containsExactly("Mr.", "Smith left.", "He returned.");
+    }
 }

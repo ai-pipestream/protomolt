@@ -3,4 +3,10 @@ description = 'The deterministic chunker: executes a chunking policy (sentence-p
 dependencies {
     api project(':protomolt-index-spi')
     api project(':protomolt-embeddings')
+
+    // The opennlp-v1 boundary rule set: OpenNLP sentence detection over the
+    // pinned English UD-EWT model, loaded from the classpath (never downloaded).
+    implementation libs.opennlp.api
+    implementation libs.opennlp.runtime
+    runtimeOnly libs.opennlp.models.sentdetect.en
 }

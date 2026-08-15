@@ -24,7 +24,14 @@ nmcp = "1.6.1"
 grpc = "1.83.1"
 chicory = "1.7.5"
 lucene = "11.0.0-experimental-SNAPSHOT"
-opennlp = "3.x-preview-SNAPSHOT"
+# The 0.1.0-alpha4 line, not 3.x-preview: the 3.x snapshots stamp
+# "OpenNLP-Version: 3.x-preview-SNAPSHOT", which their own Version.parse
+# rejects, so BaseModel loading (sentence-detector models et al.) fails on
+# that line. alpha4 stamps a parseable version and carries the same APIs.
+opennlp = "0.1.0-alpha4-SNAPSHOT"
+# Pinned Apache OpenNLP model artifacts on Maven Central (the deterministic,
+# offline model source; version bumps are deliberate re-derivations)
+opennlp-models = "1.3.0"
 apicurio = "3.3.1"
 spring = "7.0.8"
 # Boot line matching Spring Framework 7
@@ -90,6 +97,9 @@ quarkus-arc-deployment = { module = "io.quarkus:quarkus-arc-deployment" }
 lucene-core = { module = "ai.pipestream:lucene-core", version.ref = "lucene" }
 lucene-analysis-common = { module = "ai.pipestream:lucene-analysis-common", version.ref = "lucene" }
 opennlp-embeddings = { module = "ai.pipestream:opennlp-embeddings", version.ref = "opennlp" }
+opennlp-api = { module = "ai.pipestream:opennlp-api", version.ref = "opennlp" }
+opennlp-runtime = { module = "ai.pipestream:opennlp-runtime", version.ref = "opennlp" }
+opennlp-models-sentdetect-en = { module = "org.apache.opennlp:opennlp-models-sentdetect-en", version.ref = "opennlp-models" }
 apicurio-registry-java-sdk = { module = "io.apicurio:apicurio-registry-java-sdk", version.ref = "apicurio" }
 apicurio-registry-protobuf-serde = { module = "io.apicurio:apicurio-registry-protobuf-serde-kafka", version.ref = "apicurio" }
 spring-context = { module = "org.springframework:spring-context", version.ref = "spring" }
