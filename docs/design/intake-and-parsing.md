@@ -18,8 +18,9 @@ The contract supports three lanes:
 - unary ingest for small or already-typed documents;
 - client-streaming ingest for payloads whose bytes should not fit one
   message; and
-- an HTTP POST raw-binary route mirroring repo-service's upload route with
-  `x-api-key` replacing the raw account headers (not yet implemented).
+- an HTTP POST raw-binary route (`POST /v1/intake:upload`) mirroring
+  repo-service's upload route with `x-api-key` replacing the raw account
+  headers.
 
 Every lane answers the same receipt vocabulary: document ID, node ID, the
 canonical `NodeAddress`, drive, payload size, the payload's SHA-256, and the

@@ -14,6 +14,8 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -31,15 +33,18 @@ import java.util.concurrent.TimeUnit;
 public final class IntakeServices implements AutoCloseable {
 
     private final IntakeServiceConfig config;
+    private final ApiKeyIdentityResolver resolver;
     private final ManagedChannel repoChannel;
+    private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final ServerServiceDefinition intakeService;
+    private final List<IntakeHttpServer> httpServers = new ArrayList<>();
     private Server server;
 
     private IntakeServices(IntakeServiceConfig config, ApiKeyIdentityResolver resolver) {
         this.config = config;
+        this.resolver = resolver;
         this.repoChannel = openRepoChannel(config.repoTarget());
-        DocumentServiceGrpc.DocumentServiceBlockingStub documents =
-                DocumentServiceGrpc.newBlockingStub(repoChannel);
+        this.documents = DocumentServiceGrpc.newBlockingStub(repoChannel);
         IntakeGrpcService intake = new IntakeGrpcService(documents, config.maxPayloadBytes());
         this.intakeService =
                 ServerInterceptors.intercept(intake, new ApiKeyServerInterceptor(resolver));
@@ -86,6 +91,25 @@ public final class IntakeServices implements AutoCloseable {
         return server;
     }
 
+    /**
+     * Starts the HTTP upload lane ({@code POST /v1/intake:upload}, see
+     * {@link IntakeHttpServer}) alongside the gRPC transports: the same
+     * authenticated wrap-and-save path as the gRPC lanes, over a raw-binary
+     * HTTP POST.
+     *
+     * @param port the listen port (0 = ephemeral; read the bound port back
+     *        from the returned server)
+     * @return the started HTTP server (also closed by {@link #close()})
+     */
+    public IntakeHttpServer startHttp(int port) {
+        IntakeHttpServer http =
+                new IntakeHttpServer(
+                        new RawIngests(documents, config.maxPayloadBytes()), resolver);
+        http.start(port);
+        httpServers.add(http);
+        return http;
+    }
+
     /** The bound server, once one of the start methods has run. */
     public Server server() {
         return server;
@@ -93,6 +117,9 @@ public final class IntakeServices implements AutoCloseable {
 
     @Override
     public void close() {
+        for (IntakeHttpServer http : httpServers) {
+            http.close();
+        }
         if (server != null) {
             server.shutdownNow();
         }

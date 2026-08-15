@@ -4,6 +4,7 @@ import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.SaveDocumentRequest;
 import ai.pipestream.proto.repo.v1.SaveDocumentResponse;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.UUID;
@@ -18,10 +19,17 @@ final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplB
 
     final List<SaveDocumentRequest> saves = new CopyOnWriteArrayList<>();
     volatile boolean deduplicated;
+    /** When set, every save fails with this status instead of answering (repo-failure tests). */
+    volatile StatusRuntimeException failure;
 
     @Override
     public void saveDocument(
             SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> observer) {
+        StatusRuntimeException failWith = failure;
+        if (failWith != null) {
+            observer.onError(failWith);
+            return;
+        }
         saves.add(request);
         String docId = request.getDocument().getDocId();
         if (docId.isBlank()) {

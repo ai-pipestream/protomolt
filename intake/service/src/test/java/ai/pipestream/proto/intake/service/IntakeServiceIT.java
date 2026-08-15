@@ -152,6 +152,49 @@ class IntakeServiceIT {
     }
 
     @Test
+    void httpLaneUploadIsFetchableAtTheReceiptAddress() throws Exception {
+        try (IntakeHttpServer http = intake.startHttp(0)) {
+            byte[] payload = "http lane integration payload".getBytes();
+            java.net.http.HttpResponse<String> response =
+                    java.net.http.HttpClient.newHttpClient()
+                            .send(
+                                    java.net.http.HttpRequest.newBuilder(
+                                                    java.net.URI.create(
+                                                            "http://localhost:" + http.port()
+                                                                    + IntakeHttpServer.UPLOAD_PATH
+                                                                    + "?datasource_id=ds-http-it&filename=it-http.txt"))
+                                            .header("x-api-key", API_KEY)
+                                            .header("Content-Type", "text/plain")
+                                            .POST(
+                                                    java.net.http.HttpRequest.BodyPublishers
+                                                            .ofByteArray(payload))
+                                            .build(),
+                                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).isEqualTo(200);
+            IngestDocumentResponse.Builder receipt = IngestDocumentResponse.newBuilder();
+            com.google.protobuf.util.JsonFormat.parser().merge(response.body(), receipt);
+            assertThat(receipt.getDocId()).isNotBlank();
+            assertThat(receipt.getSizeBytes()).isEqualTo(payload.length);
+            assertThat(receipt.getDrive()).isEqualTo("intake");
+            assertThat(receipt.getAddress().getAccountId()).isEqualTo(ACCOUNT);
+            assertThat(receipt.getAddress().getGraphId()).isEqualTo("intake:" + ACCOUNT);
+            assertThat(receipt.getAddress().getGraphAddressId()).isEqualTo("ds-http-it");
+
+            // The receipt is honest: the payload is fetchable at its address.
+            GetDocumentResponse fetched =
+                    ai.pipestream.proto.repo.v1.DocumentServiceGrpc.newBlockingStub(repoChannel)
+                            .getDocumentByReference(
+                                    GetDocumentByReferenceRequest.newBuilder()
+                                            .setAddress(receipt.getAddress())
+                                            .build());
+            assertThat(fetched.getDocument().getBlobBag().getBlob().getData().toByteArray())
+                    .isEqualTo(payload);
+            assertThat(fetched.getDocument().getOwnership().getDatasourceId())
+                    .isEqualTo("ds-http-it");
+        }
+    }
+
+    @Test
     void unknownDriveSurfacesRepoErrorUnchanged() {
         assertThatThrownBy(
                         () ->
