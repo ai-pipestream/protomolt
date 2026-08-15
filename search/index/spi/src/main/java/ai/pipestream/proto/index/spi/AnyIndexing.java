@@ -16,11 +16,11 @@ import java.util.Objects;
 import java.util.ServiceLoader;
 
 /**
- * Write-time expansion of {@code google.protobuf.Any} plan entries.
+ * Write-time expansion of {@code google.protobuf.Any} mapping entries.
  *
- * <p>Plan time cannot know a single packed type, so {@link IndexingPlanFactory} keeps Any
+ * <p>Mapping time cannot know a single packed type, so {@link IndexMappingFactory} keeps Any
  * as one {@link IndexFieldKind#ANY} leaf. On {@link SearchEngineIndexer#map}, this helper
- * unpacks a set Any through {@link AnyHandler} / {@link DescriptorRegistry}, plans the
+ * unpacks a set Any through {@link AnyHandler} / {@link DescriptorRegistry}, maps the
  * inner descriptor with the same hint chain as the parent, and emits inner fields under
  * {@code anyField.innerPath} (proto field names; engine names prefixed with the Any
  * field's engine name, name overrides included). Unknown type URLs fail by path and type
@@ -29,11 +29,11 @@ import java.util.ServiceLoader;
  * <p>Only entries whose resolved kind is {@link IndexFieldKind#ANY} expand: a hint that
  * resolves an Any field to any other kind ({@code SKIP} included) has said otherwise and
  * is left alone. Repeated Any fields and Any fields under a repeated ancestor (a
- * {@link BlockRole#CHUNKS} scope) have no single packed type per plan path, so their
+ * {@link BlockRole#CHUNKS} scope) have no single packed type per mapping path, so their
  * entry is kept as-is; engines and schema generators ignore ANY entries.
  *
  * <p>Every unpacked payload is offered to the {@link AnyPayloadValidator}s discovered via
- * {@link ServiceLoader} before its fields are planned. With
+ * {@link ServiceLoader} before its fields are mapped. With
  * {@code protomolt-protobuf-indexing} on the classpath, packed messages carrying declared
  * validation rules are therefore validated on the same write path as everything else.
  * A hint with {@code validate_payloads: false} opts that one field out of the gate —
@@ -44,66 +44,66 @@ public final class AnyIndexing {
 
     /**
      * Maximum Any-inside-Any nesting {@link #expand} follows before failing the document.
-     * Mirrors the plan walk's default depth bound; deeper chains are adversarial data.
+     * Mirrors the mapping walk's default depth bound; deeper chains are adversarial data.
      */
     static final int MAX_EXPANSION_DEPTH = 8;
 
     private final AnyHandler anyHandler;
     private final DescriptorRegistry registry;
-    private final IndexingPlanFactory planFactory;
+    private final IndexMappingFactory mappingFactory;
     private final List<AnyPayloadValidator> payloadValidators;
 
     /** Uses the {@link ServiceLoader}-discovered {@link AnyPayloadValidator}s. */
-    public AnyIndexing(DescriptorRegistry registry, IndexingPlanFactory planFactory) {
-        this(registry, planFactory, discoverValidators());
+    public AnyIndexing(DescriptorRegistry registry, IndexMappingFactory mappingFactory) {
+        this(registry, mappingFactory, discoverValidators());
     }
 
     public AnyIndexing(
             DescriptorRegistry registry,
-            IndexingPlanFactory planFactory,
+            IndexMappingFactory mappingFactory,
             List<AnyPayloadValidator> payloadValidators) {
         this.registry = Objects.requireNonNull(registry, "registry");
         this.anyHandler = new AnyHandler(registry);
-        this.planFactory = Objects.requireNonNull(planFactory, "planFactory");
+        this.mappingFactory = Objects.requireNonNull(mappingFactory, "mappingFactory");
         this.payloadValidators = List.copyOf(payloadValidators);
     }
 
     public static AnyIndexing from(IndexerContext context) {
         Objects.requireNonNull(context, "context");
-        return new AnyIndexing(context.descriptorRegistry(), context.planFactory());
+        return new AnyIndexing(context.descriptorRegistry(), context.mappingFactory());
     }
 
     /**
      * Fallback for engines constructed from a bare mapper (no {@link IndexerContext}):
-     * inner types are planned with the default hint chain (catalog → proto options →
-     * inference) instead of the parent plan's chain.
+     * inner types are mapped with the default hint chain (catalog → proto options →
+     * inference) instead of the parent mapping's chain.
      */
     public static AnyIndexing from(ProtoFieldMapper fieldMapper) {
         Objects.requireNonNull(fieldMapper, "fieldMapper");
         return new AnyIndexing(
                 fieldMapper.getDescriptorRegistry(),
-                IndexingPlanFactory.defaults(new CatalogIndexingHintSource()));
+                IndexMappingFactory.defaults(new CatalogIndexingHintSource()));
     }
 
     /**
-     * Replaces expandable ANY entries with planned inner fields. Must run before any engine
+     * Replaces expandable ANY entries with mapped inner fields. Must run before any engine
      * document is built so an unknown type URL or an invalid payload cannot emit a partial
-     * document. Returns {@code plan} itself when it holds no ANY entry.
+     * document. Returns {@code mapping} itself when it holds no ANY entry.
      */
-    public IndexingPlan expand(Message message, IndexingPlan plan) throws MappingException {
+    public IndexMapping expand(Message message, IndexMapping mapping) throws MappingException {
         Objects.requireNonNull(message, "message");
-        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(mapping, "mapping");
         boolean hasAny = false;
-        for (IndexingPlan.IndexedField field : plan.fields()) {
+        for (IndexMapping.IndexedField field : mapping.fields()) {
             hasAny |= field.type() == IndexFieldKind.ANY;
         }
-        return hasAny ? expand(message, plan, "", 0) : plan;
+        return hasAny ? expand(message, mapping, "", 0) : mapping;
     }
 
-    private IndexingPlan expand(Message message, IndexingPlan plan, String pathToMessage, int depth)
+    private IndexMapping expand(Message message, IndexMapping mapping, String pathToMessage, int depth)
             throws MappingException {
-        List<IndexingPlan.IndexedField> out = new ArrayList<>(plan.fields().size());
-        for (IndexingPlan.IndexedField field : plan.fields()) {
+        List<IndexMapping.IndexedField> out = new ArrayList<>(mapping.fields().size());
+        for (IndexMapping.IndexedField field : mapping.fields()) {
             if (field.type() != IndexFieldKind.ANY) {
                 out.add(field);
                 continue;
@@ -131,16 +131,16 @@ public final class AnyIndexing {
                     validator.validate(unpacked, absolutePath);
                 }
             }
-            IndexingPlan inner = expand(
+            IndexMapping inner = expand(
                     unpacked,
-                    planFactory.create(unpacked.getDescriptorForType()),
+                    mappingFactory.create(unpacked.getDescriptorForType()),
                     absolutePath,
                     depth + 1);
-            for (IndexingPlan.IndexedField child : inner.fields()) {
+            for (IndexMapping.IndexedField child : inner.fields()) {
                 out.add(prefixed(child, field.path(), field.fieldName()));
             }
         }
-        return new IndexingPlan(plan.messageFullName(), out);
+        return new IndexMapping(mapping.messageFullName(), out);
     }
 
     private Message unpack(Any any, String absolutePath) throws MappingException {
@@ -193,19 +193,19 @@ public final class AnyIndexing {
         return true;
     }
 
-    private static IndexingPlan.IndexedField prefixed(
-            IndexingPlan.IndexedField field, String pathPrefix, String namePrefix) {
+    private static IndexMapping.IndexedField prefixed(
+            IndexMapping.IndexedField field, String pathPrefix, String namePrefix) {
         String path = pathPrefix.isEmpty() ? field.path() : pathPrefix + "." + field.path();
         String name = namePrefix.isEmpty() ? field.fieldName() : namePrefix + "_" + field.fieldName();
-        return new IndexingPlan.IndexedField(path, name, field.hint(), field.repeated());
+        return new IndexMapping.IndexedField(path, name, field.hint(), field.repeated());
     }
 
-    /** The plan path's leaf field plus whether any traversed ancestor is repeated. */
+    /** The mapping path's leaf field plus whether any traversed ancestor is repeated. */
     private record AnyLeaf(FieldDescriptor field, boolean underRepeatedAncestor) {
     }
 
     /**
-     * Resolves {@code path} against the descriptor alone, so a plan that does not fit the
+     * Resolves {@code path} against the descriptor alone, so a mapping that does not fit the
      * message type fails deterministically even when the field is unset on this document.
      */
     private static AnyLeaf resolveLeaf(Descriptor root, String path, String absolutePath)
@@ -219,12 +219,12 @@ public final class AnyIndexing {
             FieldDescriptor field = current.findFieldByName(segment);
             if (field == null) {
                 throw new MappingException(
-                        "ANY plan entry does not resolve on " + root.getFullName(), absolutePath);
+                        "ANY mapping entry does not resolve on " + root.getFullName(), absolutePath);
             }
             if (dot < 0) {
                 if (!isAny(field)) {
                     throw new MappingException(
-                            "ANY plan entry is not a google.protobuf.Any field but "
+                            "ANY mapping entry is not a google.protobuf.Any field but "
                                     + describe(field),
                             absolutePath);
                 }
@@ -232,7 +232,7 @@ public final class AnyIndexing {
             }
             if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
                 throw new MappingException(
-                        "ANY plan entry traverses non-message field '" + segment + "'",
+                        "ANY mapping entry traverses non-message field '" + segment + "'",
                         absolutePath);
             }
             underRepeated |= field.isRepeated();

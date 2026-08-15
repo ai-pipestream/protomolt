@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.qdrant;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import qdrant.Points.FieldType;
 
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Renders the Qdrant collection schema for an {@link IndexingPlan} — the same role
+ * Renders the Qdrant collection schema for an {@link IndexMapping} — the same role
  * {@code OpenSearchMappingGenerator}, {@code SolrSchemaGenerator}, and
  * {@code LuceneFieldSpecs} play for their engines.
  *
@@ -18,7 +18,7 @@ import java.util.Objects;
  * {@code vector_dims}, distance from the hinted {@code vector_similarity}). A VECTOR hint
  * that declares no {@code vector_dims} is rejected with an {@link IllegalArgumentException}
  * naming the field: unlike {@link QdrantSink#ensureCollectionForPoints}, which sizes vectors
- * by measuring the point data, the renderer has only the plan to go on, and a named vector
+ * by measuring the point data, the renderer has only the mapping to go on, and a named vector
  * cannot be declared without a size. Scalar fields become payload index declarations (Qdrant
  * {@link FieldType}), which a deployment applies with {@code CreateFieldIndex} calls;
  * nested/object/range/binary kinds have no Qdrant payload index and are omitted.
@@ -42,16 +42,16 @@ public final class QdrantSchemaGenerator {
     }
 
     /**
-     * Renders the collection schema for {@code plan}.
+     * Renders the collection schema for {@code mapping}.
      *
      * @throws IllegalArgumentException if a VECTOR-hinted field declares no
      *     {@code vector_dims} (see the class contract)
      */
-    public QdrantSchema generate(IndexingPlan plan) {
-        Objects.requireNonNull(plan, "plan");
+    public QdrantSchema generate(IndexMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
         List<QdrantVectorSpec> vectors = new ArrayList<>();
         List<PayloadIndex> payloadIndexes = new ArrayList<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
             ResolvedFieldHint hint = field.hint();
             if (hint.type() == IndexFieldKind.VECTOR) {
                 if (hint.vectorDims() <= 0) {

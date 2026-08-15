@@ -10,52 +10,52 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Walks a message descriptor and builds an {@link IndexingPlan} using hint sources.
+ * Walks a message descriptor and builds an {@link IndexMapping} using hint sources.
  *
  * <p>Nested messages expand into dotted paths unless the hint is {@link IndexFieldKind#OBJECT}
  * / {@link IndexFieldKind#NESTED} (engines that support real nesting keep a single entry).
  */
-public final class IndexingPlanFactory {
+public final class IndexMappingFactory {
 
     private final IndexingHintSource hints;
     private final boolean preservingProtoFieldNames;
     private final int maxDepth;
 
-    public IndexingPlanFactory(IndexingHintSource hints) {
+    public IndexMappingFactory(IndexingHintSource hints) {
         this(hints, true, 8);
     }
 
-    public IndexingPlanFactory(IndexingHintSource hints, boolean preservingProtoFieldNames, int maxDepth) {
+    public IndexMappingFactory(IndexingHintSource hints, boolean preservingProtoFieldNames, int maxDepth) {
         this.hints = Objects.requireNonNull(hints, "hints");
         this.preservingProtoFieldNames = preservingProtoFieldNames;
         this.maxDepth = maxDepth;
     }
 
     /** Catalog overrides → proto options → inference. */
-    public static IndexingPlanFactory defaults(CatalogIndexingHintSource catalog) {
+    public static IndexMappingFactory defaults(CatalogIndexingHintSource catalog) {
         IndexingHintSource chain = catalog
                 .orElse(new ProtoOptionsIndexingHintSource())
                 .orElse(new InferringIndexingHintSource());
-        return new IndexingPlanFactory(chain);
+        return new IndexMappingFactory(chain);
     }
 
-    public static IndexingPlanFactory inferringOnly() {
-        return new IndexingPlanFactory(new InferringIndexingHintSource());
+    public static IndexMappingFactory inferringOnly() {
+        return new IndexMappingFactory(new InferringIndexingHintSource());
     }
 
     /**
-     * The hint chain this factory plans with, so companions resolve per-field settings
-     * consistently with the plan — {@link AnyPayloadGate} reads
+     * The hint chain this factory resolves with, so companions resolve per-field settings
+     * consistently with the mapping — {@link AnyPayloadGate} reads
      * {@code validate_payloads} opt-outs through it.
      */
     public IndexingHintSource hints() {
         return hints;
     }
 
-    public IndexingPlan create(Descriptor descriptor) {
-        List<IndexingPlan.IndexedField> fields = new ArrayList<>();
+    public IndexMapping create(Descriptor descriptor) {
+        List<IndexMapping.IndexedField> fields = new ArrayList<>();
         walk(descriptor, "", "", 0, fields, new HashSet<>(), false);
-        return new IndexingPlan(descriptor.getFullName(), fields);
+        return new IndexMapping(descriptor.getFullName(), fields);
     }
 
     private void walk(
@@ -63,7 +63,7 @@ public final class IndexingPlanFactory {
             String pathPrefix,
             String namePrefix,
             int depth,
-            List<IndexingPlan.IndexedField> out,
+            List<IndexMapping.IndexedField> out,
             Set<String> visiting,
             boolean underRepeated) {
         if (depth > maxDepth || !visiting.add(descriptor.getFullName())) {
@@ -95,7 +95,7 @@ public final class IndexingPlanFactory {
                         new HashSet<>(visiting), childUnderRepeated);
                 continue;
             }
-            out.add(new IndexingPlan.IndexedField(
+            out.add(new IndexMapping.IndexedField(
                     path, fieldName, hint, field.isRepeated() || underRepeated));
             if (hint.blockRole() == BlockRole.CHUNKS && depth < maxDepth) {
                 // The chunk scope keeps its container entry (block engines key on it) AND
@@ -109,26 +109,26 @@ public final class IndexingPlanFactory {
         visiting.remove(descriptor.getFullName());
     }
 
-    /** Hints that cannot possibly map surface here as planning errors, with path context. */
+    /** Hints that cannot possibly map surface here as mapping errors, with path context. */
     private static void validate(FieldDescriptor field, ResolvedFieldHint hint, String path) {
         if (hint.blockRole() == BlockRole.CHUNKS
                 && (!field.isRepeated() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE)) {
-            throw new IndexingPlanException(
+            throw new IndexMappingException(
                     "BLOCK_ROLE_CHUNKS requires a repeated message field", path);
         }
         if (hint.chunkRecipe() != null
                 && field.getJavaType() != FieldDescriptor.JavaType.STRING) {
-            throw new IndexingPlanException(
+            throw new IndexMappingException(
                     "chunk_recipe derives from text and requires a string field", path);
         }
         if (hint.type().isRange()) {
             if (field.isRepeated() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                throw new IndexingPlanException(
+                throw new IndexMappingException(
                         hint.type() + " requires a singular message field with (gte,lte) or (min,max) bounds",
                         path);
             }
             if (RangeBounds.resolve(field.getMessageType(), hint.type()).isEmpty()) {
-                throw new IndexingPlanException(
+                throw new IndexMappingException(
                         "Message " + field.getMessageType().getFullName()
                                 + " declares no (gte,lte) or (min,max) pair matching " + hint.type(),
                         path);
@@ -137,7 +137,7 @@ public final class IndexingPlanFactory {
         try {
             hint.missingSubstitute();
         } catch (NumberFormatException e) {
-            throw new IndexingPlanException(
+            throw new IndexMappingException(
                     "null_value '" + hint.nullValue() + "' does not parse as " + hint.type(), path);
         }
     }

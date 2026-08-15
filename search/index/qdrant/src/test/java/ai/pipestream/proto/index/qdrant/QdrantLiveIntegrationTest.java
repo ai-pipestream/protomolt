@@ -2,7 +2,7 @@ package ai.pipestream.proto.index.qdrant;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.repo.v1.ChunkEmbedding;
@@ -58,7 +58,7 @@ class QdrantLiveIntegrationTest {
     private static String collection;
     private static ManagedChannel channel;
     private static QdrantSink sink;
-    private static IndexingPlan plan;
+    private static IndexMapping mapping;
     private static List<PointStruct> points;
 
     @BeforeAll
@@ -88,19 +88,19 @@ class QdrantLiveIntegrationTest {
                                         .setText("oranges and groves")
                                         .addEmbeddings(embedding(0f, 1f, 0f, 0f)))))
                 .build();
-        IndexingPlan indexingPlan = new IndexingPlan("ai.pipestream.proto.repo.v1.Document", List.of(
-                new IndexingPlan.IndexedField("search_metadata.title", "title",
+        IndexMapping indexMapping = new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+                new IndexMapping.IndexedField("search_metadata.title", "title",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexingPlan.IndexedField("search_metadata.source_uri", "source_uri",
+                new IndexMapping.IndexedField("search_metadata.source_uri", "source_uri",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 // The declared vector hint drives collection creation: dims enforced on the
                 // embeddings, similarity rendered as the collection's distance.
-                new IndexingPlan.IndexedField(
+                new IndexMapping.IndexedField(
                         "search_metadata.semantic_results.chunks.embeddings.vector", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(4).build())));
-        plan = indexingPlan;
+        mapping = indexMapping;
         points = new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()))
-                .map(document, plan);
+                .map(document, mapping);
         assertThat(points).hasSize(2);
     }
 
@@ -128,7 +128,7 @@ class QdrantLiveIntegrationTest {
     @Test
     @Order(1)
     void ensureCollectionCreatesFromThePoints() {
-        assertThat(sink.ensureCollectionForPoints(collection, points, plan)).isTrue();
+        assertThat(sink.ensureCollectionForPoints(collection, points, mapping)).isTrue();
     }
 
     @Test

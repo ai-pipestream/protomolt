@@ -2,7 +2,7 @@ package ai.pipestream.proto.index.solr;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -63,7 +63,7 @@ class SolrLiveIntegrationTest {
 
     private static String core;
     private static Descriptor descriptor;
-    private static IndexingPlan plan;
+    private static IndexMapping mapping;
 
     @BeforeAll
     static void createCore() throws Exception {
@@ -72,22 +72,22 @@ class SolrLiveIntegrationTest {
         core = "protomolt";
 
         descriptor = bookDescriptor();
-        plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("title", "title",
+        mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .analyzer("english")
                                 .subFields(List.of(new ResolvedFieldHint.SubField(
                                         IndexFieldKind.KEYWORD, "raw", "")))
                                 .build()),
-                new IndexingPlan.IndexedField("genre", "genre",
+                new IndexMapping.IndexedField("genre", "genre",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .sortable(true).facetable(true)
                                 .build()),
-                new IndexingPlan.IndexedField("rank", "rank",
+                new IndexMapping.IndexedField("rank", "rank",
                         ResolvedFieldHint.builder(IndexFieldKind.INT64)
                                 .sortable(true)
                                 .build()),
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(4)
                                 .build())));
@@ -132,7 +132,7 @@ class SolrLiveIntegrationTest {
     @Test
     @Order(1)
     void generatedSchemaIsAcceptedByTheSchemaApi() throws Exception {
-        SolrSchemaGenerator.SolrSchema schema = new SolrSchemaGenerator().generate(plan);
+        SolrSchemaGenerator.SolrSchema schema = new SolrSchemaGenerator().generate(mapping);
         // The vector hint requires a custom DenseVectorField type.
         assertThat(schema.fieldTypes()).isNotEmpty();
         for (Map<String, Object> type : schema.fieldTypes()) {
@@ -172,7 +172,7 @@ class SolrLiveIntegrationTest {
                 book("Running with Scissors", "memoir", 3, 1f, 0f, 0f, 0f),
                 book("The Silent Library", "mystery", 1, 0f, 1f, 0f, 0f),
                 book("Runs in the Family", "mystery", 2, 0.9f, 0.1f, 0f, 0f))) {
-            Map<String, Object> doc = new java.util.LinkedHashMap<>(mapper.map(message, plan));
+            Map<String, Object> doc = new java.util.LinkedHashMap<>(mapper.map(message, mapping));
             doc.put("id", "doc-" + id++);
             docs.add(doc);
         }

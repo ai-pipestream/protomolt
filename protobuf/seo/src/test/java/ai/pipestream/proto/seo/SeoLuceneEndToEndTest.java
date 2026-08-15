@@ -4,7 +4,7 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.lucene.LuceneFieldSpecs;
 import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.seo.v1.Article;
 import ai.pipestream.proto.seo.v1.DublinCore;
@@ -41,8 +41,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The search-metadata standard end to end on the Lucene engine: validated
- * {@link SearchStandard} messages mapped through {@link ProtoLuceneMapper} with the plan
- * {@link SeoIndexing#planFor} derives from the annotations land in a real index and
+ * {@link SearchStandard} messages mapped through {@link ProtoLuceneMapper} with the mapping
+ * {@link SeoIndexing#mappingFor} derives from the annotations land in a real index and
  * behave as the hints promise — analyzed full-text titles, exact keyword SKU terms, and
  * numeric date points answering range queries. Per-field analyzers are wired from
  * {@link LuceneFieldSpecs}, the way a host application is expected to.
@@ -55,11 +55,11 @@ class SeoLuceneEndToEndTest {
 
     @BeforeAll
     static void indexCorpus() throws Exception {
-        IndexingPlan plan = SeoIndexing.planFor(SearchStandard.getDescriptor());
+        IndexMapping mapping = SeoIndexing.mappingFor(SearchStandard.getDescriptor());
 
         // Analyzer names travel on the hints; the host maps them onto implementations.
         Map<String, Analyzer> perField = new HashMap<>();
-        for (LuceneFieldSpecs.FieldSpec spec : LuceneFieldSpecs.from(plan).fields()) {
+        for (LuceneFieldSpecs.FieldSpec spec : LuceneFieldSpecs.from(mapping).fields()) {
             if (spec.kind() == IndexFieldKind.KEYWORD) {
                 perField.put(spec.name(), new KeywordAnalyzer());
             }
@@ -75,7 +75,7 @@ class SeoLuceneEndToEndTest {
                     : new SearchStandard[] {articleDoc(), productDoc(), olderArticleDoc()}) {
                 // The standard's own validation gates the write path, as intended.
                 validator.validate(doc).throwIfInvalid();
-                writer.addDocument(mapper.map(doc, plan));
+                writer.addDocument(mapper.map(doc, mapping));
             }
         }
         reader = DirectoryReader.open(directory);

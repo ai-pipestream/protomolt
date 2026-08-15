@@ -1,14 +1,14 @@
 # Text embeddings
 
 The embeddings modules fill the VECTOR fields of a search document from its
-TEXT fields, using the same [indexing plan](indexing.md) the engine plugins
+TEXT fields, using the same [index mapping](indexing.md) the engine plugins
 interpret. A *provider* turns text into fixed-length float vectors; the
-*plan embedder* applies a provider to the document maps an engine mapper
-produced, locating and validating both fields through the plan.
+*mapping embedder* applies a provider to the document maps an engine mapper
+produced, locating and validating both fields through the mapping.
 
 | Artifact | Role |
 |---|---|
-| `protomolt-embeddings` | The `EmbeddingProvider` SPI and the plan-driven `PlanEmbedder` |
+| `protomolt-embeddings` | The `EmbeddingProvider` SPI and the mapping-driven `MappingEmbedder` |
 | `protomolt-embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
 | `protomolt-embeddings-tei` | A remote provider for Hugging Face Text Embeddings Inference over gRPC |
 | `protomolt-embeddings-ovms` | A remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
@@ -50,15 +50,15 @@ there. Registration is the standard
 
 ## Embedding a mapped document
 
-`PlanEmbedder` joins a provider to an `IndexingPlan`. Its input is the
+`MappingEmbedder` joins a provider to an `IndexMapping`. Its input is the
 `Map` form a search-engine mapper produced (OpenSearch or Solr document
-maps); it reads the plan's TEXT field from the document, embeds it, and
-writes the vector into the plan's VECTOR field as a `List` of boxed
+maps); it reads the mapping's TEXT field from the document, embeds it, and
+writes the vector into the mapping's VECTOR field as a `List` of boxed
 `Float`s: the same shape engine mappers emit for a repeated float field.
 The document is mutated in place and returned.
 
-The no-argument `embed(document)` requires the plan to have exactly one
-TEXT and one VECTOR field; plans with several take
+The no-argument `embed(document)` requires the mapping to have exactly one
+TEXT and one VECTOR field; mappings with several take
 `embed(document, textFieldName, vectorFieldName)`. Field resolution and
 the dimension check: the provider's `dimension()` against the hint's
 `vector_dims`, when the hint sets one: run before the document is
@@ -67,7 +67,7 @@ documents that carry text. A text field that is absent or empty leaves the
 document unchanged: there is nothing to embed, and a placeholder vector
 would poison similarity scores.
 
-The flow end to end: hints declare the two fields, the plan resolves
+The flow end to end: hints declare the two fields, the mapping resolves
 them, the mapper produces the document, the embedder fills the vector, and
 the sink lands it in OpenSearch:
 
@@ -84,21 +84,21 @@ message Sentence {
 ```
 
 ```java
-var plan = IndexingPlanFactory.defaults(new CatalogIndexingHintSource())
+var mapping = IndexMappingFactory.defaults(new CatalogIndexingHintSource())
         .create(message.getDescriptorForType());
 var mapper = new OpenSearchDocumentMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
-var embedder = new PlanEmbedder(EmbeddingProviders.byId("model2vec"), plan);
+var embedder = new MappingEmbedder(EmbeddingProviders.byId("model2vec"), mapping);
 
 try (var sink = new OpenSearchSink("http://localhost:9200")) {
-    sink.ensureIndex("sentences", plan); // knn_vector mappings, index.knn enabled
+    sink.ensureIndex("sentences", mapping); // knn_vector mappings, index.knn enabled
     sink.bulkWrite("sentences",
-            List.of(embedder.embed(mapper.map(message, plan))), true);
+            List.of(embedder.embed(mapper.map(message, mapping))), true);
 }
 ```
 
 As with the other descriptor-option standards, parse descriptor sets with
 the hint extensions registered (see [Search indexing](indexing.md)), or
-the options arrive as unknown fields and the plan sees no hints.
+the options arrive as unknown fields and the mapping sees no hints.
 
 The live suite (`SemanticSearchLiveIntegrationTest` in
 `:protomolt-embeddings-model2vec`) proves exactly this flow against a real

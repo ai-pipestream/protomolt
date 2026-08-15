@@ -116,8 +116,8 @@ GraphConnections connections = new GraphConnections(new GraphClient(token::acces
 connections.create("protomoltorders", "Orders", "Orders from the order service");
 
 // The schema comes from indexing hints - declared once in the proto.
-IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(orderDescriptor);
-GraphSchemas.Rendered rendered = GraphSchemas.connectionSchema(orderDescriptor, plan);
+IndexMapping mapping = IndexMappingFactory.inferringOnly().create(orderDescriptor);
+GraphSchemas.Rendered rendered = GraphSchemas.connectionSchema(orderDescriptor, mapping);
 connections.registerSchema("protomoltorders", rendered.schema(), Duration.ofMinutes(10));
 
 connections.putItem("protomoltorders", order.getId(), properties,

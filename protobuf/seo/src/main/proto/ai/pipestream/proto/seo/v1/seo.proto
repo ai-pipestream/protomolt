@@ -23,7 +23,7 @@ option java_package = "ai.pipestream.proto.seo.v1";
 // the parsers' extracted fields, and it travels on Document.structured_data
 // as a google.protobuf.Any. The validate/meta/index-hint options on these
 // descriptors make the one schema drive write-time validation, docs, and the
-// search-index plan.
+// search-index mapping.
 message SearchStandard {
   option (ai.pipestream.proto.meta.v1.message) = {
     description: "The platform search-metadata standard: Dublin Core plus one Google structured-data entity; populated by the parsing coordinator's fold and carried on Document.structured_data as an Any."

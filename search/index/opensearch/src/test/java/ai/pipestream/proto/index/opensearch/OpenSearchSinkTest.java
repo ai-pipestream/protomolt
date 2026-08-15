@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,18 +28,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * {@link OpenSearchSink} against a fake engine: the ensure-index protocol (HEAD, then PUT with
- * the generated mappings and the knn setting for vector plans, the lost-create race), the bulk
+ * the generated properties and the knn setting for vector mappings, the lost-create race), the bulk
  * NDJSON wire shape with and without caller ids, and the failure surfaces (non-2xx, per-item
  * errors).
  */
 class OpenSearchSinkTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final IndexingPlan TEXT_PLAN = new IndexingPlan("ai.pipestream.test.Doc",
-            List.of(new IndexingPlan.IndexedField("title", "title",
+    private static final IndexMapping TEXT_MAPPING = new IndexMapping("ai.pipestream.test.Doc",
+            List.of(new IndexMapping.IndexedField("title", "title",
                     ResolvedFieldHint.of(IndexFieldKind.TEXT))));
-    private static final IndexingPlan VECTOR_PLAN = new IndexingPlan("ai.pipestream.test.Doc",
-            List.of(new IndexingPlan.IndexedField("embedding", "embedding",
+    private static final IndexMapping VECTOR_MAPPING = new IndexMapping("ai.pipestream.test.Doc",
+            List.of(new IndexMapping.IndexedField("embedding", "embedding",
                     ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(4).build())));
 
     private HttpServer server;
@@ -65,7 +65,7 @@ class OpenSearchSinkTest {
         fake.stub("HEAD", "/books", 200, "");
         OpenSearchSink sink = new OpenSearchSink(baseUrl);
 
-        assertThat(sink.ensureIndex("books", TEXT_PLAN)).isFalse();
+        assertThat(sink.ensureIndex("books", TEXT_MAPPING)).isFalse();
 
         assertThat(fake.requests).singleElement()
                 .satisfies(request -> assertThat(request.method()).isEqualTo("HEAD"));
@@ -77,7 +77,7 @@ class OpenSearchSinkTest {
         fake.stub("PUT", "/books", 200, "{\"acknowledged\":true}");
         OpenSearchSink sink = new OpenSearchSink(baseUrl);
 
-        assertThat(sink.ensureIndex("books", TEXT_PLAN)).isTrue();
+        assertThat(sink.ensureIndex("books", TEXT_MAPPING)).isTrue();
 
         FakeEngineHandler.RecordedRequest put = fake.requests.get(1);
         assertThat(put.method()).isEqualTo("PUT");
@@ -86,17 +86,17 @@ class OpenSearchSinkTest {
         JsonNode body = JSON.readTree(put.body());
         assertThat(body.path("mappings").path("properties").path("title").path("type").asText())
                 .isEqualTo("text");
-        // no VECTOR field in the plan: the knn setting is not enabled
+        // no VECTOR field in the mapping: the knn setting is not enabled
         assertThat(body.has("settings")).isFalse();
     }
 
     @Test
-    void ensureIndexEnablesKnnWhenThePlanHasAVectorField() throws IOException {
+    void ensureIndexEnablesKnnWhenTheMappingHasAVectorField() throws IOException {
         fake.stub("HEAD", "/books", 404, "");
         fake.stub("PUT", "/books", 200, "{\"acknowledged\":true}");
         OpenSearchSink sink = new OpenSearchSink(baseUrl);
 
-        assertThat(sink.ensureIndex("books", VECTOR_PLAN)).isTrue();
+        assertThat(sink.ensureIndex("books", VECTOR_MAPPING)).isTrue();
 
         JsonNode body = JSON.readTree(fake.requests.get(1).body());
         // knn_vector mappings fail the index create unless the index enables knn
@@ -110,7 +110,7 @@ class OpenSearchSinkTest {
         fake.stub("HEAD", "/books", 500, "");
         OpenSearchSink sink = new OpenSearchSink(baseUrl);
 
-        assertThatThrownBy(() -> sink.ensureIndex("books", TEXT_PLAN))
+        assertThatThrownBy(() -> sink.ensureIndex("books", TEXT_MAPPING))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("books")
                 .hasMessageContaining("500");
@@ -124,7 +124,7 @@ class OpenSearchSinkTest {
         OpenSearchSink sink = new OpenSearchSink(baseUrl);
 
         // another writer created the index between the HEAD and the PUT
-        assertThat(sink.ensureIndex("books", TEXT_PLAN)).isFalse();
+        assertThat(sink.ensureIndex("books", TEXT_MAPPING)).isFalse();
     }
 
     @Test
@@ -134,7 +134,7 @@ class OpenSearchSinkTest {
                 "{\"error\":{\"type\":\"invalid_index_name_exception\",\"reason\":\"bad name\"}}");
         OpenSearchSink sink = new OpenSearchSink(baseUrl);
 
-        assertThatThrownBy(() -> sink.ensureIndex("books", TEXT_PLAN))
+        assertThatThrownBy(() -> sink.ensureIndex("books", TEXT_MAPPING))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("books")
                 .hasMessageContaining("400")
@@ -231,7 +231,7 @@ class OpenSearchSinkTest {
     void nullArgumentsAreRejected() {
         OpenSearchSink sink = new OpenSearchSink(baseUrl);
 
-        assertThatNullPointerException().isThrownBy(() -> sink.ensureIndex(null, TEXT_PLAN));
+        assertThatNullPointerException().isThrownBy(() -> sink.ensureIndex(null, TEXT_MAPPING));
         assertThatNullPointerException().isThrownBy(() -> sink.ensureIndex("books", null));
         assertThatNullPointerException()
                 .isThrownBy(() -> sink.bulkWrite(null, Map.of("1", Map.of()), false));
@@ -248,7 +248,7 @@ class OpenSearchSinkTest {
         fake.stub("HEAD", "/books", 200, "");
         OpenSearchSink sink = new OpenSearchSink(baseUrl + "/");
 
-        sink.ensureIndex("books", TEXT_PLAN);
+        sink.ensureIndex("books", TEXT_MAPPING);
 
         assertThat(fake.requests.get(0).path()).isEqualTo("/books");
     }
@@ -263,7 +263,7 @@ class OpenSearchSinkTest {
 
         // the caller owns the client: it still answers after the sink is closed
         OpenSearchSink second = new OpenSearchSink(baseUrl, client);
-        assertThat(second.ensureIndex("books", TEXT_PLAN)).isFalse();
+        assertThat(second.ensureIndex("books", TEXT_MAPPING)).isFalse();
     }
 
     /**

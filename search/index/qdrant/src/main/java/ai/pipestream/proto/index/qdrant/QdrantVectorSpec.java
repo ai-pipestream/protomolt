@@ -4,7 +4,7 @@ import qdrant.Collections.Distance;
 
 /**
  * One named vector's collection declaration: its name (a sanitized embedding-model id), the
- * vector size, and the distance function. Sizes and distances come from the plan's VECTOR
+ * vector size, and the distance function. Sizes and distances come from the mapping's VECTOR
  * indexing hints where declared, otherwise from the point data (distance defaulting to
  * {@link Distance#Cosine}).
  */

@@ -119,7 +119,7 @@ message HnswParams {
 
 // Role a field plays in a parent/child (block-join) document layout. Flat
 // engines ignore these; block engines (distributed-lucene) require CHUNKS to
-// locate the child scope. The plan factory expands the children of a CHUNKS
+// locate the child scope. The mapping factory expands the children of a CHUNKS
 // field into dotted paths while keeping the container entry itself, so block
 // engines see both the scope and its fields.
 enum BlockRole {
@@ -263,6 +263,6 @@ extend google.protobuf.FieldOptions {
 }
 
 extend google.protobuf.MessageOptions {
-  // When true, walk nested fields into the indexing plan (default true for top-level).
+  // When true, walk nested fields into the index mapping (default true for top-level).
   bool index_message = 59100472;
 }

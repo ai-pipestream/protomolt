@@ -2,19 +2,19 @@
 
 The index modules project protobuf messages into search engines. The design
 separates three concerns: *hints* say how a field should be indexed, a
-*plan* resolves hints for a concrete message type, and *engine plugins*
-interpret the plan for a specific backend. NDJSON output is engine-agnostic
+*mapping* resolves hints for a concrete message type, and *engine plugins*
+interpret the mapping for a specific backend. NDJSON output is engine-agnostic
 and does not interpret hints at all.
 
 | Artifact | Role |
 |---|---|
-| `protomolt-index-spi` | Plan model, hint sources, engine SPI, the hints `.proto` |
+| `protomolt-index-spi` | Mapping model, hint sources, engine SPI, the hints `.proto` |
 | `protomolt-index-ndjson` | Message → NDJSON lines (including bulk-index pairs) |
 | `protomolt-index-lucene` | Lucene `Document` mapping |
 | `protomolt-index-opensearch` | OpenSearch document-map mapping |
 | `protomolt-index-solr` | Solr document-map mapping |
 | `protomolt-index-qdrant` | Qdrant point mapping (repo Document semantic chunks → named vectors), a gRPC sink, and collection-schema generation; validates declared rules on write |
-| `protomolt-protobuf-indexing` | Facade chaining optional validation → plan → NDJSON; registers the declared-rules gate for unpacked Any payloads |
+| `protomolt-protobuf-indexing` | Facade chaining optional validation → mapping → NDJSON; registers the declared-rules gate for unpacked Any payloads |
 | `protomolt-connect-opensearch` | Kafka Connect sink over this write path ([guide](../sink/kafka-connect-opensearch.md)) |
 
 ## Indexing hints
@@ -50,10 +50,10 @@ message Doc {
 | Core | `type`, `name`, `stored`, `indexed` | `TEXT` vs `KEYWORD` distinguishes analyzed from exact-match strings |
 | Vectors | `vector_dims`, `vector_similarity` (cosine, dot product, L2, max inner product), `vector_element_type` (float32, byte), `hnsw { m, ef_construction }` | Lucene emits `Knn(Float\|Byte)VectorField` with the similarity function; OpenSearch/Solr carry the parameters into schema generation; Qdrant renders named vectors with size and distance (`MAX_INNER_PRODUCT` maps to `Dot`, as OpenSearch maps it to `innerproduct`) |
 | Multi-fields | `sub_fields` | The classic text-plus-keyword pattern; named `field.sub` (OpenSearch) / `field_sub` (Solr) |
-| Text analysis | `analyzer`, `search_analyzer` | Engine-interpreted names, carried into the plan and schema generation |
+| Text analysis | `analyzer`, `search_analyzer` | Engine-interpreted names, carried into the mapping and schema generation |
 | Missing values | `null_value`, `skip_if_missing` | `null_value` substitutes a typed value when the field is unset |
 | Sorting/faceting | `sortable`, `facetable` | Doc values in Lucene/Solr terms, `doc_values` in OpenSearch |
-| Ranges | `INDEX_FIELD_TYPE_{INT,LONG,FLOAT,DOUBLE,DATE}_RANGE` | Applies to a message field with `(gte, lte)` or `(min, max)` scalar pairs; misuse is a planning error carrying the field path |
+| Ranges | `INDEX_FIELD_TYPE_{INT,LONG,FLOAT,DOUBLE,DATE}_RANGE` | Applies to a message field with `(gte, lte)` or `(min, max)` scalar pairs; misuse is a mapping error carrying the field path |
 | Maps | `map_mode` | `FLATTEN` (dynamic keys), `ENTRIES` (key/value entries), `JSON` (one serialized field), `SKIP` |
 | Dates | `date_format`, `date_resolution` (millis, seconds) | Controls `Timestamp` emission and schema-level formats |
 | Escape hatch | `engine_params` | `map<string,string>` with engine-scoped keys, e.g. `opensearch.index_options`; carried verbatim into schema generation |
@@ -64,7 +64,7 @@ you cannot annotate.
 
 ### Engine schema generation
 
-Each engine plugin can generate its schema artifact from an `IndexingPlan`,
+Each engine plugin can generate its schema artifact from an `IndexMapping`,
 so index setup and document mapping come from the same declaration:
 
 - `OpenSearchMappingGenerator`: mappings JSON, including `knn_vector`
@@ -92,10 +92,10 @@ functional interface resolving a hint per field, and sources compose with
 - `InferringIndexingHintSource`: infers a sensible field kind from the
   protobuf type when nothing else matches
 
-## Plans and engines
+## Mappings and engines
 
-`IndexingPlanFactory` walks a descriptor with the configured hint sources
-and produces an `IndexingPlan`: the indexable fields, their resolved kinds,
+`IndexMappingFactory` walks a descriptor with the configured hint sources
+and produces an `IndexMapping`: the indexable fields, their resolved kinds,
 and their paths (nested messages expand to dotted paths unless marked as
 object/nested). Engine plugins implement `SearchEngineIndexerProvider` and
 are discovered via `ServiceLoader`:
@@ -105,10 +105,10 @@ ExtensionRegistry extensions = ExtensionRegistry.newInstance();
 ProtoOptionsIndexingHintSource.registerExtensions(extensions);
 // parse the FileDescriptorSet / build descriptors with that registry
 
-var plan = IndexingPlanFactory.defaults(new CatalogIndexingHintSource()).create(desc);
+var mapping = IndexMappingFactory.defaults(new CatalogIndexingHintSource()).create(desc);
 var engines = SearchEngineIndexers.createAll(new IndexerContext(fieldMapper));
-engines.get("lucene").map(message, plan);
-engines.get("opensearch").map(message, plan);
+engines.get("lucene").map(message, mapping);
+engines.get("opensearch").map(message, mapping);
 
 new ProtoNdjsonWriter().writeBulkIndex(bulk, "docs", id, message);
 ```
@@ -118,10 +118,10 @@ before parsing descriptor sets, or the options arrive as unknown fields.
 
 ### Paths under repeated ancestors
 
-A plan path may traverse a repeated message field — a `CHUNKS` block scope
+A mapping path may traverse a repeated message field — a `CHUNKS` block scope
 expands its children (`chunks.text`), and an explicit hint can expand any
-repeated message. On the write path every engine reads plan entries through
-`PlanValues`, which fans out over repeated intermediates depth-first and
+repeated message. On the write path every engine reads mapping entries through
+`MappingValues`, which fans out over repeated intermediates depth-first and
 emits the flattened leaf values as one multi-valued field, in document
 order. An empty repeated ancestor (or an element whose singular parent is
 unset) reads as missing, so `null_value` substitution applies as usual.
@@ -136,7 +136,7 @@ block scope on a block engine, or Qdrant's one-point-per-chunk mapping.
 
 ### `google.protobuf.Any`
 
-Plan time cannot know a single packed type (for example
+Mapping time cannot know a single packed type (for example
 `Document.structured_data`), so inference treats `google.protobuf.Any` as a
 well-known kind (`ANY`), not a silent `OBJECT`. A hint that resolves the
 field to any other kind — `SKIP` included — has said otherwise and wins;
@@ -145,7 +145,7 @@ not a blob.
 
 At write time the indexer unpacks a set Any through the `DescriptorRegistry`
 on `IndexerContext` (the same registry NDJSON already accepts for proto3 JSON
-rendering). Inner fields are planned with the parent hint chain and emitted
+rendering). Inner fields are mapped with the parent hint chain and emitted
 under `any_field.inner_path` (proto field names; engine names prefixed with
 the Any field's engine name). Payloads that pack further Anys expand
 recursively, bounded at 8 levels. An empty or unset Any contributes no inner
@@ -154,12 +154,12 @@ requires, value bytes that do not parse as the registered type, or value
 bytes without a type URL is an error that names the field path (and type
 URL) — never a silent skip, and each failure names its actual cause. Repeated Any fields, and Any fields under a
 repeated ancestor (a `CHUNKS` block), have no single packed type per path
-and keep their inert plan entry instead. Schema generation does not invent
+and keep their inert mapping entry instead. Schema generation does not invent
 inner mappings for Any; those appear only when a concrete packed type is
 seen on the write path.
 
 Unpacked payloads pass through every `AnyPayloadValidator` discovered via
-`ServiceLoader` before their fields are planned. `protomolt-protobuf-indexing`
+`ServiceLoader` before their fields are mapped. `protomolt-protobuf-indexing`
 registers the declared-rules validation standard, so with that module on the
 classpath a payload carrying `ai.pipestream.proto.validate.v1` (or, with the
 optional reader, `buf.validate`) rules is validated on unpack and a violation
@@ -180,7 +180,7 @@ a `DescriptorRegistry` walks each outgoing message with `AnyPayloadGate`
 before rendering: every set Any — singular, repeated elements, map values,
 payloads packing further Anys (same 8-level bound) — is unpacked against
 that registry and offered to the same validators. Because the walk follows
-message values rather than plan paths, repeated Anys and Anys under repeated
+message values rather than mapping paths, repeated Anys and Anys under repeated
 ancestors — inert on the expansion path — are validated here element by
 element, with paths like `attachments[1].title` or `extras[cover].title`.
 A registry-less writer cannot render packed Anys at all, so no gate runs
@@ -189,12 +189,12 @@ there.
 ## The validate-then-index facade
 
 `ProtobufIndexer` in `protomolt-protobuf-indexing` chains the pieces for the
-common case: optionally validate, then plan, then emit NDJSON:
+common case: optionally validate, then map, then emit NDJSON:
 
 ```java
 var indexer = ProtobufIndexer.defaults(
     ProtoValidator.forMessageType(doc.getDescriptorForType()));
-indexer.plan(doc.getDescriptorForType());
+indexer.mapping(doc.getDescriptorForType());
 indexer.toNdjsonLine(doc);   // validates first when a validator is configured
 ```
 

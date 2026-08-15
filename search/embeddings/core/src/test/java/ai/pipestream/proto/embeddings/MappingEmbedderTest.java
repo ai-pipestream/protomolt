@@ -1,7 +1,7 @@
 package ai.pipestream.proto.embeddings;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import org.junit.jupiter.api.Test;
 
@@ -12,29 +12,29 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class PlanEmbedderTest {
+class MappingEmbedderTest {
 
     private final EmbeddingProvider provider = new FixedTableEmbeddingProvider();
 
-    private static IndexingPlan.IndexedField text(String name) {
-        return new IndexingPlan.IndexedField(name, name, ResolvedFieldHint.of(IndexFieldKind.TEXT));
+    private static IndexMapping.IndexedField text(String name) {
+        return new IndexMapping.IndexedField(name, name, ResolvedFieldHint.of(IndexFieldKind.TEXT));
     }
 
-    private static IndexingPlan.IndexedField vector(String name, int dims) {
-        return new IndexingPlan.IndexedField(name, name,
+    private static IndexMapping.IndexedField vector(String name, int dims) {
+        return new IndexMapping.IndexedField(name, name,
                 ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(dims).build(), true);
     }
 
     /** One TEXT field, one VECTOR field: the shape the no-args selection requires. */
-    private static IndexingPlan singleTextPlan(int dims) {
-        return new IndexingPlan("library.Book", List.of(
+    private static IndexMapping singleTextMapping(int dims) {
+        return new IndexMapping("library.Book", List.of(
                 text("title"),
-                new IndexingPlan.IndexedField("genre", "genre", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
+                new IndexMapping.IndexedField("genre", "genre", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 vector("embedding", dims)));
     }
 
-    private static IndexingPlan twoTextPlan() {
-        return new IndexingPlan("library.Book", List.of(
+    private static IndexMapping twoTextMapping() {
+        return new IndexMapping("library.Book", List.of(
                 text("title"),
                 text("body"),
                 vector("embedding", 3)));
@@ -44,24 +44,24 @@ class PlanEmbedderTest {
     void autoSelectionEmbedsTheOnlyTextFieldIntoTheOnlyVectorField() {
         Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world", "genre", "memoir"));
 
-        Map<String, Object> embedded = new PlanEmbedder(provider, singleTextPlan(3)).embed(document);
+        Map<String, Object> embedded = new MappingEmbedder(provider, singleTextMapping(3)).embed(document);
 
         assertThat(embedded).isSameAs(document);
         assertThat(embedded.get("embedding")).isEqualTo(List.of(0.1f, 0.2f, 0.3f));
     }
 
     @Test
-    void explicitFieldNamesPickTheSourceFromAPlanWithSeveralTextFields() {
+    void explicitFieldNamesPickTheSourceFromAMappingWithSeveralTextFields() {
         Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world", "body", "a memoir"));
 
-        new PlanEmbedder(provider, twoTextPlan()).embed(document, "body", "embedding");
+        new MappingEmbedder(provider, twoTextMapping()).embed(document, "body", "embedding");
 
         assertThat(document.get("embedding")).isEqualTo(List.of(0.4f, 0.5f, 0.6f));
     }
 
     @Test
     void dimensionMismatchAgainstTheVectorDimsHintFails() {
-        PlanEmbedder embedder = new PlanEmbedder(provider, singleTextPlan(4));
+        MappingEmbedder embedder = new MappingEmbedder(provider, singleTextMapping(4));
         Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world"));
 
         assertThatThrownBy(() -> embedder.embed(document))
@@ -71,13 +71,13 @@ class PlanEmbedderTest {
     }
 
     @Test
-    void autoSelectionRejectsAPlanWithMoreThanOneTextField() {
-        PlanEmbedder embedder = new PlanEmbedder(provider, twoTextPlan());
+    void autoSelectionRejectsAMappingWithMoreThanOneTextField() {
+        MappingEmbedder embedder = new MappingEmbedder(provider, twoTextMapping());
         Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world"));
 
         assertThatThrownBy(() -> embedder.embed(document))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Plan for library.Book has 2 TEXT fields (title, body); name the"
+                .hasMessage("Mapping for library.Book has 2 TEXT fields (title, body); name the"
                         + " fields explicitly with embed(document, textFieldName, vectorFieldName)");
     }
 
@@ -85,7 +85,7 @@ class PlanEmbedderTest {
     void absentTextFieldLeavesTheDocumentUnchanged() {
         Map<String, Object> document = new LinkedHashMap<>(Map.of("genre", "memoir"));
 
-        Map<String, Object> embedded = new PlanEmbedder(provider, singleTextPlan(3)).embed(document);
+        Map<String, Object> embedded = new MappingEmbedder(provider, singleTextMapping(3)).embed(document);
 
         assertThat(embedded).isSameAs(document);
         assertThat(embedded).containsOnlyKeys("genre");
@@ -95,7 +95,7 @@ class PlanEmbedderTest {
     void emptyTextFieldLeavesTheDocumentUnchanged() {
         Map<String, Object> document = new LinkedHashMap<>(Map.of("title", ""));
 
-        assertThat(new PlanEmbedder(provider, singleTextPlan(3)).embed(document))
+        assertThat(new MappingEmbedder(provider, singleTextMapping(3)).embed(document))
                 .containsOnlyKeys("title");
     }
 }

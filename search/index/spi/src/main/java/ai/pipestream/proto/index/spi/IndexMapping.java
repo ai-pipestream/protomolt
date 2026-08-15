@@ -5,11 +5,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Engine-agnostic indexing plan derived from a message descriptor + hints.
+ * Engine-agnostic index mapping derived from a message descriptor + hints.
  * Lucene / OpenSearch / Solr plugins interpret {@link IndexFieldKind}; NDJSON ignores this.
  */
-public record IndexingPlan(String messageFullName, List<IndexedField> fields) {
-    public IndexingPlan {
+public record IndexMapping(String messageFullName, List<IndexedField> fields) {
+    public IndexMapping {
         Objects.requireNonNull(messageFullName, "messageFullName");
         fields = List.copyOf(Objects.requireNonNull(fields, "fields"));
     }

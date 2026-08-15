@@ -10,7 +10,7 @@
  * <p>{@link NdjsonOptions} controls field naming and default-value inclusion. Whitespace omission
  * is required rather than optional, because pretty-printed JSON is not valid line-oriented output.
  *
- * <p>This package is not a search-engine plugin: it does not read an indexing plan and does not
+ * <p>This package is not a search-engine plugin: it does not read an index mapping and does not
  * interpret indexing hints. The Lucene, OpenSearch, and Solr modules cover that path through the
  * {@code protomolt-index-spi} service interfaces.
  *

@@ -4,7 +4,7 @@ import com.google.protobuf.Message;
 
 /**
  * Gate offered every message unpacked from a {@code google.protobuf.Any} during write-time
- * plan expansion, before the payload's fields are planned and indexed.
+ * mapping expansion, before the payload's fields are mapped and indexed.
  *
  * <p>{@link AnyIndexing} discovers implementations via {@link java.util.ServiceLoader} and
  * runs them in discovery order. An implementation signals a violation by throwing its

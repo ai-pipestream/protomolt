@@ -15,7 +15,7 @@ option java_package = "ai.pipestream.proto.seo.v1";
 // elements/1.1/) plus a curated handful of dcterms refinements, strongly
 // typed. Field descriptions quote the DCMI element definitions; validation
 // caps and indexing hints ride the same descriptors, so the one schema drives
-// docs, write-time validation, and index planning.
+// docs, write-time validation, and index mapping.
 // ============================================================================
 
 // A curated set of widely used DCMI Metadata Terms (dcterms) refinements of

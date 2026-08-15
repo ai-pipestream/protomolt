@@ -6,8 +6,8 @@ import ai.pipestream.proto.index.ndjson.ProtoNdjsonWriter;
 import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.indexing.testdata.AnyEnvelope;
 import ai.pipestream.proto.indexing.testdata.NestedAnyPayload;
@@ -118,7 +118,7 @@ class ValidatePayloadsOptOutFacadeTest {
                 .put(AnyEnvelope.getDescriptor().getFullName(), "unchecked",
                         ResolvedFieldHint.of(IndexFieldKind.ANY));
         ProtobufIndexer indexer = new ProtobufIndexer(
-                IndexingPlanFactory.defaults(catalog),
+                IndexMappingFactory.defaults(catalog),
                 new ProtoNdjsonWriter(NdjsonOptions.defaults(), registry));
         AnyEnvelope envelope = AnyEnvelope.newBuilder()
                 .setDocId("doc-1")
@@ -137,7 +137,7 @@ class ValidatePayloadsOptOutFacadeTest {
                 .put(AnyEnvelope.getDescriptor().getFullName(), "payload",
                         ResolvedFieldHint.builder(IndexFieldKind.ANY).validatePayloads(false).build());
         ProtobufIndexer indexer = new ProtobufIndexer(
-                IndexingPlanFactory.defaults(catalog),
+                IndexMappingFactory.defaults(catalog),
                 new ProtoNdjsonWriter(NdjsonOptions.defaults(), registry));
         AnyEnvelope envelope = AnyEnvelope.newBuilder()
                 .setDocId("doc-1")
@@ -167,28 +167,28 @@ class ValidatePayloadsOptOutFacadeTest {
     }
 
     @Test
-    void thePlanKeepsAnAnyEntryForEveryOptedOutField() {
+    void theMappingKeepsAnAnyEntryForEveryOptedOutField() {
         ProtobufIndexer indexer = indexer();
 
-        IndexingPlan plan = indexer.plan(AnyEnvelope.getDescriptor());
+        IndexMapping mapping = indexer.mapping(AnyEnvelope.getDescriptor());
 
-        assertThat(plan.find("unchecked")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("unchecked")).get()
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.ANY);
-        assertThat(plan.find("unchecked")).get()
+        assertThat(mapping.find("unchecked")).get()
                 .extracting(field -> field.hint().validatePayloads())
                 .isEqualTo(false);
-        assertThat(plan.find("payload")).get()
+        assertThat(mapping.find("payload")).get()
                 .extracting(field -> field.hint().validatePayloads())
                 .isEqualTo(true);
-        assertThat(indexer.plan(OptedOutEnvelope.getDescriptor()).find("attachments")).get()
+        assertThat(indexer.mapping(OptedOutEnvelope.getDescriptor()).find("attachments")).get()
                 .extracting(field -> field.hint().validatePayloads())
                 .isEqualTo(false);
     }
 
     @Test
     void theExpansionPathSeesTheOptOutOnAPayloadsOwnField() throws Exception {
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(new CatalogIndexingHintSource());
+        IndexMappingFactory factory = IndexMappingFactory.defaults(new CatalogIndexingHintSource());
         AnyIndexing anyIndexing = new AnyIndexing(registry(), factory);
         AnyEnvelope envelope = AnyEnvelope.newBuilder()
                 .setDocId("doc-1")
@@ -198,7 +198,7 @@ class ValidatePayloadsOptOutFacadeTest {
                         .build()))
                 .build();
 
-        IndexingPlan expanded =
+        IndexMapping expanded =
                 anyIndexing.expand(envelope, factory.create(AnyEnvelope.getDescriptor()));
 
         assertThat(expanded.find("payload.unchecked_inner.title")).isPresent();

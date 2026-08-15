@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * Runs the declared-rules validation standard on every payload unpacked from a
- * {@code google.protobuf.Any} during write-time plan expansion. Registered via
+ * {@code google.protobuf.Any} during write-time mapping expansion. Registered via
  * {@code ServiceLoader}, so having this module on the classpath turns the gate on — the
  * same chaining {@link ProtobufIndexer} gives the top-level message. The shared default
  * validator is used, so rule compilation is cached per payload type.

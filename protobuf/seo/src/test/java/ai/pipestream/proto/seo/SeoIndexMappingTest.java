@@ -1,7 +1,7 @@
 package ai.pipestream.proto.seo;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.seo.v1.SearchStandard;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -9,22 +9,22 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * {@link SeoIndexing#planFor} derives the plan the seo.v1 annotations declare: the
+ * {@link SeoIndexing#mappingFor} derives the mapping the seo.v1 annotations declare: the
  * standard's containers expand into dotted leaf paths, and each spot-checked path carries
  * the annotated kind and docValues flags.
  */
-class SeoIndexingPlanTest {
+class SeoIndexMappingTest {
 
-    private static IndexingPlan plan;
+    private static IndexMapping mapping;
 
     @BeforeAll
-    static void buildPlan() {
-        plan = SeoIndexing.planFor(SearchStandard.getDescriptor());
+    static void buildMapping() {
+        mapping = SeoIndexing.mappingFor(SearchStandard.getDescriptor());
     }
 
-    private static IndexingPlan.IndexedField field(String path) {
-        return plan.find(path).orElseThrow(
-                () -> new AssertionError("plan is missing path " + path));
+    private static IndexMapping.IndexedField field(String path) {
+        return mapping.find(path).orElseThrow(
+                () -> new AssertionError("mapping is missing path " + path));
     }
 
     @Test
@@ -35,7 +35,7 @@ class SeoIndexingPlanTest {
 
     @Test
     void dublinCoreSubjectIsFacetableKeywordAndRepeated() {
-        IndexingPlan.IndexedField subject = field("dublin_core.subject");
+        IndexMapping.IndexedField subject = field("dublin_core.subject");
         assertThat(subject.type()).isEqualTo(IndexFieldKind.KEYWORD);
         assertThat(subject.hint().facetable()).isTrue();
         assertThat(subject.repeated()).isTrue();
@@ -43,7 +43,7 @@ class SeoIndexingPlanTest {
 
     @Test
     void dublinCoreDateIsSortableDate() {
-        IndexingPlan.IndexedField date = field("dublin_core.date");
+        IndexMapping.IndexedField date = field("dublin_core.date");
         assertThat(date.type()).isEqualTo(IndexFieldKind.DATE);
         assertThat(date.hint().sortable()).isTrue();
     }
@@ -55,7 +55,7 @@ class SeoIndexingPlanTest {
 
     @Test
     void dctermsRefinementsExpandUnderTheTermsContainer() {
-        IndexingPlan.IndexedField modified = field("dublin_core.terms.modified");
+        IndexMapping.IndexedField modified = field("dublin_core.terms.modified");
         assertThat(modified.type()).isEqualTo(IndexFieldKind.DATE);
         assertThat(modified.hint().sortable()).isTrue();
         assertThat(field("dublin_core.terms.abstract").type()).isEqualTo(IndexFieldKind.TEXT);
@@ -68,7 +68,7 @@ class SeoIndexingPlanTest {
 
     @Test
     void articleDatePublishedIsSortableDate() {
-        IndexingPlan.IndexedField published = field("article.date_published");
+        IndexMapping.IndexedField published = field("article.date_published");
         assertThat(published.type()).isEqualTo(IndexFieldKind.DATE);
         assertThat(published.hint().sortable()).isTrue();
     }
@@ -81,14 +81,14 @@ class SeoIndexingPlanTest {
 
     @Test
     void productSkuIsStoredKeyword() {
-        IndexingPlan.IndexedField sku = field("product.sku");
+        IndexMapping.IndexedField sku = field("product.sku");
         assertThat(sku.type()).isEqualTo(IndexFieldKind.KEYWORD);
         assertThat(sku.stored()).isTrue();
     }
 
     @Test
     void offerFieldsUnderTheRepeatedOffersScopeAreKeywordAndRepeated() {
-        IndexingPlan.IndexedField currency = field("product.offers.price_currency");
+        IndexMapping.IndexedField currency = field("product.offers.price_currency");
         assertThat(currency.type()).isEqualTo(IndexFieldKind.KEYWORD);
         assertThat(currency.repeated()).isTrue();
         assertThat(currency.fieldName()).isEqualTo("product_offers_price_currency");
@@ -97,14 +97,14 @@ class SeoIndexingPlanTest {
 
     @Test
     void aggregateRatingValueIsSortableDouble() {
-        IndexingPlan.IndexedField rating = field("product.aggregate_rating.rating_value");
+        IndexMapping.IndexedField rating = field("product.aggregate_rating.rating_value");
         assertThat(rating.type()).isEqualTo(IndexFieldKind.DOUBLE);
         assertThat(rating.hint().sortable()).isTrue();
     }
 
     @Test
     void breadcrumbPositionsAreSortableInt64() {
-        IndexingPlan.IndexedField position = field("breadcrumb_list.items.position");
+        IndexMapping.IndexedField position = field("breadcrumb_list.items.position");
         assertThat(position.type()).isEqualTo(IndexFieldKind.INT64);
         assertThat(position.hint().sortable()).isTrue();
         assertThat(position.repeated()).isTrue();
@@ -112,7 +112,7 @@ class SeoIndexingPlanTest {
 
     @Test
     void envelopeKeywordsAreFacetableKeyword() {
-        IndexingPlan.IndexedField keywords = field("keywords");
+        IndexMapping.IndexedField keywords = field("keywords");
         assertThat(keywords.type()).isEqualTo(IndexFieldKind.KEYWORD);
         assertThat(keywords.hint().facetable()).isTrue();
         assertThat(keywords.repeated()).isTrue();
@@ -125,7 +125,7 @@ class SeoIndexingPlanTest {
 
     @Test
     void videoUploadDateIsSortableDate() {
-        IndexingPlan.IndexedField uploadDate = field("video_object.upload_date");
+        IndexMapping.IndexedField uploadDate = field("video_object.upload_date");
         assertThat(uploadDate.type()).isEqualTo(IndexFieldKind.DATE);
         assertThat(uploadDate.hint().sortable()).isTrue();
     }

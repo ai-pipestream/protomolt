@@ -2,7 +2,7 @@ package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.MapMode;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.MappingException;
@@ -35,10 +35,10 @@ class OpenSearchDocumentMapperFanOutTest {
     void messageLeavesUnderAFanOutBecomeAListOfJsonObjects() throws Exception {
         Fixture f = Fixture.create();
         DynamicMessage message = f.docOf(f.chunkWithMeta("m1"), f.chunkWithMeta("m2"));
-        IndexingPlan plan = f.plan(new IndexingPlan.IndexedField(
+        IndexMapping mapping = f.mapping(new IndexMapping.IndexedField(
                 "chunks.meta", "chunks_meta", ResolvedFieldHint.of(IndexFieldKind.OBJECT), true));
 
-        assertThat(mapper.map(message, plan))
+        assertThat(mapper.map(message, mapping))
                 .containsEntry("chunks_meta", List.of(Map.of("label", "m1"), Map.of("label", "m2")));
     }
 
@@ -46,13 +46,13 @@ class OpenSearchDocumentMapperFanOutTest {
     void mapLeavesUnderAFanOutFlattenIntoOneObject() throws Exception {
         Fixture f = Fixture.create();
         DynamicMessage message = f.docOf(f.chunkWithAttr("k1", "v1"), f.chunkWithAttr("k2", "v2"));
-        IndexingPlan plan = f.plan(new IndexingPlan.IndexedField(
+        IndexMapping mapping = f.mapping(new IndexMapping.IndexedField(
                 "chunks.attrs", "chunks_attrs",
                 ResolvedFieldHint.builder(IndexFieldKind.OBJECT).mapMode(MapMode.FLATTEN).build(),
                 true));
 
         // Entries concatenated by the fan-out are still recognised as one map field.
-        assertThat(mapper.map(message, plan))
+        assertThat(mapper.map(message, mapping))
                 .containsEntry("chunks_attrs", Map.of("k1", "v1", "k2", "v2"));
     }
 
@@ -60,32 +60,32 @@ class OpenSearchDocumentMapperFanOutTest {
     void nullValueSubstituteAppliesWhenNoElementContributes() throws Exception {
         Fixture f = Fixture.create();
         DynamicMessage message = f.docOf();
-        IndexingPlan plan = f.plan(new IndexingPlan.IndexedField(
+        IndexMapping mapping = f.mapping(new IndexMapping.IndexedField(
                 "chunks.text", "chunks_text",
                 ResolvedFieldHint.builder(IndexFieldKind.TEXT).nullValue("N/A").build(), true));
 
-        assertThat(mapper.map(message, plan)).containsEntry("chunks_text", "N/A");
+        assertThat(mapper.map(message, mapping)).containsEntry("chunks_text", "N/A");
     }
 
     @Test
     void skipIfMissingFalseEmitsAnExplicitNullForAnEmptyFanOut() throws Exception {
         Fixture f = Fixture.create();
-        IndexingPlan plan = f.plan(new IndexingPlan.IndexedField(
+        IndexMapping mapping = f.mapping(new IndexMapping.IndexedField(
                 "chunks.text", "chunks_text",
                 ResolvedFieldHint.builder(IndexFieldKind.TEXT).skipIfMissing(false).build(), true));
 
-        assertThat(mapper.map(f.docOf(), plan)).containsEntry("chunks_text", null);
+        assertThat(mapper.map(f.docOf(), mapping)).containsEntry("chunks_text", null);
     }
 
     @Test
     void rangeHintUnderAFanOutFailsLoudRatherThanEmittingAWrongShape() throws Exception {
         Fixture f = Fixture.create();
         DynamicMessage message = f.docOf(f.chunkWithSpan(1, 5), f.chunkWithSpan(7, 9));
-        IndexingPlan plan = f.plan(new IndexingPlan.IndexedField(
+        IndexMapping mapping = f.mapping(new IndexMapping.IndexedField(
                 "chunks.span", "chunks_span", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE), true));
 
         // A bounds message has no flattened form; the document must not be half-built.
-        assertThatThrownBy(() -> mapper.map(message, plan))
+        assertThatThrownBy(() -> mapper.map(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("bounds message");
     }
@@ -100,8 +100,8 @@ class OpenSearchDocumentMapperFanOutTest {
                     file.findMessageTypeByName("Inner"));
         }
 
-        IndexingPlan plan(IndexingPlan.IndexedField... fields) {
-            return new IndexingPlan(doc.getFullName(), List.of(fields));
+        IndexMapping mapping(IndexMapping.IndexedField... fields) {
+            return new IndexMapping(doc.getFullName(), List.of(fields));
         }
 
         DynamicMessage docOf(DynamicMessage... chunks) {

@@ -2,7 +2,7 @@ package ai.pipestream.proto.graph;
 
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.InferringIndexingHintSource;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.sources.CompiledProtos;
@@ -72,8 +72,8 @@ class GraphSchemasTest {
     @Test
     void rendersHintsAsAConnectionSchema() throws Exception {
         Descriptor doc = compile();
-        var plan = IndexingPlanFactory.inferringOnly().create(doc);
-        GraphSchemas.Rendered rendered = GraphSchemas.connectionSchema(doc, plan);
+        var mapping = IndexMappingFactory.inferringOnly().create(doc);
+        GraphSchemas.Rendered rendered = GraphSchemas.connectionSchema(doc, mapping);
 
         assertThat(rendered.schema().path("baseType").asText())
                 .isEqualTo("microsoft.graph.externalItem");
@@ -93,7 +93,7 @@ class GraphSchemasTest {
                 .isFalse());
 
         // Repeated bools have no Graph collection type, and nested messages stay
-        // sub-documents in the plan: both skip with a reason, never silently drop.
+        // sub-documents in the mapping: both skip with a reason, never silently drop.
         assertThat(rendered.skipped()).anySatisfy(reason ->
                 assertThat(reason).contains("flags").contains("no Graph property type"));
         assertThat(rendered.skipped()).anySatisfy(reason ->
@@ -110,10 +110,10 @@ class GraphSchemasTest {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("gs.test.Doc", "body", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .name("article_body").build());
-        var plan = new IndexingPlanFactory(catalog.orElse(new InferringIndexingHintSource()))
+        var mapping = new IndexMappingFactory(catalog.orElse(new InferringIndexingHintSource()))
                 .create(doc);
 
-        Map<String, JsonNode> byName = byName(GraphSchemas.connectionSchema(doc, plan));
+        Map<String, JsonNode> byName = byName(GraphSchemas.connectionSchema(doc, mapping));
         assertThat(byName).containsKey("articleBody").doesNotContainKey("body");
     }
 
@@ -124,14 +124,14 @@ class GraphSchemasTest {
     @Test
     void aScalarUnderARepeatedParentGetsACollectionType() throws Exception {
         Descriptor doc = compile("gs/nested/gs.proto", NESTED_PROTO, "Doc");
-        // Hinting the repeated message as TEXT flattens its leaves into the plan.
+        // Hinting the repeated message as TEXT flattens its leaves into the mapping.
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("gs.nested.Doc", "authors", ResolvedFieldHint.of(IndexFieldKind.TEXT));
-        var plan = new IndexingPlanFactory(catalog.orElse(new InferringIndexingHintSource()))
+        var mapping = new IndexMappingFactory(catalog.orElse(new InferringIndexingHintSource()))
                 .create(doc);
-        assertThat(plan.fields()).extracting(f -> f.path()).contains("authors.full_name");
+        assertThat(mapping.fields()).extracting(f -> f.path()).contains("authors.full_name");
 
-        Map<String, JsonNode> byName = byName(GraphSchemas.connectionSchema(doc, plan));
+        Map<String, JsonNode> byName = byName(GraphSchemas.connectionSchema(doc, mapping));
         assertThat(byName.get("authorsFullName").path("type").asText())
                 .isEqualTo("stringCollection");
     }

@@ -6,8 +6,8 @@ import ai.pipestream.proto.gather.git.GitProtoGatherer;
 import ai.pipestream.proto.index.opensearch.OpenSearchMappingGenerator;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.json.ProtobufJsonTranscoder;
 import ai.pipestream.proto.jsonschema.ProtoJsonSchemaGenerator;
@@ -340,16 +340,16 @@ class FullPipelineSystemTest {
             Map<String, Object> defs = (Map<String, Object>) schema.get("$defs");
             assertThat(defs).containsKeys("shop.v1.Order", "shop.v1.Money", "shop.v1.Customer");
 
-            // Indexing plan + OpenSearch mappings, hints supplied through the catalog source.
+            // Index mapping + OpenSearch mappings, hints supplied through the catalog source.
             CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                     .put("shop.v1.Order", "id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-            IndexingPlan plan = IndexingPlanFactory.defaults(catalog).create(order);
-            assertThat(plan.messageFullName()).isEqualTo("shop.v1.Order");
-            Optional<IndexingPlan.IndexedField> idField = plan.find("id");
+            IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(order);
+            assertThat(mapping.messageFullName()).isEqualTo("shop.v1.Order");
+            Optional<IndexMapping.IndexedField> idField = mapping.find("id");
             assertThat(idField).isPresent();
             assertThat(idField.orElseThrow().type()).isEqualTo(IndexFieldKind.KEYWORD);
 
-            Map<String, Object> mappings = new OpenSearchMappingGenerator().generate(plan);
+            Map<String, Object> mappings = new OpenSearchMappingGenerator().generate(mapping);
             @SuppressWarnings("unchecked")
             Map<String, Object> properties = (Map<String, Object>) mappings.get("properties");
             assertThat(properties).isNotEmpty();

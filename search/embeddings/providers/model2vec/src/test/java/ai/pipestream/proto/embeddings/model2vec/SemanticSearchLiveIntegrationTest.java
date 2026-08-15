@@ -1,11 +1,11 @@
 package ai.pipestream.proto.embeddings.model2vec;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.embeddings.PlanEmbedder;
+import ai.pipestream.proto.embeddings.MappingEmbedder;
 import ai.pipestream.proto.index.opensearch.OpenSearchDocumentMapper;
 import ai.pipestream.proto.index.opensearch.OpenSearchSink;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * End-to-end semantic search with a real model: sentences flow through
  * {@link OpenSearchDocumentMapper}, get their vector from a {@link Model2VecEmbeddingProvider}
- * via {@link PlanEmbedder}, land through {@link OpenSearchSink}, and a query embedded with the
+ * via {@link MappingEmbedder}, land through {@link OpenSearchSink}, and a query embedded with the
  * same provider must rank the semantically nearest sentence first under kNN — no synthetic
  * vectors anywhere. The engine is a Testcontainers OpenSearch instance; the suite skips when
  * Docker is unavailable.
@@ -73,7 +73,7 @@ class SemanticSearchLiveIntegrationTest {
     private static OpenSearchSink sink;
     private static Model2VecEmbeddingProvider provider;
     private static Descriptor descriptor;
-    private static IndexingPlan plan;
+    private static IndexMapping mapping;
 
     @BeforeAll
     static void setUp() throws Exception {
@@ -83,10 +83,10 @@ class SemanticSearchLiveIntegrationTest {
         index = "semantic-" + UUID.randomUUID().toString().substring(0, 12);
         sink = new OpenSearchSink(base, HTTP);
         descriptor = sentenceDescriptor();
-        plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("sentence", "sentence",
+        mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("sentence", "sentence",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT)),
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(Model2VecTestModel.DIMENSION)
                                 .build())));
@@ -102,12 +102,12 @@ class SemanticSearchLiveIntegrationTest {
 
     @Test
     void modelEmbeddedSentencesAnswerASemanticKnnQuery() throws Exception {
-        assertThat(sink.ensureIndex(index, plan)).isTrue();
+        assertThat(sink.ensureIndex(index, mapping)).isTrue();
 
         // Messages carry only text; the vector field is filled by the model, not by hand.
         OpenSearchDocumentMapper mapper = new OpenSearchDocumentMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()));
-        PlanEmbedder embedder = new PlanEmbedder(provider, plan);
+        MappingEmbedder embedder = new MappingEmbedder(provider, mapping);
         Map<String, String> sentences = new LinkedHashMap<>();
         sentences.put("dog", "the dog sat on the mat");
         sentences.put("cat", "the cat sat on the mat");
@@ -119,7 +119,7 @@ class SemanticSearchLiveIntegrationTest {
             DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                     .setField(descriptor.findFieldByName("sentence"), entry.getValue())
                     .build();
-            documents.put(entry.getKey(), embedder.embed(mapper.map(message, plan)));
+            documents.put(entry.getKey(), embedder.embed(mapper.map(message, mapping)));
         }
         sink.bulkWrite(index, documents, true);
 

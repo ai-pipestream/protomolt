@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Adversarial coverage for the schema-level {@code validate_payloads} opt-out, driven from
  * descriptor options rather than catalog hints: repeated and map Any fields, non-Any
  * fields, the explicit {@code true}, opt-outs carried on an unpacked payload's own fields,
- * Any-inside-Any, catalog precedence, the depth cap, plan-time carriage, and the
+ * Any-inside-Any, catalog precedence, the depth cap, mapping-time carriage, and the
  * {@link ResolvedFieldHint} component itself.
  */
 class ValidatePayloadsOptOutTest {
@@ -160,7 +160,7 @@ class ValidatePayloadsOptOutTest {
         AnyPayloadGate gate = new AnyPayloadGate(
                 fixtures.registry,
                 List.of((unpacked, path) -> offered.add(path)),
-                IndexingPlanFactory.defaults(catalog).hints());
+                IndexMappingFactory.defaults(catalog).hints());
         DynamicMessage message = DynamicMessage.newBuilder(fixtures.envelope)
                 .setField(fixtures.field("opted"), Any.pack(fixtures.inner("A", 1)))
                 .build();
@@ -202,34 +202,34 @@ class ValidatePayloadsOptOutTest {
     }
 
     @Test
-    void thePlanKeepsAnAnyEntryCarryingTheOptOut() throws Exception {
+    void theMappingKeepsAnAnyEntryCarryingTheOptOut() throws Exception {
         OptOutFixtures fixtures = OptOutFixtures.create();
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(new CatalogIndexingHintSource());
+        IndexMappingFactory factory = IndexMappingFactory.defaults(new CatalogIndexingHintSource());
 
-        IndexingPlan plan = factory.create(fixtures.envelope);
+        IndexMapping mapping = factory.create(fixtures.envelope);
 
         // Type inference still applies to a hint that carries only validate_payloads.
-        assertThat(plan.find("opted")).get()
-                .extracting(IndexingPlan.IndexedField::type)
+        assertThat(mapping.find("opted")).get()
+                .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.ANY);
-        assertThat(plan.find("opted")).get()
+        assertThat(mapping.find("opted")).get()
                 .extracting(f -> f.hint().validatePayloads())
                 .isEqualTo(false);
-        assertThat(plan.find("attachments")).get()
+        assertThat(mapping.find("attachments")).get()
                 .extracting(f -> f.hint().validatePayloads())
                 .isEqualTo(false);
-        assertThat(plan.find("checked")).get()
+        assertThat(mapping.find("checked")).get()
                 .extracting(f -> f.hint().validatePayloads())
                 .isEqualTo(true);
-        assertThat(plan.find("plain")).get()
+        assertThat(mapping.find("plain")).get()
                 .extracting(f -> f.hint().validatePayloads())
                 .isEqualTo(true);
     }
 
     @Test
-    void theHintsAccessorExposesThePlanningChainTheGateNeeds() throws Exception {
+    void theHintsAccessorExposesTheMappingChainTheGateNeeds() throws Exception {
         OptOutFixtures fixtures = OptOutFixtures.create();
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(new CatalogIndexingHintSource());
+        IndexMappingFactory factory = IndexMappingFactory.defaults(new CatalogIndexingHintSource());
 
         assertThat(factory.hints().resolve(fixtures.field("opted")))
                 .get()
@@ -238,9 +238,9 @@ class ValidatePayloadsOptOutTest {
     }
 
     @Test
-    void theExpansionPathReadsTheOptOutFromTheInnerPlansHintChain() throws Exception {
+    void theExpansionPathReadsTheOptOutFromTheInnerMappingsHintChain() throws Exception {
         OptOutFixtures fixtures = OptOutFixtures.create();
-        IndexingPlanFactory factory = IndexingPlanFactory.defaults(new CatalogIndexingHintSource());
+        IndexMappingFactory factory = IndexMappingFactory.defaults(new CatalogIndexingHintSource());
         List<String> offered = new ArrayList<>();
         AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory,
                 List.of((unpacked, path) -> offered.add(path)));
@@ -252,7 +252,7 @@ class ValidatePayloadsOptOutTest {
                 .setField(fixtures.field("checked"), Any.pack(payload))
                 .build();
 
-        IndexingPlan expanded = anyIndexing.expand(message, factory.create(fixtures.envelope));
+        IndexMapping expanded = anyIndexing.expand(message, factory.create(fixtures.envelope));
 
         assertThat(offered).containsExactly("checked");
         assertThat(expanded.find("checked.inner.title")).isPresent();

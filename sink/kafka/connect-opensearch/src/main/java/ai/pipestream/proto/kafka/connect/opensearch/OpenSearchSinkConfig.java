@@ -56,7 +56,7 @@ public final class OpenSearchSinkConfig extends AbstractConfig {
                 .define(INDEX, ConfigDef.Type.STRING, ConfigDef.Importance.HIGH,
                         "Target index name.")
                 .define(ENSURE_INDEX, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.MEDIUM,
-                        "Create the index from the plan-generated mappings at task start when it "
+                        "Create the index from the mapping-generated properties at task start when it "
                                 + "does not exist yet (idempotent).")
                 .define(REFRESH, ConfigDef.Type.BOOLEAN, false, ConfigDef.Importance.LOW,
                         "Request an index refresh on every bulk write, making documents "

@@ -193,7 +193,7 @@ truncates on overflow.
   spec nits found.
 - Unsigned-64 handling in the standard integral validation path; FieldPaths
   port; DescriptorSets linking; HttpHeaderRule scanners.
-- Recursion guards in OpenAPI/jsonschema/IndexingPlanFactory generators.
+- Recursion guards in OpenAPI/jsonschema/IndexMappingFactory generators.
 - JSON policy compliance: no hand-rolled JSON anywhere; JsonFormat/Jackson
   split respected.
 - Thread safety of transcoder, registries, generators; ApicurioReferenceResolver

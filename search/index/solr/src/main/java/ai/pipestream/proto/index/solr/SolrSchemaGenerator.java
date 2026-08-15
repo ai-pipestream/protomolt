@@ -1,7 +1,7 @@
 package ai.pipestream.proto.index.solr;
 
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
 
@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Generates Solr managed-schema definitions from an {@link IndexingPlan}: a list of
+ * Generates Solr managed-schema definitions from an {@link IndexMapping}: a list of
  * {@code field} maps, the {@code fieldType} maps the fields require beyond Solr's stock
  * types (currently the {@code solr.DenseVectorField} types for vectors), and the
  * {@code copyField} maps that feed multi-fields. POST the pieces to the Schema API
@@ -37,12 +37,12 @@ import java.util.Objects;
  */
 public final class SolrSchemaGenerator {
 
-    public SolrSchema generate(IndexingPlan plan) {
-        Objects.requireNonNull(plan, "plan");
+    public SolrSchema generate(IndexMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
         Map<String, Map<String, Object>> fieldTypes = new LinkedHashMap<>();
         List<Map<String, Object>> fields = new ArrayList<>();
         List<Map<String, Object>> copyFields = new ArrayList<>();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
             if (field.type() == IndexFieldKind.ANY) {
                 continue;
             }

@@ -1,6 +1,6 @@
 package ai.pipestream.proto.graph;
 
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.shapes.SchemaInferrer;
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -112,8 +112,8 @@ class GraphInferSchemaDemoTest {
         ShapeSynthesizer.SynthesizedShape shape = infer("sharepoint.v1.Documents");
 
         // Full loop: SharePoint metadata -> typed proto -> a Graph external-connection schema.
-        var plan = IndexingPlanFactory.inferringOnly().create(shape.type());
-        GraphSchemas.Rendered rendered = GraphSchemas.connectionSchema(shape.type(), plan);
+        var mapping = IndexMappingFactory.inferringOnly().create(shape.type());
+        GraphSchemas.Rendered rendered = GraphSchemas.connectionSchema(shape.type(), mapping);
 
         assertThat(rendered.schema()).isNotNull();
         assertThat(rendered.schema().toString()).isNotBlank().isNotEqualTo("{}");

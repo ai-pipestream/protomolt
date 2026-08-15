@@ -1,9 +1,9 @@
 /**
- * Facade chaining optional validation, indexing-plan resolution, and NDJSON projection.
+ * Facade chaining optional validation, index-mapping resolution, and NDJSON projection.
  *
  * <p>{@link ProtobufIndexer} is the single entry point. It resolves a message type's
- * {@link ai.pipestream.proto.index.spi.IndexingPlan} through an
- * {@link ai.pipestream.proto.index.spi.IndexingPlanFactory}, validates instances with an
+ * {@link ai.pipestream.proto.index.spi.IndexMapping} through an
+ * {@link ai.pipestream.proto.index.spi.IndexMappingFactory}, validates instances with an
  * optional {@link ai.pipestream.proto.validate.ProtoValidator}, and writes NDJSON lines — plain
  * or bulk-index pairs — with {@link ai.pipestream.proto.index.ndjson.ProtoNdjsonWriter}. The
  * two concerns stay independent: pass a validator only when a caller wants the two chained.</p>
@@ -15,8 +15,8 @@
  * parsed at runtime need the hint and validation extensions registered first, which
  * {@link ProtobufIndexer#registerExtensions} does in one call.</p>
  *
- * <p>NDJSON is engine-agnostic and does not interpret the plan; the engine plugins that do —
- * Lucene, OpenSearch, Solr — read the same plan model from sibling modules.</p>
+ * <p>NDJSON is engine-agnostic and does not interpret the mapping; the engine plugins that do —
+ * Lucene, OpenSearch, Solr — read the same mapping model from sibling modules.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
  * indexing guide</a> for the hint vocabulary and the engine split.</p>

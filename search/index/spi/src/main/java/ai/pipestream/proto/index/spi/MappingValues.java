@@ -14,12 +14,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Reads one plan entry's value from a document, the shared engine write-path read.
+ * Reads one mapping entry's value from a document, the shared engine write-path read.
  *
  * <p>The field mapper's {@code getValue} deliberately refuses to traverse a repeated
- * intermediate — a mapping rule names one value. A plan path is different: a
+ * intermediate — a mapping rule names one value. A mapping path is different: a
  * {@link BlockRole#CHUNKS} scope (or any expanded repeated message) legitimately puts
- * paths like {@code chunks.text} in the plan, and the flat projection of such a path is
+ * paths like {@code chunks.text} in the mapping, and the flat projection of such a path is
  * every leaf value across the repeated elements. This reader fans out over repeated
  * message intermediates depth-first — {@code google.protobuf.Any} intermediates are
  * unpacked and traversed like the mapper does — and returns the flattened leaf values as
@@ -34,13 +34,13 @@ import java.util.List;
  * fan-out, an element whose singular parent (an Any included) is unset simply contributes
  * nothing, and leaf segments are always field names — never the mapper DSL's literals.
  */
-public final class PlanValues {
+public final class MappingValues {
 
-    private PlanValues() {
+    private MappingValues() {
     }
 
     /**
-     * Reads {@code path} from {@code message} for an indexing plan entry.
+     * Reads {@code path} from {@code message} for an index mapping entry.
      *
      * @param includeDefaults when true, a proto3 implicit-presence leaf at its default
      *        ({@code false} / {@code 0} / {@code ""}) is returned instead of skipped
@@ -183,7 +183,7 @@ public final class PlanValues {
 
     /**
      * Validates that the remainder below a fan-out resolves on the element type, so a bad
-     * plan path fails even when this document has zero elements. The walk stops at Any
+     * mapping path fails even when this document has zero elements. The walk stops at Any
      * and Struct boundaries (their content is data-dependent).
      */
     private static void checkResolvable(Descriptor element, String rest, String fullPath)

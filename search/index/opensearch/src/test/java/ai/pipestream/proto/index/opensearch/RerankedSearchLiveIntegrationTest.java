@@ -2,9 +2,9 @@ package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.embeddings.EmbeddingProvider;
-import ai.pipestream.proto.embeddings.PlanEmbedder;
+import ai.pipestream.proto.embeddings.MappingEmbedder;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.rerank.RerankProvider;
@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link RerankedSemanticSearch} end to end against a real engine with fixture providers, so
  * the lane needs Docker and nothing else: sentences flow through
  * {@link OpenSearchDocumentMapper}, get vectors from a fixed-table 4-dimensional
- * {@link EmbeddingProvider} via {@link PlanEmbedder} (the vectors form dog / cat / car
+ * {@link EmbeddingProvider} via {@link MappingEmbedder} (the vectors form dog / cat / car
  * neighborhoods, so the kNN order is known), land through {@link OpenSearchSink}, and a
  * keyword-table {@link RerankProvider} reorders the recalled candidates. The suite skips when
  * Docker is unavailable.
@@ -87,7 +87,7 @@ class RerankedSearchLiveIntegrationTest {
     private static String index;
     private static OpenSearchSink sink;
     private static Descriptor descriptor;
-    private static IndexingPlan plan;
+    private static IndexMapping mapping;
 
     @BeforeAll
     static void setUp() {
@@ -95,10 +95,10 @@ class RerankedSearchLiveIntegrationTest {
         index = "reranked-" + UUID.randomUUID().toString().substring(0, 12);
         sink = new OpenSearchSink(base, HTTP);
         descriptor = sentenceDescriptor();
-        plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("sentence", "sentence",
+        mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("sentence", "sentence",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT)),
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(4)
                                 .build())));
@@ -114,18 +114,18 @@ class RerankedSearchLiveIntegrationTest {
 
     @Test
     void rerankHeadReordersTheKnnRecallList() throws Exception {
-        assertThat(sink.ensureIndex(index, plan)).isTrue();
+        assertThat(sink.ensureIndex(index, mapping)).isTrue();
 
         EmbeddingProvider embedder = new FixtureEmbeddingProvider();
         OpenSearchDocumentMapper mapper = new OpenSearchDocumentMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()));
-        PlanEmbedder planEmbedder = new PlanEmbedder(embedder, plan);
+        MappingEmbedder mappingEmbedder = new MappingEmbedder(embedder, mapping);
         Map<String, Map<String, Object>> documents = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : SENTENCES.entrySet()) {
             DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                     .setField(descriptor.findFieldByName("sentence"), entry.getValue())
                     .build();
-            documents.put(entry.getKey(), planEmbedder.embed(mapper.map(message, plan)));
+            documents.put(entry.getKey(), mappingEmbedder.embed(mapper.map(message, mapping)));
         }
         sink.bulkWrite(index, documents, true);
 

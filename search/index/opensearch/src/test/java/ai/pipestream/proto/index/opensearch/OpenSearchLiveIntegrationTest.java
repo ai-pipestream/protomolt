@@ -2,7 +2,7 @@ package ai.pipestream.proto.index.opensearch;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -70,7 +70,7 @@ class OpenSearchLiveIntegrationTest {
     private static String index;
     private static OpenSearchSink sink;
     private static Descriptor descriptor;
-    private static IndexingPlan plan;
+    private static IndexMapping mapping;
 
     @BeforeAll
     static void setUp() {
@@ -78,22 +78,22 @@ class OpenSearchLiveIntegrationTest {
         index = "it-" + UUID.randomUUID().toString().substring(0, 12);
         sink = new OpenSearchSink(base, HTTP);
         descriptor = bookDescriptor();
-        plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("title", "title",
+        mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .analyzer("english")
                                 .subFields(List.of(new ResolvedFieldHint.SubField(
                                         IndexFieldKind.KEYWORD, "raw", "")))
                                 .build()),
-                new IndexingPlan.IndexedField("genre", "genre",
+                new IndexMapping.IndexedField("genre", "genre",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .sortable(true).facetable(true)
                                 .build()),
-                new IndexingPlan.IndexedField("rank", "rank",
+                new IndexMapping.IndexedField("rank", "rank",
                         ResolvedFieldHint.builder(IndexFieldKind.INT64)
                                 .sortable(true)
                                 .build()),
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(4)
                                 .build())));
@@ -122,8 +122,8 @@ class OpenSearchLiveIntegrationTest {
 
     @Test
     @Order(1)
-    void ensureIndexCreatesFromThePlan() throws Exception {
-        assertThat(sink.ensureIndex(index, plan)).isTrue();
+    void ensureIndexCreatesFromTheMapping() throws Exception {
+        assertThat(sink.ensureIndex(index, mapping)).isTrue();
 
         JsonNode mapping = send("GET", "/" + index + "/_mapping", null);
         JsonNode properties = mapping.path(index).path("mappings").path("properties");
@@ -132,7 +132,7 @@ class OpenSearchLiveIntegrationTest {
         assertThat(properties.path("genre").path("type").asText()).isEqualTo("keyword");
         assertThat(properties.path("embedding").path("type").asText()).isEqualTo("knn_vector");
 
-        // The plan has a VECTOR field, so the sink enabled knn on the index.
+        // The mapping has a VECTOR field, so the sink enabled knn on the index.
         JsonNode settings = send("GET", "/" + index + "/_settings", null);
         assertThat(settings.path(index).path("settings").path("index").path("knn").asText())
                 .isEqualTo("true");
@@ -149,7 +149,7 @@ class OpenSearchLiveIntegrationTest {
                 book("Running with Scissors", "memoir", 3, 1f, 0f, 0f, 0f),
                 book("The Silent Library", "mystery", 1, 0f, 1f, 0f, 0f),
                 book("Runs in the Family", "mystery", 2, 0.9f, 0.1f, 0f, 0f))) {
-            documents.put(String.valueOf(id++), mapper.map(message, plan));
+            documents.put(String.valueOf(id++), mapper.map(message, mapping));
         }
         sink.bulkWrite(index, documents, true);
 
@@ -186,7 +186,7 @@ class OpenSearchLiveIntegrationTest {
     @Order(3)
     void ensureIndexLeavesAnExistingIndexUntouched() throws Exception {
         JsonNode before = send("GET", "/" + index + "/_mapping", null);
-        assertThat(sink.ensureIndex(index, plan)).isFalse();
+        assertThat(sink.ensureIndex(index, mapping)).isFalse();
         JsonNode after = send("GET", "/" + index + "/_mapping", null);
         assertThat(after).isEqualTo(before);
     }

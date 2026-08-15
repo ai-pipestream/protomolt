@@ -20,7 +20,7 @@ public enum IndexFieldKind {
     NESTED,
     SKIP,
     /**
-     * {@code google.protobuf.Any}: not a silent {@link #OBJECT}. Plan time keeps a single
+     * {@code google.protobuf.Any}: not a silent {@link #OBJECT}. Mapping time keeps a single
      * entry; write time unpacks through the {@code DescriptorRegistry} and indexes the
      * packed message's fields. Schema generators emit no inner mappings for this kind.
      */

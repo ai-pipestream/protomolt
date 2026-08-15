@@ -38,8 +38,8 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `transform/workflow/` | `workflow` | Checked serial gRPC compositions with gates, deadlines, named registry storage, and keyed or zip joins over two live streams |
 | `transform/delegation/` | `delegation` | Coordinator and worker bidirectional contract, transcript reduction, encrypted repository-service persistence, and restart restoration |
 | `jobs/` | `jobs-proto`, `jobs-service` | Durable workflow runs with step checkpoints, external completion, Kafka request and event topics, typed failures, and retries |
-| `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Indexing plans and hints; NDJSON output; engine plugins |
-| `search/embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
+| `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Index mappings and hints; NDJSON output; engine plugins |
+| `search/embeddings/` | `embeddings` | Embedding-provider SPI and the mapping-driven embedder that fills a document's VECTOR field from its TEXT field |
 | `search/embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
 | `search/embeddings/providers/` | `embeddings-tei` | Remote provider for Hugging Face Text Embeddings Inference over gRPC |
 | `search/embeddings/providers/` | `embeddings-ovms` | Remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |

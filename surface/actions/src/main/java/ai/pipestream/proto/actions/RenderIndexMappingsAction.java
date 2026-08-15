@@ -6,8 +6,8 @@ import ai.pipestream.proto.index.qdrant.QdrantSchemaGenerator;
 import ai.pipestream.proto.index.qdrant.QdrantVectorSpec;
 import ai.pipestream.proto.index.solr.SolrSchemaGenerator;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -35,7 +35,7 @@ final class RenderIndexMappingsAction implements ProtoAction {
         ObjectNode properties = schema.putObject("properties");
         properties.set("schema", ActionJson.schemaSourceSchema());
         properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type to plan indexing for; required unless the schema "
+                "Fully qualified message type to build the index mapping for; required unless the schema "
                         + "already identifies a single message."));
         ObjectNode engine = properties.putObject("engine");
         engine.put("type", "string");
@@ -67,34 +67,34 @@ final class RenderIndexMappingsAction implements ProtoAction {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         String engine = Inputs.requireString(input, "engine");
-        IndexingPlan plan = IndexingPlanFactory.defaults(new CatalogIndexingHintSource())
+        IndexMapping mapping = IndexMappingFactory.defaults(new CatalogIndexingHintSource())
                 .create(descriptor);
         return switch (engine) {
             case "opensearch" -> {
                 ObjectNode mappings = context.objectMapper()
-                        .valueToTree(new OpenSearchMappingGenerator().generate(plan));
+                        .valueToTree(new OpenSearchMappingGenerator().generate(mapping));
                 ObjectNode sensitivity = Inputs.optionalObject(input, "sensitivity");
                 yield sensitivity == null
                         ? mappings
-                        : opensearchWithSensitivity(mappings, plan, descriptor,
+                        : opensearchWithSensitivity(mappings, mapping, descriptor,
                                 sensitivity, context);
             }
-            case "solr" -> solr(plan, context);
-            case "lucene" -> lucene(plan, context);
-            case "qdrant" -> qdrant(plan, context);
+            case "solr" -> solr(mapping, context);
+            case "lucene" -> lucene(mapping, context);
+            case "qdrant" -> qdrant(mapping, context);
             default -> throw Inputs.invalidInput(
                     "Unknown engine '" + engine + "'; expected one of opensearch, solr, lucene, qdrant",
                     "/engine");
         };
     }
 
-    private static ObjectNode qdrant(IndexingPlan plan, ActionContext context)
+    private static ObjectNode qdrant(IndexMapping mapping, ActionContext context)
             throws ActionException {
         QdrantSchemaGenerator.QdrantSchema schema;
         try {
-            schema = new QdrantSchemaGenerator().generate(plan);
+            schema = new QdrantSchemaGenerator().generate(mapping);
         } catch (IllegalArgumentException e) {
-            // The plan is derived entirely from the caller's schema, so a plan the
+            // The mapping is derived entirely from the caller's schema, so a mapping the
             // generator rejects (e.g. a VECTOR hint with no vector_dims) is caller
             // input, not a server fault.
             throw Inputs.invalidInput(e.getMessage(), "/schema");
@@ -123,7 +123,7 @@ final class RenderIndexMappingsAction implements ProtoAction {
      * and {@code exclude} become a security-plugin role fragment ({@code masked_fields}
      * hash values at query time, {@code fls} exclusions hide fields outright).
      */
-    private static ObjectNode opensearchWithSensitivity(ObjectNode mappings, IndexingPlan plan,
+    private static ObjectNode opensearchWithSensitivity(ObjectNode mappings, IndexMapping mapping,
                                                         com.google.protobuf.Descriptors.Descriptor descriptor,
                                                         ObjectNode sensitivity,
                                                         ActionContext context)
@@ -135,7 +135,7 @@ final class RenderIndexMappingsAction implements ProtoAction {
         ObjectNode properties = (ObjectNode) mappings.get("properties");
         ArrayNode maskedFields = context.objectMapper().createArrayNode();
         ArrayNode fls = context.objectMapper().createArrayNode();
-        for (IndexingPlan.IndexedField field : plan.indexable()) {
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
             String cls = sensitivityOf(descriptor, field.path());
             if (cls.isEmpty()) {
                 continue;
@@ -238,8 +238,8 @@ final class RenderIndexMappingsAction implements ProtoAction {
         return "";
     }
 
-    private static ObjectNode solr(IndexingPlan plan, ActionContext context) {
-        SolrSchemaGenerator.SolrSchema solrSchema = new SolrSchemaGenerator().generate(plan);
+    private static ObjectNode solr(IndexMapping mapping, ActionContext context) {
+        SolrSchemaGenerator.SolrSchema solrSchema = new SolrSchemaGenerator().generate(mapping);
         ObjectNode output = context.objectMapper().createObjectNode();
         output.set("fieldTypes", context.objectMapper().valueToTree(solrSchema.fieldTypes()));
         output.set("fields", context.objectMapper().valueToTree(solrSchema.fields()));
@@ -247,8 +247,8 @@ final class RenderIndexMappingsAction implements ProtoAction {
         return output;
     }
 
-    private static ObjectNode lucene(IndexingPlan plan, ActionContext context) {
-        LuceneFieldSpecs specs = LuceneFieldSpecs.from(plan);
+    private static ObjectNode lucene(IndexMapping mapping, ActionContext context) {
+        LuceneFieldSpecs specs = LuceneFieldSpecs.from(mapping);
         ObjectNode output = context.objectMapper().createObjectNode();
         output.put("messageFullName", specs.messageFullName());
         ArrayNode fields = output.putArray("fields");

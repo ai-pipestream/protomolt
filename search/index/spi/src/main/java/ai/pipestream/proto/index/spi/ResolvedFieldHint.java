@@ -124,7 +124,7 @@ public record ResolvedFieldHint(
      * otherwise), and the raw string for everything else. Empty when no substitute is set.
      *
      * @throws NumberFormatException when the substitute does not parse as the hinted number;
-     *         {@link IndexingPlanFactory} rejects such hints at planning time
+     *         {@link IndexMappingFactory} rejects such hints at mapping time
      */
     public Optional<Object> missingSubstitute() {
         if (nullValue == null) {

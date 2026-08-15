@@ -7,9 +7,9 @@ import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.AnyPayloadValidator;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.MapMode;
-import ai.pipestream.proto.index.spi.PlanValues;
+import ai.pipestream.proto.index.spi.MappingValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
@@ -28,7 +28,7 @@ import java.util.Objects;
 
 /**
  * OpenSearch-oriented document map builder.
- * Uses a shared {@link IndexingPlan} (descriptor hints); does not emit NDJSON —
+ * Uses a shared {@link IndexMapping} (descriptor hints); does not emit NDJSON —
  * pair with {@code protomolt-index-ndjson} when you need bulk lines.
  *
  * <p>Message values are converted through {@link JsonFormat}, so nested values take exactly
@@ -101,7 +101,7 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
         this.fieldMapper = Objects.requireNonNull(context, "context").fieldMapper();
         this.includeDefaults = includeDefaults;
         this.anyIndexing = new AnyIndexing(
-                context.descriptorRegistry(), context.planFactory(), payloadValidators);
+                context.descriptorRegistry(), context.mappingFactory(), payloadValidators);
     }
 
     /**
@@ -120,17 +120,17 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
     }
 
     @Override
-    public Map<String, Object> map(Message message, IndexingPlan plan) throws MappingException {
-        Objects.requireNonNull(plan, "plan");
-        IndexingPlan expanded = anyIndexing.expand(message, plan);
+    public Map<String, Object> map(Message message, IndexMapping mapping) throws MappingException {
+        Objects.requireNonNull(mapping, "mapping");
+        IndexMapping expanded = anyIndexing.expand(message, mapping);
         Map<String, Object> document = new LinkedHashMap<>();
-        for (IndexingPlan.IndexedField field : expanded.indexable()) {
+        for (IndexMapping.IndexedField field : expanded.indexable()) {
             ResolvedFieldHint hint = field.hint();
             // A vector is one whole value; a path fanning out over a repeated ancestor
             // has no flat projection and fails loudly (per-chunk vectors are entities).
             Object value = field.type() == IndexFieldKind.VECTOR
-                    ? PlanValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
-                    : PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
+                    ? MappingValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
+                    : MappingValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; skip_if_missing=false emits
                 // an explicit JSON null; otherwise absent stays absent.
@@ -226,7 +226,7 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
                 && message.getDescriptorForType().getOptions().getMapEntry();
     }
 
-    /** Legacy projection API (explicit paths). Prefer {@link #map(Message, IndexingPlan)}. */
+    /** Legacy projection API (explicit paths). Prefer {@link #map(Message, IndexMapping)}. */
     public Map<String, Object> map(Message message, List<FieldProjection> projections) throws MappingException {
         if (projections == null || projections.isEmpty()) {
             Object document = jsonShaped(message, message.getDescriptorForType().getFullName());

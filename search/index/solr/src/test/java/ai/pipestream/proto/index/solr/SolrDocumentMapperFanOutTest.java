@@ -4,8 +4,8 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.BlockRole;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.InferringIndexingHintSource;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
@@ -35,11 +35,11 @@ class SolrDocumentMapperFanOutTest {
     void fanOutValuesLandAsOneMultiValuedDocumentField() throws Exception {
         Fixture f = Fixture.create();
         DynamicMessage message = f.docOf(f.chunk("alpha"), f.chunk("beta"));
-        IndexingPlan plan = new IndexingPlan(f.doc.getFullName(), List.of(
-                new IndexingPlan.IndexedField("chunks.text", "chunks_text",
+        IndexMapping mapping = new IndexMapping(f.doc.getFullName(), List.of(
+                new IndexMapping.IndexedField("chunks.text", "chunks_text",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT), true)));
 
-        assertThat(mapper.map(message, plan))
+        assertThat(mapper.map(message, mapping))
                 .containsEntry("chunks_text", List.of("alpha", "beta"));
     }
 
@@ -47,12 +47,12 @@ class SolrDocumentMapperFanOutTest {
     void messageLeavesUnderAFanOutBecomeJsonStrings() throws Exception {
         Fixture f = Fixture.create();
         DynamicMessage message = f.docOf(f.chunkWithMeta("m1"), f.chunkWithMeta("m2"));
-        IndexingPlan plan = new IndexingPlan(f.doc.getFullName(), List.of(
-                new IndexingPlan.IndexedField("chunks.meta", "chunks_meta",
+        IndexMapping mapping = new IndexMapping(f.doc.getFullName(), List.of(
+                new IndexMapping.IndexedField("chunks.meta", "chunks_meta",
                         ResolvedFieldHint.of(IndexFieldKind.OBJECT), true)));
 
         // Solr documents are flat: each element message is its own compact JSON string.
-        assertThat(mapper.map(message, plan))
+        assertThat(mapper.map(message, mapping))
                 .containsEntry("chunks_meta", List.of("{\"label\":\"m1\"}", "{\"label\":\"m2\"}"));
     }
 
@@ -65,14 +65,14 @@ class SolrDocumentMapperFanOutTest {
                 .put(f.doc.getFullName(), "chunks", ResolvedFieldHint.builder(IndexFieldKind.NESTED)
                         .blockRole(BlockRole.CHUNKS)
                         .build());
-        IndexingPlan plan = new IndexingPlanFactory(
+        IndexMapping mapping = new IndexMappingFactory(
                 catalog.orElse(new InferringIndexingHintSource())).create(f.doc);
 
         Map<String, Object> document =
-                mapper.map(f.docOf(f.chunk("alpha"), f.chunk("beta")), plan);
+                mapper.map(f.docOf(f.chunk("alpha"), f.chunk("beta")), mapping);
         assertThat(document.get("text")).isEqualTo(List.of("alpha", "beta"));
 
-        Map<String, Object> textField = new SolrSchemaGenerator().generate(plan).fields().stream()
+        Map<String, Object> textField = new SolrSchemaGenerator().generate(mapping).fields().stream()
                 .filter(field -> "text".equals(field.get("name")))
                 .findFirst()
                 .orElseThrow();

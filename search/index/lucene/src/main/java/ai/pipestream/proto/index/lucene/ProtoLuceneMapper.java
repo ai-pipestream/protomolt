@@ -4,9 +4,9 @@ import ai.pipestream.proto.index.spi.AnyIndexing;
 import ai.pipestream.proto.index.spi.DateResolution;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.MapMode;
-import ai.pipestream.proto.index.spi.PlanValues;
+import ai.pipestream.proto.index.spi.MappingValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
@@ -54,7 +54,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Lucene document mapper driven by an {@link IndexingPlan} (descriptor indexing hints).
+ * Lucene document mapper driven by an {@link IndexMapping} (descriptor indexing hints).
  *
  * <p>Hint semantics specific to Lucene:
  * <ul>
@@ -122,16 +122,16 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     }
 
     @Override
-    public Document map(Message message, IndexingPlan plan) throws MappingException {
-        Objects.requireNonNull(plan, "plan");
-        IndexingPlan expanded = anyIndexing.expand(message, plan);
+    public Document map(Message message, IndexMapping mapping) throws MappingException {
+        Objects.requireNonNull(mapping, "mapping");
+        IndexMapping expanded = anyIndexing.expand(message, mapping);
         Document document = new Document();
-        for (IndexingPlan.IndexedField field : expanded.indexable()) {
+        for (IndexMapping.IndexedField field : expanded.indexable()) {
             // A vector is one whole value; a path fanning out over a repeated ancestor
             // has no flat projection and fails loudly (per-chunk vectors are entities).
             Object value = field.type() == IndexFieldKind.VECTOR
-                    ? PlanValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
-                    : PlanValues.read(fieldMapper, message, field.path(), includeDefaults);
+                    ? MappingValues.readWhole(fieldMapper, message, field.path(), includeDefaults)
+                    : MappingValues.read(fieldMapper, message, field.path(), includeDefaults);
             if (value == null) {
                 // null_value substitutes for missing fields; otherwise absent stays absent
                 // (skip_if_missing=false has no Lucene shape — documents cannot hold nulls).
@@ -145,7 +145,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         return document;
     }
 
-    /** Legacy projection API. Prefer {@link #map(Message, IndexingPlan)}. */
+    /** Legacy projection API. Prefer {@link #map(Message, IndexMapping)}. */
     public Document map(Message message, List<FieldProjection> projections) throws MappingException {
         Document document = new Document();
         if (projections == null) {
@@ -162,7 +162,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         return document;
     }
 
-    private void add(Document document, IndexingPlan.IndexedField field, Object value)
+    private void add(Document document, IndexMapping.IndexedField field, Object value)
             throws MappingException {
         add(document, field.fieldName(), field.path(), field.hint(), value);
     }

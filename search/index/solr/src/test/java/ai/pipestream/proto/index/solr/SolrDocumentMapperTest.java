@@ -4,8 +4,8 @@ import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexingPlan;
-import ai.pipestream.proto.index.spi.IndexingPlanFactory;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
@@ -111,10 +111,10 @@ class SolrDocumentMapperTest {
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .setField(created, timestamp)
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created", ResolvedFieldHint.of(IndexFieldKind.DATE))));
 
-        Map<String, Object> doc = mapper.map(message, plan);
+        Map<String, Object> doc = mapper.map(message, mapping);
 
         // the raw RFC3339 string, never the quoted JSON literal "\"...\""
         assertThat(doc.get("created")).isEqualTo("2023-11-14T22:13:20Z");
@@ -151,17 +151,17 @@ class SolrDocumentMapperTest {
     }
 
     @Test
-    void unsetIntermediateMessageInPlanPathSkipsField() throws Exception {
+    void unsetIntermediateMessageInMappingPathSkipsField() throws Exception {
         Descriptor descriptor = docDescriptor();
         FieldDescriptor colors = descriptor.findFieldByName("colors");
         DynamicMessage message = DynamicMessage.newBuilder(descriptor)
                 .addRepeatedField(colors, colors.getEnumType().findValueByName("RED"))
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("inner.name", "inner_name", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexingPlan.IndexedField("colors", "colors", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("inner.name", "inner_name", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
+                new IndexMapping.IndexedField("colors", "colors", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        Map<String, Object> doc = mapper.map(message, plan);
+        Map<String, Object> doc = mapper.map(message, mapping);
 
         assertThat(doc).containsEntry("colors", List.of("RED")).doesNotContainKey("inner_name");
     }
@@ -170,55 +170,55 @@ class SolrDocumentMapperTest {
     void includeDefaultsWritesImplicitPresenceDefaults() throws Exception {
         Descriptor descriptor = boolDocDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("archived", "archived",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("archived", "archived",
                         ResolvedFieldHint.of(IndexFieldKind.BOOLEAN))));
 
         // default behaviour: fields at their default value are skipped
-        assertThat(mapper.map(message, plan)).doesNotContainKey("archived");
+        assertThat(mapper.map(message, mapping)).doesNotContainKey("archived");
 
         SolrDocumentMapper withDefaults = new SolrDocumentMapper(
                 new ProtoFieldMapperImpl(new DescriptorRegistry()), true);
-        assertThat(withDefaults.map(message, plan)).containsEntry("archived", false);
+        assertThat(withDefaults.map(message, mapping)).containsEntry("archived", false);
     }
 
     @Test
-    void genuinelyInvalidPlanPathStillThrows() throws Exception {
+    void genuinelyInvalidMappingPathStillThrows() throws Exception {
         Descriptor descriptor = docDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("nope.name", "nope", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        assertThatThrownBy(() -> mapper.map(message, plan)).isInstanceOf(MappingException.class);
+        assertThatThrownBy(() -> mapper.map(message, mapping)).isInstanceOf(MappingException.class);
     }
 
     @Test
     void nullValueSubstitutesMissingField() throws Exception {
         Descriptor descriptor = boolDocDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("archived", "archived",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("archived", "archived",
                         ResolvedFieldHint.builder(IndexFieldKind.BOOLEAN).nullValue("false").build())));
 
         // the substitute is coerced to the hinted type: a boolean, not the string "false"
-        assertThat(mapper.map(message, plan)).containsEntry("archived", false);
+        assertThat(mapper.map(message, mapping)).containsEntry("archived", false);
     }
 
     @Test
     void skipIfMissingFalseStillSkipsWithoutSubstitute() throws Exception {
         Descriptor descriptor = boolDocDescriptor();
         DynamicMessage message = DynamicMessage.newBuilder(descriptor).build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("archived", "archived",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("archived", "archived",
                         ResolvedFieldHint.builder(IndexFieldKind.BOOLEAN).skipIfMissing(false).build())));
 
         // Solr documents cannot hold explicit nulls
-        assertThat(mapper.map(message, plan)).doesNotContainKey("archived");
+        assertThat(mapper.map(message, mapping)).doesNotContainKey("archived");
     }
 
     @Test
     void mapModeDefaultsToEntryJsonStrings() throws Exception {
-        Map<String, Object> doc = mapper.map(labelsMessage(), mapPlan(null));
+        Map<String, Object> doc = mapper.map(labelsMessage(), mapModeMapping(null));
 
         assertThat(doc.get("labels")).isEqualTo(List.of(
                 "{\"key\":\"env\",\"value\":\"prod\"}",
@@ -228,7 +228,7 @@ class SolrDocumentMapperTest {
     @Test
     void mapModeFlattenEmitsUnderscoreKeyFields() throws Exception {
         Map<String, Object> doc = mapper.map(labelsMessage(),
-                mapPlan(ai.pipestream.proto.index.spi.MapMode.FLATTEN));
+                mapModeMapping(ai.pipestream.proto.index.spi.MapMode.FLATTEN));
 
         assertThat(doc).containsEntry("labels_env", "prod").containsEntry("labels_team", "search");
         assertThat(doc).doesNotContainKey("labels");
@@ -237,7 +237,7 @@ class SolrDocumentMapperTest {
     @Test
     void mapModeJsonEmitsOneJsonString() throws Exception {
         Map<String, Object> doc = mapper.map(labelsMessage(),
-                mapPlan(ai.pipestream.proto.index.spi.MapMode.JSON));
+                mapModeMapping(ai.pipestream.proto.index.spi.MapMode.JSON));
 
         assertThat(doc.get("labels")).isEqualTo("{\"env\":\"prod\",\"team\":\"search\"}");
     }
@@ -245,7 +245,7 @@ class SolrDocumentMapperTest {
     @Test
     void mapModeSkipOmitsField() throws Exception {
         Map<String, Object> doc = mapper.map(labelsMessage(),
-                mapPlan(ai.pipestream.proto.index.spi.MapMode.SKIP));
+                mapModeMapping(ai.pipestream.proto.index.spi.MapMode.SKIP));
 
         assertThat(doc).isEmpty();
     }
@@ -254,7 +254,7 @@ class SolrDocumentMapperTest {
     void intRangeFromGteLteBoundsEmitsMinMaxFields() throws Exception {
         Descriptor descriptor = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
         Map<String, Object> doc = mapper.map(
-                rangeMessage(descriptor, 3, 9), rangePlan(descriptor, IndexFieldKind.INT_RANGE));
+                rangeMessage(descriptor, 3, 9), rangeMapping(descriptor, IndexFieldKind.INT_RANGE));
 
         assertThat(doc).containsEntry("pages_min", 3).containsEntry("pages_max", 9);
         assertThat(doc).doesNotContainKey("pages");
@@ -264,7 +264,7 @@ class SolrDocumentMapperTest {
     void longRangeFromMinMaxBoundsEmitsMinMaxFields() throws Exception {
         Descriptor descriptor = rangeDescriptor("min", "max", FieldDescriptorProto.Type.TYPE_INT64);
         Map<String, Object> doc = mapper.map(
-                rangeMessage(descriptor, 10L, 20L), rangePlan(descriptor, IndexFieldKind.LONG_RANGE));
+                rangeMessage(descriptor, 10L, 20L), rangeMapping(descriptor, IndexFieldKind.LONG_RANGE));
 
         assertThat(doc).containsEntry("pages_min", 10L).containsEntry("pages_max", 20L);
     }
@@ -273,12 +273,12 @@ class SolrDocumentMapperTest {
     void floatAndDoubleRangesEmitNumericBounds() throws Exception {
         Descriptor floats = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_FLOAT);
         assertThat(mapper.map(rangeMessage(floats, 0.5f, 1.5f),
-                rangePlan(floats, IndexFieldKind.FLOAT_RANGE)))
+                rangeMapping(floats, IndexFieldKind.FLOAT_RANGE)))
                 .containsEntry("pages_min", 0.5f).containsEntry("pages_max", 1.5f);
 
         Descriptor doubles = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_DOUBLE);
         assertThat(mapper.map(rangeMessage(doubles, 0.25d, 0.75d),
-                rangePlan(doubles, IndexFieldKind.DOUBLE_RANGE)))
+                rangeMapping(doubles, IndexFieldKind.DOUBLE_RANGE)))
                 .containsEntry("pages_min", 0.25d).containsEntry("pages_max", 0.75d);
     }
 
@@ -287,7 +287,7 @@ class SolrDocumentMapperTest {
         Descriptor descriptor = timestampRangeDescriptor();
         Map<String, Object> doc = mapper.map(
                 timestampRangeMessage(descriptor, 1_700_000_000L, 1_700_000_100L),
-                rangePlan(descriptor, IndexFieldKind.DATE_RANGE));
+                rangeMapping(descriptor, IndexFieldKind.DATE_RANGE));
 
         assertThat(doc).containsEntry("pages_min", "2023-11-14T22:13:20Z")
                 .containsEntry("pages_max", "2023-11-14T22:15:00Z");
@@ -298,7 +298,7 @@ class SolrDocumentMapperTest {
         Descriptor descriptor = rangeDescriptor("low", "high", FieldDescriptorProto.Type.TYPE_INT32);
 
         assertThatThrownBy(() -> mapper.map(
-                rangeMessage(descriptor, 1, 2), rangePlan(descriptor, IndexFieldKind.INT_RANGE)))
+                rangeMessage(descriptor, 1, 2), rangeMapping(descriptor, IndexFieldKind.INT_RANGE)))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("(gte,lte) or (min,max)");
     }
@@ -313,23 +313,23 @@ class SolrDocumentMapperTest {
                         .setField(tsDescriptor.findFieldByName("seconds"), 1_700_000_000L)
                         .build())
                 .build();
-        IndexingPlan plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("created", "created",
+        IndexMapping mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("created", "created",
                         ResolvedFieldHint.builder(IndexFieldKind.DATE)
                                 .dateResolution(ai.pipestream.proto.index.spi.DateResolution.SECONDS)
                                 .build())));
 
         // resolution applies only where dates are emitted numerically; documents stay ISO-8601
-        assertThat(mapper.map(message, plan)).containsEntry("created", "2023-11-14T22:13:20Z");
+        assertThat(mapper.map(message, mapping)).containsEntry("created", "2023-11-14T22:13:20Z");
     }
 
     @Test
     void unpacksRegistryKnownAnyIntoPrefixedInnerFields() throws Exception {
         AnyEnvelope env = AnyEnvelope.create();
         SolrDocumentMapper solr = new SolrDocumentMapper(env.context());
-        IndexingPlan plan = env.factory().create(env.envelope());
+        IndexMapping mapping = env.factory().create(env.envelope());
 
-        Map<String, Object> doc = solr.map(env.packed("Opinion", 12), plan);
+        Map<String, Object> doc = solr.map(env.packed("Opinion", 12), mapping);
 
         assertThat(doc)
                 .containsEntry("doc_id", "doc-1")
@@ -342,9 +342,9 @@ class SolrDocumentMapperTest {
     void unknownAnyTypeUrlFailsWithPathAndTypeUrl() throws Exception {
         AnyEnvelope env = AnyEnvelope.create();
         SolrDocumentMapper solr = new SolrDocumentMapper(env.context());
-        IndexingPlan plan = env.factory().create(env.envelope());
+        IndexMapping mapping = env.factory().create(env.envelope());
 
-        assertThatThrownBy(() -> solr.map(env.unknownType(), plan))
+        assertThatThrownBy(() -> solr.map(env.unknownType(), mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
                 .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
@@ -354,12 +354,12 @@ class SolrDocumentMapperTest {
     void unsetAnyDoesNotFailAndOmitsInnerFields() throws Exception {
         AnyEnvelope env = AnyEnvelope.create();
         SolrDocumentMapper solr = new SolrDocumentMapper(env.context());
-        IndexingPlan plan = env.factory().create(env.envelope());
+        IndexMapping mapping = env.factory().create(env.envelope());
         DynamicMessage message = DynamicMessage.newBuilder(env.envelope())
                 .setField(env.envelope().findFieldByName("doc_id"), "doc-1")
                 .build();
 
-        Map<String, Object> doc = solr.map(message, plan);
+        Map<String, Object> doc = solr.map(message, mapping);
 
         assertThat(doc).containsEntry("doc_id", "doc-1")
                 .doesNotContainKey("payload_title")
@@ -369,7 +369,7 @@ class SolrDocumentMapperTest {
     private record AnyEnvelope(
             Descriptor envelope,
             Descriptor inner,
-            IndexingPlanFactory factory,
+            IndexMappingFactory factory,
             DescriptorRegistry registry) {
 
         static AnyEnvelope create() throws Exception {
@@ -412,7 +412,7 @@ class SolrDocumentMapperTest {
             registry.register(inner);
             CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                     .put(inner.getFullName(), "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
-            return new AnyEnvelope(envelope, inner, IndexingPlanFactory.defaults(catalog), registry);
+            return new AnyEnvelope(envelope, inner, IndexMappingFactory.defaults(catalog), registry);
         }
 
         IndexerContext context() {
@@ -441,10 +441,10 @@ class SolrDocumentMapperTest {
         }
     }
 
-    private IndexingPlan mapPlan(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
+    private IndexMapping mapModeMapping(ai.pipestream.proto.index.spi.MapMode mode) throws Exception {
         Descriptor descriptor = mapFieldDescriptor();
-        return new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("labels", "labels",
+        return new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("labels", "labels",
                         ResolvedFieldHint.builder(IndexFieldKind.OBJECT).mapMode(mode).build())));
     }
 
@@ -464,9 +464,9 @@ class SolrDocumentMapperTest {
                 .build();
     }
 
-    private static IndexingPlan rangePlan(Descriptor descriptor, IndexFieldKind rangeKind) {
-        return new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
+    private static IndexMapping rangeMapping(Descriptor descriptor, IndexFieldKind rangeKind) {
+        return new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("pages", "pages", ResolvedFieldHint.of(rangeKind))));
     }
 
     private static DynamicMessage rangeMessage(Descriptor descriptor, Object lower, Object upper) {

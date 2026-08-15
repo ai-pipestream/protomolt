@@ -2,7 +2,7 @@ package ai.pipestream.proto.index.lucene;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingPlan;
+import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
@@ -42,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The Lucene engine end to end: documents mapped from dynamic messages by an
- * {@link IndexingPlan} land in a real index and behave as the hints promise — analyzed
+ * {@link IndexMapping} land in a real index and behave as the hints promise — analyzed
  * full-text search, exact keyword terms, numeric sort, point ranges, and kNN vector
  * search. The per-field analyzers are wired from {@link LuceneFieldSpecs}, the way a host
  * application is expected to.
@@ -50,7 +50,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LuceneEngineEndToEndTest {
 
     private static Descriptor descriptor;
-    private static IndexingPlan plan;
+    private static IndexMapping mapping;
     private static Directory directory;
     private static IndexSearcher searcher;
     private static DirectoryReader reader;
@@ -58,28 +58,28 @@ class LuceneEngineEndToEndTest {
     @BeforeAll
     static void indexCorpus() throws Exception {
         descriptor = bookDescriptor();
-        plan = new IndexingPlan(descriptor.getFullName(), List.of(
-                new IndexingPlan.IndexedField("title", "title",
+        mapping = new IndexMapping(descriptor.getFullName(), List.of(
+                new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .analyzer("english")
                                 .build()),
-                new IndexingPlan.IndexedField("genre", "genre",
+                new IndexMapping.IndexedField("genre", "genre",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .sortable(true)
                                 .facetable(true)
                                 .build()),
-                new IndexingPlan.IndexedField("rank", "rank",
+                new IndexMapping.IndexedField("rank", "rank",
                         ResolvedFieldHint.builder(IndexFieldKind.INT64)
                                 .sortable(true)
                                 .build()),
-                new IndexingPlan.IndexedField("embedding", "embedding",
+                new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(4)
                                 .build())));
 
         // Analyzer names travel on the hints; the host maps them onto implementations.
         Map<String, Analyzer> perField = new HashMap<>();
-        for (LuceneFieldSpecs.FieldSpec spec : LuceneFieldSpecs.from(plan).fields()) {
+        for (LuceneFieldSpecs.FieldSpec spec : LuceneFieldSpecs.from(mapping).fields()) {
             if ("english".equals(spec.analyzer())) {
                 perField.put(spec.name(), new EnglishAnalyzer());
             } else if (spec.kind() == IndexFieldKind.KEYWORD) {
@@ -93,11 +93,11 @@ class LuceneEngineEndToEndTest {
         directory = new ByteBuffersDirectory();
         try (IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(analyzer))) {
             writer.addDocument(mapper.map(
-                    book("Running with Scissors", "memoir", 3, 1f, 0f, 0f, 0f), plan));
+                    book("Running with Scissors", "memoir", 3, 1f, 0f, 0f, 0f), mapping));
             writer.addDocument(mapper.map(
-                    book("The Silent Library", "mystery", 1, 0f, 1f, 0f, 0f), plan));
+                    book("The Silent Library", "mystery", 1, 0f, 1f, 0f, 0f), mapping));
             writer.addDocument(mapper.map(
-                    book("Runs in the Family", "mystery", 2, 0.9f, 0.1f, 0f, 0f), plan));
+                    book("Runs in the Family", "mystery", 2, 0.9f, 0.1f, 0f, 0f), mapping));
         }
         reader = DirectoryReader.open(directory);
         searcher = new IndexSearcher(reader);

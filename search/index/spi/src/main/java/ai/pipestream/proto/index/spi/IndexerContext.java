@@ -16,16 +16,16 @@ import java.util.Objects;
 public record IndexerContext(
         ProtoFieldMapper fieldMapper,
         DescriptorRegistry descriptorRegistry,
-        IndexingPlanFactory planFactory) {
+        IndexMappingFactory mappingFactory) {
 
     public IndexerContext {
         Objects.requireNonNull(fieldMapper, "fieldMapper");
         descriptorRegistry = descriptorRegistry != null
                 ? descriptorRegistry
                 : Objects.requireNonNull(fieldMapper.getDescriptorRegistry(), "descriptorRegistry");
-        planFactory = planFactory != null
-                ? planFactory
-                : IndexingPlanFactory.defaults(new CatalogIndexingHintSource());
+        mappingFactory = mappingFactory != null
+                ? mappingFactory
+                : IndexMappingFactory.defaults(new CatalogIndexingHintSource());
     }
 
     public IndexerContext(ProtoFieldMapper fieldMapper) {

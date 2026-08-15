@@ -66,11 +66,11 @@ class SearchEngineIndexersTest {
     }
 
     @Test
-    void createdIndexerMapsThroughTheSharedPlan() throws Exception {
+    void createdIndexerMapsThroughTheSharedMapping() throws Exception {
         SearchEngineIndexer indexer = SearchEngineIndexers.create("stub", context()).orElseThrow();
-        IndexingPlan plan = IndexingPlanFactory.inferringOnly().create(Struct.getDescriptor());
+        IndexMapping mapping = IndexMappingFactory.inferringOnly().create(Struct.getDescriptor());
 
-        assertThat(indexer.map(StringValue.of("x"), plan))
+        assertThat(indexer.map(StringValue.of("x"), mapping))
                 .isEqualTo("google.protobuf.Struct/google.protobuf.StringValue");
     }
 }
