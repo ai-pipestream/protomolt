@@ -64,7 +64,7 @@ idempotent re-activation provokes no repo traffic.
   transitions. Every method rides the caller's `Connection`: an account
   mutation and its outbox event must commit atomically, so the store never
   opens its own connections. `JdbcAccountStore` is the Postgres default
-  (Flyway migrations in `account/service/src/main/resources/db/migration`:
+  (Flyway migrations in `account/service/src/main/resources/db/migration/account`:
   V1 `accounts`, V2 `account_events_outbox`).
 - **`IdentityResolver`** (`identity` package) — the seam for external
   identity systems (Salesforce/AD/OAuth adapters later): resolve an external

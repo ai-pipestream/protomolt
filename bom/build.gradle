@@ -112,6 +112,7 @@ def supportedModules = [
         'protomolt-intake-service',
         'protomolt-parse-proto',
         'protomolt-parse-document',
+        'protomolt-parse-service',
 ]
 
 javaPlatform {

@@ -1,0 +1,35 @@
+description = 'The parsing coordinator runtime: magic-byte content sniffing, CEL routing rules, scatter-gather parser fan-out over the plugin contract, and the SearchMetadata fold persisted back through repo-service'
+
+dependencies {
+    api project(':protomolt-parse-proto')
+
+    // The coordinator rides the repo wire contract only — the DocumentServiceGrpc
+    // blocking stub, never repo container/service internals.
+    implementation project(':protomolt-repo-proto')
+    // CelEvaluator drives the routing-rule guards.
+    implementation project(':protomolt-mapper-cel')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    implementation libs.protobuf.java.util
+    // ParseChains builds the durable-parse chain envelope (Jackson is the
+    // repo-wide JSON library).
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    // The full-stack IT boots a real repo-service (Postgres + S3) behind the
+    // coordinator; the contract tests use in-package fakes for both sides.
+    testImplementation project(':protomolt-repo-service')
+    // LedgerConfig for the IT's RepoServiceConfig — config surface only.
+    testImplementation project(':protomolt-repo-container')
+    // The durable-parse IT drives ParseDocument as a checkpointed chain job.
+    testImplementation project(':protomolt-jobs-service')
+    testImplementation project(':protomolt-chain')
+    testImplementation project(':protomolt-actions')
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
