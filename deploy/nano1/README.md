@@ -178,6 +178,39 @@ The defaults publish every 30 seconds with 90-second leases. Set
 paths. `--once` performs one publication and returns, which is the live
 acceptance form.
 
+For boot persistence, install the publisher, its host gate, and the supplied
+systemd unit without cloning a writable repository onto Nano1:
+
+```shell
+sudo install -d -o root -g root -m 0755 \
+  /opt/protomolt-mesh/scripts /opt/protomolt-mesh/deploy/nano1 /etc/protomolt
+sudo install -o root -g root -m 0755 scripts/nano1-mesh-publisher.py \
+  /opt/protomolt-mesh/scripts/nano1-mesh-publisher.py
+sudo install -o root -g root -m 0755 deploy/nano1/check-host.sh \
+  /opt/protomolt-mesh/deploy/nano1/check-host.sh
+sudo install -o root -g root -m 0644 \
+  deploy/nano1/protomolt-mesh-publisher.service \
+  /etc/systemd/system/protomolt-mesh-publisher.service
+sudoedit /etc/protomolt/nano1-mesh.env
+sudo chmod 0600 /etc/protomolt/nano1-mesh.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now protomolt-mesh-publisher.service
+```
+
+The environment file must contain `PROTOMOLT_MCP_TOKEN`. It may override
+`PROTOMOLT_MCP_ENDPOINT`, lease timing, the state path, or the advertised
+addresses described above. The unit runs as `protomolt-runner`, keeps its state
+under `/var/lib/protomolt-runner/mesh`, and restarts after a process failure.
+Its Docker group access is privileged host authority, so only the fixed,
+root-owned publisher and gate are installed under `/opt/protomolt-mesh`.
+
+Inspect its current result without exposing the token:
+
+```shell
+sudo systemctl status protomolt-mesh-publisher.service
+sudo journalctl -u protomolt-mesh-publisher.service -n 100
+```
+
 Native `linux/arm64` images produced here run on both the Jetson and the
 Raspberry Pi fleet when their base images support ARM64. GPU images remain
 Jetson-specific. Use the manual smoke workflow to prove a build target before

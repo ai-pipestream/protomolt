@@ -62,13 +62,26 @@ printf '%s' "$compose" | grep -q 'no-new-privileges:true' \
   || fail "inference services must prevent privilege escalation"
 
 say "health-gated mesh publisher"
-python3 -m py_compile ../../scripts/nano1-mesh-publisher.py \
+PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/protomolt-pycache" \
+  python3 -m py_compile ../../scripts/nano1-mesh-publisher.py \
   || fail "mesh publisher must compile"
+PYTHONDONTWRITEBYTECODE=1 python3 ../../scripts/test_nano1_mesh_publisher.py \
+  || fail "mesh publisher contract test must pass"
 grep -q 'probe_tei' ../../scripts/nano1-mesh-publisher.py \
   || fail "mesh publisher must gate the TEI lease"
 grep -q 'probe_djl' ../../scripts/nano1-mesh-publisher.py \
   || fail "mesh publisher must gate the DJL lease"
 grep -q 'probe_host' ../../scripts/nano1-mesh-publisher.py \
   || fail "mesh publisher must gate ARM64 build capacity"
+grep -q '^User=protomolt-runner$' protomolt-mesh-publisher.service \
+  || fail "mesh publisher service must use the dedicated runner account"
+grep -q '^EnvironmentFile=/etc/protomolt/nano1-mesh.env$' \
+  protomolt-mesh-publisher.service \
+  || fail "mesh publisher service must load its token outside the repository"
+grep -q '^ProtectSystem=strict$' protomolt-mesh-publisher.service \
+  || fail "mesh publisher service must protect the host filesystem"
+grep -q '^StateDirectory=protomolt-runner/mesh$' \
+  protomolt-mesh-publisher.service \
+  || fail "mesh publisher service must preserve fenced sequence state"
 
 say "PASS: Nano1 GPU deployment statics"

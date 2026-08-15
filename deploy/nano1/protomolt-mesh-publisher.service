@@ -1,0 +1,33 @@
+[Unit]
+Description=ProtoMolt Nano1 mesh capacity publisher
+Wants=network-online.target
+After=network-online.target docker.service tailscaled.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=protomolt-runner
+Group=protomolt-runner
+SupplementaryGroups=docker video render
+WorkingDirectory=/opt/protomolt-mesh
+Environment=PROTOMOLT_NANO1_MESH_LIVE=1
+EnvironmentFile=/etc/protomolt/nano1-mesh.env
+StateDirectory=protomolt-runner/mesh
+UMask=0077
+ExecStartPre=/usr/bin/test -S /var/run/docker.sock
+ExecStart=/usr/bin/python3 /opt/protomolt-mesh/scripts/nano1-mesh-publisher.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
