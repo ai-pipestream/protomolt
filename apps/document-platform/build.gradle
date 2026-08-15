@@ -1,0 +1,39 @@
+plugins {
+    id 'application'
+}
+
+description = 'The document platform in one container: repo-service, the authenticated intake door, the parsing coordinator with the embedded reference parser, the durable jobs worker, the git-backed schema registry (on by default, jobs verbs mounted), and the streaming parser playground, all wired over the in-process transport'
+
+dependencies {
+    implementation project(':protomolt-repo-service')
+    implementation project(':protomolt-repo-container')
+    implementation project(':protomolt-intake-service')
+    implementation project(':protomolt-parse-service')
+    implementation project(':protomolt-parse-text')
+    implementation project(':protomolt-parse-document')
+    implementation project(':protomolt-parse-playground')
+    implementation project(':protomolt-jobs-service')
+    implementation project(':protomolt-chain')
+    implementation project(':protomolt-actions')
+    implementation project(':protomolt-registry')
+    implementation project(':protomolt-registry-server')
+    implementation project(':protomolt-schema-confluent')
+    implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-grpc-service-profile')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.inprocess
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    testImplementation project(':protomolt-repo-container')
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
+
+application {
+    mainClass = 'ai.pipestream.proto.platform.DocumentPlatformMain'
+}
