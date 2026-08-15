@@ -11,8 +11,14 @@ import java.time.Duration;
  *        RESOURCE_EXHAUSTED before anything reaches gRParse
  * @param deadline per-parse deadline on the gRParse stream; a slow engine
  *        fails the plugin stream instead of hanging it
+ * @param emitsPreviews whether {@code GetParserInfo} advertises previews.
+ *        A deployment fact, not a request: the streaming wire carries no
+ *        processing options, so page images arrive exactly when the
+ *        gRParse fleet is built to render them into
+ *        {@code PageData.page_meta.image}; set this true for such a fleet
  */
-public record GrparseAdapterOptions(String parserVersion, long maxDocumentBytes, Duration deadline) {
+public record GrparseAdapterOptions(
+        String parserVersion, long maxDocumentBytes, Duration deadline, boolean emitsPreviews) {
 
     /** The default advertised parser version. */
     public static final String DEFAULT_PARSER_VERSION = "1.0.0";
@@ -22,6 +28,17 @@ public record GrparseAdapterOptions(String parserVersion, long maxDocumentBytes,
 
     /** The default per-parse deadline on the gRParse stream. */
     public static final Duration DEFAULT_DEADLINE = Duration.ofMinutes(10);
+
+    /**
+     * The historical three-field form: previews not advertised.
+     *
+     * @param parserVersion the advertised parser build version
+     * @param maxDocumentBytes per-document byte cap
+     * @param deadline per-parse deadline on the gRParse stream
+     */
+    public GrparseAdapterOptions(String parserVersion, long maxDocumentBytes, Duration deadline) {
+        this(parserVersion, maxDocumentBytes, deadline, false);
+    }
 
     /**
      * Validates the configuration; every field is required.

@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import ai.pipestream.document.v1.BaseTextItem;
 import ai.pipestream.document.v1.Document;
 import ai.pipestream.document.v1.DocumentOrigin;
+import ai.pipestream.document.v1.ImageRef;
 import ai.pipestream.document.v1.PageItem;
+import ai.pipestream.document.v1.Size;
 import ai.pipestream.document.v1.TextItem;
 import ai.pipestream.document.v1.TextItemBase;
 import ai.pipestream.document.v1.TitleItem;
@@ -22,6 +24,7 @@ import ai.pipestream.proto.parse.plugin.v1.GetParserInfoResponse;
 import ai.pipestream.proto.parse.plugin.v1.ParseOptions;
 import ai.pipestream.proto.parse.plugin.v1.ParseRequest;
 import ai.pipestream.proto.parse.plugin.v1.ParseResponse;
+import ai.pipestream.proto.parse.plugin.v1.PagePreview;
 import ai.pipestream.proto.parse.plugin.v1.ParsedPage;
 import ai.pipestream.proto.parse.plugin.v1.ParserOutput;
 import ai.pipestream.proto.parse.plugin.v1.ParserPluginServiceGrpc;
@@ -35,6 +38,7 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -296,14 +300,76 @@ class GrparseParserAdapterTest {
         assertThat(info.getSupportedExtensionsList()).contains(
                 "pdf", "png", "jpg", "jpeg", "tif", "tiff", "webp");
         assertThat(info.getEmitsPages()).isTrue();
-        // StreamProcessDocument has no preview surface; the adapter says so.
+        // Previews are a deployment fact; the default configuration does not
+        // claim the fleet renders page images.
         assertThat(info.getEmitsPreviews()).isFalse();
         assertThat(info.getEmitsClaims()).isTrue();
         assertThat(info.getMaxDocumentBytes())
                 .isEqualTo(GrparseAdapterOptions.DEFAULT_MAX_DOCUMENT_BYTES);
     }
 
+    @Test
+    void fleetRenderedPageImagesForwardAsPreviewsWhenAsked() throws Exception {
+        byte[] png = new byte[] {(byte) 0x89, 'P', 'N', 'G', 0, 1, 2, 3};
+        fake.reset(List.of(
+                pageWithImage(1, 2, "Alpha text.",
+                        "data:image/png;base64," + Base64.getEncoder().encodeToString(png),
+                        612, 792),
+                pageEvent(2, 2, "Beta text."),
+                completeEvent()));
+        List<ParseResponse> events = parse("payload".getBytes(), false, true);
+        List<ParseResponse> previews = events.stream()
+                .filter(e -> e.getEventCase() == ParseResponse.EventCase.PREVIEW)
+                .toList();
+        // The unrendered page is a page the fleet did not render: skipped.
+        assertThat(previews).hasSize(1);
+        PagePreview preview = previews.getFirst().getPreview();
+        assertThat(preview.getPageNumber()).isEqualTo(1);
+        assertThat(preview.getMimeType()).isEqualTo("image/png");
+        assertThat(preview.getImage().toByteArray()).isEqualTo(png);
+        assertThat(preview.getWidth()).isEqualTo(612);
+        assertThat(preview.getHeight()).isEqualTo(792);
+    }
+
+    @Test
+    void previewsStayUnemittedWhenNotAsked() throws Exception {
+        byte[] png = new byte[] {(byte) 0x89, 'P', 'N', 'G'};
+        fake.reset(List.of(
+                pageWithImage(1, 1, "Alpha text.",
+                        "data:image/png;base64," + Base64.getEncoder().encodeToString(png),
+                        612, 792),
+                completeEvent()));
+        List<ParseResponse> events = parse("payload".getBytes(), false, false);
+        assertThat(events)
+                .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.PREVIEW);
+    }
+
+    @Test
+    void nonDataImageUrisAreSkippedNotFailed() throws Exception {
+        fake.reset(List.of(
+                pageWithImage(1, 1, "Alpha text.", "s3://bucket/page-1.png", 612, 792),
+                completeEvent()));
+        List<ParseResponse> events = parse("payload".getBytes(), false, true);
+        assertThat(events)
+                .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.PREVIEW);
+    }
+
     // ------------------------------------------------------------------
+
+    static DocumentStreamEvent pageWithImage(
+            int pageNumber, int totalPages, String text, String uri, double width, double height) {
+        DocumentStreamEvent base = pageEvent(pageNumber, totalPages, text);
+        return base.toBuilder()
+                .setPage(base.getPage().toBuilder()
+                        .setPageMeta(base.getPage().getPageMeta().toBuilder()
+                                .setImage(ImageRef.newBuilder()
+                                        .setMimetype("image/png")
+                                        .setUri(uri)
+                                        .setSize(Size.newBuilder()
+                                                .setWidth(width)
+                                                .setHeight(height)))))
+                .build();
+    }
 
     static DocumentStreamEvent pageEvent(int pageNumber, int totalPages, String text) {
         return DocumentStreamEvent.newBuilder()
@@ -340,12 +406,17 @@ class GrparseParserAdapterTest {
     }
 
     static ParseRequest optionsFrame(boolean emitPages) {
+        return optionsFrame(emitPages, false);
+    }
+
+    static ParseRequest optionsFrame(boolean emitPages, boolean emitPreviews) {
         return ParseRequest.newBuilder()
                 .setOptions(ParseOptions.newBuilder()
                         .setDocumentId("doc-g1")
                         .setFilename("scan.pdf")
                         .setContentType("application/pdf")
-                        .setEmitPages(emitPages))
+                        .setEmitPages(emitPages)
+                        .setEmitPreviews(emitPreviews))
                 .build();
     }
 
@@ -363,11 +434,16 @@ class GrparseParserAdapterTest {
     }
 
     static List<ParseResponse> parse(byte[] payload, boolean emitPages) throws Exception {
+        return parse(payload, emitPages, false);
+    }
+
+    static List<ParseResponse> parse(byte[] payload, boolean emitPages, boolean emitPreviews)
+            throws Exception {
         List<ParseResponse> events = new ArrayList<>();
         AtomicReference<Throwable> failure = new AtomicReference<>();
         CountDownLatch done = new CountDownLatch(1);
         StreamObserver<ParseRequest> requests = stub.parse(observer(events, failure, done));
-        requests.onNext(optionsFrame(emitPages));
+        requests.onNext(optionsFrame(emitPages, emitPreviews));
         requests.onNext(dataFrame(payload));
         requests.onCompleted();
         assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();

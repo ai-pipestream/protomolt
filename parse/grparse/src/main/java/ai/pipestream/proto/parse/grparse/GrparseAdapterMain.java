@@ -23,6 +23,13 @@ public final class GrparseAdapterMain {
     /** Env var choosing the adapter's gRPC port; defaults to {@value #DEFAULT_PORT}. */
     public static final String ENV_PORT = "PARSE_GRPARSE_PORT";
 
+    /**
+     * Env var declaring the gRParse fleet renders page images into the
+     * stream ({@code true}/{@code false}, default {@code false}); a
+     * deployment fact the adapter advertises as {@code emits_previews}.
+     */
+    public static final String ENV_EMITS_PREVIEWS = "PARSE_GRPARSE_EMITS_PREVIEWS";
+
     /** The default adapter gRPC port. */
     public static final int DEFAULT_PORT = 9096;
 
@@ -46,7 +53,11 @@ public final class GrparseAdapterMain {
         int port = port(System.getenv(ENV_PORT));
 
         GrparseParserAdapter adapter =
-                new GrparseParserAdapter(target.trim(), GrparseAdapterOptions.defaults());
+                new GrparseParserAdapter(target.trim(), new GrparseAdapterOptions(
+                        GrparseAdapterOptions.DEFAULT_PARSER_VERSION,
+                        GrparseAdapterOptions.DEFAULT_MAX_DOCUMENT_BYTES,
+                        GrparseAdapterOptions.DEFAULT_DEADLINE,
+                        Boolean.parseBoolean(System.getenv(ENV_EMITS_PREVIEWS))));
         HealthStatusManager health = new HealthStatusManager();
         Server server = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
