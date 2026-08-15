@@ -1,0 +1,23 @@
+description = 'S3 pull connector: lists a bucket, pulls new and changed objects past a watermark, and feeds them through the intake door as stable-identity documents'
+
+dependencies {
+    api project(':protomolt-acquire-pull')
+    api project(':protomolt-composer')
+    implementation project(':protomolt-actions')
+    implementation platform(libs.awssdk.bom)
+    implementation libs.awssdk.s3
+    implementation libs.awssdk.url.connection.client
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+
+    // The full-stack IT boots a real repo-service (Postgres + LocalStack S3)
+    // behind the real intake door and pulls from a LocalStack source bucket.
+    testImplementation project(':protomolt-intake-service')
+    testImplementation project(':protomolt-repo-service')
+    testImplementation project(':protomolt-repo-container')
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}

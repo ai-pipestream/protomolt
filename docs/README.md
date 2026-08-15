@@ -6,6 +6,7 @@ The guides below follow the repository's module layout.
 ## Acquire
 
 - [Stream connectors](acquire/connector.md): bounded, flow-controlled inputs
+- [Pull connectors](acquire/pull-connectors.md): S3 and JDBC pulls through the intake door, watermark in and out
 - [Gathering proto sources](acquire/gathering.md): filesystem, jar, Git, and Maven sources
 - [Microsoft Graph](acquire/msgraph.md): OneDrive, SharePoint, and Copilot connectors
 

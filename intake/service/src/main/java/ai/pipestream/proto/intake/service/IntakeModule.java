@@ -12,6 +12,9 @@ import java.util.Set;
  * from the node's channels (in-process when co-mounted, remote otherwise);
  * the key store either arrives explicitly or is selected from the
  * environment with the standing precedence (OIDC over JDBC over seeded).
+ * Wiring also publishes the door's in-process endpoint, so co-mounted
+ * modules (the pull connectors) feed it without a socket — authenticated
+ * exactly like remote callers, the interceptor wraps every transport.
  */
 public final class IntakeModule implements ServiceModule {
 
@@ -32,6 +35,7 @@ public final class IntakeModule implements ServiceModule {
 
     private final Config config;
     private IntakeServices services;
+    private Server inProcess;
     private Server netty;
     private IntakeHttpServer http;
 
@@ -58,7 +62,7 @@ public final class IntakeModule implements ServiceModule {
     }
 
     @Override
-    public ServiceMount wire(NodeContext context) {
+    public ServiceMount wire(NodeContext context) throws Exception {
         ApiKeyIdentityResolver resolver = config.resolver() != null
                 ? config.resolver()
                 : IntakeServiceMain.selectResolver(context.environment());
@@ -68,6 +72,9 @@ public final class IntakeModule implements ServiceModule {
                         context.channels().targetOf("repo"),
                         config.maxPayloadBytes()),
                 resolver);
+        String inProcessName = ROLE + "-" + context.nodeId();
+        inProcess = services.startInProcess(inProcessName);
+        context.channels().publishInProcess(ROLE, inProcessName);
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
@@ -82,6 +89,7 @@ public final class IntakeModule implements ServiceModule {
                 if (http != null) {
                     http.close();
                 }
+                inProcess.shutdownNow();
                 services.close();
             }
         };

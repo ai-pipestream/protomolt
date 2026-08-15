@@ -1,0 +1,10 @@
+description = 'Shared pull-connector core: the intake feed seam (gRPC submission with the API key), the stable-identity document wrap, and the pull report'
+
+dependencies {
+    api project(':protomolt-intake-proto')
+    api project(':protomolt-repo-proto')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.inprocess
+
+    testRuntimeOnly libs.slf4j.simple
+}
