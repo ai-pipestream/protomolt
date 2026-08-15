@@ -50,8 +50,9 @@ through `DocumentService`.
 
 The parsing coordinator selects parsers with CEL rules, invokes compatible
 parser services, records every parser result, and folds document-level claims
-into search metadata. The current modules define the wire contracts; service
-implementations are separate planned work.
+into search metadata. Intake's runtime lives in `intake/service`; the parsing
+coordinator's wire contract is defined and its runtime is separate planned
+work.
 
 See [intake and parsing](intake-and-parsing.md).
 
@@ -116,7 +117,7 @@ events or start relay loops.
 | --- | --- |
 | Repository | `repo/proto`, `repo/container`, `repo/service` |
 | Accounts | `account/proto`, `account/service` |
-| Intake | `intake/proto` |
+| Intake | `intake/proto`, `intake/service` |
 | Parsing | `parse/proto`, `parse/document` |
 
 Repository and account services support in-process transports for tests and

@@ -109,6 +109,7 @@ def supportedModules = [
         'protomolt-inference-openai',
         'protomolt-inference-structured',
         'protomolt-intake-proto',
+        'protomolt-intake-service',
         'protomolt-parse-proto',
         'protomolt-parse-document',
 ]

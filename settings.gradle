@@ -329,6 +329,9 @@ project(':protomolt-inference-structured').projectDir = file('inference/structur
 include 'protomolt-intake-proto'
 project(':protomolt-intake-proto').projectDir = file('intake/proto')
 
+include 'protomolt-intake-service'
+project(':protomolt-intake-service').projectDir = file('intake/service')
+
 // parse/ — the parsing coordinator: CEL routing rules, scatter-gather parser
 // fan-out, and the SearchMetadata fold.
 
