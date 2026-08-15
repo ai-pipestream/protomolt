@@ -3,8 +3,18 @@
   "packageRules": [
     {
       "description": "Confluent is boxed to 8.0.x: 8.1+ (Kafka 4.1-based) references org.apache.kafka.common.metrics.Monitorable, absent from the pinned kafka-clients 3.9 line. See the comment in gradle/libs.versions.toml; lift this when kafka-clients moves to >= 4.1.",
-      "matchPackagePatterns": ["^io\\.confluent"],
-      "allowedVersions": "<8.1"
+      "allowedVersions": "<8.1",
+      "matchPackageNames": ["/^io\\.confluent/"]
+    },
+    {
+      "description": "Nano1 uses JetPack 7.2 with the CUDA 13.2 and TensorRT 10.16 runtime line. Newer NGC TensorRT images require a newer host runtime.",
+      "matchPackageNames": ["nvcr.io/nvidia/tensorrt"],
+      "allowedVersions": "/^26\\.05-py3$/"
+    },
+    {
+      "description": "Apicurio Registry 3.3.1 fails the integration stack health gate. Keep the known-good 3.3.0 image until a replacement passes the full registry suite.",
+      "matchPackageNames": ["apicurio/apicurio-registry"],
+      "allowedVersions": "/^3\\.3\\.0$/"
     }
   ]
 }

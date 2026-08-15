@@ -7,7 +7,7 @@
 
 services:
   serve-init:
-    image: busybox:1.37.0
+    image: busybox:1.38.0
     user: "0:0"
     command:
       - sh
@@ -129,7 +129,7 @@ services:
     restart: "no"
 
   repo-postgres:
-    image: postgres:17.6-alpine
+    image: postgres:17.11-alpine
     container_name: protomolt-repo-postgres
     environment:
       POSTGRES_USER: ${PROTOMOLT_REPO_DB_USER:-documents}
@@ -189,7 +189,7 @@ services:
     restart: "no"
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.0
+    image: quay.io/keycloak/keycloak:26.7.1
     container_name: protomolt-keycloak
     command: ["start-dev", "--import-realm"]
     environment:

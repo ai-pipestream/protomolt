@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.26
 # ARM64-only DJL Serving runtime for JetPack 7.2. The NVIDIA 26.05 TensorRT
 # image matches Nano1's CUDA 13.2 and TensorRT 10.16 software line.
 FROM deepjavalibrary/djl-serving:0.36.0-aarch64@sha256:a3fc7ef607a2f0f0c559367cafcec3fea555735fcecfe99f43ad2213188f67c4 AS djl
