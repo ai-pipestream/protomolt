@@ -1,14 +1,14 @@
 # The document platform, self-contained: one platform container (repo-service,
 # intake door, parsing coordinator with the embedded reference parser, durable
-# jobs worker, schema registry, parser playground), one PostgreSQL instance
-# carrying the two platform databases, and RustFS as the S3-compatible object
-# store. Build the app first:
+# jobs worker, schema registry, parser playground, search door), one
+# PostgreSQL instance carrying the two platform databases, and RustFS as the
+# S3-compatible object store. Build the app first:
 #
 #   ./gradlew :protomolt-document-platform:installDist
 #   docker compose -f deploy/document-platform/compose.yml up --build
 #
 # Then: search console http://localhost:8096, playground http://localhost:8095,
-# registry http://localhost:8081,
+# registry http://localhost:8081, search gRPC localhost:9094,
 # intake gRPC localhost:9092 (demo key: demo-key -> account demo).
 name: protomolt-document-platform
 

@@ -172,7 +172,7 @@ message EmbeddingSpec {
   bool normalize = 4;
 }
 
-// An index policy: derive chunks and vectors from the annotated source text
+// A chunking policy: derive chunks and vectors from the annotated source text
 // field at index time (chunk + embed on the server). Attach to a string field.
 // The policy digest (spi ChunkingPolicy.digest()) identifies the derivation
 // pipeline; index consumers pin it the way they pin a schema.

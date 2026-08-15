@@ -45,7 +45,7 @@ expire stale advertisements and leases using a trusted clock, and reoffer work
 from the latest valid checkpoint. At-least-once delivery is safe only when
 frames and outputs retain idempotency ids and immutable content fingerprints.
 
-## Index plan
+## Indexed fields
 
 Index fields only for a named query: entity and scope ids, parent id, state,
 type, processor, node, tenant, created and updated time, deadline, lease expiry,

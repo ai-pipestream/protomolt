@@ -55,6 +55,7 @@ import org.junit.jupiter.api.Test;
 class GrparseParserAdapterTest {
 
     static FakeGrparse fake;
+    static String grparseName;
     static Server grparseServer;
     static GrparseParserAdapter adapter;
     static Server adapterServer;
@@ -65,7 +66,7 @@ class GrparseParserAdapterTest {
     @BeforeAll
     static void boot() throws Exception {
         fake = new FakeGrparse();
-        String grparseName = InProcessServerBuilder.generateName();
+        grparseName = InProcessServerBuilder.generateName();
         grparseServer = InProcessServerBuilder.forName(grparseName)
                 .directExecutor()
                 .addService(fake)
@@ -352,6 +353,108 @@ class GrparseParserAdapterTest {
         List<ParseResponse> events = parse("payload".getBytes(), false, true);
         assertThat(events)
                 .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.PREVIEW);
+    }
+
+    @Test
+    void malformedImageDataUrisAreSkippedNotFailed() throws Exception {
+        fake.reset(List.of(
+                pageWithImage(1, 1, "Alpha text.", "data:image/png;base64,not!!base64", 612, 792),
+                pageWithImage(2, 2, "Beta text.", "data:image/png;base64,", 612, 792),
+                completeEvent()));
+        List<ParseResponse> events = parse("payload".getBytes(), false, true);
+        assertThat(events)
+                .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.PREVIEW);
+    }
+
+    @Test
+    void aSecondOptionsFrameIsInvalidArgument() throws Exception {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        StreamObserver<ParseRequest> requests =
+                stub.parse(observer(new ArrayList<>(), failure, done));
+        requests.onNext(optionsFrame(false));
+        requests.onNext(optionsFrame(false));
+
+        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+        assertThat(((StatusRuntimeException) failure.get()).getStatus().getCode())
+                .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void aStreamClosingWithoutOptionsIsInvalidArgument() throws Exception {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        StreamObserver<ParseRequest> requests =
+                stub.parse(observer(new ArrayList<>(), failure, done));
+        try {
+            requests.onCompleted();
+        } catch (RuntimeException alreadyClosed) {
+            // The server already rejected the stream.
+        }
+
+        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+        assertThat(((StatusRuntimeException) failure.get()).getStatus().getCode())
+                .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void anOversizedPayloadIsResourceExhaustedBeforeGrparse() throws Exception {
+        // A second adapter with a 1 KiB cap, over the same fake: the payload
+        // is rejected before anything reaches gRParse.
+        fake.reset(List.of());
+        String tinyName = InProcessServerBuilder.generateName();
+        GrparseParserAdapter tiny = new GrparseParserAdapter(
+                InProcessChannelBuilder.forName(grparseName).build(),
+                new GrparseAdapterOptions(
+                        GrparseAdapterOptions.DEFAULT_PARSER_VERSION,
+                        1024,
+                        GrparseAdapterOptions.DEFAULT_DEADLINE));
+        Server tinyServer = InProcessServerBuilder.forName(tinyName)
+                .directExecutor()
+                .addService(tiny)
+                .build()
+                .start();
+        ManagedChannel tinyChannel = InProcessChannelBuilder.forName(tinyName).build();
+        try {
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            CountDownLatch done = new CountDownLatch(1);
+            StreamObserver<ParseRequest> requests =
+                    ParserPluginServiceGrpc.newStub(tinyChannel)
+                            .parse(observer(new ArrayList<>(), failure, done));
+            requests.onNext(optionsFrame(false));
+            requests.onNext(dataFrame(new byte[2048]));
+            requests.onCompleted();
+
+            assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+            assertThat(((StatusRuntimeException) failure.get()).getStatus().getCode())
+                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(fake.received).isEmpty();
+        } finally {
+            tinyChannel.shutdownNow();
+            tinyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void anEmptyGrparseStreamIsAnInternalFailure() throws Exception {
+        fake.reset(List.of());
+
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        StreamObserver<ParseRequest> requests =
+                stub.parse(observer(new ArrayList<>(), failure, done));
+        requests.onNext(optionsFrame(false));
+        requests.onNext(dataFrame("payload".getBytes()));
+        requests.onCompleted();
+
+        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+        Status status = ((StatusRuntimeException) failure.get()).getStatus();
+        assertThat(status.getCode()).isEqualTo(Status.Code.INTERNAL);
+        assertThat(status.getDescription()).contains("no pages and no collector documents");
     }
 
     // ------------------------------------------------------------------

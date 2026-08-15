@@ -166,3 +166,24 @@ envelopes. Enforce compatible changes in CI once a release baseline exists.
 
 Digest-pin generator build images and archives. Package the required license
 and notice material and keep the binary checksum enforced by the build.
+
+### Search door hardening (from the Phase 2 review)
+
+The 2026-08-15 review confirmed these as real gaps, deliberately deferred:
+
+- No delete/tombstone RPC on `search.v1`: a repo-deleted document stays
+  searchable forever, and replay never cleans up what the source no longer
+  has. The door needs an explicit un-index surface tied to repo deletion.
+- `LuceneSearchStore.index()` commits (fsyncs) per document, a throughput
+  ceiling for corpus-wide replays; batch or interval commits with honest
+  durability semantics are the fix.
+- `GrpcDocumentFetcher` blocking stubs carry no call deadline.
+- `SearchRequest` has no validation annotations and an unbounded `k`;
+  `SearchHit.stored` is string-only.
+- Body derivation belongs in the coordinator: the text parser claiming
+  `body` fixed the reference path, but gRParse-parsed documents still index
+  with an empty body. The long-term home is coordinator-side derivation
+  from parsed text items, so every parser's output becomes searchable.
+- `apps/serve` (`ProtoMoltServe`) still has the swallowed
+  JsonProcessingException workflow-repository pattern the registry module
+  was cured of; same fix applies (serve track).
