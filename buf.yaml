@@ -20,6 +20,8 @@ modules:
     name: buf.build/ai-pipestream/protobuf-validation
   - path: search/index/spi/src/main/proto
     name: buf.build/ai-pipestream/protobuf-indexing-hints
+  - path: protobuf/seo/src/main/proto
+    name: buf.build/ai-pipestream/protobuf-seo
   - path: protobuf/metadata/src/test/proto
     name: buf.build/ai-pipestream/protobuf-metadata-testdata
   - path: protobuf/validation/src/test/proto

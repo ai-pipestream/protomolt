@@ -66,6 +66,7 @@ def supportedModules = [
         'protomolt-protobuf-prompt',
         'protomolt-protobuf-validation',
         'protomolt-protobuf-indexing',
+        'protomolt-protobuf-seo',
         'protomolt-index-spi',
         'protomolt-index-ndjson',
         'protomolt-index-lucene',

@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.seo.v1;
+
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/seo/v1/dublin_core.proto";
+import "ai/pipestream/proto/seo/v1/structured_data.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.seo.v1";
+
+// ============================================================================
+// SEARCH-METADATA STANDARD — the envelope that combines Dublin Core and the
+// Google structured-data types into the one message the platform folds parser
+// output into and carries with a document.
+// ============================================================================
+
+// The platform's search-metadata standard: Dublin Core descriptive metadata
+// plus at most one Google structured-data entity, with page-level keywords
+// and the canonical URL. The parsing coordinator's fold populates it from
+// the parsers' extracted fields, and it travels on Document.structured_data
+// as a google.protobuf.Any. The validate/meta/index-hint options on these
+// descriptors make the one schema drive write-time validation, docs, and the
+// search-index plan.
+message SearchStandard {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "The platform search-metadata standard: Dublin Core plus one Google structured-data entity; populated by the parsing coordinator's fold and carried on Document.structured_data as an Any."
+    owner: "protomolt"
+    labels: {key: "component", value: "seo"}
+    labels: {key: "surface", value: "search"}
+  };
+
+  // Dublin Core descriptive metadata for the document.
+  DublinCore dublin_core = 1 [
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Dublin Core descriptive metadata for the document."
+    }
+  ];
+  // Free page-level keywords, distinct from any structured-data keywords.
+  repeated string keywords = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {
+        max_items: 200
+        unique: true
+        items: {
+          string: {max_len: 200}
+        }
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Free page-level keywords."
+    }
+  ];
+  // The page's canonical URL (rel=canonical).
+  optional string canonical_url = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD},
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {
+        uri: true
+        max_len: 2048
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The page's canonical URL (rel=canonical)."
+    }
+  ];
+
+  // The Google structured-data entity the document primarily represents;
+  // at most one per document, matching Google's one-main-entity guidance.
+  oneof structured {
+    // A news, sports, or blog article (schema.org/Article).
+    Article article = 10;
+    // A product listing (schema.org/Product).
+    Product product = 11;
+    // A frequently-asked-questions page (schema.org/FAQPage).
+    FaqPage faq_page = 12;
+    // Step-by-step instructions for a task (schema.org/HowTo).
+    HowTo how_to = 13;
+    // The page's breadcrumb trail (schema.org/BreadcrumbList).
+    BreadcrumbList breadcrumb_list = 14;
+    // An organization entity (schema.org/Organization).
+    Organization organization = 15;
+    // A person entity (schema.org/Person).
+    Person person = 16;
+    // A video (schema.org/VideoObject).
+    VideoObject video_object = 17;
+    // An event (schema.org/Event).
+    Event event = 18;
+    // A cooking recipe (schema.org/Recipe).
+    Recipe recipe = 19;
+    // A job opening (schema.org/JobPosting).
+    JobPosting job_posting = 20;
+  }
+}
