@@ -106,6 +106,18 @@ lint:
 breaking:
   use:
     - FILE
+  ignore:
+    # temporary: waives the ChunkingPolicy rename (ChunkRecipe and its
+    # chunk_recipe field) landing in the next PR; buf applies breaking
+    # ignores from the AGAINST side's config, so the waiver must be on main
+    # BEFORE the wire break. One entry per module image that carries the
+    # file. Drop after the rename merges.
+    - search/index/spi/src/main/proto/ai/pipestream/proto/index/hints/v1/indexing_hints.proto
+    - acquire/confluence/src/main/proto/ai/pipestream/proto/index/hints/v1/indexing_hints.proto
+    - mesh/cluster/src/main/proto/ai/pipestream/proto/index/hints/v1/indexing_hints.proto
+    - mesh/proto/src/main/proto/ai/pipestream/proto/index/hints/v1/indexing_hints.proto
+    - protobuf/indexing/src/test/proto/ai/pipestream/proto/index/hints/v1/indexing_hints.proto
+    - protobuf/seo/src/main/proto/ai/pipestream/proto/index/hints/v1/indexing_hints.proto
   # Standing note: repo/ and acquire-confluence are pre-release, but the
   # ignore mechanism breaks the workspace image comparison for any PR
   # that adds a module, and repo/'s NodeAddress wire break (the reason
