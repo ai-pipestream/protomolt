@@ -1,0 +1,16 @@
+description = 'The parser playground: a pure-JDK web front end that streams typed parse events into the page as they happen, rendering the document progressively instead of waiting behind a spinner'
+
+dependencies {
+    implementation project(':protomolt-parse-proto')
+    implementation project(':protomolt-parse-document')
+    // Demo mode embeds the reference text parser in-process.
+    implementation project(':protomolt-parse-text')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.inprocess
+    implementation libs.protobuf.java.util
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    testRuntimeOnly libs.slf4j.simple
+}
