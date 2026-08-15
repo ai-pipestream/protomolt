@@ -1,25 +1,21 @@
 package ai.pipestream.proto.parse.grparse;
 
-import ai.pipestream.document.v1.BaseTextItem;
 import ai.pipestream.document.v1.Document;
-import ai.pipestream.document.v1.TextItemBase;
 import ai.pipestream.parse.v1.CollectorDocument;
-import ai.pipestream.parse.v1.CollectorFailure;
 import ai.pipestream.parse.v1.DocumentChunk;
 import ai.pipestream.parse.v1.DocumentComplete;
 import ai.pipestream.parse.v1.DocumentStreamEvent;
-import ai.pipestream.document.v1.ImageRef;
 import ai.pipestream.parse.v1.PageData;
 import ai.pipestream.parse.v1.ParseStreamingServiceGrpc;
 import ai.pipestream.proto.parse.document.DoclingProjection;
 import ai.pipestream.proto.parse.plugin.v1.DocumentClaims;
 import ai.pipestream.proto.parse.plugin.v1.GetParserInfoRequest;
 import ai.pipestream.proto.parse.plugin.v1.GetParserInfoResponse;
+import ai.pipestream.proto.parse.plugin.v1.PagePreview;
 import ai.pipestream.proto.parse.plugin.v1.ParseOptions;
 import ai.pipestream.proto.parse.plugin.v1.ParseProgress;
 import ai.pipestream.proto.parse.plugin.v1.ParseRequest;
 import ai.pipestream.proto.parse.plugin.v1.ParseResponse;
-import ai.pipestream.proto.parse.plugin.v1.PagePreview;
 import ai.pipestream.proto.parse.plugin.v1.ParsedPage;
 import ai.pipestream.proto.parse.plugin.v1.ParserOutput;
 import ai.pipestream.proto.parse.plugin.v1.ParserPluginServiceGrpc;
@@ -57,18 +53,19 @@ import java.util.concurrent.TimeUnit;
  * {@code DocumentComplete} contributes the origin and collector failures;
  * {@code CollectorDocument} contributes an out-of-process collector's full
  * document. When gRParse completes, the accumulated content is assembled
- * into one fleet-model document, claims are offered, and the
- * {@code ParserOutput} is emitted exactly once.
+ * into one fleet-model document ({@link FleetAssembly}), claims are offered,
+ * and the {@code ParserOutput} is emitted exactly once.
  *
  * <p>Previews: the streaming wire carries no processing options, so the
  * adapter cannot request page renders; page images arrive exactly when the
  * gRParse fleet is built to render them into
  * {@code PageData.page_meta.image} (a data URI). When the caller asked for
  * previews, each such image is decoded and forwarded live as a
- * {@code PagePreview}; {@code emits_previews} advertises the deployment
- * fact from {@link GrparseAdapterOptions#emitsPreviews()}.
- * {@code PreviewSpec} parameters cannot reach the fleet and are ignored,
- * as the plugin contract allows for parameters a parser cannot honor.
+ * {@code PagePreview} ({@link PagePreviews}); {@code emits_previews}
+ * advertises the deployment fact from
+ * {@link GrparseAdapterOptions#emitsPreviews()}. {@code PreviewSpec}
+ * parameters cannot reach the fleet and are ignored, as the plugin contract
+ * allows for parameters a parser cannot honor.
  *
  * <p>Degradation: gRParse degrades instead of failing while any collector
  * succeeds; each {@code CollectorFailure} becomes one
@@ -202,6 +199,7 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
         private boolean failed;
         private long sequence;
         private StreamObserver<DocumentChunk> upstream;
+        private boolean upstreamDone;
 
         /**
          * Pages by page number; iteration order is page order regardless of
@@ -264,11 +262,7 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
         @Override
         public void onError(Throwable t) {
             failed = true;
-            if (upstream != null) {
-                upstream.onError(Status.CANCELLED
-                        .withDescription("plugin caller went away")
-                        .asRuntimeException());
-            }
+            cancelUpstream("plugin caller went away");
         }
 
         @Override
@@ -300,11 +294,13 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
 
                         @Override
                         public void onError(Throwable t) {
+                            upstreamDone = true;
                             failUpstream(t);
                         }
 
                         @Override
                         public void onCompleted() {
+                            upstreamDone = true;
                             assembleAndFinish();
                         }
                     });
@@ -365,7 +361,7 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
                         .setPageNumber(page.getPageNumber())
                         .setTotalPages(Math.max(0, event.getTotalPages()))
                         .setContent(Any.pack(page))
-                        .setText(pageText(page))));
+                        .setText(DoclingTexts.pageText(page))));
             }
             if (parseOptions.getEmitPreviews()) {
                 emitPreview(page);
@@ -374,26 +370,14 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
 
         /**
          * Forwards the page's rendered image, when the fleet supplied one
-         * as an embedded data URI. Non-data URIs reference storage this
-         * adapter has no business fetching, and pages without images are
-         * simply pages the fleet did not render; both are skipped, never
-         * failed.
+         * as an embedded data URI; pages without one are skipped, never
+         * failed (see {@link PagePreviews}).
          */
         private void emitPreview(PageData page) {
-            if (!page.getPageMeta().hasImage()) {
-                return;
+            PagePreview preview = PagePreviews.fromPage(page);
+            if (preview != null) {
+                emit(builder -> builder.setPreview(preview));
             }
-            ImageRef image = page.getPageMeta().getImage();
-            DataUri decoded = DataUri.parse(image.getUri());
-            if (decoded == null) {
-                return;
-            }
-            emit(builder -> builder.setPreview(PagePreview.newBuilder()
-                    .setPageNumber(page.getPageNumber())
-                    .setMimeType(decoded.mimeType())
-                    .setImage(decoded.data())
-                    .setWidth((int) Math.round(image.getSize().getWidth()))
-                    .setHeight((int) Math.round(image.getSize().getHeight()))));
         }
 
         private void assembleAndFinish() {
@@ -407,50 +391,19 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
                                     "grparse: stream completed with no pages and no collector documents")
                             .asRuntimeException();
                 }
-                Document assembled = assemble();
+                Document assembled = FleetAssembly.assemble(
+                        pages, collectorDocuments, documentComplete, parseOptions.getFilename());
                 emitClaims(assembled);
                 DoclingProjection.Projected projected = DoclingProjection.toParserDocument(assembled);
-                List<String> warnings = collectWarnings();
                 emit(builder -> builder.setDocument(
                         ParserOutput.newBuilder()
                                 .setDocument(projected.document())
-                                .addAllWarnings(warnings)));
+                                .addAllWarnings(FleetAssembly.warningsOf(
+                                        documentComplete, collectorDocuments))));
                 observer.onCompleted();
             } catch (Throwable t) {
                 fail(t);
             }
-        }
-
-        /**
-         * The final fleet-model document. A single collector document with
-         * no page stream IS the output; otherwise pages concatenate in page
-         * order and any collector documents append additively after them
-         * (gRParse's own scatter-gather merge model).
-         */
-        private Document assemble() {
-            if (pages.isEmpty() && collectorDocuments.size() == 1) {
-                return collectorDocuments.getFirst().getDocument();
-            }
-            Document.Builder document = Document.newBuilder()
-                    .setSchemaName("docling_document_v2")
-                    .setName(parseOptions.getFilename());
-            if (documentComplete != null && documentComplete.hasOrigin()) {
-                document.setOrigin(documentComplete.getOrigin());
-            }
-            for (PageData page : pages.values()) {
-                document.addAllTexts(page.getTextsList());
-                document.addAllTables(page.getTablesList());
-                document.addAllPictures(page.getPicturesList());
-                if (page.hasPageMeta()) {
-                    document.putPages(page.getPageNumber(), page.getPageMeta());
-                }
-            }
-            for (CollectorDocument collected : collectorDocuments) {
-                document.addAllTexts(collected.getDocument().getTextsList());
-                document.addAllTables(collected.getDocument().getTablesList());
-                document.addAllPictures(collected.getDocument().getPicturesList());
-            }
-            return document.build();
         }
 
         /**
@@ -460,7 +413,7 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
          */
         private void emitClaims(Document assembled) {
             Struct.Builder claims = Struct.newBuilder();
-            String title = titleOf(assembled);
+            String title = DoclingTexts.titleOf(assembled);
             if (!title.isBlank()) {
                 claims.putFields("title", Value.newBuilder().setStringValue(title).build());
             }
@@ -473,28 +426,6 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
                 Struct built = claims.build();
                 emit(builder -> builder.setClaims(DocumentClaims.newBuilder().setClaims(built)));
             }
-        }
-
-        /**
-         * One warning line per degradation gRParse reported: every
-         * {@code CollectorFailure}, plus each collector document's own
-         * extraction warnings. Non-empty warnings make the stored result
-         * PARTIAL — losses are reported, never dropped.
-         */
-        private List<String> collectWarnings() {
-            List<String> warnings = new ArrayList<>();
-            if (documentComplete != null) {
-                for (CollectorFailure failure : documentComplete.getCollectorFailuresList()) {
-                    warnings.add(
-                            "collector " + failure.getCollector().name() + ": " + failure.getError());
-                }
-            }
-            for (CollectorDocument collected : collectorDocuments) {
-                for (String warning : collected.getWarningsList()) {
-                    warnings.add("collector " + collected.getCollector().name() + ": " + warning);
-                }
-            }
-            return warnings;
         }
 
         private void emit(java.util.function.Consumer<ParseResponse.Builder> filler) {
@@ -522,6 +453,10 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
 
         private void fail(Throwable t) {
             failed = true;
+            // An adapter-side failure abandons the gRParse stream too:
+            // leaving it half-open would burn fleet compute until the
+            // deadline.
+            cancelUpstream("adapter failed the parse");
             if (t instanceof io.grpc.StatusRuntimeException) {
                 observer.onError(t);
             } else {
@@ -530,54 +465,14 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
                         .asRuntimeException());
             }
         }
-    }
 
-    // ------------------------------------------------------------------
-
-    /** Concatenates a page's text items' text in list order, newline-separated. */
-    private static String pageText(PageData page) {
-        StringBuilder text = new StringBuilder();
-        for (BaseTextItem item : page.getTextsList()) {
-            String itemText = textOf(item);
-            if (!itemText.isBlank()) {
-                if (!text.isEmpty()) {
-                    text.append('\n');
-                }
-                text.append(itemText);
+        private void cancelUpstream(String reason) {
+            if (upstream != null && !upstreamDone) {
+                upstreamDone = true;
+                upstream.onError(Status.CANCELLED
+                        .withDescription(reason)
+                        .asRuntimeException());
             }
         }
-        return text.toString();
-    }
-
-    /** The first non-blank title item's text; blank when none exists. */
-    private static String titleOf(Document document) {
-        for (BaseTextItem item : document.getTextsList()) {
-            if (item.getItemCase() == BaseTextItem.ItemCase.TITLE) {
-                String text = item.getTitle().getBase().getText();
-                if (!text.isBlank()) {
-                    return text;
-                }
-            }
-        }
-        return "";
-    }
-
-    private static String textOf(BaseTextItem item) {
-        // CodeItem inlines its fields instead of embedding TextItemBase.
-        if (item.getItemCase() == BaseTextItem.ItemCase.CODE) {
-            return item.getCode().getText();
-        }
-        TextItemBase base =
-                switch (item.getItemCase()) {
-                    case TITLE -> item.getTitle().getBase();
-                    case SECTION_HEADER -> item.getSectionHeader().getBase();
-                    case LIST_ITEM -> item.getListItem().getBase();
-                    case FORMULA -> item.getFormula().getBase();
-                    case TEXT -> item.getText().getBase();
-                    case FIELD_HEADING -> item.getFieldHeading().getBase();
-                    case FIELD_VALUE -> item.getFieldValue().getBase();
-                    case CODE, ITEM_NOT_SET -> null;
-                };
-        return base == null ? "" : base.getText();
     }
 }

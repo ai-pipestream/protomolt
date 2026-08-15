@@ -34,6 +34,9 @@ import java.util.Set;
  *        required exactly when {@code profilesDir} is set
  * @param parseDeadlineSeconds per-parse deadline for coordinator fan-out
  * @param workerCount jobs worker claim loops
+ * @param searchGrpcPort search door gRPC port; {@code 0} picks free
+ * @param searchIndexDir directory of the search door's Lucene index
+ * @param searchConsolePort search console HTTP port; {@code 0} picks free
  * @param roles the roles this node mounts ({@code PROTOMOLT_ROLES}); the
  *        default is the full one-container preset, and configuration is
  *        only required for what is actually selected (a repo-only node

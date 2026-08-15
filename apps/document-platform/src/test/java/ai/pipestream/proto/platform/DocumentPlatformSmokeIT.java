@@ -60,8 +60,9 @@ import org.testcontainers.utility.DockerImageName;
  * TCP port the container would expose. Ingest over the intake door, a
  * durable parse submitted through the registry's submit-workflow action and
  * completed by the running worker, the parsed result read back over repo's
- * public gRPC, the registry serving the fleet document model, and the
- * playground page serving.
+ * public gRPC, the registry serving the fleet document model, the playground
+ * page serving, the durable parse-and-index workflow producing a search hit
+ * through the search door, and a replay that re-derives without duplicating.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
