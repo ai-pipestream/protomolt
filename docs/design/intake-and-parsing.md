@@ -2,7 +2,9 @@
 
 Intake and parsing define the boundary between external content and document
 pipelines. The contracts live in `intake/proto` and `parse/proto`. The intake
-runtime lives in `intake/service`; the parsing runtime is planned separately.
+runtime lives in `intake/service`, the parsing coordinator's in
+`parse/service`; `parse/text` is the reference parser and `parse/playground`
+the streaming front end.
 
 ## Intake service
 

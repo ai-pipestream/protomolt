@@ -50,9 +50,10 @@ through `DocumentService`.
 
 The parsing coordinator selects parsers with CEL rules, invokes compatible
 parser services, records every parser result, and folds document-level claims
-into search metadata. Intake's runtime lives in `intake/service`; the parsing
-coordinator's wire contract is defined and its runtime is separate planned
-work.
+into search metadata. Intake's runtime lives in `intake/service` and the
+coordinator's in `parse/service`; `parse/document` hosts the canonical fleet
+document model, `parse/text` the reference parser, and `parse/playground` the
+streaming front end.
 
 See [intake and parsing](intake-and-parsing.md).
 
@@ -118,7 +119,7 @@ events or start relay loops.
 | Repository | `repo/proto`, `repo/container`, `repo/service` |
 | Accounts | `account/proto`, `account/service` |
 | Intake | `intake/proto`, `intake/service` |
-| Parsing | `parse/proto`, `parse/document`, `parse/service`, `parse/text` |
+| Parsing | `parse/proto`, `parse/document`, `parse/service`, `parse/text`, `parse/playground` |
 
 Repository and account services support in-process transports for tests and
 embedding, plus standalone Netty gRPC servers with health and reflection.
