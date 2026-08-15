@@ -9,6 +9,12 @@ dependencies {
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
+    // The JDBC key store (framework-free, same stack as the account store):
+    // plain JDBC over HikariCP + Flyway.
+    implementation libs.hikari
+    implementation libs.flyway.core
+    implementation libs.flyway.database.postgresql
+    implementation libs.postgresql
     implementation libs.slf4j.api
 
     runtimeOnly libs.slf4j.simple

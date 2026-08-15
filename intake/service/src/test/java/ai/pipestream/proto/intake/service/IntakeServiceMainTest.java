@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.pipestream.proto.intake.service.identity.InMemoryApiKeyIdentityResolver;
+import ai.pipestream.proto.intake.service.identity.IntakeKeyStoreConfig;
 import org.junit.jupiter.api.Test;
 
 class IntakeServiceMainTest {
@@ -60,6 +61,48 @@ class IntakeServiceMainTest {
                 IntakeServiceMain.selectResolver(
                         java.util.Map.of(IntakeServiceMain.ENV_KEYS, "k=acct"));
         assertThat(seeded).isInstanceOf(InMemoryApiKeyIdentityResolver.class);
+    }
+
+    @Test
+    void bothOidcAndJdbcUrlsAreRejectedNamingBoth() {
+        assertThatThrownBy(
+                        () ->
+                                IntakeServiceMain.selectResolver(
+                                        java.util.Map.of(
+                                                IntakeServiceMain.ENV_OIDC_URL,
+                                                "http://idp/introspect",
+                                                IntakeKeyStoreConfig.ENV_JDBC_URL,
+                                                "jdbc:postgresql://db/keys")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(IntakeServiceMain.ENV_OIDC_URL)
+                .hasMessageContaining(IntakeKeyStoreConfig.ENV_JDBC_URL);
+    }
+
+    @Test
+    void jdbcEnvIsValidatedBeforeAnyConnectionIsAttempted() {
+        // The JDBC url selects the JDBC store, and the rest of the variable
+        // family is validated by IntakeKeyStoreConfig BEFORE the resolver
+        // constructor connects: a config mistake names the missing variable
+        // instead of surfacing as a connection failure. (The happy path
+        // needs a live database and lives in JdbcApiKeyIdentityResolverIT.)
+        assertThatThrownBy(
+                        () ->
+                                IntakeServiceMain.selectResolver(
+                                        java.util.Map.of(
+                                                IntakeKeyStoreConfig.ENV_JDBC_URL,
+                                                "jdbc:postgresql://db/keys")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(IntakeKeyStoreConfig.ENV_USERNAME);
+        assertThatThrownBy(
+                        () ->
+                                IntakeServiceMain.selectResolver(
+                                        java.util.Map.of(
+                                                IntakeKeyStoreConfig.ENV_JDBC_URL,
+                                                "jdbc:postgresql://db/keys",
+                                                IntakeKeyStoreConfig.ENV_USERNAME,
+                                                "keys")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(IntakeKeyStoreConfig.ENV_PASSWORD);
     }
 
     @Test

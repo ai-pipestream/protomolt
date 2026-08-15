@@ -2,7 +2,9 @@ package ai.pipestream.proto.intake.service;
 
 import ai.pipestream.proto.intake.service.identity.ApiKeyIdentityResolver;
 import ai.pipestream.proto.intake.service.identity.InMemoryApiKeyIdentityResolver;
+import ai.pipestream.proto.intake.service.identity.IntakeKeyStoreConfig;
 import ai.pipestream.proto.intake.service.identity.IntakeScope;
+import ai.pipestream.proto.intake.service.identity.JdbcApiKeyIdentityResolver;
 import ai.pipestream.proto.intake.service.identity.OidcIntrospectionResolver;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -11,15 +13,22 @@ import org.slf4j.LoggerFactory;
 /**
  * Standalone entry point: environment-configured intake over Netty.
  *
- * <p>Key-store selection: when
+ * <p>Key-store selection, in precedence order: when
  * {@code DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL} is set the door
  * authenticates against the IdP's RFC 7662 introspection endpoint (the
  * Keycloak-shaped production default; client id/secret ride the companion
- * env vars). Otherwise the store is seeded from
- * {@code DOCUMENT_PLATFORM_INTAKE_KEYS}, a semicolon-separated list of
+ * env vars). Otherwise, when
+ * {@code DOCUMENT_PLATFORM_INTAKE_KEYS_JDBC_URL} is set the door uses the
+ * JDBC-backed key store in the operator's own PostgreSQL — the air-gapped
+ * deployment, no IdP involved (username/password ride the companion env
+ * vars; see {@link IntakeKeyStoreConfig}). Otherwise the store is seeded
+ * from {@code DOCUMENT_PLATFORM_INTAKE_KEYS}, a semicolon-separated list of
  * {@code <key>=<account_id>[@<datasource_id>[,...]]} entries — the
  * env-seeded store for demos and single-tenant deployments. Exactly one
- * source must be configured; a door with no key store is refused loudly.
+ * source must be configured: setting BOTH the OIDC url and the JDBC url is
+ * rejected loudly (two authentication authorities is a misconfiguration,
+ * not a precedence question), and a door with no key store at all is
+ * refused just as loudly.
  */
 public final class IntakeServiceMain {
 
@@ -57,12 +66,26 @@ public final class IntakeServiceMain {
     /**
      * Picks the key store the environment configures: OIDC introspection
      * when {@link #ENV_OIDC_URL} is set (client id and secret then become
-     * required, rejected loudly by name when missing), else the env-seeded
-     * in-memory store.
+     * required, rejected loudly by name when missing); else the JDBC store
+     * when {@link IntakeKeyStoreConfig#ENV_JDBC_URL} is set (username and
+     * password then become required, validated by
+     * {@link IntakeKeyStoreConfig#fromEnvironmentMap} BEFORE any connection
+     * is attempted); else the env-seeded in-memory store. Setting both urls
+     * is rejected by name — the door must have exactly one authentication
+     * authority.
      */
     static ApiKeyIdentityResolver selectResolver(java.util.Map<String, String> env) {
         String oidcUrl = env.get(ENV_OIDC_URL);
-        if (oidcUrl != null && !oidcUrl.isBlank()) {
+        String jdbcUrl = env.get(IntakeKeyStoreConfig.ENV_JDBC_URL);
+        boolean oidcConfigured = oidcUrl != null && !oidcUrl.isBlank();
+        boolean jdbcConfigured = jdbcUrl != null && !jdbcUrl.isBlank();
+        if (oidcConfigured && jdbcConfigured) {
+            throw new IllegalArgumentException(
+                    ENV_OIDC_URL + " and " + IntakeKeyStoreConfig.ENV_JDBC_URL
+                            + " are both set; the door takes exactly one key store"
+                            + " (unset one of them)");
+        }
+        if (oidcConfigured) {
             String clientId = env.get(ENV_OIDC_CLIENT_ID);
             String clientSecret = env.get(ENV_OIDC_CLIENT_SECRET);
             if (clientId == null || clientId.isBlank()) {
@@ -75,6 +98,12 @@ public final class IntakeServiceMain {
             }
             return new OidcIntrospectionResolver(
                     java.net.URI.create(oidcUrl.trim()), clientId.trim(), clientSecret.trim());
+        }
+        if (jdbcConfigured) {
+            // Validate the whole variable family BEFORE constructing: the
+            // constructor connects and migrates, and a config error should
+            // name the missing variable, not surface as a connection failure.
+            return new JdbcApiKeyIdentityResolver(IntakeKeyStoreConfig.fromEnvironmentMap(env));
         }
         return resolverFromEnvironment(env.get(ENV_KEYS));
     }
