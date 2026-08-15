@@ -85,6 +85,7 @@ def supportedModules = [
         'protomolt-quarkus',
         'protomolt-quarkus-deployment',
         'protomolt-spring',
+        'protomolt-composer',
         'protomolt-server-common',
         'protomolt-server-jdk',
         'protomolt-server-vertx',

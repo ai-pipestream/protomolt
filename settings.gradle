@@ -355,6 +355,9 @@ project(':protomolt-parse-playground').projectDir = file('parse/playground')
 
 // host/ — embedding the toolkit into servers and frameworks.
 
+include 'protomolt-composer'
+project(':protomolt-composer').projectDir = file('host/composer')
+
 include 'protomolt-server-common'
 project(':protomolt-server-common').projectDir = file('host/servers/common')
 
