@@ -53,3 +53,14 @@ by identity term, so replays never duplicate.
 
 Hits carry the document identity, the chunk identity for chunk hits, the
 lane score, and the stored fields of the matching document or chunk.
+
+## The parse-and-index workflow
+
+`SearchWorkflows.parseAndIndexWorkflow` builds the two-step durable
+workflow (`parse-and-index`): the coordinator parses the stored document,
+then the door indexes it under the request's mapping subject
+(`ParseAndIndexRequest` carries both identities explicitly). When the
+`search` role co-mounts with `parse` and `registry`, the module registers
+the workflow at wire time, so operators submit it by name through the jobs
+verbs. The [document platform](../apps/document-platform.md) mounts all of
+this by default and its smoke IT proves ingest-to-search-hit over real TCP.

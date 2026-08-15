@@ -72,10 +72,15 @@ services:
       DOCUMENT_PLATFORM_REGISTRY_GIT: /data/registry.git
       # Demo key store: key demo-key, account demo (the seeded account).
       DOCUMENT_PLATFORM_INTAKE_KEYS: demo-key=demo
+      # Search index on the /data volume. To activate the vector lane, mount
+      # a Model2Vec model directory and set PROTOMOLT_MODEL2VEC_PATH to it;
+      # without one the repo-document subject serves the lexical lane only.
+      DOCUMENT_PLATFORM_SEARCH_INDEX_DIR: /data/search-index
     ports:
       - "9090:9090"   # repo gRPC
       - "9092:9092"   # intake gRPC
       - "9093:9093"   # parse gRPC
+      - "9094:9094"   # search gRPC
       - "8081:8081"   # registry HTTP (+ jobs verbs on /protomolt/actions)
       - "8095:8095"   # parser playground
     volumes:

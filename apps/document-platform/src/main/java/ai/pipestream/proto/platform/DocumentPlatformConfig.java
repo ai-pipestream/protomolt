@@ -42,7 +42,9 @@ public record DocumentPlatformConfig(
         String profilesDir,
         String profileEndpoint,
         long parseDeadlineSeconds,
-        int workerCount) {
+        int workerCount,
+        int searchGrpcPort,
+        Path searchIndexDir) {
 
     /** Env var for the jobs database JDBC URL (required). */
     public static final String ENV_JOBS_JDBC_URL = "DOCUMENT_PLATFORM_JOBS_JDBC_URL";
@@ -96,6 +98,18 @@ public record DocumentPlatformConfig(
     /** The default playground HTTP port. */
     public static final int DEFAULT_PLAYGROUND_PORT = 8095;
 
+    /** Env var for the search door gRPC port. */
+    public static final String ENV_SEARCH_GRPC_PORT = "DOCUMENT_PLATFORM_SEARCH_GRPC_PORT";
+
+    /** Env var for the search index directory. */
+    public static final String ENV_SEARCH_INDEX_DIR = "DOCUMENT_PLATFORM_SEARCH_INDEX_DIR";
+
+    /** The default search door gRPC port. */
+    public static final int DEFAULT_SEARCH_GRPC_PORT = 9094;
+
+    /** The default search index directory. */
+    public static final String DEFAULT_SEARCH_INDEX_DIR = "/data/search-index";
+
     public DocumentPlatformConfig {
         if (repo == null) {
             throw new IllegalArgumentException("repo config is required");
@@ -118,6 +132,10 @@ public record DocumentPlatformConfig(
         }
         if (workerCount <= 0) {
             throw new IllegalArgumentException("workerCount must be positive");
+        }
+        if (searchIndexDir == null) {
+            throw new IllegalArgumentException(
+                    "searchIndexDir is required: the platform serves search by default");
         }
     }
 
@@ -148,7 +166,9 @@ public record DocumentPlatformConfig(
                 blankToNull(System.getenv(ENV_PARSE_PROFILES)),
                 blankToNull(System.getenv(ENV_PARSE_PROFILE_ENDPOINT)),
                 60L,
-                intEnv(ENV_WORKER_COUNT, 2));
+                intEnv(ENV_WORKER_COUNT, 2),
+                intEnv(ENV_SEARCH_GRPC_PORT, DEFAULT_SEARCH_GRPC_PORT),
+                Path.of(env(ENV_SEARCH_INDEX_DIR, DEFAULT_SEARCH_INDEX_DIR)));
     }
 
     private static String env(String name, String fallback) {

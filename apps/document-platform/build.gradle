@@ -14,6 +14,15 @@ dependencies {
     implementation project(':protomolt-parse-document')
     implementation project(':protomolt-parse-playground')
     implementation project(':protomolt-jobs-service')
+    implementation project(':protomolt-search-door')
+    implementation project(':protomolt-search-proto')
+    implementation project(':protomolt-index-spi')
+    implementation project(':protomolt-chunker')
+    implementation project(':protomolt-embeddings')
+    // The product-default embedding model: on the classpath so a configured
+    // Model2Vec model activates the vector lane, and the preset names its
+    // configuration knobs by constant.
+    implementation project(':protomolt-embeddings-model2vec')
     implementation project(':protomolt-workflow')
     implementation project(':protomolt-actions')
     implementation project(':protomolt-registry')
@@ -33,6 +42,14 @@ dependencies {
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
+}
+
+// The search door links the Lucene 11 line, which ships Java 25 bytecode:
+// the app and its tests need a 25 runtime (same pin as :protomolt-index-lucene).
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
 application {

@@ -139,13 +139,21 @@ public final class TextParserService extends ParserPluginServiceGrpc.ParserPlugi
                     }
                     Parsed parsed = parseText(
                             payload.toString(StandardCharsets.UTF_8), options.getFilename());
+                    // The searchable identity of a text document: the title
+                    // and the parsed body, folded into SearchMetadata so
+                    // downstream indexing has text without re-reading blobs.
+                    Struct.Builder claims = Struct.newBuilder();
                     if (!parsed.title().isBlank()) {
+                        claims.putFields("title", Value.newBuilder()
+                                .setStringValue(parsed.title()).build());
+                    }
+                    if (!parsed.body().isBlank()) {
+                        claims.putFields("body", Value.newBuilder()
+                                .setStringValue(parsed.body()).build());
+                    }
+                    if (claims.getFieldsCount() > 0) {
                         emit(builder -> builder.setClaims(
-                                DocumentClaims.newBuilder()
-                                        .setClaims(Struct.newBuilder()
-                                                .putFields("title", Value.newBuilder()
-                                                        .setStringValue(parsed.title())
-                                                        .build()))));
+                                DocumentClaims.newBuilder().setClaims(claims)));
                     }
                     emit(builder -> builder.setProgress(
                             ParseProgress.newBuilder()
@@ -182,8 +190,8 @@ public final class TextParserService extends ParserPluginServiceGrpc.ParserPlugi
         };
     }
 
-    /** One parse outcome: the document plus the title claim (may be blank). */
-    private record Parsed(Document document, String title) {}
+    /** One parse outcome: the document plus the title and body claims (may be blank). */
+    private record Parsed(Document document, String title, String body) {}
 
     /**
      * Blank-line-separated blocks become text items; a leading markdown
@@ -199,6 +207,7 @@ public final class TextParserService extends ParserPluginServiceGrpc.ParserPlugi
                     .setFilename(filename));
         }
         String title = "";
+        StringBuilder body = new StringBuilder();
         int index = 0;
         for (String block : text.split("\\R{2,}")) {
             String trimmed = block.strip();
@@ -223,10 +232,14 @@ public final class TextParserService extends ParserPluginServiceGrpc.ParserPlugi
                                         .setSelfRef(selfRef)
                                         .setOrig(trimmed)
                                         .setText(flowed))));
+                if (!body.isEmpty()) {
+                    body.append("\n\n");
+                }
+                body.append(flowed);
             }
             index++;
         }
-        return new Parsed(document.build(), title);
+        return new Parsed(document.build(), title, body.toString());
     }
 
     private static boolean looksLikeHeading(String block) {

@@ -3,8 +3,8 @@
 The document platform is the one-container deployment of the document
 pipeline: `apps/document-platform` wires repo-service, the authenticated
 intake door, the parsing coordinator, the durable jobs worker, the schema
-registry, and the streaming parser playground into one JVM over the
-in-process transport. It is the productized form of what
+registry, the search door, and the streaming parser playground into one JVM
+over the in-process transport. It is the productized form of what
 `GoldenPathSystemTest` proves.
 
 ## Running it
@@ -22,6 +22,7 @@ the jobs store) and RustFS for object storage. Ports:
 | 9090 | repo-service gRPC (DocumentService, DriveService, health, reflection) |
 | 9092 | intake gRPC (`IntakeService`, API-key authenticated) |
 | 9093 | parsing coordinator gRPC (`ParseCoordinatorService`) |
+| 9094 | search door gRPC (`SearchService`, `SearchIndexService`) |
 | 8081 | schema registry HTTP, with the jobs verbs on `/protomolt/actions` |
 | 8095 | parser playground |
 
@@ -37,6 +38,16 @@ the jobs store) and RustFS for object storage. Ports:
   `POST /protomolt/actions/submit-workflow` with
   `{"workflowName": "parse-document", "input": {"address": {...}}}`; poll with
   `get-job`. The platform's own worker fleet claims and completes it.
+- The `parse-and-index` workflow registers too: the same submission with
+  `{"workflowName": "parse-and-index", "input": {"address": {...},
+  "mappingSubject": "repo-document"}}` parses the document and indexes it
+  under the [search door](../search/door.md)'s `repo-document` subject, so a
+  completed run means the document answers queries on the search port.
+- The search door serves the `repo-document` mapping subject over the index
+  at `DOCUMENT_PLATFORM_SEARCH_INDEX_DIR` (default `/data/search-index`).
+  The lexical lane always works; the vector lane activates when a Model2Vec
+  model directory is configured (`PROTOMOLT_MODEL2VEC_PATH`), with the
+  policy's dims read from the loaded model.
 - The embedded reference text parser serves text and markdown. A fleet of
   external parsers replaces it by pointing
   `DOCUMENT_PLATFORM_PARSE_PROFILES` (+ `..._PROFILE_ENDPOINT`) at a
@@ -60,4 +71,5 @@ compose file is the worked example.
 
 `DocumentPlatformSmokeIT` drives every external surface over real TCP:
 registry subjects, authenticated ingest, submit-workflow to completion, the
-parsed result read back, and the playground page.
+parsed result read back, parse-and-index to a lexical search hit on the
+search port, and the playground page.

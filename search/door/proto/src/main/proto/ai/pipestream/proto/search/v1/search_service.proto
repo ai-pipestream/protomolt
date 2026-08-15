@@ -44,6 +44,16 @@ message IndexDocumentResponse {
   string policy_digest = 3;
 }
 
+// Input of the parse-and-index workflow: parse one stored document through
+// the coordinator, then index it under a mapping subject. Both identities
+// are explicit; the workflow never assumes a subject.
+message ParseAndIndexRequest {
+  // The stored document to parse and index.
+  ai.pipestream.proto.repo.v1.NodeAddress address = 1;
+  // The mapping subject the index step indexes under. Required.
+  string mapping_subject = 2;
+}
+
 // Which query lane to run.
 enum SearchLane {
   // Unset. Refused: the caller must choose a lane.
