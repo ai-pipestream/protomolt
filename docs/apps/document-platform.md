@@ -6,7 +6,8 @@ intake door, the parsing coordinator, the durable jobs worker, the schema
 registry, the search door with its console page, and the streaming parser
 playground into one JVM
 over the in-process transport. It is the productized form of what
-`GoldenPathSystemTest` proves.
+`GoldenPathSystemTest` proves. The same binary boots as specialized nodes
+via `PROTOMOLT_ROLES` — see [Role nodes](role-nodes.md).
 
 ## Running it
 

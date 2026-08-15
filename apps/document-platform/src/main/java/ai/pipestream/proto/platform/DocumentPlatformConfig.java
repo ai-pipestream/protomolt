@@ -3,6 +3,11 @@ package ai.pipestream.proto.platform;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Configuration for the one-container document platform.
@@ -29,6 +34,13 @@ import java.nio.file.Path;
  *        required exactly when {@code profilesDir} is set
  * @param parseDeadlineSeconds per-parse deadline for coordinator fan-out
  * @param workerCount jobs worker claim loops
+ * @param roles the roles this node mounts ({@code PROTOMOLT_ROLES}); the
+ *        default is the full one-container preset, and configuration is
+ *        only required for what is actually selected (a repo-only node
+ *        needs no jobs database)
+ * @param environment the process environment the node resolves remote
+ *        role targets ({@code PROTOMOLT_<ROLE>_TARGET}) and opt-in role
+ *        configuration (the acquire connectors) from
  */
 public record DocumentPlatformConfig(
         RepoServiceConfig repo,
@@ -45,7 +57,25 @@ public record DocumentPlatformConfig(
         int workerCount,
         int searchGrpcPort,
         Path searchIndexDir,
-        int searchConsolePort) {
+        int searchConsolePort,
+        List<String> roles,
+        Map<String, String> environment) {
+
+    /** The full one-container preset, in canonical mount order. */
+    public static final List<String> DEFAULT_ROLES = List.of(
+            "repo", "parser-text", "registry", "parse", "jobs", "intake",
+            "playground", "search", "search-console");
+
+    /** Every role the platform binary can mount. */
+    public static final Set<String> KNOWN_ROLES = Set.of(
+            "repo", "parser-text", "registry", "parse", "jobs", "intake",
+            "playground", "search", "search-console", "acquire-s3", "acquire-jdbc");
+
+    /** Env var selecting the roles this node mounts (comma-separated). */
+    public static final String ENV_ROLES = "PROTOMOLT_ROLES";
+
+    /** Env var naming a remote actions route for a console mounted without a registry. */
+    public static final String ENV_ACTIONS_URL = "DOCUMENT_PLATFORM_ACTIONS_URL";
 
     /** Env var for the jobs database JDBC URL (required). */
     public static final String ENV_JOBS_JDBC_URL = "DOCUMENT_PLATFORM_JOBS_JDBC_URL";
@@ -118,15 +148,24 @@ public record DocumentPlatformConfig(
     public static final int DEFAULT_SEARCH_CONSOLE_PORT = 8096;
 
     public DocumentPlatformConfig {
-        if (repo == null) {
-            throw new IllegalArgumentException("repo config is required");
+        roles = roles == null || roles.isEmpty() ? DEFAULT_ROLES : List.copyOf(roles);
+        environment = environment == null ? Map.of() : Map.copyOf(environment);
+        for (String role : roles) {
+            if (!KNOWN_ROLES.contains(role)) {
+                throw new IllegalArgumentException("unknown role '" + role
+                        + "'; known roles: " + String.join(", ",
+                                KNOWN_ROLES.stream().sorted().toList()));
+            }
         }
-        if (jobs == null) {
-            throw new IllegalArgumentException("jobs config is required");
+        if (repo == null && roles.contains("repo")) {
+            throw new IllegalArgumentException("repo config is required on a repo node");
         }
-        if (registryGit == null) {
+        if (jobs == null && roles.contains("jobs")) {
+            throw new IllegalArgumentException("jobs config is required on a jobs node");
+        }
+        if (registryGit == null && roles.contains("registry")) {
             throw new IllegalArgumentException(
-                    "registryGit is required: the platform runs its registry by default");
+                    "registryGit is required: this node runs the registry");
         }
         boolean profiles = profilesDir != null && !profilesDir.isBlank();
         boolean endpoint = profileEndpoint != null && !profileEndpoint.isBlank();
@@ -140,10 +179,15 @@ public record DocumentPlatformConfig(
         if (workerCount <= 0) {
             throw new IllegalArgumentException("workerCount must be positive");
         }
-        if (searchIndexDir == null) {
+        if (searchIndexDir == null && roles.contains("search")) {
             throw new IllegalArgumentException(
-                    "searchIndexDir is required: the platform serves search by default");
+                    "searchIndexDir is required: this node serves search");
         }
+    }
+
+    /** Whether this node mounts the given role. */
+    public boolean mounts(String role) {
+        return roles.contains(role);
     }
 
     /**
@@ -152,18 +196,23 @@ public record DocumentPlatformConfig(
      * is required by name.
      */
     public static DocumentPlatformConfig fromEnvironment() {
-        String jobsUrl = System.getenv(ENV_JOBS_JDBC_URL);
-        if (jobsUrl == null || jobsUrl.isBlank()) {
-            throw new IllegalArgumentException(ENV_JOBS_JDBC_URL + " is required");
+        List<String> roles = rolesFromEnvironment(System.getenv(ENV_ROLES));
+        WorkflowRunStoreConfig jobs = null;
+        if (roles.contains("jobs")) {
+            String jobsUrl = System.getenv(ENV_JOBS_JDBC_URL);
+            if (jobsUrl == null || jobsUrl.isBlank()) {
+                throw new IllegalArgumentException(ENV_JOBS_JDBC_URL + " is required");
+            }
+            jobs = new WorkflowRunStoreConfig(
+                    jobsUrl,
+                    env(ENV_JOBS_USERNAME, ""),
+                    env(ENV_JOBS_PASSWORD, ""),
+                    WorkflowRunStoreConfig.DEFAULT_POOL_SIZE,
+                    WorkflowRunStoreConfig.DEFAULT_MIGRATION_LOCATION);
         }
         return new DocumentPlatformConfig(
-                RepoServiceConfig.fromEnvironment(),
-                new WorkflowRunStoreConfig(
-                        jobsUrl,
-                        env(ENV_JOBS_USERNAME, ""),
-                        env(ENV_JOBS_PASSWORD, ""),
-                        WorkflowRunStoreConfig.DEFAULT_POOL_SIZE,
-                        WorkflowRunStoreConfig.DEFAULT_MIGRATION_LOCATION),
+                roles.contains("repo") ? RepoServiceConfig.fromEnvironment() : null,
+                jobs,
                 Path.of(env(ENV_REGISTRY_GIT, DEFAULT_REGISTRY_GIT)),
                 intEnv(ENV_REGISTRY_PORT, DEFAULT_REGISTRY_PORT),
                 intEnv(ENV_INTAKE_GRPC_PORT, DEFAULT_INTAKE_GRPC_PORT),
@@ -176,7 +225,23 @@ public record DocumentPlatformConfig(
                 intEnv(ENV_WORKER_COUNT, 2),
                 intEnv(ENV_SEARCH_GRPC_PORT, DEFAULT_SEARCH_GRPC_PORT),
                 Path.of(env(ENV_SEARCH_INDEX_DIR, DEFAULT_SEARCH_INDEX_DIR)),
-                intEnv(ENV_SEARCH_CONSOLE_PORT, DEFAULT_SEARCH_CONSOLE_PORT));
+                intEnv(ENV_SEARCH_CONSOLE_PORT, DEFAULT_SEARCH_CONSOLE_PORT),
+                roles,
+                System.getenv());
+    }
+
+    /** Parses {@code PROTOMOLT_ROLES}; absent or blank means the full preset. */
+    static List<String> rolesFromEnvironment(String value) {
+        if (value == null || value.isBlank()) {
+            return DEFAULT_ROLES;
+        }
+        List<String> roles = new ArrayList<>();
+        for (String role : value.split(",")) {
+            if (!role.isBlank()) {
+                roles.add(role.trim().toLowerCase(Locale.ROOT));
+            }
+        }
+        return List.copyOf(roles);
     }
 
     private static String env(String name, String fallback) {

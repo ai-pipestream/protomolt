@@ -67,6 +67,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Task console](apps/task-console.md): inspect and guide durable multi-agent tasks in a browser
 - [Docker](apps/docker.md): container images and Compose setup
 - [Document platform](apps/document-platform.md): the one-container document pipeline (repo, intake, parse, jobs, registry, search, console, playground)
+- [Role nodes](apps/role-nodes.md): the same binary as specialized nodes via PROTOMOLT_ROLES and remote role targets
 - [Coding workers](apps/coding-workers.md): Java and C++ agent environments, state, credentials, and transport boundaries
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
 - [Nano1 ARM64 node](../deploy/nano1/README.md): native image builds and GPU inference boundary

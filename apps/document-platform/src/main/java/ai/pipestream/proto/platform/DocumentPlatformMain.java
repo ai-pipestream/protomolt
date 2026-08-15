@@ -1,6 +1,7 @@
 package ai.pipestream.proto.platform;
 
 import ai.pipestream.proto.intake.service.IntakeServiceMain;
+import ai.pipestream.proto.intake.service.identity.ApiKeyIdentityResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,8 +37,10 @@ public final class DocumentPlatformMain {
      */
     public static void main(String[] args) throws Exception {
         DocumentPlatformConfig config = DocumentPlatformConfig.fromEnvironment();
-        DocumentPlatform platform = DocumentPlatform.start(
-                config, IntakeServiceMain.selectResolver(System.getenv()));
+        ApiKeyIdentityResolver resolver = config.mounts("intake")
+                ? IntakeServiceMain.selectResolver(System.getenv())
+                : null;
+        DocumentPlatform platform = DocumentPlatform.start(config, resolver);
         Runtime.getRuntime().addShutdownHook(new Thread(platform::close, "platform-shutdown"));
         LOG.info("document platform serving; shut down with SIGTERM");
         Thread.currentThread().join();

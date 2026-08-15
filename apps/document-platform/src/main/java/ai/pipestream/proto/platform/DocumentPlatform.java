@@ -1,5 +1,7 @@
 package ai.pipestream.proto.platform;
 
+import ai.pipestream.proto.acquire.jdbc.JdbcPullModule;
+import ai.pipestream.proto.acquire.s3.S3PullModule;
 import ai.pipestream.proto.composer.Channels;
 import ai.pipestream.proto.composer.Composer;
 import ai.pipestream.proto.intake.service.IntakeModule;
@@ -34,21 +36,23 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The document platform in one JVM: the shipped one-container PRESET over
- * the {@link Composer}. The wiring that used to live here as hand-ordered
- * construction is now the role set
- * {@code repo, parser-text, registry, parse, jobs, intake, playground}
- * mounted through the ServiceModule SPI; this class only maps the
- * {@code DOCUMENT_PLATFORM_*} configuration onto module configs, boots the
- * node, and publishes the fleet document model. The same modules booted
- * with a different role list are a specialized node, not a different
- * program.
+ * The document platform in one JVM: role selection over the
+ * {@link Composer}. The default is the full one-container preset; setting
+ * {@code PROTOMOLT_ROLES} boots the same binary as a specialized node (a
+ * repo node, a search node, a connector node), with absent roles reached
+ * remotely through {@code PROTOMOLT_<ROLE>_TARGET}. This class only maps
+ * the {@code DOCUMENT_PLATFORM_*} configuration onto module configs for
+ * the selected roles, boots the node, and (when the registry is local)
+ * publishes the fleet document model. One binary, many roles: a different
+ * role list is a different node, never a different program.
  */
 public final class DocumentPlatform implements AutoCloseable {
 
@@ -68,87 +72,155 @@ public final class DocumentPlatform implements AutoCloseable {
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
-        this.repo = new RepoServiceModule(config.repo());
-        this.registry = new RegistryModule(
-                config.registryGit(),
-                SchemaRegistryServerConfig.defaults().withPort(config.registryPort()));
-        RoutingRules rules = config.rulesJson() != null
-                ? RoutingRules.fromJson(config.rulesJson())
-                : defaultRules();
-        this.parse = new ParseModule(new ParseModule.Config(
-                rules,
-                config.profilesDir() != null
-                        ? Map.of()
-                        : Map.of(TextParserService.PARSER_NAME, TextParserModule.ROLE),
-                config.profilesDir() != null ? Path.of(config.profilesDir()) : null,
-                config.profileEndpoint(),
-                config.parseDeadlineSeconds(),
-                config.parseGrpcPort()));
-        JobsModule jobs = new JobsModule(config.jobs(), new WorkflowRunsConfig(
-                "document-platform",
-                config.workerCount(),
-                WorkflowRunsConfig.DEFAULT_LEASE_DURATION,
-                WorkflowRunsConfig.DEFAULT_POLL_INTERVAL,
-                WorkflowRunsConfig.DEFAULT_BACKOFF_BASE_SECONDS,
-                WorkflowRunsConfig.DEFAULT_MAX_ATTEMPTS,
-                WorkflowRunsConfig.DEFAULT_MAX_CONCURRENT_PER_TARGET,
-                null,
-                WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC,
-                null,
-                null));
-        this.intake = new IntakeModule(new IntakeModule.Config(
-                config.intakeGrpcPort(),
-                -1,
-                IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES,
-                resolver));
-        this.playground = new PlaygroundModule(
-                config.playgroundPort(), PlaygroundModule.DEFAULT_PARSER_ROLE);
-        this.search = new SearchDoorModule(new SearchDoorModule.Config(
-                config.searchGrpcPort(),
-                config.searchIndexDir(),
-                Map.of(RepoDocumentMapping.SUBJECT,
-                        RepoDocumentMapping.served(defaultChunkingPolicy()))));
-        this.searchConsole = new SearchConsoleModule(new SearchConsoleModule.Config(
-                config.searchConsolePort(),
-                () -> "http://127.0.0.1:" + registry.httpPort() + "/protomolt/actions"));
+        if (config.mounts(IntakeModule.ROLE) && resolver == null) {
+            throw new IllegalArgumentException(
+                    "resolver is required: this node mounts the intake door");
+        }
+        Composer.Builder composer = Composer.emptyBuilder()
+                .environment(config.environment())
+                .remoteOpener(target ->
+                        NettyChannelBuilder.forTarget(target).usePlaintext().build());
 
-        Composer composer = Composer.emptyBuilder()
-                .module(repo)
-                .module(new TextParserModule())
-                .module(registry)
-                .module(parse)
-                .module(jobs)
-                .module(intake)
-                .module(playground)
-                .module(search)
-                .module(searchConsole)
-                .environment(Map.of())
-                .remoteOpener(target -> NettyChannelBuilder.forTarget(target).usePlaintext().build())
-                .build();
-        this.node = composer.boot(List.of(
-                RepoServiceModule.ROLE, TextParserModule.ROLE, RegistryModule.ROLE,
-                ParseModule.ROLE, JobsModule.ROLE, IntakeModule.ROLE, PlaygroundModule.ROLE,
-                SearchDoorModule.ROLE, SearchConsoleModule.ROLE));
+        this.repo = config.mounts(RepoServiceModule.ROLE)
+                ? new RepoServiceModule(config.repo()) : null;
+        this.registry = config.mounts(RegistryModule.ROLE)
+                ? new RegistryModule(
+                        config.registryGit(),
+                        SchemaRegistryServerConfig.defaults().withPort(config.registryPort()))
+                : null;
+        if (config.mounts(ParseModule.ROLE)) {
+            RoutingRules rules = config.rulesJson() != null
+                    ? RoutingRules.fromJson(config.rulesJson())
+                    : defaultRules();
+            this.parse = new ParseModule(new ParseModule.Config(
+                    rules,
+                    config.profilesDir() != null
+                            ? Map.of()
+                            : Map.of(TextParserService.PARSER_NAME, TextParserModule.ROLE),
+                    config.profilesDir() != null ? Path.of(config.profilesDir()) : null,
+                    config.profileEndpoint(),
+                    config.parseDeadlineSeconds(),
+                    config.parseGrpcPort()));
+        } else {
+            this.parse = null;
+        }
+        JobsModule jobs = config.mounts(JobsModule.ROLE)
+                ? new JobsModule(config.jobs(), new WorkflowRunsConfig(
+                        "document-platform",
+                        config.workerCount(),
+                        WorkflowRunsConfig.DEFAULT_LEASE_DURATION,
+                        WorkflowRunsConfig.DEFAULT_POLL_INTERVAL,
+                        WorkflowRunsConfig.DEFAULT_BACKOFF_BASE_SECONDS,
+                        WorkflowRunsConfig.DEFAULT_MAX_ATTEMPTS,
+                        WorkflowRunsConfig.DEFAULT_MAX_CONCURRENT_PER_TARGET,
+                        null,
+                        WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC,
+                        null,
+                        null))
+                : null;
+        this.intake = config.mounts(IntakeModule.ROLE)
+                ? new IntakeModule(new IntakeModule.Config(
+                        config.intakeGrpcPort(),
+                        -1,
+                        IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES,
+                        resolver))
+                : null;
+        this.playground = config.mounts(PlaygroundModule.ROLE)
+                ? new PlaygroundModule(
+                        config.playgroundPort(), PlaygroundModule.DEFAULT_PARSER_ROLE)
+                : null;
+        this.search = config.mounts(SearchDoorModule.ROLE)
+                ? new SearchDoorModule(new SearchDoorModule.Config(
+                        config.searchGrpcPort(),
+                        config.searchIndexDir(),
+                        Map.of(RepoDocumentMapping.SUBJECT,
+                                RepoDocumentMapping.served(defaultChunkingPolicy()))))
+                : null;
+        this.searchConsole = config.mounts(SearchConsoleModule.ROLE)
+                ? new SearchConsoleModule(new SearchConsoleModule.Config(
+                        config.searchConsolePort(), actionsBaseUrl(config)))
+                : null;
+
+        List<ai.pipestream.proto.composer.ServiceModule> selected = new ArrayList<>();
+        for (ai.pipestream.proto.composer.ServiceModule module
+                : new ai.pipestream.proto.composer.ServiceModule[] {
+                        repo, registry, parse, jobs, intake, playground, search,
+                        searchConsole}) {
+            if (module != null) {
+                selected.add(module);
+            }
+        }
+        if (config.mounts(TextParserModule.ROLE)) {
+            selected.add(new TextParserModule());
+        }
+        if (config.mounts(S3PullModule.ROLE)) {
+            selected.add(new S3PullModule(
+                    S3PullModule.Config.fromEnvironment(config.environment())));
+        }
+        if (config.mounts(JdbcPullModule.ROLE)) {
+            selected.add(new JdbcPullModule(
+                    JdbcPullModule.Config.fromEnvironment(config.environment())));
+        }
+        for (ai.pipestream.proto.composer.ServiceModule module : selected) {
+            composer.module(module);
+        }
+
+        this.node = composer.build().boot(config.roles());
         try {
-            publishDocumentModel();
+            if (registry != null) {
+                publishDocumentModel();
+            }
         } catch (RuntimeException | IOException e) {
             node.close();
             throw e;
         }
 
-        LOG.info(
-                "document platform up: repo gRPC {}, intake gRPC {}, parse gRPC {},"
-                        + " search gRPC {}, registry http {}, playground http {},"
-                        + " search console http {}",
-                repo.grpcPort(), intake.grpcPort(), parse.grpcPort(), search.grpcPort(),
-                registry.httpPort(), playground.port(), searchConsole.port());
+        List<String> surfaces = new ArrayList<>();
+        if (repo != null) {
+            surfaces.add("repo gRPC " + repo.grpcPort());
+        }
+        if (intake != null) {
+            surfaces.add("intake gRPC " + intake.grpcPort());
+        }
+        if (parse != null) {
+            surfaces.add("parse gRPC " + parse.grpcPort());
+        }
+        if (search != null) {
+            surfaces.add("search gRPC " + search.grpcPort());
+        }
+        if (registry != null) {
+            surfaces.add("registry http " + registry.httpPort());
+        }
+        if (playground != null) {
+            surfaces.add("playground http " + playground.port());
+        }
+        if (searchConsole != null) {
+            surfaces.add("search console http " + searchConsole.port());
+        }
+        LOG.info("document platform up as roles {}: {}",
+                config.roles(), String.join(", ", surfaces));
+    }
+
+    /**
+     * The operations panel's actions route: the co-mounted registry when this
+     * node runs one, an explicitly configured remote route otherwise
+     * ({@code DOCUMENT_PLATFORM_ACTIONS_URL}; absent disables the panel).
+     */
+    private Supplier<String> actionsBaseUrl(DocumentPlatformConfig config) {
+        if (registry != null) {
+            return () -> "http://127.0.0.1:" + registry.httpPort() + "/protomolt/actions";
+        }
+        String remote = config.environment()
+                .getOrDefault(DocumentPlatformConfig.ENV_ACTIONS_URL, "");
+        return () -> remote;
     }
 
     /**
      * Builds and starts the platform.
      *
      * @param config the platform configuration
-     * @param resolver the intake key store
+     * @param resolver the intake key store; required exactly when the role
+     *        list mounts the intake door, ignored otherwise
      * @return the running platform
      * @throws IOException when a server fails to bind
      */
@@ -157,45 +229,50 @@ public final class DocumentPlatform implements AutoCloseable {
         if (config == null) {
             throw new IllegalArgumentException("config must not be null");
         }
-        if (resolver == null) {
-            throw new IllegalArgumentException("resolver must not be null");
-        }
         return new DocumentPlatform(config, resolver);
     }
 
     /** The bound intake gRPC port. */
     public int intakePort() {
-        return intake.grpcPort();
+        return mounted(intake, IntakeModule.ROLE).grpcPort();
     }
 
     /** The bound coordinator gRPC port. */
     public int parsePort() {
-        return parse.grpcPort();
+        return mounted(parse, ParseModule.ROLE).grpcPort();
     }
 
     /** The bound repo gRPC port. */
     public int repoPort() {
-        return repo.grpcPort();
+        return mounted(repo, RepoServiceModule.ROLE).grpcPort();
     }
 
     /** The bound registry HTTP port. */
     public int registryPort() {
-        return registry.httpPort();
+        return mounted(registry, RegistryModule.ROLE).httpPort();
     }
 
     /** The bound playground HTTP port. */
     public int playgroundPort() {
-        return playground.port();
+        return mounted(playground, PlaygroundModule.ROLE).port();
     }
 
     /** The bound search door gRPC port. */
     public int searchPort() {
-        return search.grpcPort();
+        return mounted(search, SearchDoorModule.ROLE).grpcPort();
     }
 
     /** The bound search console HTTP port. */
     public int searchConsolePort() {
-        return searchConsole.port();
+        return mounted(searchConsole, SearchConsoleModule.ROLE).port();
+    }
+
+    private static <T> T mounted(T module, String role) {
+        if (module == null) {
+            throw new IllegalStateException(
+                    "role '" + role + "' is not mounted on this node");
+        }
+        return module;
     }
 
     /** The in-process name repo-service answers on inside this JVM. */

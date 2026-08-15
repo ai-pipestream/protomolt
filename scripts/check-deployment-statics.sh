@@ -37,6 +37,7 @@ except ImportError:
     sys.exit(0)
 for path in [
     "deploy/document-platform/compose.yml",
+    "deploy/document-platform/compose-roles.yml",
     "deploy/portainer/compose.yml",
     "deploy/krick/compose.yml",
     "deploy/nano1/compose.yml",
