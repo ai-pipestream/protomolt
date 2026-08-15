@@ -1,0 +1,109 @@
+# The document platform split into role nodes: the SAME image the one-container
+# compose builds, booted twice with different PROTOMOLT_ROLES. The repo node
+# runs only the document store; the app node runs everything else and reaches
+# the repo over PROTOMOLT_REPO_TARGET. This is the smallest split topology; the
+# same mechanism scales to any role list DocumentPlatformConfig.KNOWN_ROLES
+# names. Build the app first:
+#
+#   ./gradlew :protomolt-document-platform:installDist
+#   docker compose -f deploy/document-platform/compose-roles.yml up --build
+#
+# Then: search console http://localhost:8096, playground http://localhost:8095,
+# registry http://localhost:8081, intake gRPC localhost:9092
+# (demo key: demo-key -> account demo), repo gRPC localhost:9090 (the repo node).
+name: protomolt-document-platform-roles
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: protomolt
+      POSTGRES_PASSWORD: protomolt
+      POSTGRES_DB: documents
+    volumes:
+      - ./init-jobs-db.sql:/docker-entrypoint-initdb.d/init-jobs-db.sql:ro
+      - roles-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U protomolt -d documents"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.11-preview.1
+    environment:
+      RUSTFS_ACCESS_KEY: protomolt
+      RUSTFS_SECRET_KEY: protomoltsecret
+      RUSTFS_VOLUMES: /data/rustfs0
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+    volumes:
+      - roles-rustfs:/data/rustfs0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  # The document store, alone. Only the repo role's configuration is needed:
+  # no jobs database, no registry, no search index on this node.
+  repo-node:
+    build:
+      context: ../../apps/document-platform
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+    environment:
+      PROTOMOLT_ROLES: repo
+      DOCUMENT_PLATFORM_JDBC_URL: jdbc:postgresql://postgres:5432/documents
+      DOCUMENT_PLATFORM_USERNAME: protomolt
+      DOCUMENT_PLATFORM_PASSWORD: protomolt
+      DOCUMENT_PLATFORM_S3_ENDPOINT: http://rustfs:9000
+      DOCUMENT_PLATFORM_S3_REGION: us-east-1
+      DOCUMENT_PLATFORM_S3_ACCESS_KEY: protomolt
+      DOCUMENT_PLATFORM_S3_SECRET_KEY: protomoltsecret
+      DOCUMENT_PLATFORM_SEED_ACCOUNT_ID: demo
+    ports:
+      - "9090:9090"   # repo gRPC
+    volumes:
+      - roles-repo-data:/data
+
+  # Everything else, reaching the repo node over the wire. The registry, jobs
+  # worker and parse coordinator stay co-located: jobs reads workflow
+  # definitions and the actions catalog through in-JVM contributions.
+  app-node:
+    build:
+      context: ../../apps/document-platform
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      repo-node:
+        condition: service_started
+    environment:
+      PROTOMOLT_ROLES: parser-text,registry,parse,jobs,intake,playground,search,search-console
+      PROTOMOLT_REPO_TARGET: repo-node:9090
+      DOCUMENT_PLATFORM_JOBS_JDBC_URL: jdbc:postgresql://postgres:5432/jobs
+      DOCUMENT_PLATFORM_JOBS_USERNAME: protomolt
+      DOCUMENT_PLATFORM_JOBS_PASSWORD: protomolt
+      DOCUMENT_PLATFORM_REGISTRY_GIT: /data/registry.git
+      DOCUMENT_PLATFORM_INTAKE_KEYS: demo-key=demo
+      DOCUMENT_PLATFORM_SEARCH_INDEX_DIR: /data/search-index
+    ports:
+      - "9092:9092"   # intake gRPC
+      - "9093:9093"   # parse gRPC
+      - "9094:9094"   # search gRPC
+      - "8081:8081"   # registry HTTP (+ verbs on /protomolt/actions)
+      - "8095:8095"   # parser playground
+      - "8096:8096"   # search console
+    volumes:
+      - roles-app-data:/data
+
+volumes:
+  roles-postgres:
+  roles-rustfs:
+  roles-repo-data:
+  roles-app-data:

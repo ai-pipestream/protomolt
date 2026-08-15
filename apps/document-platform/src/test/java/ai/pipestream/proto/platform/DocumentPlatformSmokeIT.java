@@ -36,6 +36,7 @@ import io.grpc.Metadata;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.MetadataUtils;
 import java.net.URI;
+import java.util.Map;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -122,7 +123,9 @@ class DocumentPlatformSmokeIT {
                         1,
                         0,
                         work.resolve("search-index"),
-                        0),
+                        0,
+                        null,
+                        Map.of()),
                 new InMemoryApiKeyIdentityResolver()
                         .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
 

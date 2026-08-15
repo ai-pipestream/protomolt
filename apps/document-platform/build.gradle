@@ -16,6 +16,8 @@ dependencies {
     implementation project(':protomolt-jobs-service')
     implementation project(':protomolt-search-door')
     implementation project(':protomolt-search-console')
+    implementation project(':protomolt-acquire-s3')
+    implementation project(':protomolt-acquire-jdbc')
     implementation project(':protomolt-search-proto')
     implementation project(':protomolt-index-spi')
     implementation project(':protomolt-chunker')
