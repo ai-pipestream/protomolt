@@ -99,3 +99,32 @@ reference-linked source set into the registry and
 idempotent re-publish, and update discrimination all verified through the
 same client code that talks to Confluent and Apicurio. If those pass
 against us, we speak the protocol.
+
+## Federation
+
+A registry federates by treating another mesh's registry repository as an
+ordinary git remote of its own. `RegistryFederation` (over the Git store)
+manages the remotes and runs sync; the composed registry role exposes it as
+two [actions](../surface/actions.md): `registry-remotes` (list/add/remove;
+remotes are node-local git config, never a commit) and `registry-sync`.
+
+Sync is strictly pull: fetch the remote, read its `subjects/` and
+`descriptors/sha256/` straight out of the fetched git objects (nothing is
+merged into the working tree), and import through the normal registration
+pipeline. That gives every imported version a local global ID, a compile
+check, and a compatibility gate: the sync path is always gated by a
+`CompatibilityWriteGate` under the target subject's effective local mode,
+even when the store's own write gate is absent. A version that fails the
+gate is reported with its violations and stops that subject's import;
+other subjects continue.
+
+Subjects carry their origin in the name: remote subject `s` imports as
+`<remote>:<s>`, so a subject federated through two meshes reads as a
+provenance chain (`b:a:s`). References between remote subjects are
+rewritten to the namespaced names; the schema text (whose import paths are
+reference *names*) is untouched. Descriptor artifacts are content-addressed
+and import verbatim when missing. Sync is idempotent, and a remote whose
+history diverged from what was already imported is refused at the
+divergence point: local registry history is append-only, federation
+included. The remote's global IDs, compatibility modes, and workflows never
+sync: those are local concerns on both sides.

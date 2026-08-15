@@ -7,6 +7,7 @@ import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
 import ai.pipestream.proto.composer.ServiceMount;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
+import ai.pipestream.proto.registry.RegistryFederation;
 import ai.pipestream.proto.workflow.WorkflowRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -20,7 +21,9 @@ import java.util.Optional;
  * store and contributes it (plus a {@link WorkflowRepository} view of it)
  * for later-wired modules: the parse module registers workflows, the jobs
  * module reads definitions and contributes its verbs. Starting builds the
- * actions catalog from everything contributed and serves HTTP.
+ * actions catalog from everything contributed, adds the federation verbs
+ * ({@code registry-remotes}, {@code registry-sync}) over the store, and
+ * serves HTTP.
  */
 public final class RegistryModule implements ServiceModule {
 
@@ -74,6 +77,9 @@ public final class RegistryModule implements ServiceModule {
                 for (ProtoAction action : context.contributions().all(ProtoAction.class)) {
                     catalog = catalog.register(action);
                 }
+                RegistryFederation federation = RegistryFederation.over(store);
+                catalog = catalog.register(new RegistryRemotesAction(federation))
+                        .register(new RegistrySyncAction(federation));
                 server = new SchemaRegistryServer(serverConfig, store, catalog);
                 httpPort = server.start();
             }

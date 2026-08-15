@@ -470,6 +470,11 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         git.close();
     }
 
+    /** The underlying git handle, for same-package collaborators ({@link RegistryFederation}). */
+    Git git() {
+        return git;
+    }
+
     // ---------------------------------------------------------------- locking
 
     @FunctionalInterface
