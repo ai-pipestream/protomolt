@@ -1,0 +1,38 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The search door contract: the query surface over indexed documents and the indexing RPC the durable workflows drive'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+
+    // Extract the repo .proto files so protoc can resolve the imports.
+    protobuf project(':protomolt-repo-proto')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

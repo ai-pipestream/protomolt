@@ -69,6 +69,8 @@ def supportedModules = [
         'protomolt-protobuf-seo',
         'protomolt-index-spi',
         'protomolt-chunker',
+        'protomolt-search-proto',
+        'protomolt-search-door',
         'protomolt-index-ndjson',
         'protomolt-index-lucene',
         'protomolt-index-opensearch',

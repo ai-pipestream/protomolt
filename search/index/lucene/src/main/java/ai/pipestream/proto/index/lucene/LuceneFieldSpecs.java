@@ -136,7 +136,7 @@ public record LuceneFieldSpecs(String messageFullName, List<FieldSpec> fields) {
     }
 
     /** Engine-neutral similarity mapped onto Lucene's {@link VectorSimilarityFunction}. */
-    static VectorSimilarityFunction similarityFunction(VectorSimilarity similarity) {
+    public static VectorSimilarityFunction similarityFunction(VectorSimilarity similarity) {
         return switch (similarity) {
             case COSINE -> VectorSimilarityFunction.COSINE;
             case DOT_PRODUCT -> VectorSimilarityFunction.DOT_PRODUCT;
