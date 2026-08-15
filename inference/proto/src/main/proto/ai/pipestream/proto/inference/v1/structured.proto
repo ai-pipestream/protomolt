@@ -55,7 +55,7 @@ message GenerateStructuredRequest {
   ];
 
   // The resolved persona to render the prompt for; absent renders
-  // persona-free (schema directives only).
+  // persona-free (schema instructions only).
   ai.pipestream.proto.prompt.v1.Persona persona = 3;
 
   // Maximum generation attempts, counting the first; 0 applies the

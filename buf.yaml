@@ -106,7 +106,17 @@ lint:
 breaking:
   use:
     - FILE
-    # No ignores. repo/ and acquire-confluence are pre-release, but the
+  ignore:
+    # temporary: V2 instruction rename, drop after merge. In a workspace an
+    # ignore is matched per module as <module dir>/<image path>, so llm.proto
+    # needs one entry for the module that owns it plus one for each module
+    # whose image imports it (the two testdata modules); the latter two paths
+    # do not exist on disk and that is expected.
+    - protobuf/llm/src/main/proto/ai/pipestream/proto/llm/v1/llm.proto
+    - protobuf/llm/src/test/proto/ai/pipestream/proto/llm/v1/llm.proto
+    - protobuf/prompt/src/test/proto/ai/pipestream/proto/llm/v1/llm.proto
+    # Standing note (pre-dates the waiver above): repo/ and
+    # acquire-confluence are pre-release, but the
     # ignore mechanism breaks the workspace image comparison for any PR
     # that adds a module, and repo/'s NodeAddress wire break (the reason
     # the waiver existed) is long merged. A future deliberate wire break

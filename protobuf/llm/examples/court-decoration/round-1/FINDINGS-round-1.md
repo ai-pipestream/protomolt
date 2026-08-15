@@ -25,7 +25,7 @@ cases). Across those 30 persona-runs:
 | outcome | count | verdict |
 |---|---|---|
 | found a legitimate identifier deeper in the text (reporter cite, file no.) | 9 | defensible |
-| **copied the prompt's own example** (`No. 08-2575` — from the field directive's `e.g.`) | 5 | self-inflicted prompt bug |
+| **copied the prompt's own example** (`No. 08-2575` — from the field instruction's `e.g.`) | 5 | self-inflicted prompt bug |
 | **invented a plausible number** (`No. 91-00123`, `No. 1897-12345`) | 8 | hallucination |
 | wrote prose into the field (`Not specified in the text`, `(example…)` ) | 7 | schema-semantics miss |
 | correctly omitted the field | 1 | the only fully correct runs |
@@ -41,9 +41,9 @@ cheap (substring checks, as here).
 
 ## v1.1 form changes (applied to `proto/court/v1/opinion_metadata.proto`)
 
-1. **Removed the concrete example** from `docket_number`'s directive —
+1. **Removed the concrete example** from `docket_number`'s instruction —
   it leaked into 5 fills. (General lesson: never put a realistic-looking
-  literal in an llm.v1 directive; the model treats it as a value, not an
+  literal in an llm.v1 instruction; the model treats it as a value, not an
   illustration.)
 2. **Added an omission safeguard**: leave the field out when no docket is
   printed; never write "not specified" or an example.

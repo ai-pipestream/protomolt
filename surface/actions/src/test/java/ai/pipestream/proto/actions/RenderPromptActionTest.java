@@ -94,7 +94,7 @@ class RenderPromptActionTest {
                   };
                   // The issuing court.
                   string court = 1 [(ai.pipestream.proto.llm.v1.field) = {
-                    directive: "Name the court exactly as it appears in the caption."
+                    instruction: "Name the court exactly as it appears in the caption."
                     volatile: true
                   }];
                 }

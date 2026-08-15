@@ -13,14 +13,14 @@ class DescriptorLlmTest {
     @Test
     void readsMessageOptions() {
         MessageLlm message = DescriptorLlm.message(FORM).orElseThrow();
-        assertThat(message.getDirective()).isEqualTo("Fill this form from the source text alone.");
+        assertThat(message.getInstruction()).isEqualTo("Fill this form from the source text alone.");
         assertThat(message.getSafeguardsList()).containsExactly("Do not use outside knowledge.");
     }
 
     @Test
     void readsFieldOptions() {
         FieldLlm court = DescriptorLlm.field(FORM.findFieldByName("court")).orElseThrow();
-        assertThat(court.getDirective()).isEqualTo("Name the court exactly as it appears in the caption.");
+        assertThat(court.getInstruction()).isEqualTo("Name the court exactly as it appears in the caption.");
         assertThat(court.getSafeguardsList()).containsExactly("Do not abbreviate.");
         assertThat(court.getVolatile()).isFalse();
 
@@ -47,7 +47,7 @@ class DescriptorLlmTest {
         assertThat(citations.getSafeguardsList()).containsExactly(
                 "Do not invent citations.",
                 "Do not cite authority the text does not mention.");
-        assertThat(citations.getDirective()).isEqualTo("List every authority the text cites.");
+        assertThat(citations.getInstruction()).isEqualTo("List every authority the text cites.");
         assertThat(citations.getVolatile()).isFalse();
     }
 

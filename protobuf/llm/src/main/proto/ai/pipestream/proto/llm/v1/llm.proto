@@ -17,12 +17,12 @@ import "google/protobuf/descriptor.proto";
 // descriptor set. Renderers (notably protomolt-prompt) turn them into model instructions;
 // nothing here is enforced by the schema itself.
 
-// LLM-facing directives for a single field.
+// LLM-facing instructions for a single field.
 message FieldLlm {
   // Instruction to the model for filling this field, in imperative prose
   // (e.g. "Name the court exactly as it appears in the caption."). Empty means the
   // field carries no fill-time guidance beyond its type and validation rules.
-  string directive = 1;
+  string instruction = 1;
 
   // Things the model must NOT do when filling this field, in imperative prose
   // (e.g. "Do not invent citations that do not appear in the text."). Safeguards are
@@ -37,22 +37,22 @@ message FieldLlm {
   bool volatile = 3;
 }
 
-// LLM-facing directives for a whole message.
+// LLM-facing instructions for a whole message.
 message MessageLlm {
   // Overall instruction to the model filling this message, in imperative prose
   // (e.g. "Fill this form from the perspective of a practicing litigator.").
-  string directive = 1;
+  string instruction = 1;
 
   // Fill-wide prohibitions, rendered before the per-field safeguards.
   repeated string safeguards = 2;
 }
 
 extend google.protobuf.FieldOptions {
-  // LLM-facing directives for this field.
+  // LLM-facing instructions for this field.
   FieldLlm field = 59100521;
 }
 
 extend google.protobuf.MessageOptions {
-  // LLM-facing directives for this message.
+  // LLM-facing instructions for this message.
   MessageLlm message = 59100522;
 }

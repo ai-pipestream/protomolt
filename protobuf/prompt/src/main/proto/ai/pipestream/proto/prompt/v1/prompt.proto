@@ -55,7 +55,7 @@ message RenderPromptRequest {
   ];
 
   // The resolved persona to render for. Absent means render persona-free: schema
-  // directives only, no point of view.
+  // instructions only, no point of view.
   Persona persona = 2;
 
   // Per-document specifics, packed as Any (typically the same type being filled, or a
@@ -76,7 +76,7 @@ message PromptPacket {
   // not resolve it.
   string descriptor_set_ref = 2;
 
-  // The rendered instructions: message and field directives, validation constraints as
+  // The rendered instructions: message and field instructions, validation constraints as
   // requirements, CEL rules as cross-field requirements, quality dimensions as scoring
   // notes, and all safeguards, in reading order.
   string instructions = 3;

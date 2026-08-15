@@ -18,7 +18,7 @@ message DecoratedOpinion {
     description: "Metadata extracted from a court opinion."
   };
   option (ai.pipestream.proto.llm.v1.message) = {
-    directive: "Fill this form from the opinion text alone."
+    instruction: "Fill this form from the opinion text alone."
     safeguards: "Do not use outside legal knowledge."
   };
   option (ai.pipestream.proto.validate.v1.message) = {
@@ -46,7 +46,7 @@ message DecoratedOpinion {
       description: "The issuing court, as it appears in the caption."
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Name the court exactly as it appears in the caption."
+      instruction: "Name the court exactly as it appears in the caption."
       safeguards: "Do not abbreviate."
     }
   ];
@@ -68,7 +68,7 @@ message DecoratedOpinion {
   // The authority the opinion treats as controlling.
   string leading_authority = 4 [
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Cite the authority the opinion treats as controlling."
+      instruction: "Cite the authority the opinion treats as controlling."
       volatile: true
     }
   ];

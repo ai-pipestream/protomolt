@@ -37,7 +37,7 @@ rounds 2 and 3.
 
 The `string.max_len` triple is one doc (10133969, a 24k-char truncated
 monster) whose caption exceeds the 500-char cap from all three personas —
-a real catch, and a directive tension worth noting ("use the full caption"
+a real catch, and an instruction tension worth noting ("use the full caption"
 vs a 500-char field). Minor tooling note: the harness records that
 violation with `field: null`; field attribution for string rules should be
 fixed in the runner.

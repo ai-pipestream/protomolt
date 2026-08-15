@@ -41,7 +41,7 @@ That is the piece protomolt provides, and the reason this example lives in
 this repository:
 
 - The metadata shape is a **protobuf message** (`proto/court/v1/opinion_metadata.proto`).
-  Field directives, safeguard text, and validation rules are declared on the
+  Field instructions, safeguard text, and validation rules are declared on the
   schema itself via `llm.v1` and `validate.v1` annotations — the schema is
   both the prompt and the contract.
 - `render-prompt` compiles that schema into the instruction packet the model

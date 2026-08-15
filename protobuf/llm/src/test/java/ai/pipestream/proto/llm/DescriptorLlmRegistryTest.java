@@ -39,10 +39,10 @@ class DescriptorLlmRegistryTest {
         Descriptor form = rebuildForm(proto);
 
         MessageLlm message = DescriptorLlm.message(form).orElseThrow();
-        assertThat(message.getDirective()).isEqualTo("Fill this form from the source text alone.");
+        assertThat(message.getInstruction()).isEqualTo("Fill this form from the source text alone.");
 
         FieldLlm court = DescriptorLlm.field(form.findFieldByName("court")).orElseThrow();
-        assertThat(court.getDirective())
+        assertThat(court.getInstruction())
                 .isEqualTo("Name the court exactly as it appears in the caption.");
         assertThat(DescriptorLlm.field(form.findFieldByName("note"))).isEmpty();
     }

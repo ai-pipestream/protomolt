@@ -81,7 +81,7 @@ class ProtoSourceCompilerOptionsTest {
                               description: "The title."
                             },
                             (ai.pipestream.proto.llm.v1.field) = {
-                              directive: "Fill the title."
+                              instruction: "Fill the title."
                             }
                           ];
                         }
@@ -96,7 +96,7 @@ class ProtoSourceCompilerOptionsTest {
         assertThat(options.hasExtension(MetadataProto.field)).isTrue();
         assertThat(options.getExtension(MetadataProto.field).getDescription()).isEqualTo("The title.");
         assertThat(options.hasExtension(LlmProto.field)).isTrue();
-        assertThat(options.getExtension(LlmProto.field).getDirective()).isEqualTo("Fill the title.");
+        assertThat(options.getExtension(LlmProto.field).getInstruction()).isEqualTo("Fill the title.");
     }
 
     @Test
@@ -116,7 +116,7 @@ class ProtoSourceCompilerOptionsTest {
                             description: "A document."
                           };
                           option (ai.pipestream.proto.llm.v1.message) = {
-                            directive: "Fill the document."
+                            instruction: "Fill the document."
                           };
                           string title = 1;
                         }
@@ -128,7 +128,7 @@ class ProtoSourceCompilerOptionsTest {
         assertThat(options.hasExtension(MetadataProto.message)).isTrue();
         assertThat(options.getExtension(MetadataProto.message).getDescription()).isEqualTo("A document.");
         assertThat(options.hasExtension(LlmProto.message)).isTrue();
-        assertThat(options.getExtension(LlmProto.message).getDirective()).isEqualTo("Fill the document.");
+        assertThat(options.getExtension(LlmProto.message).getInstruction()).isEqualTo("Fill the document.");
         assertThat(options.hasExtension(ValidateProto.message)).isFalse();
         assertThat(options.hasExtension(QualityProto.quality)).isFalse();
     }
@@ -147,7 +147,7 @@ class ProtoSourceCompilerOptionsTest {
         MessageOptions messageOptions = message(compiled, FORM, "DecoratedOpinion").getOptions();
         assertThat(messageOptions.getExtension(MetadataProto.message).getDescription())
                 .isEqualTo("Metadata extracted from a court opinion.");
-        assertThat(messageOptions.getExtension(LlmProto.message).getDirective())
+        assertThat(messageOptions.getExtension(LlmProto.message).getInstruction())
                 .isEqualTo("Fill this form from the opinion text alone.");
         assertThat(messageOptions.getExtension(LlmProto.message).getSafeguardsList())
                 .containsExactly("Do not use outside legal knowledge.");
@@ -174,7 +174,7 @@ class ProtoSourceCompilerOptionsTest {
         assertThat(court.getExtension(ValidateProto.field).getString().getMaxLen()).isEqualTo(200);
         assertThat(court.getExtension(MetadataProto.field).getDescription())
                 .isEqualTo("The issuing court, as it appears in the caption.");
-        assertThat(court.getExtension(LlmProto.field).getDirective())
+        assertThat(court.getExtension(LlmProto.field).getInstruction())
                 .isEqualTo("Name the court exactly as it appears in the caption.");
         assertThat(court.getExtension(LlmProto.field).getSafeguardsList())
                 .containsExactly("Do not abbreviate.");
@@ -193,10 +193,10 @@ class ProtoSourceCompilerOptionsTest {
         assertThat(posture.hasExtension(MetadataProto.field)).isFalse();
         assertThat(posture.hasExtension(LlmProto.field)).isFalse();
 
-        // leading_authority: llm directive + volatile.
+        // leading_authority: llm instruction + volatile.
         FieldOptions authority = field(compiled, FORM, "DecoratedOpinion", "leading_authority")
                 .getOptions();
-        assertThat(authority.getExtension(LlmProto.field).getDirective())
+        assertThat(authority.getExtension(LlmProto.field).getInstruction())
                 .isEqualTo("Cite the authority the opinion treats as controlling.");
         assertThat(authority.getExtension(LlmProto.field).getVolatile()).isTrue();
         assertThat(authority.hasExtension(ValidateProto.field)).isFalse();

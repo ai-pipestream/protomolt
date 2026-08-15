@@ -41,7 +41,7 @@ final class RenderPromptAction implements ProtoAction {
                 .put("type", "object")
                 .put("description", "The resolved persona to render for, as canonical proto3 "
                         + "JSON of ai.pipestream.proto.prompt.v1.Persona. Absent renders "
-                        + "persona-free (schema directives only).");
+                        + "persona-free (schema instructions only).");
         properties.putObject("descriptor_set_ref")
                 .put("type", "string")
                 .put("description", "Opaque registry reference echoed into the packet so the "
