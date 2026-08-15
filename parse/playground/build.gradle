@@ -1,6 +1,7 @@
 description = 'The parser playground: a pure-JDK web front end that streams typed parse events into the page as they happen, rendering the document progressively instead of waiting behind a spinner'
 
 dependencies {
+    api project(':protomolt-composer')
     implementation project(':protomolt-parse-proto')
     implementation project(':protomolt-parse-document')
     // Demo mode embeds the reference text parser in-process.

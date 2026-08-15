@@ -1,6 +1,9 @@
 description = 'The parsing coordinator runtime: magic-byte content sniffing, CEL routing rules, scatter-gather parser fan-out over the plugin contract, and the SearchMetadata fold persisted back through repo-service'
 
 dependencies {
+    api project(':protomolt-composer')
+    implementation project(':protomolt-parse-document')
+    implementation project(':protomolt-registry')
     api project(':protomolt-parse-proto')
 
     // The coordinator rides the repo wire contract only — the DocumentServiceGrpc

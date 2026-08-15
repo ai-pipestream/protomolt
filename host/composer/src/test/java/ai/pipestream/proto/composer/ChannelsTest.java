@@ -131,6 +131,24 @@ class ChannelsTest {
     }
 
     @Test
+    void targetStringsPivotBetweenInProcessAndRemote() {
+        Composer composer = Composer.emptyBuilder()
+                .module(new PublishingModule("repo"))
+                .environment(Map.of("PROTOMOLT_PARSE_TARGET", "parse.example.internal:9093"))
+                .build();
+
+        try (Composer.Node node = composer.boot(List.of("repo"))) {
+            Channels channels = node.context().channels();
+            assertThat(channels.targetOf("repo"))
+                    .startsWith(Channels.IN_PROCESS_PREFIX + "repo-");
+            assertThat(channels.targetOf("parse")).isEqualTo("parse.example.internal:9093");
+            assertThatThrownBy(() -> channels.targetOf("inference"))
+                    .isInstanceOf(ComposerException.class)
+                    .hasMessageContaining("PROTOMOLT_INFERENCE_TARGET");
+        }
+    }
+
+    @Test
     void duplicateEndpointPublicationIsRejected() {
         ServiceModule doublePublisher = new ServiceModule() {
             @Override

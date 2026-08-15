@@ -1,75 +1,45 @@
 package ai.pipestream.proto.platform;
 
-import ai.pipestream.proto.actions.ActionCatalog;
-import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.workflow.WorkflowRepository;
-import ai.pipestream.proto.workflow.WorkflowRunner;
-import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
+import ai.pipestream.proto.composer.Channels;
+import ai.pipestream.proto.composer.Composer;
+import ai.pipestream.proto.intake.service.IntakeModule;
 import ai.pipestream.proto.intake.service.IntakeServiceConfig;
-import ai.pipestream.proto.intake.service.IntakeServices;
 import ai.pipestream.proto.intake.service.identity.ApiKeyIdentityResolver;
+import ai.pipestream.proto.jobs.service.JobsModule;
 import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
-import ai.pipestream.proto.jobs.service.actions.GetJobAction;
-import ai.pipestream.proto.jobs.service.actions.ListJobsAction;
-import ai.pipestream.proto.jobs.service.actions.SubmitWorkflowAction;
-import ai.pipestream.proto.jobs.service.store.WorkflowRunDatabase;
-import ai.pipestream.proto.jobs.service.store.JdbcWorkflowRunStore;
-import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
-import ai.pipestream.proto.parse.playground.ParsePlaygroundServer;
-import ai.pipestream.proto.parse.service.ParseWorkflows;
-import ai.pipestream.proto.parse.service.ParseCoordinatorConfig;
-import ai.pipestream.proto.parse.service.ParseCoordinatorServices;
-import ai.pipestream.proto.parse.service.ParserRegistry;
+import ai.pipestream.proto.parse.playground.PlaygroundModule;
+import ai.pipestream.proto.parse.service.ParseModule;
 import ai.pipestream.proto.parse.service.RoutingRules;
+import ai.pipestream.proto.parse.text.TextParserModule;
 import ai.pipestream.proto.parse.text.TextParserService;
 import ai.pipestream.proto.parse.v1.RoutingRule;
-import ai.pipestream.proto.registry.GitSchemaRegistryStore;
-import ai.pipestream.proto.registry.server.SchemaRegistryServer;
+import ai.pipestream.proto.registry.server.RegistryModule;
 import ai.pipestream.proto.registry.server.SchemaRegistryServerConfig;
-import ai.pipestream.proto.repo.service.RepoServices;
+import ai.pipestream.proto.repo.service.RepoServiceModule;
 import ai.pipestream.proto.schema.confluent.ConfluentSchemaPublisher;
 import ai.pipestream.proto.sources.ProtoSourceSet;
 import ai.pipestream.proto.sources.publish.PublishOptions;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.util.JsonFormat;
-import io.grpc.Server;
-import io.grpc.inprocess.InProcessChannelBuilder;
-import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The document platform in one JVM: the composition root the container
- * boots. Everything the golden path proved, wired for real:
- *
- * <ul>
- *   <li>repo-service on Postgres + S3 (in-process for the siblings, Netty
- *   for external callers), lifecycle loops running;</li>
- *   <li>the git-backed schema registry, ON by default, serving the fleet
- *   document model as a published artifact from first boot, with the jobs
- *   verbs (submit-workflow, get-job, list-jobs) mounted on its actions
- *   route;</li>
- *   <li>the parsing coordinator with the embedded reference text parser (or
- *   a service-profile fleet when configured), and the {@code parse-document}
- *   workflow registered so a durable parse is one submit-workflow call;</li>
- *   <li>the durable jobs worker claiming from its own Postgres;</li>
- *   <li>the authenticated intake door;</li>
- *   <li>the streaming parser playground.</li>
- * </ul>
- *
- * <p>No DI framework: this class is the wiring, in dependency order, and
- * {@link #close()} unwinds it in reverse.
+ * The document platform in one JVM: the shipped one-container PRESET over
+ * the {@link Composer}. The wiring that used to live here as hand-ordered
+ * construction is now the role set
+ * {@code repo, parser-text, registry, parse, jobs, intake, playground}
+ * mounted through the ServiceModule SPI; this class only maps the
+ * {@code DOCUMENT_PLATFORM_*} configuration onto module configs, boots the
+ * node, and publishes the fleet document model. The same modules booted
+ * with a different role list are a specialized node, not a different
+ * program.
  */
 public final class DocumentPlatform implements AutoCloseable {
 
@@ -78,113 +48,32 @@ public final class DocumentPlatform implements AutoCloseable {
     /** The registry subject the fleet document model publishes under. */
     public static final String DOCUMENT_SUBJECT = "ai/pipestream/document/v1/document.proto";
 
-    private final RepoServices repo;
-    private final Server repoGrpc;
-    private final Server textParser;
-    private final ParseCoordinatorServices coordinator;
-    private final Server parseInProcess;
-    private final Server parseGrpc;
-    private final GitSchemaRegistryStore registry;
-    private final SchemaRegistryServer registryServer;
-    private final int registryHttpPort;
-    private final WorkflowRunDatabase jobsDatabase;
-    private final WorkflowRunWorker worker;
-    private final IntakeServices intake;
-    private final Server intakeGrpc;
-    private final ParsePlaygroundServer playground;
-
-    private final String repoInProcessName;
-    private final String parseInProcessName;
+    private final Composer.Node node;
+    private final RepoServiceModule repo;
+    private final ParseModule parse;
+    private final RegistryModule registry;
+    private final IntakeModule intake;
+    private final PlaygroundModule playground;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
-        String suffix = UUID.randomUUID().toString().substring(0, 8);
-        this.repoInProcessName = "platform-repo-" + suffix;
-        this.parseInProcessName = "platform-parse-" + suffix;
-        String textParserName = "platform-text-parser-" + suffix;
-
-        // 1. The document store, with its lifecycle loops.
-        this.repo = RepoServices.build(config.repo());
-        repo.startInProcess(repoInProcessName);
-        this.repoGrpc = repo.startNetty(config.repo().grpcPort());
-        repo.seedAccountDrives();
-        repo.startLifecycle();
-
-        // 2. The embedded reference parser (a fleet member like any other,
-        // it just happens to share the JVM).
-        this.textParser = InProcessServerBuilder.forName(textParserName)
-                .addService(new TextParserService())
-                .build()
-                .start();
-
-        // 3. The parsing coordinator.
+        this.repo = new RepoServiceModule(config.repo());
+        this.registry = new RegistryModule(
+                config.registryGit(),
+                SchemaRegistryServerConfig.defaults().withPort(config.registryPort()));
         RoutingRules rules = config.rulesJson() != null
                 ? RoutingRules.fromJson(config.rulesJson())
                 : defaultRules();
-        ParserRegistry parsers = config.profilesDir() != null
-                ? ParserRegistry.fromProfiles(
-                        new FileSystemServiceProfileRepository(java.nio.file.Path.of(config.profilesDir())),
-                        config.profileEndpoint())
-                : ParserRegistry.of(Map.of(
-                        TextParserService.PARSER_NAME,
-                        ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + textParserName));
-        this.coordinator = ParseCoordinatorServices.build(
-                new ParseCoordinatorConfig(
-                        0,
-                        ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + repoInProcessName,
-                        "intake",
-                        config.parseDeadlineSeconds()),
+        this.parse = new ParseModule(new ParseModule.Config(
                 rules,
-                parsers);
-        // The coordinator tracks one server; the platform owns the extra
-        // in-process mount (the workflow's target) and closes it itself.
-        this.parseInProcess = coordinator.startInProcess(parseInProcessName);
-        this.parseGrpc = coordinator.startNetty(config.parseGrpcPort());
-
-        // 4. The jobs store and worker (its own database, its own Flyway
-        // history; the disjoint per-module migration directories are what
-        // make this classpath legal).
-        this.jobsDatabase = new WorkflowRunDatabase(config.jobs());
-        JdbcWorkflowRunStore jobs = new JdbcWorkflowRunStore(jobsDatabase);
-        ActionContext context = ActionContext.create();
-        // Parse checkpoints carry the parser's docling document as an Any;
-        // the checkpoint transcoder resolves it through this registry.
-        context.registry().registerFile(ai.pipestream.document.v1.DocumentProto.getDescriptor());
-
-        // 5. The schema registry: ON by default, jobs verbs mounted.
-        this.registry = GitSchemaRegistryStore.builder()
-                .repositoryDir(config.registryGit())
-                .build();
-        registry.putWorkflow(
-                ParseWorkflows.PARSE_DOCUMENT_WORKFLOW,
-                ParseWorkflows.parseDocumentWorkflow(
-                                ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + parseInProcessName,
-                                config.parseDeadlineSeconds() * 1000)
-                        .toString());
-        WorkflowRepository workflows = workflowRepository(registry);
-        ActionCatalog catalog = ActionCatalog.defaults(context)
-                .register(new SubmitWorkflowAction(jobs, workflows, WorkflowRunsConfig.DEFAULT_MAX_ATTEMPTS))
-                .register(new GetJobAction(jobs))
-                .register(new ListJobsAction(jobs));
-        this.registryServer = new SchemaRegistryServer(
-                SchemaRegistryServerConfig.defaults().withPort(config.registryPort()),
-                registry,
-                catalog);
-        this.registryHttpPort = registryServer.start();
-        publishDocumentModel();
-
-        // 6. The worker fleet.
-        WorkflowRunner runner = new WorkflowRunner(step -> {
-            String target = step.target();
-            if (target.startsWith(ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX)) {
-                return InProcessChannelBuilder.forName(
-                                target.substring(
-                                        ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX.length()))
-                        .build();
-            }
-            return NettyChannelBuilder.forTarget(target).usePlaintext().build();
-        });
-        this.worker = new WorkflowRunWorker(jobs, context, workflows, runner, new WorkflowRunsConfig(
+                config.profilesDir() != null
+                        ? Map.of()
+                        : Map.of(TextParserService.PARSER_NAME, TextParserModule.ROLE),
+                config.profilesDir() != null ? Path.of(config.profilesDir()) : null,
+                config.profileEndpoint(),
+                config.parseDeadlineSeconds(),
+                config.parseGrpcPort()));
+        JobsModule jobs = new JobsModule(config.jobs(), new WorkflowRunsConfig(
                 "document-platform",
                 config.workerCount(),
                 WorkflowRunsConfig.DEFAULT_LEASE_DURATION,
@@ -196,30 +85,40 @@ public final class DocumentPlatform implements AutoCloseable {
                 WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC,
                 null,
                 null));
-        worker.start();
+        this.intake = new IntakeModule(new IntakeModule.Config(
+                config.intakeGrpcPort(),
+                -1,
+                IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES,
+                resolver));
+        this.playground = new PlaygroundModule(
+                config.playgroundPort(), PlaygroundModule.DEFAULT_PARSER_ROLE);
 
-        // 7. The authenticated front door.
-        this.intake = IntakeServices.build(
-                new IntakeServiceConfig(
-                        config.intakeGrpcPort(),
-                        IntakeServiceConfig.INPROCESS_TARGET_PREFIX + repoInProcessName,
-                        IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES),
-                resolver);
-        this.intakeGrpc = intake.startNetty(config.intakeGrpcPort());
-
-        // 8. The streaming parser playground, watching the embedded parser.
-        this.playground = new ParsePlaygroundServer(
-                config.playgroundPort(),
-                ParsePlaygroundServer.INPROCESS_TARGET_PREFIX + textParserName,
-                JsonFormat.TypeRegistry.newBuilder()
-                        .add(ai.pipestream.document.v1.Document.getDescriptor())
-                        .build());
+        Composer composer = Composer.emptyBuilder()
+                .module(repo)
+                .module(new TextParserModule())
+                .module(registry)
+                .module(parse)
+                .module(jobs)
+                .module(intake)
+                .module(playground)
+                .environment(Map.of())
+                .remoteOpener(target -> NettyChannelBuilder.forTarget(target).usePlaintext().build())
+                .build();
+        this.node = composer.boot(List.of(
+                RepoServiceModule.ROLE, TextParserModule.ROLE, RegistryModule.ROLE,
+                ParseModule.ROLE, JobsModule.ROLE, IntakeModule.ROLE, PlaygroundModule.ROLE));
+        try {
+            publishDocumentModel();
+        } catch (RuntimeException | IOException e) {
+            node.close();
+            throw e;
+        }
 
         LOG.info(
                 "document platform up: repo gRPC {}, intake gRPC {}, parse gRPC {},"
                         + " registry http {}, playground http {}",
-                repoGrpc.getPort(), intakeGrpc.getPort(), parseGrpc.getPort(),
-                registryHttpPort, playground.port());
+                repo.grpcPort(), intake.grpcPort(), parse.grpcPort(),
+                registry.httpPort(), playground.port());
     }
 
     /**
@@ -243,22 +142,22 @@ public final class DocumentPlatform implements AutoCloseable {
 
     /** The bound intake gRPC port. */
     public int intakePort() {
-        return intakeGrpc.getPort();
+        return intake.grpcPort();
     }
 
     /** The bound coordinator gRPC port. */
     public int parsePort() {
-        return parseGrpc.getPort();
+        return parse.grpcPort();
     }
 
     /** The bound repo gRPC port. */
     public int repoPort() {
-        return repoGrpc.getPort();
+        return repo.grpcPort();
     }
 
     /** The bound registry HTTP port. */
     public int registryPort() {
-        return registryHttpPort;
+        return registry.httpPort();
     }
 
     /** The bound playground HTTP port. */
@@ -268,26 +167,13 @@ public final class DocumentPlatform implements AutoCloseable {
 
     /** The in-process name repo-service answers on inside this JVM. */
     public String repoInProcessName() {
-        return repoInProcessName;
+        return node.context().channels().targetOf(RepoServiceModule.ROLE)
+                .substring(Channels.IN_PROCESS_PREFIX.length());
     }
 
     @Override
     public void close() {
-        playground.close();
-        intake.close();
-        worker.close();
-        registryServer.close();
-        try {
-            registry.close();
-        } catch (Exception e) {
-            LOG.warn("registry close failed", e);
-        }
-        jobsDatabase.close();
-        coordinator.close();
-        parseInProcess.shutdownNow();
-        textParser.shutdownNow();
-        // repo tracks every server it started (in-process and Netty alike).
-        repo.close();
+        node.close();
     }
 
     /**
@@ -309,13 +195,13 @@ public final class DocumentPlatform implements AutoCloseable {
                 .add(DOCUMENT_SUBJECT, documentProto, "platform")
                 .build();
         try (ConfluentSchemaPublisher publisher = new ConfluentSchemaPublisher(
-                URI.create("http://127.0.0.1:" + registryHttpPort))) {
+                URI.create("http://127.0.0.1:" + registry.httpPort()))) {
             publisher.publish(sources, PublishOptions.defaults()).throwIfFailed();
         } catch (Exception e) {
             throw new IllegalStateException("publishing the document model failed", e);
         }
         LOG.info("registry serves {} ({} subject(s) total)", DOCUMENT_SUBJECT,
-                registry.subjects().size());
+                registry.store().subjects().size());
     }
 
     private static RoutingRules defaultRules() {
@@ -325,20 +211,5 @@ public final class DocumentPlatform implements AutoCloseable {
                 .setParserName(TextParserService.PARSER_NAME)
                 .setPriority(1)
                 .build()));
-    }
-
-    private static WorkflowRepository workflowRepository(GitSchemaRegistryStore store) {
-        ObjectMapper json = new ObjectMapper();
-        return name -> {
-            Optional<String> text = store.workflow(name);
-            return text.map(t -> {
-                try {
-                    var node = json.readTree(t);
-                    return node instanceof ObjectNode workflow ? workflow : null;
-                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                    return null;
-                }
-            });
-        };
     }
 }
