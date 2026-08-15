@@ -1,0 +1,6 @@
+description = 'The deterministic chunker: executes a chunking policy (sentence-packed over pinned boundary rules) so two corpora agree on chunk boundaries exactly when their policy digests agree'
+
+dependencies {
+    api project(':protomolt-index-spi')
+    api project(':protomolt-embeddings')
+}

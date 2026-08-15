@@ -9,6 +9,7 @@ and does not interpret hints at all.
 | Artifact | Role |
 |---|---|
 | `protomolt-index-spi` | Mapping model, hint sources, engine SPI, the hints `.proto` |
+| `protomolt-chunker` | Deterministic chunking-policy execution ([chunking](chunking.md)) |
 | `protomolt-index-ndjson` | Message → NDJSON lines (including bulk-index pairs) |
 | `protomolt-index-lucene` | Lucene `Document` mapping |
 | `protomolt-index-opensearch` | OpenSearch document-map mapping |
