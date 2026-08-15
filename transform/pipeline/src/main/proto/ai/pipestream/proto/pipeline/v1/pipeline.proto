@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.pipeline.v1;
 
-import "ai/pipestream/proto/grpc/recipe/v1/grpc_recipe.proto";
+import "ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto";
 import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/duration.proto";
@@ -11,26 +11,26 @@ option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.pipeline.v1";
 
 // The pipeline execution contract: the compiled, streaming-aware form of a
-// GrpcRecipe. A pipeline is the typed-edge-normalized rendering of a recipe:
+// Workflow. A pipeline is the typed-edge-normalized rendering of a workflow:
 // every gRPC or structured step is fed by an explicit TypedEdge (the compiler
-// synthesizes one from a recipe step's top-level rules when it has none), and
+// synthesizes one from a workflow step's top-level rules when it has none), and
 // every edge carries an explicit cardinality. The static checker re-derives
 // every method's streaming shape and every binding's cardinality from the
 // descriptor set named by descriptor_fingerprint and rejects any drift, so a
 // pipeline that checks cannot fail on a shape or type error at run time.
 // This contract supersedes the earlier runtime-oriented pipeline.proto in
 // this file: that draft modeled its own CEL/filter/select steps and was never
-// wired to an executor. The recipe's TypedEdge and FanOutSpec are embedded
+// wired to an executor. The workflow's TypedEdge and FanOutSpec are embedded
 // unchanged so mapping, CEL, projection, fan-out, and branch failure policy
-// keep exactly one meaning across recipes and pipelines.
+// keep exactly one meaning across workflows and pipelines.
 message Pipeline {
   option (ai.pipestream.proto.meta.v1.message) = {
-    description: "The compiled, streaming-aware execution form of a gRPC recipe: typed edges with explicit cardinality over every gRPC streaming shape."
+    description: "The compiled, streaming-aware execution form of a gRPC workflow: typed edges with explicit cardinality over every gRPC streaming shape."
     owner: "protomolt"
     sensitivity: "internal"
   };
 
-  // Stable path-safe identity, echoing the source recipe.
+  // Stable path-safe identity, echoing the source workflow.
   string name = 1 [
     (ai.pipestream.proto.validate.v1.field).required = true,
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
@@ -57,9 +57,9 @@ message Pipeline {
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // The exact service dependencies carried over from the recipe. Each
+  // The exact service dependencies carried over from the workflow. Each
   // dependency's descriptor fingerprint must equal descriptor_fingerprint.
-  repeated ai.pipestream.proto.grpc.recipe.v1.ServiceDependency dependencies = 5 [
+  repeated ai.pipestream.proto.grpc.workflow.v1.ServiceDependency dependencies = 5 [
     (ai.pipestream.proto.validate.v1.field).repeated = {
       min_items: 1
       max_items: 64
@@ -86,15 +86,15 @@ message Pipeline {
     (ai.pipestream.proto.validate.v1.field).duration.gte = {nanos: 1},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // Name of the recipe this pipeline was compiled from; empty when the
+  // Name of the workflow this pipeline was compiled from; empty when the
   // pipeline was authored directly.
-  string source_recipe_name = 9 [
+  string source_workflow_name = 9 [
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // Lowercase SHA-256 fingerprint of the serialized source recipe; empty
-  // exactly when source_recipe_name is empty.
-  string source_recipe_fingerprint = 10 [
+  // Lowercase SHA-256 fingerprint of the serialized source workflow; empty
+  // exactly when source_workflow_name is empty.
+  string source_workflow_fingerprint = 10 [
     (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-f]{64}$",
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -141,7 +141,7 @@ message PipelineStep {
   ];
   // Optional boolean CEL gate over the scope, allowed on gRPC steps only. A
   // false gate skips the step; the scope binding still forms, exactly as in
-  // the chain runner.
+  // the workflow runner.
   string when = 3 [
     (ai.pipestream.proto.validate.v1.field).string.max_len = 16384,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
@@ -197,12 +197,12 @@ message GrpcCallStep {
   // owned by the completing actor. When any declared source binds a stream,
   // the edge is a stream edge: its rules apply per element and produce_type
   // names the element type.
-  ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // Bounded fan-out over a repeated field of the edge's produced message.
   // Unary methods only: each item executes one branch and the ordered branch
   // outputs collect into one message, so a fanned-out step binds its collect
   // type with cardinality ONE regardless of the method's response shape.
-  ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fan_out = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  ai.pipestream.proto.grpc.workflow.v1.FanOutSpec fan_out = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // Declared cardinality of the edge feeding this step. Must be ONE when no
   // declared source binds a stream and MANY when one does; must be
   // UNSPECIFIED exactly when the step carries no edge. A MANY edge into a
@@ -225,7 +225,7 @@ message GrpcCallStep {
   // step. With a streaming response the check applies per element.
   bool validate_response = 7 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // How the response is obtained. External steps carry no edge and no fan-out.
-  ai.pipestream.proto.grpc.recipe.v1.StepCompletion completion = 8 [
+  ai.pipestream.proto.grpc.workflow.v1.StepCompletion completion = 8 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
       enum: {defined_only: true}
@@ -247,16 +247,16 @@ message StructuredStep {
   };
 
   // The generation specification: target type, catalog model, attempt cap.
-  ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec spec = 1 [
+  ai.pipestream.proto.grpc.workflow.v1.StructuredGenerationSpec spec = 1 [
     (ai.pipestream.proto.validate.v1.field).required = true,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Optional grounding edge. When present it must read only ONE bindings: a
   // stream must be collected before it can ground a generation.
-  ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge = 2 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge = 2 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // Bounded fan-out over a repeated field of the edge's produced message: one
   // generation per item, collected into one message. Requires edge.
-  ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fan_out = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  ai.pipestream.proto.grpc.workflow.v1.FanOutSpec fan_out = 3 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
 // Turns a repeated message field of a ONE binding into a stream of its
@@ -326,7 +326,7 @@ message CollectStep {
 }
 
 // Pipeline result projection over the final scope, checked with the same
-// scoped rule dialects as the recipe output.
+// scoped rule dialects as the workflow output.
 message PipelineOutput {
   option (ai.pipestream.proto.meta.v1.message) = {
     description: "Pipeline result projection: output type plus scoped text and CEL mapping rules."
@@ -346,7 +346,7 @@ message PipelineOutput {
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Typed CEL mapping rules over the final scope.
-  repeated ai.pipestream.proto.grpc.recipe.v1.CelMappingRule cel_rules = 3 [
+  repeated ai.pipestream.proto.grpc.workflow.v1.CelMappingRule cel_rules = 3 [
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 1024,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

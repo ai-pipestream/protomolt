@@ -203,7 +203,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
             return;
         }
         if (config.apiToken() != null && !authorized(exchange)) {
-            // The registry holds schema, config, and chain writes plus action execution:
+            // The registry holds schema, config, and workflow writes plus action execution:
             // the same shared secret that guards gRPC/REST/MCP guards it, health excepted.
             writeError(exchange, 401, 401, "Missing or invalid API token 'api_token'");
             return;
@@ -250,13 +250,13 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 && segments.get(1).equals("subjects") && segments.get(3).equals("parquet-schema")) {
             requireMethod(exchange, method, "GET", () -> parquetSchema(exchange, segments.get(2)));
         } else if (segments.size() == 2 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("chains")) {
-            requireMethod(exchange, method, "GET", () -> listChains(exchange));
+                && segments.get(1).equals("workflows")) {
+            requireMethod(exchange, method, "GET", () -> listWorkflows(exchange));
         } else if (segments.size() == 3 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("chains")) {
+                && segments.get(1).equals("workflows")) {
             switch (method) {
-                case "GET" -> getChain(exchange, segments.get(2));
-                case "PUT" -> putChain(exchange, segments.get(2));
+                case "GET" -> getWorkflow(exchange, segments.get(2));
+                case "PUT" -> putWorkflow(exchange, segments.get(2));
                 default -> methodNotAllowed(exchange, "GET, PUT");
             }
         } else if (actions != null && segments.size() == 2 && segments.get(0).equals(nativePrefix)
@@ -461,76 +461,76 @@ public final class SchemaRegistryServer implements AutoCloseable {
 
     // ---------------------------------------------------------------- native extras
 
-    private void listChains(HttpExchange exchange) throws IOException {
+    private void listWorkflows(HttpExchange exchange) throws IOException {
         if (!(store instanceof GitSchemaRegistryStore gitStore)) {
-            writeError(exchange, 404, 40401, "This store does not hold chains");
+            writeError(exchange, 404, 40401, "This store does not hold workflows");
             return;
         }
         try {
-            writeJson(exchange, 200, json.valueToTree(gitStore.chains()));
+            writeJson(exchange, 200, json.valueToTree(gitStore.workflows()));
         } catch (Exception e) {
-            internalError(exchange, "listing chains", e);
+            internalError(exchange, "listing workflows", e);
         }
     }
 
-    private void getChain(HttpExchange exchange, String name) throws IOException {
+    private void getWorkflow(HttpExchange exchange, String name) throws IOException {
         if (!(store instanceof GitSchemaRegistryStore gitStore)) {
-            writeError(exchange, 404, 40401, "This store does not hold chains");
+            writeError(exchange, 404, 40401, "This store does not hold workflows");
             return;
         }
         try {
-            var chain = gitStore.chain(name);
-            if (chain.isEmpty()) {
-                writeError(exchange, 404, 40401, "Chain not found: " + name);
+            var workflow = gitStore.workflow(name);
+            if (workflow.isEmpty()) {
+                writeError(exchange, 404, 40401, "Workflow not found: " + name);
                 return;
             }
-            // The stored chain is already JSON; it is written verbatim rather than reparsed.
+            // The stored workflow is already JSON; it is written verbatim rather than reparsed.
             writeBytes(exchange, 200, "application/json",
-                    chain.get().getBytes(StandardCharsets.UTF_8));
+                    workflow.get().getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
-            internalError(exchange, "reading a chain", e);
+            internalError(exchange, "reading a workflow", e);
         }
     }
 
     /**
-     * Stores a chain, gated the way schema writes are compatibility-gated: when the action
-     * catalog is mounted, {@code check-chain} must pass before anything is committed.
+     * Stores a workflow, gated the way schema writes are compatibility-gated: when the action
+     * catalog is mounted, {@code check-workflow} must pass before anything is committed.
      */
-    private void putChain(HttpExchange exchange, String name) throws IOException {
+    private void putWorkflow(HttpExchange exchange, String name) throws IOException {
         if (!(store instanceof GitSchemaRegistryStore gitStore)) {
-            writeError(exchange, 404, 40401, "This store does not hold chains");
+            writeError(exchange, 404, 40401, "This store does not hold workflows");
             return;
         }
         JsonNode body = readJsonBody(exchange);
-        if (!(body instanceof ObjectNode chain)) {
-            writeError(exchange, 422, 42201, "The body must be a chain definition object");
+        if (!(body instanceof ObjectNode workflow)) {
+            writeError(exchange, 422, 42201, "The body must be a workflow definition object");
             return;
         }
         if (actions != null) {
             try {
                 ObjectNode request = json.createObjectNode();
-                request.set("chain", chain);
-                ObjectNode checked = actions.execute("check-chain", request);
+                request.set("workflow", workflow);
+                ObjectNode checked = actions.execute("check-workflow", request);
                 if (!checked.path("ok").asBoolean()) {
                     ObjectNode error = json.createObjectNode();
                     error.put("error_code", 42202);
-                    error.put("message", "Chain does not verify");
+                    error.put("message", "Workflow does not verify");
                     error.set("findings", checked.get("findings"));
                     writeJson(exchange, 422, error);
                     return;
                 }
             } catch (ActionException e) {
-                writeError(exchange, 422, 42202, "Chain does not verify: " + e.getMessage());
+                writeError(exchange, 422, 42202, "Workflow does not verify: " + e.getMessage());
                 return;
             }
         }
         try {
-            gitStore.putChain(name, chain.toString());
+            gitStore.putWorkflow(name, workflow.toString());
             writeJson(exchange, 200, json.createObjectNode().put("name", name));
         } catch (IllegalArgumentException e) {
             writeError(exchange, 422, 42201, e.getMessage());
         } catch (Exception e) {
-            internalError(exchange, "storing a chain", e);
+            internalError(exchange, "storing a workflow", e);
         }
     }
 

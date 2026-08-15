@@ -3,21 +3,21 @@ package ai.pipestream.proto.mcp;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.codegen.GenerateStubsAction;
-import ai.pipestream.proto.chain.ChainRunner;
-import ai.pipestream.proto.chain.RecipeWorkbenchActions;
+import ai.pipestream.proto.workflow.WorkflowRunner;
+import ai.pipestream.proto.workflow.WorkflowWorkbenchActions;
 import ai.pipestream.proto.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
-import ai.pipestream.proto.grpc.recipe.ArtifactRepository;
-import ai.pipestream.proto.grpc.recipe.FileSystemArtifactRepository;
-import ai.pipestream.proto.grpc.recipe.FileSystemRunEvidenceRepository;
-import ai.pipestream.proto.grpc.recipe.RecipeRepository;
-import ai.pipestream.proto.grpc.recipe.RunEvidenceRepository;
+import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
+import ai.pipestream.proto.grpc.workflow.FileSystemArtifactRepository;
+import ai.pipestream.proto.grpc.workflow.FileSystemRunEvidenceRepository;
+import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
+import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workspace.ServiceWorkspaceActions;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
-import ai.pipestream.proto.registry.RegistryRecipeRepository;
+import ai.pipestream.proto.registry.RegistryWorkflowVersionRepository;
 
 import java.nio.file.Path;
 
@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Stdio entry point: {@code protomolt-mcp [--registry-git <path>]
- * [--service-workspace <path>] [--recipe-workspace <path>]}.
+ * [--service-workspace <path>] [--workflow-workspace <path>]}.
  *
  * <p>Without arguments the server exposes the action catalog as tools. With
  * {@code --registry-git}, the git-backed registry at the given path is additionally exposed
@@ -43,7 +43,7 @@ public final class McpMain {
     public static void main(String[] args) throws Exception {
         Path registryPath = null;
         Path serviceWorkspacePath = null;
-        Path recipeWorkspacePath = null;
+        Path workflowWorkspacePath = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--registry-git" -> {
@@ -60,16 +60,16 @@ public final class McpMain {
                     }
                     serviceWorkspacePath = Path.of(args[++i]);
                 }
-                case "--recipe-workspace" -> {
+                case "--workflow-workspace" -> {
                     if (i + 1 >= args.length) {
-                        System.err.println("--recipe-workspace requires a path");
+                        System.err.println("--workflow-workspace requires a path");
                         System.exit(2);
                     }
-                    recipeWorkspacePath = Path.of(args[++i]);
+                    workflowWorkspacePath = Path.of(args[++i]);
                 }
                 case "--help", "-h" -> {
                     System.err.println("usage: protomolt-mcp [--registry-git <path>] "
-                            + "[--service-workspace <path>] [--recipe-workspace <path>]");
+                            + "[--service-workspace <path>] [--workflow-workspace <path>]");
                     return;
                 }
                 default -> {
@@ -81,10 +81,10 @@ public final class McpMain {
 
         ServiceProfileRepository serviceProfiles = serviceWorkspacePath == null
                 ? null : new FileSystemServiceProfileRepository(serviceWorkspacePath);
-        ArtifactRepository artifacts = recipeWorkspacePath == null ? null
-                : new FileSystemArtifactRepository(recipeWorkspacePath.resolve("artifacts"));
-        RunEvidenceRepository runs = recipeWorkspacePath == null ? null
-                : new FileSystemRunEvidenceRepository(recipeWorkspacePath.resolve("runs"));
+        ArtifactRepository artifacts = workflowWorkspacePath == null ? null
+                : new FileSystemArtifactRepository(workflowWorkspacePath.resolve("artifacts"));
+        RunEvidenceRepository runs = workflowWorkspacePath == null ? null
+                : new FileSystemRunEvidenceRepository(workflowWorkspacePath.resolve("runs"));
         String version = McpMain.class.getPackage().getImplementationVersion();
         if (registryPath == null) {
             ActionCatalog catalog = catalog(ActionContext.create(), serviceProfiles,
@@ -100,7 +100,7 @@ public final class McpMain {
                 .repositoryDir(registryPath)
                 .build()) {
             ActionCatalog catalog = catalog(ActionContext.create(), serviceProfiles,
-                    artifacts, runs, new RegistryRecipeRepository(store), store);
+                    artifacts, runs, new RegistryWorkflowVersionRepository(store), store);
             McpServer server = new McpServer(catalog, CompositeResources.of(
                     new RegistryResources(store), serviceProfiles == null
                             ? null : new ServiceProfileResources(serviceProfiles, store)),
@@ -125,7 +125,7 @@ public final class McpMain {
                                          ServiceProfileRepository serviceProfiles,
                                          ArtifactRepository artifacts,
                                          RunEvidenceRepository runs,
-                                         RecipeRepository recipes,
+                                         WorkflowVersionRepository workflows,
                                          ai.pipestream.proto.registry.SchemaRegistryStore registry) {
         ActionCatalog catalog = ActionCatalog.defaults(context)
                 .register(new GrpcInvokeAction())
@@ -134,7 +134,7 @@ public final class McpMain {
                 .register(new GatherGitAction());
         ServiceWorkspaceActions.register(catalog, serviceProfiles, registry,
                 ai.pipestream.proto.grpc.invoke.ChannelFactory.standard());
-        return RecipeWorkbenchActions.register(catalog, new ChainRunner(), artifacts, runs,
-                recipes);
+        return WorkflowWorkbenchActions.register(catalog, new WorkflowRunner(), artifacts, runs,
+                workflows);
     }
 }

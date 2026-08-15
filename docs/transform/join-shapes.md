@@ -93,7 +93,7 @@ variable. The same scope shape appears everywhere combination happens:
 | Context | Scope entries |
 |---|---|
 | Join | `order`, `customer`, … (the named sources) |
-| Chain step | `input`, `steps.<name>` |
+| Workflow step | `input`, `steps.<name>` |
 | Enrich transform | `input`, `response` |
 | Key+value record join | `key`, `value` |
 
@@ -108,8 +108,8 @@ surface with scoped source paths.
   source, descriptor set, implied rules) and `join-messages` (sources with
   messages + a target or shape spec + rules → the joined message). Verbs
   mean every surface: typed RPCs, REST, Swagger, MCP tools for agents.
-- **Chains**: the chain variable scope *is* a multi-source scope, so a
-  chain's output mapping is already a join of every step's response.
+- **Workflows**: the workflow variable scope *is* a multi-source scope, so a
+  workflow's output mapping is already a join of every step's response.
 - **gRPC streams: our streaming turf.** Stateful topic-to-topic joins
   belong to Kafka Streams. But when both sides are *gRPC server streams*,
   the join is ours: open two flow-controlled `DynamicGrpcStream`s, match
@@ -141,7 +141,7 @@ alongside the stream-join phase.
   an expiry policy. If a join needs unbounded state, it needs a database.
 - **A query language**: rules and CEL are the surface. If a SQL-ish
   layer ever makes sense, it compiles down to these primitives (the same
-  posture as the chain manager's contract-as-language direction).
+  posture as the workflow manager's contract-as-language direction).
 
 ## Stream-join behavior
 

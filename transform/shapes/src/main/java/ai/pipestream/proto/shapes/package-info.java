@@ -12,7 +12,7 @@
  *
  * <p>{@link RuleChecker} statically validates both rule dialects against descriptors, so a
  * ruleset fails at configuration time rather than on a message; it is also what
- * {@code ai.pipestream.proto.chain} uses to verify a chain. {@link SchemaInferrer} works in
+ * {@code ai.pipestream.proto.workflow} uses to verify a workflow. {@link SchemaInferrer} works in
  * the other direction, deriving a message type from sample {@code Struct} data.</p>
  *
  * <p>The single-message counterparts of these rules live in

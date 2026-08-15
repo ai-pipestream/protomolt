@@ -49,15 +49,15 @@ class DemoModeTest {
     }
 
     @Test
-    void demoChainIsStoredAndRunsByName() throws Exception {
+    void demoWorkflowIsStoredAndRunsByName() throws Exception {
         HttpResponse<String> listed = http.send(HttpRequest.newBuilder(
                         URI.create("http://127.0.0.1:" + serve.registryPort()
-                                + "/protomolt/chains")).GET().build(),
+                                + "/protomolt/workflows")).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(listed.body()).contains("compile-and-list");
 
-        JsonNode run = post("/grpc-json/ProtoMoltService/RunChain", """
-                {"chainName": "compile-and-list",
+        JsonNode run = post("/grpc-json/ProtoMoltService/RunWorkflow", """
+                {"workflowName": "compile-and-list",
                  "input": {"sources": {"d.proto":
                    "syntax = \\"proto3\\"; package d; message Demo { int32 n = 1; }"}}}
                 """);

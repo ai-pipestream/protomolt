@@ -13,7 +13,7 @@ services:
       - sh
       - -ec
       - |
-        mkdir -p /data/registry.git /data/services /data/recipes
+        mkdir -p /data/registry.git /data/services /data/workflows
         chown -R 10001:10001 /data
     volumes:
       - protomolt-data:/data
@@ -31,8 +31,8 @@ services:
       - /data/registry.git
       - --service-workspace
       - /data/services
-      - --recipe-workspace
-      - /data/recipes
+      - --workflow-workspace
+      - /data/workflows
       - --delegation-repo-endpoint
       - repo-service:9090
       - --delegation-repo-drive

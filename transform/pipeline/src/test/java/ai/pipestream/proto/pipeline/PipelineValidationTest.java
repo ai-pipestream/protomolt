@@ -1,6 +1,6 @@
 package ai.pipestream.proto.pipeline;
 
-import ai.pipestream.proto.grpc.recipe.v1.StepCompletion;
+import ai.pipestream.proto.grpc.workflow.v1.StepCompletion;
 import ai.pipestream.proto.pipeline.v1.CollectStep;
 import ai.pipestream.proto.pipeline.v1.EdgeCardinality;
 import ai.pipestream.proto.pipeline.v1.MethodShape;
@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Structural validation of the pipeline contract: the same fail-fast, field-naming style as
- * the recipe contract's validation, covering the invariants the descriptor checker assumes.
+ * the workflow contract's validation, covering the invariants the descriptor checker assumes.
  */
 class PipelineValidationTest {
 
@@ -132,13 +132,13 @@ class PipelineValidationTest {
     }
 
     @Test
-    void sourceRecipeProvenanceMustPair() {
+    void sourceWorkflowProvenanceMustPair() {
         Pipeline pipeline = validPipeline().toBuilder()
-                .setSourceRecipeName("some-recipe")
+                .setSourceWorkflowName("some-workflow")
                 .build();
         assertThatThrownBy(() -> PipelineValidation.validate(pipeline))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("source_recipe_name")
+                .hasMessageContaining("source_workflow_name")
                 .hasMessageContaining("set together");
     }
 

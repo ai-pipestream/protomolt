@@ -3,7 +3,7 @@
  * service.
  *
  * <p>Every verb is one typed RPC. {@link ProtoMoltCatalog} assembles the full catalog — the
- * built-in actions plus the gRPC, service-workspace, codegen, chain, jobs, inference, gather,
+ * built-in actions plus the gRPC, service-workspace, codegen, workflow, jobs, inference, gather,
  * and emit verbs, and
  * {@link ProtoMoltGrpcService} binds an
  * {@link ai.pipestream.proto.actions.ActionCatalog} as the service. Dispatch runs through

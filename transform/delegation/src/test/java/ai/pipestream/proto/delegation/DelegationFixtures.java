@@ -31,7 +31,7 @@ import ai.pipestream.proto.delegation.v1.Transcript;
 import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
-import ai.pipestream.proto.grpc.recipe.v1.ArtifactReference;
+import ai.pipestream.proto.grpc.workflow.v1.ArtifactReference;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
 

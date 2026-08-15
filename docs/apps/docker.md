@@ -22,7 +22,7 @@ stdio agent with no port, so it is in a Compose profile and is driven on demand 
 [The ACP agent](#the-acp-agent-stdio) below).
 
 The server starts with `--demo`, which seeds a throwaway git registry, a sample schema, and a
-sample chain, so every surface has something to answer:
+sample workflow, so every surface has something to answer:
 
 | Surface | URL | What it is |
 |---|---|---|
@@ -125,7 +125,7 @@ The serve image is also exercised end to end from the test suite.
 `HEALTHCHECK`. It then asserts every published surface answers over the mapped
 ports: `/health` over REST, an MCP initialize over streamable HTTP, a dynamic
 gRPC call driven purely by reflection, and the demo registry's subjects and
-chains. The suite runs with the module's ordinary `test` task (which builds
+workflows. The suite runs with the module's ordinary `test` task (which builds
 the distribution first) and skips when Docker is unavailable:
 
 ```shell

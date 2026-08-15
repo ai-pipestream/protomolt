@@ -126,8 +126,8 @@ project(':protomolt-pipeline').projectDir = file('transform/pipeline')
 include 'protomolt-delegation'
 project(':protomolt-delegation').projectDir = file('transform/delegation')
 
-include 'protomolt-chain'
-project(':protomolt-chain').projectDir = file('transform/chain')
+include 'protomolt-workflow'
+project(':protomolt-workflow').projectDir = file('transform/workflow')
 
 // mesh/: the PipeStream protobuf mesh profile: core entity contracts and
 // processing annotations for the entity vocabulary every mesh node shares.
@@ -243,8 +243,8 @@ project(':protomolt-grpc-service-profile').projectDir = file('surface/grpc/servi
 include 'protomolt-grpc-service-workspace'
 project(':protomolt-grpc-service-workspace').projectDir = file('surface/grpc/service-workspace')
 
-include 'protomolt-grpc-recipe'
-project(':protomolt-grpc-recipe').projectDir = file('surface/grpc/recipe')
+include 'protomolt-grpc-workflow'
+project(':protomolt-grpc-workflow').projectDir = file('surface/grpc/workflow')
 
 include 'protomolt-grpc-validation'
 project(':protomolt-grpc-validation').projectDir = file('surface/grpc/validation')
@@ -293,7 +293,7 @@ project(':protomolt-account-proto').projectDir = file('account/proto')
 include 'protomolt-account-service'
 project(':protomolt-account-service').projectDir = file('account/service')
 
-// jobs/ — asynchronous chain execution: durable chain jobs (Postgres is the
+// jobs/ — asynchronous workflow execution: durable workflow runs (Postgres is the
 // truth), a request topic in, lifecycle events out.
 
 include 'protomolt-jobs-proto'

@@ -1,6 +1,6 @@
 package ai.pipestream.proto.pipeline;
 
-import ai.pipestream.proto.grpc.recipe.v1.ServiceDependency;
+import ai.pipestream.proto.grpc.workflow.v1.ServiceDependency;
 import ai.pipestream.proto.pipeline.v1.EdgeCardinality;
 import ai.pipestream.proto.pipeline.v1.GrpcCallStep;
 import ai.pipestream.proto.pipeline.v1.MethodShape;
@@ -138,7 +138,7 @@ final class PipelineFixtures {
         return descriptor;
     }
 
-    /** A dependency in the recipe compiler's convention: alias and profile are the FQN. */
+    /** A dependency in the workflow compiler's convention: alias and profile are the FQN. */
     static ServiceDependency dependency(String service) {
         return ServiceDependency.newBuilder()
                 .setAlias(service)
@@ -163,7 +163,7 @@ final class PipelineFixtures {
                                          MethodShape shape,
                                          EdgeCardinality edgeCardinality,
                                          EdgeCardinality outputCardinality,
-                                         ai.pipestream.proto.grpc.recipe.v1.TypedEdge
+                                         ai.pipestream.proto.grpc.workflow.v1.TypedEdge
                                                  edge) {
         GrpcCallStep.Builder call = GrpcCallStep.newBuilder()
                 .setMethod(method)
@@ -171,7 +171,7 @@ final class PipelineFixtures {
                 .setEdge(edge)
                 .setEdgeCardinality(edgeCardinality)
                 .setOutputCardinality(outputCardinality)
-                .setCompletion(ai.pipestream.proto.grpc.recipe.v1.StepCompletion
+                .setCompletion(ai.pipestream.proto.grpc.workflow.v1.StepCompletion
                         .STEP_COMPLETION_LIVE);
         return PipelineStep.newBuilder()
                 .setName(name)
@@ -180,10 +180,10 @@ final class PipelineFixtures {
     }
 
     /** A minimal typed edge: declared sources, a produced type, and optional rules. */
-    static ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge(String produceType,
+    static ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge(String produceType,
                                                              List<String> sources,
                                                              String... rules) {
-        return ai.pipestream.proto.grpc.recipe.v1.TypedEdge.newBuilder()
+        return ai.pipestream.proto.grpc.workflow.v1.TypedEdge.newBuilder()
                 .addAllSources(sources)
                 .setProduceType(produceType)
                 .addAllRules(List.of(rules))
@@ -192,9 +192,9 @@ final class PipelineFixtures {
 
     /** A valid structured step grounded in a projected upstream result. */
     static PipelineStep structuredStep(String name, String dependency, String model,
-                                       ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge) {
+                                       ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge) {
         StructuredStep.Builder structured = StructuredStep.newBuilder()
-                .setSpec(ai.pipestream.proto.grpc.recipe.v1.StructuredGenerationSpec
+                .setSpec(ai.pipestream.proto.grpc.workflow.v1.StructuredGenerationSpec
                         .newBuilder()
                         .setTargetType(SUMMARY)
                         .setModel(model)

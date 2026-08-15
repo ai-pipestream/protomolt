@@ -1,7 +1,7 @@
 package ai.pipestream.proto.jobs.service.store;
 
 /**
- * The verdict of {@link ChainJobStore#completeParkedStep}: the state machine
+ * The verdict of {@link WorkflowRunStore#completeParkedStep}: the state machine
  * gate for the human-in-the-loop lane, decided atomically inside the store's
  * transaction (the row is locked {@code FOR UPDATE} while it is made).
  */

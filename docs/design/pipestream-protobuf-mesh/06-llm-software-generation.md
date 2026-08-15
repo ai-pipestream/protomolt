@@ -10,7 +10,7 @@ authority.
 
 Requires the [core contracts](01-core-contracts-and-annotations.md). Reuse the
 structured-generation coordinator, inference catalog, credential resolver,
-delegation lifecycle, recipes, artifacts, replay, and generated gRPC clients.
+delegation lifecycle, workflows, artifacts, replay, and generated gRPC clients.
 It may initially use the current delegation stream while the generic mesh node
 stream is developed.
 

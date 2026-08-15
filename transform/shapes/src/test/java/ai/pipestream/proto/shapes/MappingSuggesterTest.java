@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Structural mapping suggestions: name-matched candidates identify their source and target
  * fields, respect type and shape agreement, rank exact spellings first, and every emitted
- * rule passes the same {@link RuleChecker} chains are verified with.
+ * rule passes the same {@link RuleChecker} workflows are verified with.
  */
 class MappingSuggesterTest {
 
@@ -168,7 +168,7 @@ class MappingSuggesterTest {
     }
 
     @Test
-    void everySuggestedRulePassesTheChainTypeChecker() {
+    void everySuggestedRulePassesTheWorkflowTypeChecker() {
         MappingSuggester.Suggestions suggestions =
                 MappingSuggester.suggest(sources(), ticket);
 

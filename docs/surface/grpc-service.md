@@ -64,7 +64,7 @@ serve/build/install/protomolt-serve/bin/protomolt-serve \
     [--host <addr>] [--grpc-port <n>] [--http-port <n>] \
     [--registry-git <path> [--registry-port <n>]] \
     [--api-token <secret>] [--gather-cache <dir>] \
-    [--service-workspace <dir>] [--recipe-workspace <dir>] [--demo]
+    [--service-workspace <dir>] [--workflow-workspace <dir>] [--demo]
 ```
 
 `--help` (or `-h`) prints the complete flag set, including the optional jobs
@@ -83,7 +83,7 @@ service-workspace flags are:
 | none | `PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS` | `43200` | Task console browser session lifetime, from 1 through 604800 seconds |
 | `--gather-cache` | `PROTOMOLT_GATHER_CACHE` | the library default under the process owner's home | Directory for `gather-git`'s per-repo clone caches |
 | `--service-workspace` | `PROTOMOLT_SERVICE_WORKSPACE` | none | Directory for durable gRPC service profiles and content-addressed descriptor artifacts |
-| `--recipe-workspace` | `PROTOMOLT_RECIPE_WORKSPACE` | none | Directory for content-addressed redacted fixtures and immutable run evidence |
+| `--workflow-workspace` | `PROTOMOLT_WORKFLOW_WORKSPACE` | none | Directory for content-addressed redacted fixtures and immutable run evidence |
 | `--demo` | none | off | Seed the sample schema described below |
 
 The delegation coordinator keeps its transcript in memory unless a repository
@@ -105,7 +105,7 @@ encrypted in the serve process before it reaches the repository service; see
 [Agent delegation](../transform/delegation.md) for the storage contract and
 the restart semantics.
 
-Outbound reflection, invocation, service refresh, and chain execution share
+Outbound reflection, invocation, service refresh, and workflow execution share
 one host-configured target, transport, deadline, and channel-concurrency
 boundary. See [Outbound gRPC channel policy](../operations/grpc-channel-policy.md) for its
 launcher flags, environment variables, defaults, and embedding API.

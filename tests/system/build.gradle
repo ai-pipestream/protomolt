@@ -27,7 +27,7 @@ dependencies {
     testImplementation project(':protomolt-repo-service')
     testImplementation project(':protomolt-repo-container')
     testImplementation project(':protomolt-jobs-service')
-    testImplementation project(':protomolt-chain')
+    testImplementation project(':protomolt-workflow')
     testImplementation project(':protomolt-actions')
     testImplementation project(':protomolt-index-lucene')
     testImplementation project(':protomolt-mapper-core')

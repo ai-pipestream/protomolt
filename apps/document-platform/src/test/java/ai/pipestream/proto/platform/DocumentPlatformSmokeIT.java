@@ -9,7 +9,7 @@ import ai.pipestream.proto.intake.v1.IngestDocumentRequest;
 import ai.pipestream.proto.intake.v1.IngestDocumentResponse;
 import ai.pipestream.proto.intake.v1.IntakeServiceGrpc;
 import ai.pipestream.proto.intake.v1.RawPayload;
-import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
 import ai.pipestream.proto.parse.v1.ParseDocumentRequest;
 import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
@@ -51,7 +51,7 @@ import org.testcontainers.utility.DockerImageName;
  * Smoke-proves the one-container platform through its OWN composition root
  * and its EXTERNAL surfaces only: every call in this test crosses a real
  * TCP port the container would expose. Ingest over the intake door, a
- * durable parse submitted through the registry's submit-chain action and
+ * durable parse submitted through the registry's submit-workflow action and
  * completed by the running worker, the parsed result read back over repo's
  * public gRPC, the registry serving the fleet document model, and the
  * playground page serving.
@@ -103,12 +103,12 @@ class DocumentPlatformSmokeIT {
                                 "platform-docs",
                                 0,
                                 null, null, null, null, 0, 0L),
-                        new ChainJobStoreConfig(
+                        new WorkflowRunStoreConfig(
                                 JOBS_DB.getJdbcUrl(),
                                 JOBS_DB.getUsername(),
                                 JOBS_DB.getPassword(),
-                                ChainJobStoreConfig.DEFAULT_POOL_SIZE,
-                                ChainJobStoreConfig.DEFAULT_MIGRATION_LOCATION),
+                                WorkflowRunStoreConfig.DEFAULT_POOL_SIZE,
+                                WorkflowRunStoreConfig.DEFAULT_MIGRATION_LOCATION),
                         work.resolve("registry.git"),
                         0, 0, 0, 0,
                         null, null, null,
@@ -177,10 +177,10 @@ class DocumentPlatformSmokeIT {
     @Order(3)
     void aDurableParseSubmittedThroughTheRegistryActionCompletes() throws Exception {
         ObjectNode submit = MAPPER.createObjectNode();
-        submit.put("chainName", "parse-document");
+        submit.put("workflowName", "parse-document");
         submit.set("input", MAPPER.readTree(JsonFormat.printer().print(
                 ParseDocumentRequest.newBuilder().setAddress(receipt.getAddress()).build())));
-        JsonNode submitted = postAction("submit-chain", submit);
+        JsonNode submitted = postAction("submit-workflow", submit);
         assertThat(submitted.path("ok").asBoolean()).as(submitted.toString()).isTrue();
         String jobId = submitted.path("jobId").asText();
         assertThat(jobId).isNotBlank();

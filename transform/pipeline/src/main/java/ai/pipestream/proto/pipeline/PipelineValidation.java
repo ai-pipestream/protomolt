@@ -1,6 +1,6 @@
 package ai.pipestream.proto.pipeline;
 
-import ai.pipestream.proto.grpc.recipe.RecipeValidation;
+import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
 import ai.pipestream.proto.pipeline.v1.CollectStep;
 import ai.pipestream.proto.pipeline.v1.EdgeCardinality;
 import ai.pipestream.proto.pipeline.v1.GrpcCallStep;
@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
 
 /**
  * Structural and safety validation for the pipeline contract, mirroring the validate.v1
- * annotations on {@code pipeline.proto} the way {@link RecipeValidation} mirrors the recipe
+ * annotations on {@code pipeline.proto} the way {@link WorkflowValidation} mirrors the workflow
  * contract. Descriptor-grounded shape, cardinality, and mapping checks are the
  * {@link PipelineChecker}'s job; this class only guarantees a pipeline is well-formed enough
  * to store and to check.
@@ -46,10 +46,10 @@ public final class PipelineValidation {
         require(pipeline.getSerializedSize() <= MAX_PIPELINE_BYTES,
                 "pipeline exceeds the maximum serialized size of "
                         + MAX_PIPELINE_BYTES + " bytes");
-        RecipeValidation.validateName(pipeline.getName(), "pipeline.name");
-        RecipeValidation.validateText(pipeline.getDescription(), "pipeline.description");
-        RecipeValidation.validateType(pipeline.getInputType(), "pipeline.input_type");
-        RecipeValidation.validateFingerprint(pipeline.getDescriptorFingerprint(),
+        WorkflowValidation.validateName(pipeline.getName(), "pipeline.name");
+        WorkflowValidation.validateText(pipeline.getDescription(), "pipeline.description");
+        WorkflowValidation.validateType(pipeline.getInputType(), "pipeline.input_type");
+        WorkflowValidation.validateFingerprint(pipeline.getDescriptorFingerprint(),
                 "pipeline.descriptor_fingerprint");
         require(pipeline.getDependenciesCount() > 0,
                 "pipeline.dependencies must not be empty");
@@ -57,7 +57,7 @@ public final class PipelineValidation {
                 "pipeline.dependencies exceeds the maximum of " + MAX_DEPENDENCIES);
         Set<String> aliases = new HashSet<>();
         for (var dependency : pipeline.getDependenciesList()) {
-            RecipeValidation.validate(dependency);
+            WorkflowValidation.validate(dependency);
             require(aliases.add(dependency.getAlias()),
                     "duplicate dependency alias: " + dependency.getAlias());
             require(dependency.getDescriptorFingerprint()
@@ -77,21 +77,21 @@ public final class PipelineValidation {
         if (pipeline.hasOutput()) {
             validate(pipeline.getOutput());
         }
-        RecipeValidation.validatePositiveDuration(pipeline.getDeadline(),
+        WorkflowValidation.validatePositiveDuration(pipeline.getDeadline(),
                 "pipeline.deadline");
         require(pipeline.getMaxStreamMessages() >= 1
                         && pipeline.getMaxStreamMessages() <= MAX_STREAM_MESSAGES,
                 "pipeline.max_stream_messages must be between 1 and "
                         + MAX_STREAM_MESSAGES);
-        require(pipeline.getSourceRecipeName().isEmpty()
-                        == pipeline.getSourceRecipeFingerprint().isEmpty(),
-                "pipeline.source_recipe_name and pipeline.source_recipe_fingerprint must "
+        require(pipeline.getSourceWorkflowName().isEmpty()
+                        == pipeline.getSourceWorkflowFingerprint().isEmpty(),
+                "pipeline.source_workflow_name and pipeline.source_workflow_fingerprint must "
                         + "be set together");
-        if (!pipeline.getSourceRecipeName().isEmpty()) {
-            RecipeValidation.validateName(pipeline.getSourceRecipeName(),
-                    "pipeline.source_recipe_name");
-            RecipeValidation.validateFingerprint(pipeline.getSourceRecipeFingerprint(),
-                    "pipeline.source_recipe_fingerprint");
+        if (!pipeline.getSourceWorkflowName().isEmpty()) {
+            WorkflowValidation.validateName(pipeline.getSourceWorkflowName(),
+                    "pipeline.source_workflow_name");
+            WorkflowValidation.validateFingerprint(pipeline.getSourceWorkflowFingerprint(),
+                    "pipeline.source_workflow_fingerprint");
         }
     }
 
@@ -107,12 +107,12 @@ public final class PipelineValidation {
                         && !step.getName().equals("target"),
                 "step.name must be an identifier other than 'input'/'target'");
         if (!step.getDependency().isEmpty()) {
-            RecipeValidation.validateName(step.getDependency(), "step.dependency");
+            WorkflowValidation.validateName(step.getDependency(), "step.dependency");
             require(aliases == null || aliases.contains(step.getDependency()),
                     "step dependency is not declared: " + step.getDependency());
         }
-        RecipeValidation.validateText(step.getWhen(), "step.when");
-        RecipeValidation.validateDuration(step.getDeadline(), "step.deadline");
+        WorkflowValidation.validateText(step.getWhen(), "step.when");
+        WorkflowValidation.validateDuration(step.getDeadline(), "step.deadline");
         switch (step.getKindCase()) {
             case GRPC_CALL -> validate(step.getGrpcCall());
             case STRUCTURED -> validate(step.getStructured());
@@ -132,7 +132,7 @@ public final class PipelineValidation {
     /** Validates a gRPC call step. */
     public static void validate(GrpcCallStep call) {
         require(call != null, "grpc_call must not be null");
-        RecipeValidation.validateMethod(call.getMethod(), "step.grpc_call.method");
+        WorkflowValidation.validateMethod(call.getMethod(), "step.grpc_call.method");
         require(defined(call.getMethodShape()) && call.getMethodShape()
                         != MethodShape.METHOD_SHAPE_UNSPECIFIED,
                 "step.grpc_call.method_shape must be a declared streaming shape");
@@ -143,14 +143,14 @@ public final class PipelineValidation {
                                 != EdgeCardinality.EDGE_CARDINALITY_UNSPECIFIED,
                 "step.grpc_call.output_cardinality must be ONE or MANY");
         require(call.getCompletion()
-                        == ai.pipestream.proto.grpc.recipe.v1.StepCompletion
+                        == ai.pipestream.proto.grpc.workflow.v1.StepCompletion
                                 .STEP_COMPLETION_LIVE
                         || call.getCompletion()
-                                == ai.pipestream.proto.grpc.recipe.v1.StepCompletion
+                                == ai.pipestream.proto.grpc.workflow.v1.StepCompletion
                                         .STEP_COMPLETION_EXTERNAL,
                 "step.grpc_call.completion must be live or external");
         boolean external = call.getCompletion()
-                == ai.pipestream.proto.grpc.recipe.v1.StepCompletion
+                == ai.pipestream.proto.grpc.workflow.v1.StepCompletion
                         .STEP_COMPLETION_EXTERNAL;
         if (external) {
             require(!call.hasEdge() && !call.hasFanOut(),
@@ -163,20 +163,20 @@ public final class PipelineValidation {
         } else {
             require(call.hasEdge(),
                     "a live gRPC step requires an edge; the compiler synthesizes one "
-                            + "from a recipe step's top-level rules");
+                            + "from a workflow step's top-level rules");
             require(call.getEdgeCardinality()
                             != EdgeCardinality.EDGE_CARDINALITY_UNSPECIFIED,
                     "step.grpc_call.edge_cardinality must be ONE or MANY when the step "
                             + "carries an edge");
         }
         if (call.hasEdge()) {
-            RecipeValidation.validate(call.getEdge());
+            WorkflowValidation.validate(call.getEdge());
         }
         if (call.hasFanOut()) {
             require(call.hasEdge(),
                     "step.grpc_call.fan_out requires step.grpc_call.edge; the items "
                             + "resolve against the edge's produced message");
-            RecipeValidation.validate(call.getFanOut());
+            WorkflowValidation.validate(call.getFanOut());
         }
     }
 
@@ -184,15 +184,15 @@ public final class PipelineValidation {
     public static void validate(StructuredStep structured) {
         require(structured != null, "structured must not be null");
         require(structured.hasSpec(), "step.structured.spec must be present");
-        RecipeValidation.validate(structured.getSpec());
+        WorkflowValidation.validate(structured.getSpec());
         if (structured.hasEdge()) {
-            RecipeValidation.validate(structured.getEdge());
+            WorkflowValidation.validate(structured.getEdge());
         }
         if (structured.hasFanOut()) {
             require(structured.hasEdge(),
                     "step.structured.fan_out requires step.structured.edge; the items "
                             + "resolve against the edge's produced message");
-            RecipeValidation.validate(structured.getFanOut());
+            WorkflowValidation.validate(structured.getFanOut());
         }
     }
 
@@ -212,7 +212,7 @@ public final class PipelineValidation {
         require(collect != null, "collect must not be null");
         require(identifier(collect.getSource()),
                 "step.collect.source must be an identifier");
-        RecipeValidation.validateType(collect.getCollectType(), "step.collect.collect_type");
+        WorkflowValidation.validateType(collect.getCollectType(), "step.collect.collect_type");
         require(collect.getCollectInto().length() <= 256
                         && IDENTIFIER.matcher(collect.getCollectInto()).matches(),
                 "step.collect.collect_into must be a non-blank field name of at most "
@@ -222,7 +222,7 @@ public final class PipelineValidation {
     /** Validates a pipeline output projection. */
     public static void validate(PipelineOutput output) {
         require(output != null, "output must not be null");
-        RecipeValidation.validateType(output.getType(), "output.type");
+        WorkflowValidation.validateType(output.getType(), "output.type");
         require(output.getRulesCount() <= MAX_RULES,
                 "output.rules exceeds the maximum of " + MAX_RULES);
         require(output.getCelRulesCount() <= MAX_RULES,

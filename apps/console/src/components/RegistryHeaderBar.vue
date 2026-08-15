@@ -40,8 +40,8 @@
         variant="tonal"
         size="small"
         class="mr-2"
-        :to="{ name: 'schema-registry-chains' }"
-      >Chains</v-btn>
+        :to="{ name: 'schema-registry-workflows' }"
+      >Workflows</v-btn>
 
       <v-btn
         prepend-icon="mdi-set-merge"

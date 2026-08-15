@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.delegation.v1;
 
-import "ai/pipestream/proto/grpc/recipe/v1/grpc_recipe.proto";
+import "ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto";
 import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/duration.proto";
@@ -398,7 +398,7 @@ message TaskSpec {
   ];
   // Content-addressed context the worker starts from (specs, fixtures, prior
   // outputs), by reference only.
-  repeated ai.pipestream.proto.grpc.recipe.v1.ArtifactReference context = 5 [
+  repeated ai.pipestream.proto.grpc.workflow.v1.ArtifactReference context = 5 [
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 64,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -600,7 +600,7 @@ message Checkpoint {
   ];
   // The checkpointed state as a content-addressed artifact, when the state is
   // too large for the token.
-  ai.pipestream.proto.grpc.recipe.v1.ArtifactReference state = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  ai.pipestream.proto.grpc.workflow.v1.ArtifactReference state = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // Optional bounded note about what the checkpoint covers.
   string note = 5 [
     (ai.pipestream.proto.validate.v1.field).string.max_len = 1024,
@@ -781,7 +781,7 @@ message TaskMessage {
   ];
   // Content-addressed artifacts the message refers to (logs, diffs, specs),
   // by reference only.
-  repeated ai.pipestream.proto.grpc.recipe.v1.ArtifactReference artifacts = 8 [
+  repeated ai.pipestream.proto.grpc.workflow.v1.ArtifactReference artifacts = 8 [
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 32,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -860,7 +860,7 @@ message CompletionCandidate {
   ];
   // Content-addressed outputs the work produced (reports, generated sources,
   // logs), by reference only.
-  repeated ai.pipestream.proto.grpc.recipe.v1.ArtifactReference artifacts = 5 [
+  repeated ai.pipestream.proto.grpc.workflow.v1.ArtifactReference artifacts = 5 [
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 64,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -917,7 +917,7 @@ message CheckEvidence {
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Content-addressed check output (logs, reports), by reference only.
-  repeated ai.pipestream.proto.grpc.recipe.v1.ArtifactReference artifacts = 5 [
+  repeated ai.pipestream.proto.grpc.workflow.v1.ArtifactReference artifacts = 5 [
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 32,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.mesh.v1;
 
-import "ai/pipestream/proto/grpc/recipe/v1/grpc_recipe.proto";
+import "ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto";
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
 import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
@@ -252,7 +252,7 @@ message SchemaReference {
   ];
   // Optional content-addressed descriptor-set artifact, for receivers that
   // fetch schemas from an artifact repository instead of a registry.
-  ai.pipestream.proto.grpc.recipe.v1.ArtifactReference descriptor_artifact = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
+  ai.pipestream.proto.grpc.workflow.v1.ArtifactReference descriptor_artifact = 4 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
 }
 
 // A typed claim check: the payload lives in a content-addressed artifact and
@@ -267,7 +267,7 @@ message ClaimCheck {
   };
 
   // The stored payload bytes, by content address.
-  ai.pipestream.proto.grpc.recipe.v1.ArtifactReference artifact = 1 [
+  ai.pipestream.proto.grpc.workflow.v1.ArtifactReference artifact = 1 [
     (ai.pipestream.proto.validate.v1.field).required = true,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

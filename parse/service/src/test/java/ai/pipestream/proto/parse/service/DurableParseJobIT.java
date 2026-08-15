@@ -3,14 +3,14 @@ package ai.pipestream.proto.parse.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.chain.ChainRunner;
-import ai.pipestream.proto.jobs.service.ChainJobSubmitter;
-import ai.pipestream.proto.jobs.service.ChainJobsConfig;
-import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
-import ai.pipestream.proto.jobs.service.store.ChainJobRecord;
-import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
-import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
-import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
+import ai.pipestream.proto.workflow.WorkflowRunner;
+import ai.pipestream.proto.jobs.service.WorkflowRunSubmitter;
+import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunDatabase;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
+import ai.pipestream.proto.jobs.service.store.JdbcWorkflowRunStore;
+import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
 import ai.pipestream.proto.parse.v1.ParseDocumentRequest;
 import ai.pipestream.proto.repo.v1.Blob;
 import ai.pipestream.proto.repo.v1.BlobBag;
@@ -38,9 +38,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
- * Proves a parse runs as a DURABLE JOB: the parse-document chain submitted
+ * Proves a parse runs as a DURABLE JOB: the parse-document workflow submitted
  * to the jobs store (real Postgres), claimed and executed by a
- * {@link ChainJobWorker}, its step response checkpointed on the job row, a
+ * {@link WorkflowRunWorker}, its step response checkpointed on the job row, a
  * transient coordinator failure requeued and retried to completion, and the
  * parse's side effect (the coordinator's PARSED save) landing exactly once
  * per successful execution.
@@ -67,10 +67,10 @@ class DurableParseJobIT {
     static ParseCoordinatorServices coordinator;
     static String coordinatorName;
 
-    static ChainJobDatabase database;
-    static JdbcChainJobStore store;
-    static ChainJobSubmitter submitter;
-    static ChainJobWorker worker;
+    static WorkflowRunDatabase database;
+    static JdbcWorkflowRunStore store;
+    static WorkflowRunSubmitter submitter;
+    static WorkflowRunWorker worker;
     static ActionContext context;
 
     @BeforeAll
@@ -105,15 +105,15 @@ class DurableParseJobIT {
         coordinatorName = InProcessServerBuilder.generateName();
         coordinator.startInProcess(coordinatorName);
 
-        database = new ChainJobDatabase(new ChainJobStoreConfig(
+        database = new WorkflowRunDatabase(new WorkflowRunStoreConfig(
                 POSTGRES.getJdbcUrl(),
                 POSTGRES.getUsername(),
                 POSTGRES.getPassword(),
-                ChainJobStoreConfig.DEFAULT_POOL_SIZE,
-                ChainJobStoreConfig.DEFAULT_MIGRATION_LOCATION));
-        store = new JdbcChainJobStore(database);
+                WorkflowRunStoreConfig.DEFAULT_POOL_SIZE,
+                WorkflowRunStoreConfig.DEFAULT_MIGRATION_LOCATION));
+        store = new JdbcWorkflowRunStore(database);
         context = ActionContext.create();
-        ChainJobsConfig config = new ChainJobsConfig(
+        WorkflowRunsConfig config = new WorkflowRunsConfig(
                 "durable-parse-it",
                 1,
                 Duration.ofSeconds(30),
@@ -122,15 +122,15 @@ class DurableParseJobIT {
                 3,
                 4,
                 null,
-                ChainJobsConfig.DEFAULT_EVENTS_TOPIC,
+                WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC,
                 null,
                 null);
-        ChainRunner runner = new ChainRunner(step -> InProcessChannelBuilder
+        WorkflowRunner runner = new WorkflowRunner(step -> InProcessChannelBuilder
                 .forName(step.target().substring(
                         ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX.length()))
                 .build());
-        submitter = new ChainJobSubmitter(store, null, config.maxAttemptsDefault());
-        worker = new ChainJobWorker(store, context, null, runner, config);
+        submitter = new WorkflowRunSubmitter(store, null, config.maxAttemptsDefault());
+        worker = new WorkflowRunWorker(store, context, null, runner, config);
     }
 
     @AfterAll
@@ -170,8 +170,8 @@ class DurableParseJobIT {
         String inputJson = JsonFormat.printer().print(
                 ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
         JsonNode input = MAPPER.readTree(inputJson);
-        ChainJobSubmitter.Outcome outcome = submitter.submit(
-                ParseChains.parseDocumentChain(
+        WorkflowRunSubmitter.Outcome outcome = submitter.submit(
+                ParseWorkflows.parseDocumentWorkflow(
                         ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + coordinatorName, 30_000),
                 null,
                 input,
@@ -187,8 +187,8 @@ class DurableParseJobIT {
 
         assertThat(worker.workOnce()).isTrue();
 
-        ChainJobRecord job = store.get(jobId).orElseThrow();
-        assertThat(job.status).isEqualTo(ChainJobRecord.STATUS_COMPLETED);
+        WorkflowRunRecord job = store.get(jobId).orElseThrow();
+        assertThat(job.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
         // The parse step's full response is checkpointed on the row.
         assertThat(job.checkpoints).contains("\"parse\"").contains("parserResults");
         assertThat(job.result).contains("alpha");
@@ -204,8 +204,8 @@ class DurableParseJobIT {
 
         // First execution hits the injected UNAVAILABLE read: requeued, not dead.
         assertThat(worker.workOnce()).isTrue();
-        ChainJobRecord afterFailure = store.get(jobId).orElseThrow();
-        assertThat(afterFailure.status).isEqualTo(ChainJobRecord.STATUS_QUEUED);
+        WorkflowRunRecord afterFailure = store.get(jobId).orElseThrow();
+        assertThat(afterFailure.status).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
         assertThat(afterFailure.attempt).isEqualTo(1);
         assertThat(repo.saves).isEmpty();
 
@@ -220,8 +220,8 @@ class DurableParseJobIT {
             }
         }
         assertThat(retried).isTrue();
-        ChainJobRecord done = store.get(jobId).orElseThrow();
-        assertThat(done.status).isEqualTo(ChainJobRecord.STATUS_COMPLETED);
+        WorkflowRunRecord done = store.get(jobId).orElseThrow();
+        assertThat(done.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
         assertThat(repo.saves).hasSize(1);
     }
 }

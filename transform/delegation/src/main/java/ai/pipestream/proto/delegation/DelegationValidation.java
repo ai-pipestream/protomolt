@@ -26,7 +26,7 @@ import ai.pipestream.proto.delegation.v1.Transcript;
 import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
-import ai.pipestream.proto.grpc.recipe.RecipeValidation;
+import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
 
@@ -36,8 +36,8 @@ import java.util.regex.Pattern;
 
 /**
  * Structural and safety validation for the delegation contract, mirroring the validate.v1
- * annotations on {@code delegation.proto} the way {@link RecipeValidation} mirrors the
- * recipe contract. Lifecycle, sequencing, and evidence-completeness checks are the
+ * annotations on {@code delegation.proto} the way {@link WorkflowValidation} mirrors the
+ * workflow contract. Lifecycle, sequencing, and evidence-completeness checks are the
  * {@link DelegationReducer}'s job; this class only guarantees a frame or transcript is
  * well-formed enough to carry and to reduce.
  */
@@ -245,7 +245,7 @@ public final class DelegationValidation {
         validateAttempt(offer.getAttempt(), "offer.attempt");
         require(offer.hasSpec(), "offer.spec must be set");
         validate(offer.getSpec());
-        RecipeValidation.validatePositiveDuration(offer.getLeaseDuration(),
+        WorkflowValidation.validatePositiveDuration(offer.getLeaseDuration(),
                 "offer.lease_duration");
         require(offer.hasExpiresAt(), "offer.expires_at must be set");
         validateTimestamp(offer.getExpiresAt(), "offer.expires_at");
@@ -258,7 +258,7 @@ public final class DelegationValidation {
     public static void validate(TaskSpec spec) {
         require(spec != null, "spec must not be null");
         require(!spec.getObjective().isBlank(), "spec.objective must not be blank");
-        RecipeValidation.validateText(spec.getObjective(), "spec.objective");
+        WorkflowValidation.validateText(spec.getObjective(), "spec.objective");
         require(spec.getAllowedScopeCount() <= MAX_SCOPE_ITEMS,
                 "spec.allowed_scope exceeds the maximum of " + MAX_SCOPE_ITEMS);
         spec.getAllowedScopeList()
@@ -281,9 +281,9 @@ public final class DelegationValidation {
         }
         require(spec.getContextCount() <= MAX_REFERENCES,
                 "spec.context exceeds the maximum of " + MAX_REFERENCES);
-        spec.getContextList().forEach(RecipeValidation::validate);
+        spec.getContextList().forEach(WorkflowValidation::validate);
         if (spec.hasDeadline()) {
-            RecipeValidation.validatePositiveDuration(spec.getDeadline(),
+            WorkflowValidation.validatePositiveDuration(spec.getDeadline(),
                     "spec.deadline");
         }
     }
@@ -327,7 +327,7 @@ public final class DelegationValidation {
         require(!checkpoint.getResumeToken().isBlank(),
                 "checkpoint.resume_token must not be blank");
         if (checkpoint.hasState()) {
-            RecipeValidation.validate(checkpoint.getState());
+            WorkflowValidation.validate(checkpoint.getState());
         }
         bounded(checkpoint.getNote(), 1_024, "checkpoint.note");
     }
@@ -413,7 +413,7 @@ public final class DelegationValidation {
         candidate.getCommitsList().forEach(DelegationValidation::validate);
         require(candidate.getArtifactsCount() <= MAX_REFERENCES,
                 "completion.artifacts exceeds the maximum of " + MAX_REFERENCES);
-        candidate.getArtifactsList().forEach(RecipeValidation::validate);
+        candidate.getArtifactsList().forEach(WorkflowValidation::validate);
     }
 
     /**
@@ -443,7 +443,7 @@ public final class DelegationValidation {
         bounded(message.getText(), 8_192, "task_message.text");
         require(message.getArtifactsCount() <= MAX_NEEDS,
                 "task_message.artifacts exceeds the maximum of " + MAX_NEEDS);
-        message.getArtifactsList().forEach(RecipeValidation::validate);
+        message.getArtifactsList().forEach(WorkflowValidation::validate);
         require(message.hasSentAt(), "task_message.sent_at must be set");
         validateTimestamp(message.getSentAt(), "task_message.sent_at");
     }
@@ -460,7 +460,7 @@ public final class DelegationValidation {
         bounded(evidence.getDetail(), 4_096, "evidence.detail");
         require(evidence.getArtifactsCount() <= MAX_NEEDS,
                 "evidence.artifacts exceeds the maximum of " + MAX_NEEDS);
-        evidence.getArtifactsList().forEach(RecipeValidation::validate);
+        evidence.getArtifactsList().forEach(WorkflowValidation::validate);
     }
 
     /** Validates one commit reference. */

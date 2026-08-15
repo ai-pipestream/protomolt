@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * With an API token configured, the registry sits behind the same boundary as the other
  * operational surfaces: every route requires the shared secret except health. The registry
- * carries schema, config, and chain writes plus action execution — it must not be the one
+ * carries schema, config, and workflow writes plus action execution — it must not be the one
  * listener an operator forgets.
  */
 class TokenAuthTest {
@@ -123,7 +123,7 @@ class TokenAuthTest {
         assertThat(get("/health").statusCode()).isEqualTo(200);
 
         for (String path : List.of("/subjects", "/config", "/schemas/ids/1",
-                "/protomolt/chains", "/protomolt/subjects/x/descriptor-set")) {
+                "/protomolt/workflows", "/protomolt/subjects/x/descriptor-set")) {
             assertThat(get(path).statusCode())
                     .as("%s without a token", path)
                     .isEqualTo(401);

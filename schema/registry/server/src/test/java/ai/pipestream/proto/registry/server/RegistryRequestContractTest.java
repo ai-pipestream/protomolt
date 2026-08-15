@@ -146,7 +146,7 @@ class RegistryRequestContractTest {
     }
 
     @Test
-    void actionAndChainRoutesEnforceTheirVerbs() throws Exception {
+    void actionAndWorkflowRoutesEnforceTheirVerbs() throws Exception {
         try (InMemorySchemaRegistryStore actionStore = new InMemorySchemaRegistryStore();
                 SchemaRegistryServer actionServer = new SchemaRegistryServer(
                         SchemaRegistryServerConfig.defaults().withHost("127.0.0.1").withPort(0),
@@ -159,7 +159,7 @@ class RegistryRequestContractTest {
                             URI.create(actionBase + "/protomolt/actions/compile")).GET().build()),
                     "POST");
         }
-        assertAllow(send(HttpRequest.newBuilder(URI.create(base + "/protomolt/chains"))
+        assertAllow(send(HttpRequest.newBuilder(URI.create(base + "/protomolt/workflows"))
                         .DELETE().build()),
                 "GET");
     }

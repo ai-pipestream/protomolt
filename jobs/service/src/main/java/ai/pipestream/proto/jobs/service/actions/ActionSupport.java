@@ -1,8 +1,8 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.jobs.service.store.ChainJobRecord;
-import ai.pipestream.proto.jobs.service.store.ChainJobStore;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -10,7 +10,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Instant;
 
 /**
- * The shared plumbing of the chain-jobs verbs: the null-store "unavailable"
+ * The shared plumbing of the workflow-runs verbs: the null-store "unavailable"
  * gate (a server without {@code --jobs-jdbc}/{@code --jobs-kafka} answers
  * every jobs verb the same way), minimal envelope validation (the actions
  * module's own {@code Inputs} is package-private), and the row → JSON
@@ -19,7 +19,7 @@ import java.time.Instant;
 final class ActionSupport {
 
     /** The message every jobs verb answers when no store is mounted. */
-    static final String UNAVAILABLE_MESSAGE = "chain jobs are not configured on this "
+    static final String UNAVAILABLE_MESSAGE = "workflow runs are not configured on this "
             + "server (start protomolt-serve with --jobs-jdbc and --jobs-kafka)";
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
@@ -29,7 +29,7 @@ final class ActionSupport {
     }
 
     /** The null-store gate: no store means every call answers "unavailable". */
-    static ChainJobStore requireStore(ChainJobStore store) throws ActionException {
+    static WorkflowRunStore requireStore(WorkflowRunStore store) throws ActionException {
         if (store == null) {
             throw new ActionException("unavailable", UNAVAILABLE_MESSAGE);
         }
@@ -125,10 +125,10 @@ final class ActionSupport {
      *        false for the list-jobs summary
      * @return the JSON document
      */
-    static ObjectNode jobJson(ChainJobRecord job, boolean full) {
+    static ObjectNode jobJson(WorkflowRunRecord job, boolean full) {
         ObjectNode node = JsonNodeFactory.instance.objectNode();
         node.put("jobId", job.jobId.toString());
-        node.put("chainName", job.chainName);
+        node.put("workflowName", job.workflowName);
         node.put("status", job.status);
         node.put("attempt", job.attempt);
         putText(node, "outstandingStep", job.outstandingStep);

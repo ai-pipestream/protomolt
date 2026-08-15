@@ -1,7 +1,7 @@
 package ai.pipestream.proto.registry;
 
-import ai.pipestream.proto.grpc.recipe.RecipeValidation;
-import ai.pipestream.proto.grpc.recipe.v1.VersionedRecipe;
+import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
+import ai.pipestream.proto.grpc.workflow.v1.VersionedWorkflow;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -44,7 +44,8 @@ import java.util.stream.Stream;
  * subjects/&lt;url-encoded-subject&gt;/v&lt;N&gt;.proto  schema text
  * subjects/&lt;url-encoded-subject&gt;/v&lt;N&gt;.json   metadata: references, globalId, contentHash
  * subjects/&lt;url-encoded-subject&gt;/config.json per-subject compatibility mode, when set
- * recipes/&lt;url-encoded-name&gt;/&lt;url-encoded-version&gt;.pb  immutable promoted recipe
+ * workflows/&lt;url-encoded-name&gt;.json         stored workflow definition
+ * workflow-versions/&lt;url-encoded-name&gt;/&lt;url-encoded-version&gt;.pb  immutable promoted version
  * descriptors/sha256/&lt;fingerprint&gt;.pb         content-addressed descriptor set
  * </pre>
  *
@@ -62,8 +63,8 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
     private static final ConcurrentMap<Path, ReentrantLock> JVM_LOCKS = new ConcurrentHashMap<>();
 
     private static final String SUBJECTS_DIR = "subjects";
-    private static final String CHAINS_DIR = "chains";
-    private static final String RECIPE_DIR = "recipes";
+    private static final String WORKFLOWS_DIR = "workflows";
+    private static final String WORKFLOW_VERSIONS_DIR = "workflow-versions";
     private static final String DESCRIPTORS_DIR = "descriptors/sha256";
     private static final String REGISTRY_FILE = "registry.json";
     private static final String LOCK_FILE = "registry.lock";
@@ -260,38 +261,38 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
     }
 
     /**
-     * Stores a named chain definition (an opaque JSON document to this store), one commit
-     * per put under {@code chains/<name>.json}. The registry server gates writes with
-     * {@code check-chain}; the store only persists and versions via Git history.
+     * Stores a named workflow definition (an opaque JSON document to this store), one commit
+     * per put under {@code workflows/<name>.json}. The registry server gates writes with
+     * {@code check-workflow}; the store only persists and versions via Git history.
      */
-    public void putChain(String name, String chainJson) throws RegistryStoreException {
-        requireChainName(name);
-        Objects.requireNonNull(chainJson, "chainJson");
+    public void putWorkflow(String name, String workflowJson) throws RegistryStoreException {
+        requireWorkflowName(name);
+        Objects.requireNonNull(workflowJson, "workflowJson");
         locked(() -> {
-            String path = CHAINS_DIR + "/" + encode(name) + ".json";
-            Files.createDirectories(repoDir.resolve(CHAINS_DIR));
-            Files.writeString(repoDir.resolve(path), chainJson);
-            commit(List.of(path), "Put chain " + name);
+            String path = WORKFLOWS_DIR + "/" + encode(name) + ".json";
+            Files.createDirectories(repoDir.resolve(WORKFLOWS_DIR));
+            Files.writeString(repoDir.resolve(path), workflowJson);
+            commit(List.of(path), "Put workflow " + name);
             return null;
         });
     }
 
-    /** The named chain's JSON document, when present. */
-    public Optional<String> chain(String name) throws RegistryStoreException {
-        requireChainName(name);
-        Path path = repoDir.resolve(CHAINS_DIR).resolve(encode(name) + ".json");
+    /** The named workflow's JSON document, when present. */
+    public Optional<String> workflow(String name) throws RegistryStoreException {
+        requireWorkflowName(name);
+        Path path = repoDir.resolve(WORKFLOWS_DIR).resolve(encode(name) + ".json");
         try {
             return Files.isRegularFile(path)
                     ? Optional.of(Files.readString(path))
                     : Optional.empty();
         } catch (IOException e) {
-            throw new RegistryStoreException("Failed to read chain " + name, e);
+            throw new RegistryStoreException("Failed to read workflow " + name, e);
         }
     }
 
-    /** Every stored chain name, sorted. */
-    public List<String> chains() throws RegistryStoreException {
-        Path dir = repoDir.resolve(CHAINS_DIR);
+    /** Every stored workflow name, sorted. */
+    public List<String> workflows() throws RegistryStoreException {
+        Path dir = repoDir.resolve(WORKFLOWS_DIR);
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
@@ -302,87 +303,87 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
                     .sorted()
                     .toList();
         } catch (IOException e) {
-            throw new RegistryStoreException("Failed to list chains", e);
+            throw new RegistryStoreException("Failed to list workflows", e);
         }
     }
 
-    // ---------------------------------------------------------------- promoted recipes
+    // ---------------------------------------------------------------- promoted workflows
 
     /**
-     * Stores one immutable promoted recipe version, one commit per version under
-     * {@code recipes/<name>/<version>.pb} (serialized {@link VersionedRecipe}; binary, never
+     * Stores one immutable promoted workflow version, one commit per version under
+     * {@code workflows/<name>/<version>.pb} (serialized {@link VersionedWorkflow}; binary, never
      * JSON). The candidate is fully validated first: malformed identities, fingerprints, or a
-     * content fingerprint that does not match the recipe bytes are rejected before anything
+     * content fingerprint that does not match the workflow bytes are rejected before anything
      * touches the repository.
      *
      * <p>Promotion is immutable: saving a version that already exists is a no-op when the
      * stored bytes are identical (idempotent re-promotion) and refused otherwise.</p>
      *
-     * @throws IllegalArgumentException when the recipe violates the contract or the version
+     * @throws IllegalArgumentException when the workflow violates the contract or the version
      *         already exists with different content
      */
-    public void putRecipe(VersionedRecipe recipe) throws RegistryStoreException {
-        Objects.requireNonNull(recipe, "recipe");
-        RecipeValidation.validate(recipe);
+    public void putWorkflow(VersionedWorkflow workflow) throws RegistryStoreException {
+        Objects.requireNonNull(workflow, "workflow");
+        WorkflowValidation.validate(workflow);
         locked(() -> {
-            String path = recipePath(recipe.getRecipe().getName(), recipe.getVersion());
+            String path = workflowPath(workflow.getWorkflow().getName(), workflow.getVersion());
             Path target = repoDir.resolve(path);
-            byte[] bytes = recipe.toByteArray();
+            byte[] bytes = workflow.toByteArray();
             if (Files.isRegularFile(target)) {
                 if (Arrays.equals(Files.readAllBytes(target), bytes)) {
                     return null; // idempotent re-promotion of identical content
                 }
-                throw new IllegalArgumentException("recipe " + recipe.getRecipe().getName()
-                        + " version " + recipe.getVersion()
+                throw new IllegalArgumentException("workflow " + workflow.getWorkflow().getName()
+                        + " version " + workflow.getVersion()
                         + " is immutable: the stored content differs");
             }
             Files.createDirectories(target.getParent());
             Files.write(target, bytes);
-            commit(List.of(path), "Promote recipe " + recipe.getRecipe().getName()
-                    + " " + recipe.getVersion());
+            commit(List.of(path), "Promote workflow " + workflow.getWorkflow().getName()
+                    + " " + workflow.getVersion());
             return null;
         });
     }
 
-    /** One exact promoted recipe version, when present; stored bytes are re-validated. */
-    public Optional<VersionedRecipe> recipe(String name, String version)
+    /** One exact promoted workflow version, when present; stored bytes are re-validated. */
+    public Optional<VersionedWorkflow> workflow(String name, String version)
             throws RegistryStoreException {
-        RecipeValidation.validateName(name, "recipe.name");
-        RecipeValidation.validateName(version, "versioned_recipe.version");
-        Path path = repoDir.resolve(recipePath(name, version));
+        WorkflowValidation.validateName(name, "workflow.name");
+        WorkflowValidation.validateName(version, "versioned_workflow.version");
+        Path path = repoDir.resolve(workflowPath(name, version));
         if (!Files.isRegularFile(path)) {
             return Optional.empty();
         }
         try {
-            return Optional.of(readRecipe(path));
+            return Optional.of(readWorkflow(path));
         } catch (IOException e) {
-            throw new RegistryStoreException("Failed to read recipe " + name, e);
+            throw new RegistryStoreException("Failed to read workflow " + name, e);
         }
     }
 
-    /** All promoted versions of one recipe, ascending by version name. */
-    public List<VersionedRecipe> recipeVersions(String name) throws RegistryStoreException {
-        RecipeValidation.validateName(name, "recipe.name");
-        Path dir = repoDir.resolve(RECIPE_DIR).resolve(encode(name));
+    /** All promoted versions of one workflow, ascending by version name. */
+    public List<VersionedWorkflow> workflowVersions(String name) throws RegistryStoreException {
+        WorkflowValidation.validateName(name, "workflow.name");
+        Path dir = repoDir.resolve(WORKFLOW_VERSIONS_DIR).resolve(encode(name));
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
         try (Stream<Path> files = Files.list(dir)) {
-            List<VersionedRecipe> versions = new ArrayList<>();
+            List<VersionedWorkflow> versions = new ArrayList<>();
             for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
                 if (file.getFileName().toString().endsWith(".pb")) {
-                    versions.add(readRecipe(file));
+                    versions.add(readWorkflow(file));
                 }
             }
             return List.copyOf(versions);
         } catch (IOException e) {
-            throw new RegistryStoreException("Failed to list recipe versions for " + name, e);
+            throw new RegistryStoreException("Failed to list workflow versions for " + name, e);
         }
     }
 
-    /** Every recipe holding at least one promoted version, sorted. */
-    public List<String> recipeNames() throws RegistryStoreException {
-        Path dir = repoDir.resolve(RECIPE_DIR);
+    /** Every workflow holding at least one promoted version, sorted. */
+    public List<String> workflowNames() throws RegistryStoreException {
+        Path dir = repoDir.resolve(WORKFLOW_VERSIONS_DIR);
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
@@ -392,28 +393,28 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
                     .sorted()
                     .toList();
         } catch (IOException e) {
-            throw new RegistryStoreException("Failed to list recipes", e);
+            throw new RegistryStoreException("Failed to list workflows", e);
         }
     }
 
-    private static VersionedRecipe readRecipe(Path path) throws IOException {
-        VersionedRecipe recipe = VersionedRecipe.parseFrom(Files.readAllBytes(path));
+    private static VersionedWorkflow readWorkflow(Path path) throws IOException {
+        VersionedWorkflow workflow = VersionedWorkflow.parseFrom(Files.readAllBytes(path));
         // Stored bytes answer to the same contract as fresh promotions: a corrupted or
-        // hand-edited file fails loudly here instead of serving an invalid recipe.
-        RecipeValidation.validate(recipe);
-        return recipe;
+        // hand-edited file fails loudly here instead of serving an invalid workflow.
+        WorkflowValidation.validate(workflow);
+        return workflow;
     }
 
     /**
-     * The repo-relative {@code recipes/<encoded>/<encoded>.pb} path, checked to stay inside
-     * {@link #RECIPE_DIR} — the same second line of defense as {@link #subjectDir}.
+     * The repo-relative {@code workflows/<encoded>/<encoded>.pb} path, checked to stay inside
+     * {@link #WORKFLOW_VERSIONS_DIR} — the same second line of defense as {@link #subjectDir}.
      */
-    private String recipePath(String name, String version) {
-        String relative = RECIPE_DIR + "/" + encode(name) + "/" + encode(version) + ".pb";
+    private String workflowPath(String name, String version) {
+        String relative = WORKFLOW_VERSIONS_DIR + "/" + encode(name) + "/" + encode(version) + ".pb";
         Path resolved = repoDir.resolve(relative).normalize();
-        if (!resolved.startsWith(repoDir.resolve(RECIPE_DIR).normalize())) {
+        if (!resolved.startsWith(repoDir.resolve(WORKFLOW_VERSIONS_DIR).normalize())) {
             throw new IllegalArgumentException(
-                    "recipe identity does not name a file under " + RECIPE_DIR);
+                    "workflow identity does not name a file under " + WORKFLOW_VERSIONS_DIR);
         }
         return relative;
     }
@@ -428,10 +429,10 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         return resolved;
     }
 
-    private static void requireChainName(String name) {
+    private static void requireWorkflowName(String name) {
         if (name == null || name.isBlank() || !name.matches("[A-Za-z0-9._-]+")) {
             throw new IllegalArgumentException(
-                    "Chain names use [A-Za-z0-9._-]; got '" + name + "'");
+                    "Workflow names use [A-Za-z0-9._-]; got '" + name + "'");
         }
     }
 

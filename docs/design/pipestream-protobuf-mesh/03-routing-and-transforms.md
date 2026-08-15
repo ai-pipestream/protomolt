@@ -68,7 +68,7 @@ fingerprint stability, and forbidden inline policy.
 - Successful decisions are replayable from recorded catalog and policy
   fingerprints.
 - No prohibited field reaches a capturing processor.
-- Existing recipe and pipeline semantics cross the mesh boundary unchanged.
+- Existing workflow and pipeline semantics cross the mesh boundary unchanged.
 
 ## Exclusions
 

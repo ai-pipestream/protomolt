@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'The chain-jobs contract: the ChainJobEvent lifecycle envelope and the ChainJobRequest request-topic payload'
+description = 'The workflow-runs contract: the WorkflowRunEvent lifecycle envelope and the WorkflowRunRequest request-topic payload'
 
 dependencies {
     api libs.protobuf.java

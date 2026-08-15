@@ -3,7 +3,7 @@ package ai.pipestream.proto.systemtests;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.chain.ChainRunner;
+import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.embeddings.EmbeddingProvider;
 import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
@@ -20,14 +20,14 @@ import ai.pipestream.proto.intake.v1.IngestDocumentRequest;
 import ai.pipestream.proto.intake.v1.IngestDocumentResponse;
 import ai.pipestream.proto.intake.v1.IntakeServiceGrpc;
 import ai.pipestream.proto.intake.v1.RawPayload;
-import ai.pipestream.proto.jobs.service.ChainJobSubmitter;
-import ai.pipestream.proto.jobs.service.ChainJobsConfig;
-import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
-import ai.pipestream.proto.jobs.service.store.ChainJobRecord;
-import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
-import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
-import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
-import ai.pipestream.proto.parse.service.ParseChains;
+import ai.pipestream.proto.jobs.service.WorkflowRunSubmitter;
+import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunDatabase;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
+import ai.pipestream.proto.jobs.service.store.JdbcWorkflowRunStore;
+import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
+import ai.pipestream.proto.parse.service.ParseWorkflows;
 import ai.pipestream.proto.parse.service.ParseCoordinatorConfig;
 import ai.pipestream.proto.parse.service.ParseCoordinatorServices;
 import ai.pipestream.proto.parse.service.ParserRegistry;
@@ -108,7 +108,7 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * THE golden path, end to end in one JVM (the all-in-one embedding path every
  * platform service supports): a court-corpus document enters the
- * authenticated intake door, a durable chain job routes it through the
+ * authenticated intake door, a durable workflow run routes it through the
  * parsing coordinator to the reference text parser, the parsed result and
  * folded metadata persist in the repository, the document indexes into
  * Lucene under plans carrying the search standard, and search — lexical and
@@ -152,10 +152,10 @@ class GoldenPathSystemTest {
     static GitSchemaRegistryStore registry;
     static SchemaRegistryServer registryServer;
     static URI registryBase;
-    static ChainJobDatabase jobsDatabase;
-    static JdbcChainJobStore jobs;
-    static ChainJobWorker worker;
-    static ChainJobSubmitter submitter;
+    static WorkflowRunDatabase jobsDatabase;
+    static JdbcWorkflowRunStore jobs;
+    static WorkflowRunWorker worker;
+    static WorkflowRunSubmitter submitter;
     static ActionContext context;
 
     static String caseName;
@@ -229,24 +229,24 @@ class GoldenPathSystemTest {
         registryBase = URI.create("http://127.0.0.1:" + registryServer.start());
 
         // The durable executor on its own Postgres.
-        jobsDatabase = new ChainJobDatabase(new ChainJobStoreConfig(
+        jobsDatabase = new WorkflowRunDatabase(new WorkflowRunStoreConfig(
                 JOBS_DB.getJdbcUrl(), JOBS_DB.getUsername(), JOBS_DB.getPassword(),
-                ChainJobStoreConfig.DEFAULT_POOL_SIZE,
-                ChainJobStoreConfig.DEFAULT_MIGRATION_LOCATION));
-        jobs = new JdbcChainJobStore(jobsDatabase);
+                WorkflowRunStoreConfig.DEFAULT_POOL_SIZE,
+                WorkflowRunStoreConfig.DEFAULT_MIGRATION_LOCATION));
+        jobs = new JdbcWorkflowRunStore(jobsDatabase);
         context = ActionContext.create();
         // The parse checkpoint carries the parser's docling document as an
         // Any; the checkpoint transcoder resolves it through this registry.
         context.registry().registerFile(ai.pipestream.document.v1.DocumentProto.getDescriptor());
-        ChainJobsConfig jobsConfig = new ChainJobsConfig(
+        WorkflowRunsConfig jobsConfig = new WorkflowRunsConfig(
                 "golden-worker", 1, Duration.ofMinutes(1), Duration.ofMillis(50),
-                0, 3, 4, null, ChainJobsConfig.DEFAULT_EVENTS_TOPIC, null, null);
-        ChainRunner runner = new ChainRunner(step -> InProcessChannelBuilder
+                0, 3, 4, null, WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC, null, null);
+        WorkflowRunner runner = new WorkflowRunner(step -> InProcessChannelBuilder
                 .forName(step.target().substring(
                         ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX.length()))
                 .build());
-        submitter = new ChainJobSubmitter(jobs, null, jobsConfig.maxAttemptsDefault());
-        worker = new ChainJobWorker(jobs, context, null, runner, jobsConfig);
+        submitter = new WorkflowRunSubmitter(jobs, null, jobsConfig.maxAttemptsDefault());
+        worker = new WorkflowRunWorker(jobs, context, null, runner, jobsConfig);
 
         // The court corpus fixture (from the samples jar).
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -343,8 +343,8 @@ class GoldenPathSystemTest {
     void aDurableJobParsesItThroughTheCoordinator() throws Exception {
         String inputJson = JsonFormat.printer().print(
                 ParseDocumentRequest.newBuilder().setAddress(receipt.getAddress()).build());
-        ChainJobSubmitter.Outcome outcome = submitter.submit(
-                ParseChains.parseDocumentChain(
+        WorkflowRunSubmitter.Outcome outcome = submitter.submit(
+                ParseWorkflows.parseDocumentWorkflow(
                         ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + coordinatorName, 60_000),
                 null,
                 MAPPER.readTree(inputJson),
@@ -353,8 +353,8 @@ class GoldenPathSystemTest {
         assertThat(outcome.ok()).as(outcome.toString()).isTrue();
 
         assertThat(worker.workOnce()).isTrue();
-        ChainJobRecord job = jobs.get(UUID.fromString(outcome.jobId())).orElseThrow();
-        assertThat(job.status).as("job error: " + job.error).isEqualTo(ChainJobRecord.STATUS_COMPLETED);
+        WorkflowRunRecord job = jobs.get(UUID.fromString(outcome.jobId())).orElseThrow();
+        assertThat(job.status).as("job error: " + job.error).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
 
         stored = DocumentServiceGrpc.newBlockingStub(repoChannel)
                 .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()

@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Structural validation of the delegation contract: the fail-fast, field-naming style
- * of the recipe and pipeline contracts, covering the invariants the reducer assumes.
+ * of the workflow and pipeline contracts, covering the invariants the reducer assumes.
  */
 class DelegationValidationTest {
 

@@ -140,14 +140,14 @@ class ContainerSmokeIntegrationTest {
     }
 
     @Test
-    void demoRegistryServesItsSubjectsAndChains() throws Exception {
+    void demoRegistryServesItsSubjectsAndWorkflows() throws Exception {
         HttpResponse<String> subjects = get(8081, "/subjects");
         assertThat(subjects.statusCode()).isEqualTo(200);
         assertThat(subjects.body()).contains(DemoSchemas.SHOP_SUBJECT);
 
-        HttpResponse<String> chains = get(8081, "/protomolt/chains");
-        assertThat(chains.statusCode()).isEqualTo(200);
-        assertThat(chains.body()).contains("compile-and-list");
+        HttpResponse<String> workflows = get(8081, "/protomolt/workflows");
+        assertThat(workflows.statusCode()).isEqualTo(200);
+        assertThat(workflows.body()).contains("compile-and-list");
     }
 
     /** Builds the reflected files in dependency order and resolves a ProtoMoltService method. */

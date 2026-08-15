@@ -171,16 +171,16 @@ class ProtoMoltGrpcServiceTest {
                             "collectType": "flow.v1.Summaries",
                             "collectInto": "summaries"}}
                 """;
-        JsonNode valid = call("CheckChain", """
-                {"chain": {"name": "typed-dataflow",
+        JsonNode valid = call("CheckWorkflow", """
+                {"workflow": {"name": "typed-dataflow",
                   "schema": {"sources": {"flow/v1/dataflow.proto": %s}},
                   "inputType": "flow.v1.Batch", "steps": [%s]}}
                 """.formatted(source, step));
 
         assertThat(valid.path("ok").asBoolean()).as(valid::toString).isTrue();
 
-        JsonNode invalid = call("CheckChain", """
-                {"chain": {"name": "typed-dataflow",
+        JsonNode invalid = call("CheckWorkflow", """
+                {"workflow": {"name": "typed-dataflow",
                   "schema": {"sources": {"flow/v1/dataflow.proto": %s}},
                   "inputType": "flow.v1.Batch", "steps": [%s]}}
                 """.formatted(source, step

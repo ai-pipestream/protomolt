@@ -143,10 +143,10 @@ class McpHttpTest {
                 .isEqualTo(tools.size());
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
                 "generate-stubs", "join-messages", "synthesize-shape", "merge-schemas",
-                "check-rules", "run-chain", "check-chain", "infer-schema", "mask-message",
-                "submit-chain", "get-job", "list-jobs", "complete-step", "service-register",
+                "check-rules", "run-workflow", "check-workflow", "infer-schema", "mask-message",
+                "submit-workflow", "get-job", "list-jobs", "complete-step", "service-register",
                 "service-list", "service-inspect", "service-refresh", "service-invoke", "suggest-mappings",
-                "compile-recipe", "record-recipe-run", "replay-recipe", "promote-recipe",
+                "compile-workflow", "record-workflow-run", "replay-workflow", "promote-workflow",
                 "delegation-worker-register", "delegation-offer", "delegation-watch",
                 "delegation-message", "delegation-review", "delegation-transcript",
                 "mesh-node-register", "mesh-node-heartbeat", "mesh-processor-register",

@@ -5,9 +5,9 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 
 /**
  * Resolves dotted repeated-field paths (unnest paths, fan-out items paths) against a
- * message type. The walk mirrors the chain's edge flow exactly: every intermediate segment
+ * message type. The walk mirrors the workflow's edge flow exactly: every intermediate segment
  * must be a singular message field and the final segment a repeated message field, so a
- * malformed path fails identically in chains, recipes, and pipelines.
+ * malformed path fails identically in workflows and pipelines.
  */
 final class StreamPaths {
 

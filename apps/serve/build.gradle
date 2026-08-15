@@ -9,7 +9,7 @@ dependencies {
 
     implementation project(':protomolt-json')
     implementation project(':protomolt-mcp')
-    implementation project(':protomolt-chain')
+    implementation project(':protomolt-workflow')
     // The live delegation coordinator and its MCP verbs mount in this process.
     implementation project(':protomolt-delegation')
     implementation project(':protomolt-mesh-cluster')
@@ -26,7 +26,7 @@ dependencies {
     implementation project(':protomolt-server-jdk')
     implementation project(':protomolt-registry')
     implementation project(':protomolt-registry-server')
-    // The chain-jobs fleet (worker, relay, store) starts in this process
+    // The workflow-runs fleet (worker, relay, store) starts in this process
     // when --jobs-jdbc is given.
     implementation project(':protomolt-jobs-service')
     // The inference catalog boots from --inference-model specs; the OpenVINO

@@ -1,6 +1,6 @@
 package ai.pipestream.proto.pipeline;
 
-import ai.pipestream.proto.grpc.recipe.v1.ServiceDependency;
+import ai.pipestream.proto.grpc.workflow.v1.ServiceDependency;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 

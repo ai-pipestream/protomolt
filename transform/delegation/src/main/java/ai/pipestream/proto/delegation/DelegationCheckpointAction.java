@@ -2,7 +2,7 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.grpc.recipe.v1.ArtifactReference;
+import ai.pipestream.proto.grpc.workflow.v1.ArtifactReference;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** Records one resumable checkpoint of worker state on the leased attempt. */

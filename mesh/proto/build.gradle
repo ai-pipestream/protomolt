@@ -7,9 +7,9 @@ description = 'The protobuf mesh core contract: EntityEnvelope, EntityHeader, Sc
 dependencies {
     api libs.protobuf.java
     api libs.protobuf.java.util
-    // The contract reuses the recipe's content-addressed ArtifactReference for
+    // The contract reuses the workflow's content-addressed ArtifactReference for
     // claim checks and descriptor artifacts.
-    api project(':protomolt-grpc-recipe')
+    api project(':protomolt-grpc-workflow')
     // Persisted mesh fields carry the house validation and sensitivity metadata
     // options, plus index hints on exactly the named discovery-query fields.
     api project(':protomolt-protobuf-validation')

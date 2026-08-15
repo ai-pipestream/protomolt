@@ -59,17 +59,17 @@ that only needs the built-ins does not pull them in. Each implements the same
 | `grpc-invoke` | `protomolt-grpc-invoke` | Call a unary or server-streaming gRPC method with no generated stubs; requests and responses are proto3 JSON |
 | `generate-stubs` | `protomolt-codegen` | Generate message code in java, kotlin, python, cpp, csharp, ruby, php, and objc, plus `grpc-java` service stubs, using protoc as WebAssembly |
 | `gather-git` | `protomolt-gather-git` | Gather `.proto` sources from a git repository (branch, tag, or commit) and compile them; returns the source texts plus a descriptor set usable as a schema input |
-| `run-chain` | `protomolt-chain` | Execute a chain: serial unary gRPC calls, each request mapped from the chain input and prior steps' responses, with gates, per-step validation, and nested deadlines |
-| `check-chain` | `protomolt-chain` | Verify a chain without running it: methods resolve and are unary, step names are valid scope variables, gates are boolean CEL, and every mapping type-checks |
-| `compile-recipe` | `protomolt-chain` | Compile a checked chain into the deterministic descriptor-grounded recipe contract |
-| `suggest-mappings` | `protomolt-chain` | Propose conservative descriptor-compatible mapping candidates and pass each through the chain rule checker |
-| `record-recipe-run` | `protomolt-chain` | Execute a live chain and persist sensitivity-redacted, content-addressed fixtures plus immutable run evidence |
-| `replay-recipe` | `protomolt-chain` | Replay recorded fixtures offline and report recipe, schema, request, response, mapping, or ordering drift |
-| `promote-recipe` | `protomolt-chain` | Store validated recipe content as an immutable version in the mounted git registry |
+| `run-workflow` | `protomolt-workflow` | Execute a workflow: serial unary gRPC calls, each request mapped from the workflow input and prior steps' responses, with gates, per-step validation, and nested deadlines |
+| `check-workflow` | `protomolt-workflow` | Verify a workflow without running it: methods resolve and are unary, step names are valid scope variables, gates are boolean CEL, and every mapping type-checks |
+| `compile-workflow` | `protomolt-workflow` | Compile a checked workflow into the deterministic descriptor-grounded workflow contract |
+| `suggest-mappings` | `protomolt-workflow` | Propose conservative descriptor-compatible mapping candidates and pass each through the workflow rule checker |
+| `record-workflow-run` | `protomolt-workflow` | Execute a live workflow and persist sensitivity-redacted, content-addressed fixtures plus immutable run evidence |
+| `replay-workflow` | `protomolt-workflow` | Replay recorded fixtures offline and report workflow, schema, request, response, mapping, or ordering drift |
+| `promote-workflow` | `protomolt-workflow` | Store validated workflow content as an immutable version in the mounted git registry |
 | `emit-okf` | `protomolt-emit-okf` | Render a schema as an Open Knowledge Format (OKF v0.1) bundle: linked markdown concept documents for every message, enum, and service, inline plus zipped |
-| `submit-chain` | `protomolt-jobs-service` | Submit a chain for durable asynchronous execution |
-| `get-job` | `protomolt-jobs-service` | Read one chain job and its step checkpoints |
-| `list-jobs` | `protomolt-jobs-service` | List durable chain jobs |
+| `submit-workflow` | `protomolt-jobs-service` | Submit a workflow for durable asynchronous execution |
+| `get-job` | `protomolt-jobs-service` | Read one workflow run and its step checkpoints |
+| `list-jobs` | `protomolt-jobs-service` | List durable workflow runs |
 | `complete-step` | `protomolt-jobs-service` | Resume a parked external-completion step with its result |
 | `inference-generate` | `protomolt-inference-service` | Run generation through a configured inference provider |
 | `inference-list-models` | `protomolt-inference-service` | List configured inference models without exposing provider credentials |

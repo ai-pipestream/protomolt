@@ -13,7 +13,7 @@ dependencies {
     implementation project(':protomolt-parse-document')
     implementation project(':protomolt-parse-playground')
     implementation project(':protomolt-jobs-service')
-    implementation project(':protomolt-chain')
+    implementation project(':protomolt-workflow')
     implementation project(':protomolt-actions')
     implementation project(':protomolt-registry')
     implementation project(':protomolt-registry-server')

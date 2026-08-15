@@ -10,9 +10,9 @@ dependencies {
     api libs.grpc.api
     api libs.grpc.stub
     api libs.grpc.protobuf
-    // The contract reuses the recipe's content-addressed ArtifactReference for
+    // The contract reuses the workflow's content-addressed ArtifactReference for
     // context, checkpoint state, and completion evidence references.
-    api project(':protomolt-grpc-recipe')
+    api project(':protomolt-grpc-workflow')
     // Durable transcripts use the repository service raw-blob API. The
     // repository service remains responsible for its S3 backing store and
     // optional Redis cache.

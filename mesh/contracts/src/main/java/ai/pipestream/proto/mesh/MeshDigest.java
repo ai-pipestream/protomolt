@@ -22,7 +22,7 @@ import java.util.Map;
  * canonical encoding of a {@link FileDescriptorSet}: the {@link FileDescriptorProto}s sorted by
  * file name and serialized in that order. protobuf-java serializes each proto deterministically
  * (fields in tag order; no maps occur in descriptor protos), so the fingerprint depends on content
- * alone, never on assembly order. This matches the recipe and pipeline convention, so a mesh
+ * alone, never on assembly order. This matches the workflow and pipeline convention, so a mesh
  * fingerprint is directly comparable with a {@code ServiceProfile} or pipeline dependency
  * fingerprint computed over the same set.
  *

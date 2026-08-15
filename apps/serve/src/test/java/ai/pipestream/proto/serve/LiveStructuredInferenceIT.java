@@ -83,7 +83,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *
  * <p>Wire-level privacy is proven deterministically: the catalog model's
  * endpoint points at an in-process capturing reverse proxy, which forwards to
- * the configured endpoint and records every outbound request body. The chain
+ * the configured endpoint and records every outbound request body. The workflow
  * input carries an excluded-from-projection sentinel and a sensitivity-masked
  * sentinel; the test proves both appear in NO captured provider request, NO
  * persisted artifact byte, and NO serialized RunEvidence, while an allowed
@@ -97,7 +97,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>Repair-loop coverage is deliberately NOT exercised here: forcing a live
  * model to fail its first attempt would rely on probabilistic prompting.
  * Forced-repair coverage lives with the scripted provider
- * (StructuredGeneratorTest, StructuredRecipeReplayTest); this test owns
+ * (StructuredGeneratorTest, StructuredWorkflowReplayTest); this test owns
  * transport, grounding, validation, and privacy acceptance, and accepts any
  * successful attempt count within the coordinator's budget of 1 to 3.</p>
  */
@@ -152,7 +152,7 @@ class LiveStructuredInferenceIT {
         String descriptorSet = Base64.getEncoder()
                 .encodeToString(compiled.descriptorSet().toByteArray());
 
-        Path recipes = directory.resolve("recipes");
+        Path workflows = directory.resolve("workflows");
         CapturingProxy proxy = new CapturingProxy(endpoint);
         String credentialRef = System.getenv(CREDENTIAL_REF_ENV);
         String expectedBearer = null;
@@ -165,17 +165,17 @@ class LiveStructuredInferenceIT {
         try (proxy;
              ProtoMoltServe serve = ProtoMoltServe.start(new ProtoMoltServe.Options(
                      "127.0.0.1", 0, 0, null, 0, null, false, null, null,
-                     List.of(modelSpec), null, null, recipes))) {
+                     List.of(modelSpec), null, null, workflows))) {
             ManagedChannel channel = ManagedChannelBuilder
                     .forAddress("127.0.0.1", serve.grpcPort()).usePlaintext().build();
             try {
                 runScenario(new TypedGrpcSurface(channel), "live-grpc",
-                        descriptorSet, upstream, summary, recipes);
+                        descriptorSet, upstream, summary, workflows);
             } finally {
                 channel.shutdownNow();
             }
             try (McpSurface mcp = new McpSurface(serve.httpPort())) {
-                runScenario(mcp, "live-mcp", descriptorSet, upstream, summary, recipes);
+                runScenario(mcp, "live-mcp", descriptorSet, upstream, summary, workflows);
             }
         }
 
@@ -208,13 +208,13 @@ class LiveStructuredInferenceIT {
                     .isFalse();
         }
 
-        // Persistence-level proof: no file under the recipe workspace (input,
+        // Persistence-level proof: no file under the workflow workspace (input,
         // request, response, and output artifacts plus the stored run
         // evidence) carries either sentinel, credential reference, or bearer
         // material. Boolean assertions deliberately avoid printing credential
         // values if this live check fails.
         boolean credentialEvidenceLeak = false;
-        try (Stream<Path> paths = Files.walk(recipes)) {
+        try (Stream<Path> paths = Files.walk(workflows)) {
             for (Path path : paths.filter(Files::isRegularFile).toList()) {
                 String content = new String(Files.readAllBytes(path),
                         StandardCharsets.ISO_8859_1);
@@ -228,7 +228,7 @@ class LiveStructuredInferenceIT {
             }
         }
         assertThat(credentialEvidenceLeak)
-                .as("persisted recipe evidence excludes credential references and material")
+                .as("persisted workflow evidence excludes credential references and material")
                 .isFalse();
     }
 
@@ -247,36 +247,36 @@ class LiveStructuredInferenceIT {
         return "Bearer " + value;
     }
 
-    /** compile-recipe, record-recipe-run, then offline replay-recipe, on one surface. */
+    /** compile-workflow, record-workflow-run, then offline replay-workflow, on one surface. */
     private void runScenario(Surface surface, String runId, String descriptorSet,
-                             Descriptor upstream, Descriptor summary, Path recipes)
+                             Descriptor upstream, Descriptor summary, Path workflows)
             throws Exception {
-        ObjectNode chain = chain();
+        ObjectNode workflow = workflow();
         ObjectNode compile = MAPPER.createObjectNode();
-        compile.set("chain", chain);
-        JsonNode compiled = surface.tool("compile-recipe", compile);
-        String fingerprint = compiled.path("recipeFingerprint").asText();
+        compile.set("workflow", workflow);
+        JsonNode compiled = surface.tool("compile-workflow", compile);
+        String fingerprint = compiled.path("workflowFingerprint").asText();
         assertThat(fingerprint).hasSize(64);
 
         ObjectNode record = MAPPER.createObjectNode();
-        record.set("chain", chain);
+        record.set("workflow", workflow);
         record.set("input", inputFixture());
         record.put("runId", runId);
-        JsonNode recorded = surface.tool("record-recipe-run", record);
+        JsonNode recorded = surface.tool("record-workflow-run", record);
         assertThat(recorded.path("ok").asBoolean()).as(recorded::toString).isTrue();
         JsonNode evidence = recorded.path("evidence");
         assertEvidence(evidence, fingerprint, runId);
         assertThat(evidence.toString())
                 .doesNotContain(EXCLUDED_SENTINEL, SENSITIVE_SENTINEL);
 
-        assertPersistedFixtures(evidence, upstream, summary, recipes);
+        assertPersistedFixtures(evidence, upstream, summary, workflows);
 
         ObjectNode replay = MAPPER.createObjectNode();
-        replay.set("recipe", compiled.path("recipe"));
+        replay.set("workflow", compiled.path("workflow"));
         replay.put("runId", runId);
         replay.set("schema", MAPPER.createObjectNode()
                 .put("descriptorSetBase64", descriptorSet));
-        JsonNode replayed = surface.tool("replay-recipe", replay);
+        JsonNode replayed = surface.tool("replay-workflow", replay);
         assertThat(replayed.path("ok").asBoolean()).as(replayed::toString).isTrue();
     }
 
@@ -284,7 +284,7 @@ class LiveStructuredInferenceIT {
     private static void assertEvidence(JsonNode evidence, String fingerprint, String runId) {
         assertThat(evidence.path("runId").asText()).isEqualTo(runId);
         assertThat(evidence.path("status").asText()).isEqualTo("RUN_STATUS_SUCCEEDED");
-        assertThat(evidence.path("recipeFingerprint").asText()).isEqualTo(fingerprint);
+        assertThat(evidence.path("workflowFingerprint").asText()).isEqualTo(fingerprint);
         assertThat(evidence.path("inputArtifact").path("redacted").asBoolean()).isTrue();
         assertThat(evidence.path("outputArtifact").path("redacted").asBoolean()).isTrue();
 
@@ -327,9 +327,9 @@ class LiveStructuredInferenceIT {
      * edge-produced upstream result with both sensitive fields masked out.
      */
     private static void assertPersistedFixtures(JsonNode evidence, Descriptor upstream,
-                                                Descriptor summary, Path recipes)
+                                                Descriptor summary, Path workflows)
             throws Exception {
-        Path artifacts = recipes.resolve("artifacts");
+        Path artifacts = workflows.resolve("artifacts");
 
         String outputSha = evidence.path("outputArtifact").path("sha256").asText();
         DynamicMessage output = DynamicMessage.parseFrom(summary,
@@ -369,19 +369,19 @@ class LiveStructuredInferenceIT {
      * grounding form that carries only the allowed fields, and validated before
      * the generation runs.
      */
-    private static ObjectNode chain() {
-        ObjectNode chain = MAPPER.createObjectNode();
-        chain.put("name", "live-structured-acceptance");
-        ObjectNode schema = chain.putObject("schema");
+    private static ObjectNode workflow() {
+        ObjectNode workflow = MAPPER.createObjectNode();
+        workflow.put("name", "live-structured-acceptance");
+        ObjectNode schema = workflow.putObject("schema");
         ObjectNode sources = schema.putObject("sources");
         sources.put(VALIDATE, resource(VALIDATE));
         sources.put(PROJECTION, resource(PROJECTION));
         sources.put(METADATA, resource(METADATA));
         sources.put(ACCEPTANCE, resource(ACCEPTANCE));
         schema.put("root", ACCEPTANCE);
-        chain.put("inputType", UPSTREAM);
-        chain.put("deadlineMs", 600_000);
-        ObjectNode step = chain.putArray("steps").addObject();
+        workflow.put("inputType", UPSTREAM);
+        workflow.put("deadlineMs", 600_000);
+        ObjectNode step = workflow.putArray("steps").addObject();
         step.put("name", STEP);
         ObjectNode structured = step.putObject("structured");
         structured.put("targetType", SUMMARY);
@@ -396,7 +396,7 @@ class LiveStructuredInferenceIT {
                 .add("secret_token = input.secret_token");
         edge.put("projectTo", GROUNDING);
         edge.put("validate", true);
-        return chain;
+        return workflow;
     }
 
     private static String resource(String name) {
@@ -411,7 +411,7 @@ class LiveStructuredInferenceIT {
         }
     }
 
-    /** One workbench verb call: compile-recipe, record-recipe-run, or replay-recipe. */
+    /** One workbench verb call: compile-workflow, record-workflow-run, or replay-workflow. */
     private interface Surface {
         JsonNode tool(String name, ObjectNode arguments) throws Exception;
     }
@@ -439,7 +439,7 @@ class LiveStructuredInferenceIT {
             return MAPPER.readTree(JsonFormat.printer().print(responses.getFirst()));
         }
 
-        /** 'compile-recipe' becomes 'CompileRecipe'. */
+        /** 'compile-workflow' becomes 'CompileWorkflow'. */
         private static String rpc(String verb) {
             StringBuilder rpc = new StringBuilder(verb.length());
             for (String part : verb.split("-")) {
