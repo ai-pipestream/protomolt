@@ -24,7 +24,7 @@ class ReplayActionTest {
     static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** Records every submission and answers with a synthetic job id. */
-    static final class RecordingSubmit implements ProtoAction {
+    static class RecordingSubmit implements ProtoAction {
 
         final List<ObjectNode> submissions = new ArrayList<>();
 
@@ -44,7 +44,8 @@ class ReplayActionTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context) {
+        public ObjectNode execute(ObjectNode input, ActionContext context)
+                throws ActionException {
             submissions.add(input.deepCopy());
             ObjectNode result = MAPPER.createObjectNode();
             result.put("ok", true);
@@ -131,5 +132,129 @@ class ReplayActionTest {
         ObjectNode output = replay.execute(input, ActionContext.create());
         assertThat(output.path("submitted").asInt()).isZero();
         assertThat(submit.submissions).isEmpty();
+    }
+
+    @Test
+    void aSubmissionFailureStopsTheReplayAndSurfaces() {
+        RecordingSubmit submit = new RecordingSubmit() {
+            @Override
+            public ObjectNode execute(ObjectNode input, ActionContext context)
+                    throws ActionException {
+                if (submissions.size() == 1) {
+                    throw new ActionException("submit-refused", "the jobs module refused");
+                }
+                return super.execute(input, context);
+            }
+        };
+        ReplayAction replay = new ReplayAction(
+                request -> ListDocumentsResponse.newBuilder()
+                        .addDocuments(document("doc-1"))
+                        .addDocuments(document("doc-2"))
+                        .addDocuments(document("doc-3"))
+                        .build(),
+                submit);
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("drive", "intake");
+        // The refusal propagates; the run submitted before it stays submitted.
+        assertThatThrownBy(() -> replay.execute(input, ActionContext.create()))
+                .isInstanceOf(ActionException.class)
+                .hasMessageContaining("the jobs module refused");
+        assertThat(submit.submissions).hasSize(1);
+    }
+
+    @Test
+    void anEmptyPageStillFollowsItsContinuationToken() throws Exception {
+        RecordingSubmit submit = new RecordingSubmit();
+        ReplayAction replay = new ReplayAction(request -> {
+            if (request.getContinuationToken().isEmpty()) {
+                // An empty first page with a continuation: paging continues.
+                return ListDocumentsResponse.newBuilder()
+                        .setNextContinuationToken("page-2")
+                        .build();
+            }
+            return ListDocumentsResponse.newBuilder()
+                    .addDocuments(document("doc-1"))
+                    .build();
+        }, submit);
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("drive", "intake");
+        ObjectNode output = replay.execute(input, ActionContext.create());
+        assertThat(output.path("submitted").asInt()).isEqualTo(1);
+        assertThat(submit.submissions).hasSize(1);
+    }
+
+    @Test
+    void anAbsentAccountIdSendsNoAccountFilter() throws Exception {
+        List<String> accountFilters = new ArrayList<>();
+        ReplayAction replay = new ReplayAction(request -> {
+            accountFilters.add(request.getAccountId());
+            return ListDocumentsResponse.getDefaultInstance();
+        }, new RecordingSubmit());
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("drive", "intake");
+        replay.execute(input, ActionContext.create());
+        assertThat(accountFilters).containsExactly("");
+    }
+
+    @Test
+    void aReplayIdStampsDeterministicRunIdsSoResubmissionDeduplicates() throws Exception {
+        RecordingSubmit first = new RecordingSubmit();
+        ReplayAction replay = new ReplayAction(
+                request -> ListDocumentsResponse.newBuilder()
+                        .addDocuments(document("doc-1"))
+                        .addDocuments(document("doc-2"))
+                        .build(),
+                first);
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("drive", "intake");
+        input.put("replayId", "policy-change-2026-08");
+
+        replay.execute(input, ActionContext.create());
+        assertThat(first.submissions).hasSize(2);
+        List<String> firstIds = first.submissions.stream()
+                .map(envelope -> envelope.path("jobId").asText())
+                .toList();
+        // Distinct per document, well-formed uuids, and stable across a
+        // resubmission of the same replay: submit-workflow's idempotency key
+        // does the dedup.
+        assertThat(firstIds).doesNotHaveDuplicates().allSatisfy(id ->
+                assertThat(java.util.UUID.fromString(id)).isNotNull());
+
+        RecordingSubmit second = new RecordingSubmit();
+        replay = new ReplayAction(
+                request -> ListDocumentsResponse.newBuilder()
+                        .addDocuments(document("doc-1"))
+                        .addDocuments(document("doc-2"))
+                        .build(),
+                second);
+        replay.execute(input, ActionContext.create());
+        assertThat(second.submissions.stream()
+                .map(envelope -> envelope.path("jobId").asText())
+                .toList())
+                .containsExactlyElementsOf(firstIds);
+    }
+
+    @Test
+    void withoutAReplayIdSubmissionsCarryNoJobId() throws Exception {
+        RecordingSubmit submit = new RecordingSubmit();
+        ReplayAction replay = new ReplayAction(
+                request -> ListDocumentsResponse.newBuilder()
+                        .addDocuments(document("doc-1"))
+                        .build(),
+                submit);
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("drive", "intake");
+        replay.execute(input, ActionContext.create());
+        assertThat(submit.submissions.getFirst().has("jobId")).isFalse();
     }
 }

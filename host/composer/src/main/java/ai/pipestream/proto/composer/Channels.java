@@ -1,6 +1,7 @@
 package ai.pipestream.proto.composer;
 
 import io.grpc.ManagedChannel;
+import java.util.Locale;
 
 /**
  * The monolith/distributed pivot. A module reaches another role with
@@ -54,6 +55,6 @@ public interface Channels {
 
     /** The environment variable naming a role's remote target. */
     static String targetVariable(String role) {
-        return "PROTOMOLT_" + role.toUpperCase(java.util.Locale.ROOT).replace('-', '_') + "_TARGET";
+        return "PROTOMOLT_" + role.toUpperCase(Locale.ROOT).replace('-', '_') + "_TARGET";
     }
 }

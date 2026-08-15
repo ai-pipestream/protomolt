@@ -269,7 +269,8 @@ public final class ParseCoordinatorGrpcService
     /**
      * Arbitrates the claims: for each claimed key naming a string-valued
      * {@link SearchMetadata} field, the claim of the highest-priority parser
-     * (plan order) wins. Unknown keys and non-string claims are ignored.
+     * (plan order) wins. Unknown keys, non-string claims, and blank strings
+     * are ignored — a blank claim must never fold over a real value.
      */
     private static Fold fold(List<TaskResult> outcomes) {
         LinkedHashMap<String, String> values = new LinkedHashMap<>();
@@ -277,7 +278,8 @@ public final class ParseCoordinatorGrpcService
         for (TaskResult outcome : outcomes) {
             for (Map.Entry<String, Value> claim : outcome.claims().entrySet()) {
                 if (values.containsKey(claim.getKey())
-                        || claim.getValue().getKindCase() != Value.KindCase.STRING_VALUE) {
+                        || claim.getValue().getKindCase() != Value.KindCase.STRING_VALUE
+                        || claim.getValue().getStringValue().isBlank()) {
                     continue;
                 }
                 FieldDescriptor field =

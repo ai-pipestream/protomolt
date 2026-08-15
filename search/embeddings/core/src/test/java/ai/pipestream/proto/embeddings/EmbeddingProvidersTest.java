@@ -4,6 +4,8 @@ import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -45,6 +47,75 @@ class EmbeddingProvidersTest {
                 .hasMessageContaining("fixed-table")
                 .hasMessageContaining("3")
                 .hasMessageContaining("dims=8");
+    }
+
+    @Test
+    void duplicateProviderIdsAreRejectedNotLastWins() {        // Two providers registering the same id are a classpath
+        // misconfiguration; silently keeping one could derive a corpus with
+        // the wrong model, so discovery must fail and name the id.
+        EmbeddingProvider first = new FixedTableEmbeddingProvider();
+        EmbeddingProvider second = new FixedTableEmbeddingProvider();
+
+        assertThatThrownBy(() -> EmbeddingProviders.indexById(List.of(first, second)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("fixed-table")
+                .hasMessageContaining(FixedTableEmbeddingProvider.class.getName());
+
+        assertThat(EmbeddingProviders.indexById(List.of(first))).containsOnlyKeys("fixed-table");
+    }
+
+    @Test
+    void selectByIdClosesTheProvidersItDoesNotReturn() {
+        RecordingProvider wanted = new RecordingProvider("wanted");
+        RecordingProvider discarded = new RecordingProvider("discarded");
+
+        EmbeddingProvider selected =
+                EmbeddingProviders.selectById(List.of(discarded, wanted), "wanted");
+
+        assertThat(selected).isSameAs(wanted);
+        assertThat(wanted.closed).isFalse();
+        assertThat(discarded.closed).isTrue();
+    }
+
+    @Test
+    void selectByIdClosesEverythingWhenTheIdIsAbsent() {
+        RecordingProvider one = new RecordingProvider("one");
+        RecordingProvider two = new RecordingProvider("two");
+
+        assertThatThrownBy(() -> EmbeddingProviders.selectById(List.of(one, two), "absent"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absent");
+        assertThat(one.closed).isTrue();
+        assertThat(two.closed).isTrue();
+    }
+
+    private static final class RecordingProvider implements EmbeddingProvider {
+        private final String id;
+        boolean closed;
+
+        RecordingProvider(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public String providerId() {
+            return id;
+        }
+
+        @Override
+        public int dimension() {
+            return 1;
+        }
+
+        @Override
+        public float[] embed(String text) {
+            return new float[1];
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
     }
 
     private static ChunkingPolicy.EmbeddingSpec spec(String model, int dims) {

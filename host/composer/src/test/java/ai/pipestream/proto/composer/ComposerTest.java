@@ -61,6 +61,58 @@ class ComposerTest {
     }
 
     @Test
+    void aNullMountFromWireIsABootFailure() {
+        List<String> journal = new ArrayList<>();
+        ServiceModule nullWiring = new ServiceModule() {
+            @Override
+            public String role() {
+                return "jobs";
+            }
+
+            @Override
+            public ServiceMount wire(NodeContext context) {
+                return null;
+            }
+        };
+        Composer composer = Composer.emptyBuilder()
+                .module(new RecordingModule("repo", Set.of(), journal))
+                .module(nullWiring)
+                .environment(Map.of())
+                .build();
+
+        assertThatThrownBy(() -> composer.boot(List.of("repo", "jobs")))
+                .isInstanceOf(ComposerException.class)
+                .hasMessageContaining("jobs")
+                .hasMessageContaining("null mount");
+        assertThat(journal).containsExactly("wire:repo", "close:repo");
+    }
+
+    @Test
+    void aNullContributionIsRejected() {
+        ServiceModule module = new ServiceModule() {
+            @Override
+            public String role() {
+                return "repo";
+            }
+
+            @Override
+            public ServiceMount wire(NodeContext context) {
+                context.contributions().contribute(String.class, null);
+                return ServiceMount.inert(() -> {
+                });
+            }
+        };
+        Composer composer = Composer.emptyBuilder()
+                .module(module)
+                .environment(Map.of())
+                .build();
+
+        assertThatThrownBy(() -> composer.boot(List.of("repo")))
+                .isInstanceOf(ComposerException.class)
+                .hasRootCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void wiresInDependencyOrderStartsInOrderClosesInReverse() {
         List<String> journal = new ArrayList<>();
         Composer composer = Composer.emptyBuilder()

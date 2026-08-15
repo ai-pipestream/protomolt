@@ -333,14 +333,19 @@ public final class DocumentPlatform implements AutoCloseable {
                     Model2VecEmbeddingProvider.PATH_ENVIRONMENT_VARIABLE);
             return null;
         }
-        EmbeddingProvider provider =
-                EmbeddingProviders.byId(Model2VecEmbeddingProvider.PROVIDER_ID);
+        int dims;
+        // Borrowed only to learn the model's dimension; the derivation loads
+        // its own provider, so this instance goes back.
+        try (EmbeddingProvider provider =
+                EmbeddingProviders.byId(Model2VecEmbeddingProvider.PROVIDER_ID)) {
+            dims = provider.dimension();
+        }
         return new ChunkingPolicy(
                 new ChunkingPolicy.ChunkingSpec(
                         SentencePackedChunker.STRATEGY, SentencePackedChunker.STRATEGY_VERSION,
                         120, 16, 20, 200, SentencePackedChunker.BOUNDARY),
                 new ChunkingPolicy.EmbeddingSpec(
-                        Model2VecEmbeddingProvider.PROVIDER_ID, provider.dimension(),
+                        Model2VecEmbeddingProvider.PROVIDER_ID, dims,
                         VectorSimilarity.COSINE, true),
                 "", true);
     }

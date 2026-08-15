@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -116,6 +117,9 @@ public final class Composer {
             }
         } catch (Exception e) {
             closeAll(closeStack);
+            // Channels handed out during wiring are node-owned; with no Node
+            // returned, the failed boot must close them itself.
+            context.channels.close();
             if (e instanceof ComposerException composer) {
                 throw composer;
             }
@@ -126,7 +130,7 @@ public final class Composer {
 
     /** The roles this composer can mount, sorted. */
     public Set<String> knownRoles() {
-        return new java.util.TreeSet<>(modules.keySet());
+        return new TreeSet<>(modules.keySet());
     }
 
     private List<ServiceModule> order(List<String> roles) {
