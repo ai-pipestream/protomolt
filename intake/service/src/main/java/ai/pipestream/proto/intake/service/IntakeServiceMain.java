@@ -1,7 +1,9 @@
 package ai.pipestream.proto.intake.service;
 
+import ai.pipestream.proto.intake.service.identity.ApiKeyIdentityResolver;
 import ai.pipestream.proto.intake.service.identity.InMemoryApiKeyIdentityResolver;
 import ai.pipestream.proto.intake.service.identity.IntakeScope;
+import ai.pipestream.proto.intake.service.identity.OidcIntrospectionResolver;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,16 +11,30 @@ import org.slf4j.LoggerFactory;
 /**
  * Standalone entry point: environment-configured intake over Netty.
  *
- * <p>The key store is seeded from {@code DOCUMENT_PLATFORM_INTAKE_KEYS}, a
- * semicolon-separated list of {@code <key>=<account_id>[@<datasource_id>[,...]]}
- * entries — the env-seeded store for demos and single-tenant deployments.
- * Production deployments swap in an external key store (Keycloak, JDBC)
- * through {@link IntakeServices#build}; this main stays deliberately small.
+ * <p>Key-store selection: when
+ * {@code DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL} is set the door
+ * authenticates against the IdP's RFC 7662 introspection endpoint (the
+ * Keycloak-shaped production default; client id/secret ride the companion
+ * env vars). Otherwise the store is seeded from
+ * {@code DOCUMENT_PLATFORM_INTAKE_KEYS}, a semicolon-separated list of
+ * {@code <key>=<account_id>[@<datasource_id>[,...]]} entries — the
+ * env-seeded store for demos and single-tenant deployments. Exactly one
+ * source must be configured; a door with no key store is refused loudly.
  */
 public final class IntakeServiceMain {
 
     /** Env var seeding the in-memory key store: {@code <key>=<account>[@ds1,ds2];...}. */
     public static final String ENV_KEYS = "DOCUMENT_PLATFORM_INTAKE_KEYS";
+
+    /** Env var naming the IdP's RFC 7662 introspection endpoint. */
+    public static final String ENV_OIDC_URL = "DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL";
+
+    /** Env var carrying this door's client id at the IdP. */
+    public static final String ENV_OIDC_CLIENT_ID = "DOCUMENT_PLATFORM_INTAKE_OIDC_CLIENT_ID";
+
+    /** Env var carrying this door's client secret at the IdP. */
+    public static final String ENV_OIDC_CLIENT_SECRET =
+            "DOCUMENT_PLATFORM_INTAKE_OIDC_CLIENT_SECRET";
 
     private static final Logger LOG = LoggerFactory.getLogger(IntakeServiceMain.class);
 
@@ -27,7 +43,7 @@ public final class IntakeServiceMain {
 
     public static void main(String[] args) throws Exception {
         IntakeServiceConfig config = IntakeServiceConfig.fromEnvironment();
-        InMemoryApiKeyIdentityResolver resolver = resolverFromEnvironment(System.getenv(ENV_KEYS));
+        ApiKeyIdentityResolver resolver = selectResolver(System.getenv());
         IntakeServices services = IntakeServices.build(config, resolver);
         services.startNetty(config.grpcPort());
         LOG.info(
@@ -36,6 +52,31 @@ public final class IntakeServiceMain {
                 config.repoTarget());
         Runtime.getRuntime().addShutdownHook(new Thread(services::close, "intake-shutdown"));
         services.server().awaitTermination();
+    }
+
+    /**
+     * Picks the key store the environment configures: OIDC introspection
+     * when {@link #ENV_OIDC_URL} is set (client id and secret then become
+     * required, rejected loudly by name when missing), else the env-seeded
+     * in-memory store.
+     */
+    static ApiKeyIdentityResolver selectResolver(java.util.Map<String, String> env) {
+        String oidcUrl = env.get(ENV_OIDC_URL);
+        if (oidcUrl != null && !oidcUrl.isBlank()) {
+            String clientId = env.get(ENV_OIDC_CLIENT_ID);
+            String clientSecret = env.get(ENV_OIDC_CLIENT_SECRET);
+            if (clientId == null || clientId.isBlank()) {
+                throw new IllegalArgumentException(
+                        ENV_OIDC_CLIENT_ID + " is required with " + ENV_OIDC_URL);
+            }
+            if (clientSecret == null || clientSecret.isBlank()) {
+                throw new IllegalArgumentException(
+                        ENV_OIDC_CLIENT_SECRET + " is required with " + ENV_OIDC_URL);
+            }
+            return new OidcIntrospectionResolver(
+                    java.net.URI.create(oidcUrl.trim()), clientId.trim(), clientSecret.trim());
+        }
+        return resolverFromEnvironment(env.get(ENV_KEYS));
     }
 
     /**

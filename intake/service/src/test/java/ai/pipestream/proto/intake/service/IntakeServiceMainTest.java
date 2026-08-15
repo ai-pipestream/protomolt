@@ -36,6 +36,33 @@ class IntakeServiceMainTest {
     }
 
     @Test
+    void oidcEnvSelectsTheIntrospectionStoreAndDemandsClientCredentials() {
+        var oidc =
+                IntakeServiceMain.selectResolver(
+                        java.util.Map.of(
+                                IntakeServiceMain.ENV_OIDC_URL, "http://idp/introspect",
+                                IntakeServiceMain.ENV_OIDC_CLIENT_ID, "door",
+                                IntakeServiceMain.ENV_OIDC_CLIENT_SECRET, "s3cret"));
+        assertThat(oidc)
+                .isInstanceOf(
+                        ai.pipestream.proto.intake.service.identity.OidcIntrospectionResolver.class);
+
+        assertThatThrownBy(
+                        () ->
+                                IntakeServiceMain.selectResolver(
+                                        java.util.Map.of(
+                                                IntakeServiceMain.ENV_OIDC_URL, "http://idp/introspect")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(IntakeServiceMain.ENV_OIDC_CLIENT_ID);
+
+        // No OIDC url falls back to the env-seeded store.
+        var seeded =
+                IntakeServiceMain.selectResolver(
+                        java.util.Map.of(IntakeServiceMain.ENV_KEYS, "k=acct"));
+        assertThat(seeded).isInstanceOf(InMemoryApiKeyIdentityResolver.class);
+    }
+
+    @Test
     void malformedEntriesAreRejectedByName() {
         assertThatThrownBy(() -> IntakeServiceMain.resolverFromEnvironment("just-a-key"))
                 .isInstanceOf(IllegalArgumentException.class)
