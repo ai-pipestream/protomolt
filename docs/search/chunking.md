@@ -12,25 +12,36 @@ rebuild.
 ## The chunker
 
 `SentencePackedChunker` implements the `sentence-packed` strategy,
-implementation version 1, over the pinned boundary rule set `rules-v1`:
+implementation version 1, over a pinned boundary rule set. Two rule sets
+are carried:
 
-- Sentences end after `.?!` runs (with trailing closers) followed by
-  whitespace; a blank line always ends a sentence. The rules are
-  hand-rolled and frozen under the rule-set id, so a JDK upgrade can never
-  silently move a boundary (`java.text.BreakIterator` is deliberately not
-  used).
-- A token is a maximal non-whitespace run.
-- Sentences pack greedily toward `target_tokens`; the next chunk
-  re-includes trailing sentences of the previous one up to
-  `overlap_tokens`; a sentence above `max_tokens` splits at token
-  boundaries; an undersized trailing chunk merges into its predecessor
-  unless that would break the max (never-above-max outranks
-  never-below-min).
+- `rules-v1` (the default for new policies): sentences end after `.?!`
+  runs (with trailing closers) followed by whitespace; a blank line
+  always ends a sentence; a token is a maximal non-whitespace run. The
+  rules are hand-rolled and frozen under the rule-set id, so a JDK
+  upgrade can never silently move a boundary (`java.text.BreakIterator`
+  is deliberately not used).
+- `opennlp-v1`: sentence detection by OpenNLP's sentence detector over
+  the pinned English UD-EWT model
+  (`org.apache.opennlp:opennlp-models-sentdetect-en:1.3.0`, loaded from
+  the classpath, never downloaded), with tokens delimited by Unicode
+  whitespace — the rule set for text whose whitespace is not ASCII
+  (non-breaking spaces, Unicode line separators). A different model,
+  model version, or language is a new rule-set id.
 
-A chunker executes exactly one (strategy, version, boundary) triple and
-refuses every other by name, so a policy never silently runs on the wrong
-implementation. Any behavior change bumps the strategy version, which
-changes the policy digest and re-chunks corpora explicitly.
+Under either rule set: sentences pack greedily toward `target_tokens`;
+the next chunk re-includes trailing sentences of the previous one up to
+`overlap_tokens`; a sentence above `max_tokens` splits at token
+boundaries; an undersized trailing chunk merges into its predecessor
+unless that would break the max (never-above-max outranks
+never-below-min).
+
+A chunker executes exactly one (strategy, version) pair and the boundary
+rule sets it carries, refusing every other id by name, so a policy never
+silently runs on the wrong implementation. Any behavior change bumps the
+strategy version, which changes the policy digest and re-chunks corpora
+explicitly; so does pinning a different boundary rule set, since the id
+is a digest component.
 
 ## Output
 

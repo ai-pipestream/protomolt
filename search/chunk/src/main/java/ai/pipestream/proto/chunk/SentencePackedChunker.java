@@ -7,12 +7,13 @@ import java.util.List;
 /**
  * The {@code sentence-packed} chunker, implementation version 1: executes a
  * {@link ChunkingPolicy.ChunkingSpec} deterministically. Sentences from the
- * pinned boundary rules pack greedily toward {@code targetTokens}; the next
- * chunk re-includes trailing sentences of the previous one up to
- * {@code overlapTokens}; a sentence larger than {@code maxTokens} splits at
- * token boundaries; an undersized trailing chunk merges into its
- * predecessor unless the merge would break the max, because the never-emit-
- * above-max rule outranks the never-emit-below-min rule.
+ * boundary rule set the spec pins (see {@link BoundaryRules} for the carried
+ * sets) pack greedily toward {@code targetTokens}; the next chunk re-includes
+ * trailing sentences of the previous one up to {@code overlapTokens}; a
+ * sentence larger than {@code maxTokens} splits at token boundaries; an
+ * undersized trailing chunk merges into its predecessor unless the merge
+ * would break the max, because the never-emit-above-max rule outranks the
+ * never-emit-below-min rule.
  *
  * <p>Determinism is the whole point: the same text under the same spec
  * yields byte-identical chunks on every JDK and every release carrying
@@ -28,7 +29,7 @@ public final class SentencePackedChunker {
     /** The pinned implementation version; bumps on ANY behavior change. */
     public static final int STRATEGY_VERSION = 1;
 
-    /** The boundary rule set this implementation carries. */
+    /** The boundary rule set new policies pin by default. */
     public static final String BOUNDARY = SentenceRules.ID;
 
     /** Creates the chunker; it is stateless and thread-safe. */
@@ -46,11 +47,11 @@ public final class SentencePackedChunker {
      * @return the derived chunks, in order
      */
     public List<Chunk> chunk(String text, ChunkingPolicy.ChunkingSpec spec) {
-        requireCompatible(spec);
+        BoundaryRules rules = requireCompatible(spec);
         if (text == null || text.isBlank()) {
             return List.of();
         }
-        List<SentenceRules.Sentence> sentences = split(text, spec.maxTokens());
+        List<SentenceRules.Sentence> sentences = split(text, spec.maxTokens(), rules);
         List<List<SentenceRules.Sentence>> packs = pack(sentences, spec);
         mergeUndersizedTail(packs, spec);
         List<Chunk> chunks = new ArrayList<>(packs.size());
@@ -62,12 +63,12 @@ public final class SentencePackedChunker {
                     text.substring(start, end),
                     start,
                     end,
-                    SentenceRules.countTokens(text, start, end)));
+                    rules.tokens(text, start, end).size()));
         }
         return List.copyOf(chunks);
     }
 
-    private static void requireCompatible(ChunkingPolicy.ChunkingSpec spec) {
+    private static BoundaryRules requireCompatible(ChunkingPolicy.ChunkingSpec spec) {
         if (spec == null) {
             throw new IllegalArgumentException("spec must not be null");
         }
@@ -78,10 +79,6 @@ public final class SentencePackedChunker {
         if (spec.strategyVersion() != STRATEGY_VERSION) {
             throw new IllegalArgumentException("this chunker is " + STRATEGY + " version "
                     + STRATEGY_VERSION + ", the policy pins version " + spec.strategyVersion());
-        }
-        if (!BOUNDARY.equals(spec.boundary())) {
-            throw new IllegalArgumentException("this chunker carries boundary rules " + BOUNDARY
-                    + ", the policy names " + spec.boundary());
         }
         if (spec.targetTokens() <= 0) {
             throw new IllegalArgumentException("targetTokens must be positive");
@@ -97,35 +94,25 @@ public final class SentencePackedChunker {
         if (spec.minTokens() < 0) {
             throw new IllegalArgumentException("minTokens must not be negative");
         }
+        return BoundaryRules.forId(spec.boundary());
     }
 
     /** Segments, splitting any sentence above the max at token boundaries. */
-    private static List<SentenceRules.Sentence> split(String text, int maxTokens) {
+    private static List<SentenceRules.Sentence> split(
+            String text, int maxTokens, BoundaryRules rules) {
         List<SentenceRules.Sentence> sentences = new ArrayList<>();
-        for (SentenceRules.Sentence sentence : SentenceRules.segment(text)) {
-            if (maxTokens == 0 || sentence.tokens() <= maxTokens) {
+        for (SentenceRules.Sentence sentence : rules.segment(text)) {
+            List<BoundaryRules.TokenSpan> tokens =
+                    rules.tokens(text, sentence.start(), sentence.end());
+            if (maxTokens == 0 || tokens.size() <= maxTokens) {
                 sentences.add(sentence);
                 continue;
             }
-            int windowStart = sentence.start();
-            int windowTokens = 0;
-            boolean inToken = false;
-            for (int i = sentence.start(); i < sentence.end(); i++) {
-                boolean whitespace = Character.isWhitespace(text.charAt(i));
-                if (!whitespace && !inToken && windowTokens == maxTokens) {
-                    int windowEnd = trimEnd(text, windowStart, i);
-                    sentences.add(new SentenceRules.Sentence(windowStart, windowEnd, windowTokens));
-                    windowStart = i;
-                    windowTokens = 0;
-                }
-                if (!whitespace && !inToken) {
-                    windowTokens++;
-                }
-                inToken = !whitespace;
+            for (int i = 0; i < tokens.size(); i += maxTokens) {
+                int windowEnd = Math.min(i + maxTokens, tokens.size());
+                sentences.add(new SentenceRules.Sentence(
+                        tokens.get(i).start(), tokens.get(windowEnd - 1).end(), windowEnd - i));
             }
-            sentences.add(new SentenceRules.Sentence(
-                    windowStart, sentence.end(),
-                    SentenceRules.countTokens(text, windowStart, sentence.end())));
         }
         return sentences;
     }
@@ -185,12 +172,5 @@ public final class SentencePackedChunker {
             }
         }
         packs.removeLast();
-    }
-
-    private static int trimEnd(String text, int start, int end) {
-        while (end > start && Character.isWhitespace(text.charAt(end - 1))) {
-            end--;
-        }
-        return end;
     }
 }

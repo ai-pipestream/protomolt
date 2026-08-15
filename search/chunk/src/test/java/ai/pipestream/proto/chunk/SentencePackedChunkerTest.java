@@ -103,6 +103,63 @@ class SentencePackedChunkerTest {
     }
 
     @Test
+    void textWithoutAFinalTerminatorStillYieldsItsSentence() {
+        List<Chunk> chunks = CHUNKER.chunk("A complete sentence. And a fragment", spec(10, 0, 0, 0));
+        assertThat(chunks).extracting(Chunk::text)
+                .containsExactly("A complete sentence. And a fragment");
+    }
+
+    @Test
+    void supplementaryPlaneCharactersKeepFaithfulOffsetsAndTokens() {
+        // Emoji are surrogate pairs: two chars, one token character run.
+        String text = "The 🎉 party started. It ended late 🌙.";
+        List<Chunk> chunks = CHUNKER.chunk(text, spec(20, 0, 0, 0));
+        assertThat(chunks).hasSize(1);
+        Chunk chunk = chunks.getFirst();
+        assertThat(chunk.tokenCount()).isEqualTo(8);
+        assertThat(text.substring(chunk.startOffset(), chunk.endOffset()))
+                .isEqualTo(chunk.text())
+                .isEqualTo(text);
+    }
+
+    @Test
+    void windowSplitsKeepSupplementaryCharactersWhole() {
+        String text = "one 🎉 two 🎉 three";
+        List<Chunk> chunks = CHUNKER.chunk(text, spec(2, 0, 0, 2));
+        assertThat(chunks).extracting(Chunk::text)
+                .containsExactly("one 🎉", "two 🎉", "three");
+        for (Chunk chunk : chunks) {
+            assertThat(text.substring(chunk.startOffset(), chunk.endOffset()))
+                    .isEqualTo(chunk.text());
+        }
+    }
+
+    @Test
+    void aSentenceAboveTargetButWithinMaxStandsAlone() {
+        String text = "Short one. This particular sentence runs well past the target budget.";
+        List<Chunk> chunks = CHUNKER.chunk(text, spec(4, 0, 0, 0));
+        assertThat(chunks).hasSize(2);
+        assertThat(chunks.getFirst().text()).isEqualTo("Short one.");
+        // Never split (it is under the unlimited max), so it exceeds target.
+        assertThat(chunks.get(1).tokenCount()).isEqualTo(9);
+    }
+
+    @Test
+    void overlapTakesOnlyWhatTheBudgetFits() {
+        // Sentences of 2, 5, 3, then 7 tokens; target 10 closes the first
+        // three together. The overlap budget of 4 fits the 3-token trailing
+        // sentence but not the 5-token one before it.
+        String text = "Alpha one. Beta gamma delta epsilon two. Iota kappa three."
+                + " Mu nu xi omicron pi rho four.";
+        List<Chunk> chunks = CHUNKER.chunk(text, spec(10, 4, 0, 0));
+        assertThat(chunks).hasSize(2);
+        assertThat(chunks.get(1).text())
+                .startsWith("Iota kappa three.")
+                .contains("four.")
+                .doesNotContain("epsilon");
+    }
+
+    @Test
     void foreignPoliciesAreRefusedByName() {
         assertThatThrownBy(() -> CHUNKER.chunk("text.", new ChunkingPolicy.ChunkingSpec(
                 "token-window", 1, 10, 0, 0, 0, SentencePackedChunker.BOUNDARY)))

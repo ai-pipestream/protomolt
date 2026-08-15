@@ -92,16 +92,27 @@ final class SentenceRules {
 
     /** Tokens in {@code [start, end)}: maximal non-whitespace runs. */
     static int countTokens(String text, int start, int end) {
-        int tokens = 0;
-        boolean inToken = false;
+        return tokenSpans(text, start, end).size();
+    }
+
+    /** Token spans in {@code [start, end)}: maximal non-whitespace runs. */
+    static List<BoundaryRules.TokenSpan> tokenSpans(String text, int start, int end) {
+        List<BoundaryRules.TokenSpan> spans = new ArrayList<>();
+        int tokenStart = -1;
         for (int i = start; i < end; i++) {
             boolean whitespace = Character.isWhitespace(text.charAt(i));
-            if (!whitespace && !inToken) {
-                tokens++;
+            if (!whitespace && tokenStart < 0) {
+                tokenStart = i;
             }
-            inToken = !whitespace;
+            if (whitespace && tokenStart >= 0) {
+                spans.add(new BoundaryRules.TokenSpan(tokenStart, i));
+                tokenStart = -1;
+            }
         }
-        return tokens;
+        if (tokenStart >= 0) {
+            spans.add(new BoundaryRules.TokenSpan(tokenStart, end));
+        }
+        return spans;
     }
 
     private static boolean isTerminator(char c) {

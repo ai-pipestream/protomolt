@@ -87,6 +87,59 @@ class PolicyDerivationTest {
         assertThat(new PolicyDerivation(new FakeProvider()).derive("  ", policy(false))).isEmpty();
     }
 
+    /**
+     * A provider whose vector is null or not its declared dimension is broken;
+     * the derivation refuses it rather than deriving a corrupt corpus.
+     */
+    @Test
+    void aProviderReturningNullOrWrongDimsFailsHard() {
+        EmbeddingProvider nullReturning = new StubProvider(null);
+        assertThatThrownBy(() -> new PolicyDerivation(nullReturning)
+                .derive("One short sentence.", policy(false)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("null");
+
+        EmbeddingProvider wrongDims = new StubProvider(new float[] {1, 2});
+        assertThatThrownBy(() -> new PolicyDerivation(wrongDims)
+                .derive("One short sentence.", policy(false)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("2 dims");
+    }
+
+    @Test
+    void aZeroVectorStaysZeroUnderNormalize() {
+        // A zero vector has no direction to normalize; dividing by its zero
+        // norm would NaN every component, so it passes through unchanged.
+        EmbeddingProvider zero = new StubProvider(new float[] {0, 0, 0});
+        List<PolicyDerivation.DerivedChunk> derived = new PolicyDerivation(zero)
+                .derive("One short sentence.", policy(true));
+        assertThat(derived.getFirst().vector()).containsExactly(0f, 0f, 0f);
+    }
+
+    /** A 3-dim provider misbehaving exactly as constructed. */
+    private static final class StubProvider implements EmbeddingProvider {
+        private final float[] vector;
+
+        private StubProvider(float[] vector) {
+            this.vector = vector;
+        }
+
+        @Override
+        public String providerId() {
+            return "fake";
+        }
+
+        @Override
+        public int dimension() {
+            return 3;
+        }
+
+        @Override
+        public float[] embed(String text) {
+            return vector;
+        }
+    }
+
     @Test
     void discoverResolvesThePolicysProviderThroughTheServiceLoader() {
         ChunkingPolicy discovered = new ChunkingPolicy(

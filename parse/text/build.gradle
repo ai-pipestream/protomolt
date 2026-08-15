@@ -9,6 +9,8 @@ dependencies {
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
     implementation libs.slf4j.api
+    // Text cleaning on OpenNLP's Unicode whitespace model, not regex.
+    implementation libs.opennlp.api
 
     runtimeOnly libs.slf4j.simple
 

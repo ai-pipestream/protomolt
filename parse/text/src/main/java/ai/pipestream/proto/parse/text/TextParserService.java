@@ -209,14 +209,14 @@ public final class TextParserService extends ParserPluginServiceGrpc.ParserPlugi
         String title = "";
         StringBuilder body = new StringBuilder();
         int index = 0;
-        for (String block : text.split("\\R{2,}")) {
-            String trimmed = block.strip();
+        for (String block : TextCleaning.splitOnBlankLines(text)) {
+            String trimmed = TextCleaning.trim(block);
             if (trimmed.isEmpty()) {
                 continue;
             }
             String selfRef = "#/texts/" + index;
             if (index == 0 && looksLikeHeading(trimmed)) {
-                title = stripHeadingMarkup(trimmed);
+                title = TextCleaning.stripHeadingMarkup(trimmed);
                 document.addTexts(BaseTextItem.newBuilder()
                         .setTitle(TitleItem.newBuilder()
                                 .setBase(TextItemBase.newBuilder()
@@ -225,7 +225,7 @@ public final class TextParserService extends ParserPluginServiceGrpc.ParserPlugi
                                         .setText(title))));
             } else {
                 // Rejoin single newlines inside a block: one item per block.
-                String flowed = trimmed.replaceAll("\\R", " ");
+                String flowed = TextCleaning.flowLines(trimmed);
                 document.addTexts(BaseTextItem.newBuilder()
                         .setText(TextItem.newBuilder()
                                 .setBase(TextItemBase.newBuilder()
@@ -250,9 +250,5 @@ public final class TextParserService extends ParserPluginServiceGrpc.ParserPlugi
             return true;
         }
         return block.length() <= 120 && !block.endsWith(".");
-    }
-
-    private static String stripHeadingMarkup(String heading) {
-        return heading.replaceFirst("^#+\\s*", "").strip();
     }
 }
