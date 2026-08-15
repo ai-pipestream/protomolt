@@ -1,0 +1,42 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The gRParse adapter: a ParserPluginService that bridges the parser plugin contract to gRParse\'s StreamProcessDocument page stream, joining the C++ fleet parser to the coordinator with zero C++ changes'
+
+dependencies {
+    api project(':protomolt-parse-proto')
+    // Assembles the fleet document model and projects it via DoclingProjection.
+    api project(':protomolt-parse-document')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    implementation libs.slf4j.api
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+
+    // Extract the fleet document .proto so protoc can resolve the vendored
+    // gRParse imports.
+    protobuf project(':protomolt-parse-document')
+
+    testRuntimeOnly libs.slf4j.simple
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

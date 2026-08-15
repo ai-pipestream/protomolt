@@ -105,6 +105,15 @@ completes, never faked from a finished result. A parse that produces nothing
 fails the stream with a gRPC status (stored as a FAILED result); a degraded
 parse reports its losses through `ParserOutput.warnings` (stored PARTIAL).
 
+gRParse, the C++ fleet parser, joins through the `parse/grparse` sidecar
+adapter with zero C++ changes: the adapter implements `ParserPluginService`,
+bridges each parse onto gRParse's `StreamProcessDocument` page stream
+(vendored wire surface), maps page events and collector output back onto the
+plugin envelope, and reports collector failures as warnings. It is deployed
+next to gRParse and registered via a service profile under the name
+`grparse`. Preview images are not part of `StreamProcessDocument`, so the
+adapter advertises `emits_previews=false`; previews are future adapter work.
+
 ## Trigger model
 
 The contract supports event-driven and on-demand execution. An event-driven

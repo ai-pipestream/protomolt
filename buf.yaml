@@ -53,6 +53,13 @@ modules:
   # published artifact.
   - path: parse/document/src/main/proto
     name: buf.build/ai-pipestream/document
+  # gRParse's streaming wire surface, vendored byte-identical from the
+  # gRParse repo so the parse/grparse adapter can bridge it onto the parser
+  # plugin contract. Same regime as the fleet document model above: lint
+  # exemption lives in the TOP-LEVEL lint.ignore, never a module-level lint
+  # block.
+  - path: parse/grparse/src/main/proto
+    name: buf.build/ai-pipestream/parse-grparse
   - path: acquire/confluence/src/main/proto
     name: buf.build/ai-pipestream/acquire-confluence
   - path: transform/projection/src/main/proto
@@ -79,6 +86,10 @@ lint:
     # module-level lint block breaks the workspace image `buf breaking`
     # compares.
     - parse/document/src/main/proto/ai/pipestream/document/v1/document.proto
+    # The vendored gRParse streaming surface keeps gRParse's own lint bar for
+    # the same byte-identity reason.
+    - parse/grparse/src/main/proto/ai/pipestream/parse/v1/parse_stream.proto
+    - parse/grparse/src/main/proto/ai/pipestream/parse/v1/parse_types.proto
   ignore_only:
     # GetDocument and GetDocumentByReference deliberately share
     # GetDocumentResponse: same payload, two coordinate systems.
