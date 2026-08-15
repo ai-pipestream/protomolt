@@ -15,9 +15,13 @@ import org.slf4j.LoggerFactory;
  * <p>The routing rules come from {@code DOCUMENT_PLATFORM_PARSE_RULES_JSON}
  * (an inline proto3-JSON array) or {@code DOCUMENT_PLATFORM_PARSE_RULES_FILE}
  * (a file holding the same) — exactly one must be set. The parser fleet comes
+ * from {@code DOCUMENT_PLATFORM_PARSE_PROFILES} (a service-profile store
+ * directory plus {@code DOCUMENT_PLATFORM_PARSE_PROFILE_ENDPOINT}, the
+ * endpoint name every profile must carry — how fleet parsers register), or
  * from {@code DOCUMENT_PLATFORM_PARSE_PARSERS}, a comma-separated list of
- * {@code <parser_name>=<target>} entries. A coordinator with zero parsers can
- * parse nothing, so a missing fleet fails the boot loudly.
+ * {@code <parser_name>=<target>} entries. Exactly one source; a coordinator
+ * with zero parsers can parse nothing, so a missing fleet fails the boot
+ * loudly.
  */
 public final class ParseCoordinatorMain {
 
@@ -37,8 +41,10 @@ public final class ParseCoordinatorMain {
         RoutingRules rules = rulesFromEnvironment(
                 System.getenv(ParseCoordinatorConfig.ENV_RULES_JSON),
                 System.getenv(ParseCoordinatorConfig.ENV_RULES_FILE));
-        ParserRegistry parsers = ParserRegistry.of(
-                parsersFromEnvironment(System.getenv(ParseCoordinatorConfig.ENV_PARSERS)));
+        ParserRegistry parsers = registryFromEnvironment(
+                System.getenv(ParseCoordinatorConfig.ENV_PROFILES),
+                System.getenv(ParseCoordinatorConfig.ENV_PROFILE_ENDPOINT),
+                System.getenv(ParseCoordinatorConfig.ENV_PARSERS));
         ParseCoordinatorServices services = ParseCoordinatorServices.build(config, rules, parsers);
         services.startNetty(config.grpcPort());
         LOG.info(
@@ -49,6 +55,44 @@ public final class ParseCoordinatorMain {
                 parsers.parserNames());
         Runtime.getRuntime().addShutdownHook(new Thread(services::close, "parse-shutdown"));
         services.server().awaitTermination();
+    }
+
+    /**
+     * Picks the parser source the environment configures: the
+     * service-profile store when {@code DOCUMENT_PLATFORM_PARSE_PROFILES}
+     * is set (the endpoint name then required by name; the target list must
+     * be absent), else the inline target list. Exactly one source.
+     *
+     * @param profilesDir the {@code PROFILES} value, possibly null
+     * @param endpointName the {@code PROFILE_ENDPOINT} value, possibly null
+     * @param parsersSpec the {@code PARSERS} value, possibly null
+     * @return the parser registry
+     */
+    static ParserRegistry registryFromEnvironment(
+            String profilesDir, String endpointName, String parsersSpec) {
+        boolean profiles = profilesDir != null && !profilesDir.isBlank();
+        boolean inline = parsersSpec != null && !parsersSpec.isBlank();
+        if (profiles && inline) {
+            throw new IllegalArgumentException(ParseCoordinatorConfig.ENV_PROFILES + " and "
+                    + ParseCoordinatorConfig.ENV_PARSERS
+                    + " are both set; configure exactly one parser source");
+        }
+        if (profiles) {
+            if (endpointName == null || endpointName.isBlank()) {
+                throw new IllegalArgumentException(ParseCoordinatorConfig.ENV_PROFILE_ENDPOINT
+                        + " is required with " + ParseCoordinatorConfig.ENV_PROFILES);
+            }
+            try {
+                return ParserRegistry.fromProfiles(
+                        new ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository(
+                                Path.of(profilesDir.trim())),
+                        endpointName.trim());
+            } catch (IOException e) {
+                throw new IllegalArgumentException(
+                        "could not open the service-profile store at " + profilesDir, e);
+            }
+        }
+        return ParserRegistry.of(parsersFromEnvironment(parsersSpec));
     }
 
     /**

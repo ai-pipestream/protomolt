@@ -55,6 +55,59 @@ public final class ParserRegistry implements AutoCloseable {
     }
 
     /**
+     * Builds the registry from a service-profile repository: every stored
+     * profile registers a parser under the profile's name (THE parser
+     * identity), dialing the named endpoint. This is how fleet parsers
+     * (gRParse included) register with the coordinator — save a profile,
+     * no coordinator restart, no hand-maintained target list.
+     *
+     * <p>Only {@code TRANSPORT_PLAINTEXT} endpoints are accepted for now:
+     * the parser client dials plaintext, and silently downgrading a profile
+     * that asked for TLS would be a lie. A TLS endpoint is rejected loudly
+     * at construction.
+     *
+     * @param profiles the profile store (the same store the rest of the
+     *        toolkit reads)
+     * @param endpointName the endpoint each profile must name (e.g.
+     *        {@code "local"})
+     * @return the registry; channels open lazily on first use
+     */
+    public static ParserRegistry fromProfiles(
+            ai.pipestream.proto.grpc.profile.ServiceProfileRepository profiles,
+            String endpointName) {
+        if (profiles == null) {
+            throw new IllegalArgumentException("profiles must not be null");
+        }
+        if (endpointName == null || endpointName.isBlank()) {
+            throw new IllegalArgumentException("endpointName must not be blank");
+        }
+        Map<String, String> targets = new java.util.LinkedHashMap<>();
+        java.util.List<ai.pipestream.proto.grpc.profile.v1.ServiceProfile> all;
+        try {
+            all = profiles.list();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("could not list service profiles", e);
+        }
+        for (ai.pipestream.proto.grpc.profile.v1.ServiceProfile profile : all) {
+            ai.pipestream.proto.grpc.profile.v1.ServiceEndpoint endpoint =
+                    profile.getEndpointsList().stream()
+                            .filter(e -> endpointName.equals(e.getName()))
+                            .findFirst()
+                            .orElseThrow(() -> new IllegalArgumentException(
+                                    "service profile '" + profile.getName()
+                                            + "' has no endpoint named '" + endpointName + "'"));
+            if (endpoint.getTransport()
+                    != ai.pipestream.proto.grpc.profile.v1.Transport.TRANSPORT_PLAINTEXT) {
+                throw new IllegalArgumentException(
+                        "service profile '" + profile.getName() + "' endpoint '" + endpointName
+                                + "' is not plaintext; the parser client cannot honor it");
+            }
+            targets.put(profile.getName(), endpoint.getHost() + ":" + endpoint.getPort());
+        }
+        return new ParserRegistry(targets);
+    }
+
+    /**
      * The client for one parser, opening its channel on first use.
      *
      * @param parserName the parser identity from the plan

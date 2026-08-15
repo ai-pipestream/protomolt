@@ -49,6 +49,12 @@ public record ParseCoordinatorConfig(
     /** Env var listing the parser fleet: {@code name=target,name=target,...}. */
     public static final String ENV_PARSERS = "DOCUMENT_PLATFORM_PARSE_PARSERS";
 
+    /** Env var naming the service-profile store directory for parser discovery. */
+    public static final String ENV_PROFILES = "DOCUMENT_PLATFORM_PARSE_PROFILES";
+
+    /** Env var naming the endpoint each parser profile must carry. */
+    public static final String ENV_PROFILE_ENDPOINT = "DOCUMENT_PLATFORM_PARSE_PROFILE_ENDPOINT";
+
     public ParseCoordinatorConfig {
         if (repoTarget == null || repoTarget.isBlank()) {
             throw new IllegalArgumentException("repoTarget must not be blank");
