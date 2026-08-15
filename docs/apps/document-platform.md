@@ -43,6 +43,10 @@ the jobs store) and RustFS for object storage. Ports:
   "mappingSubject": "repo-document"}}` parses the document and indexes it
   under the [search door](../search/door.md)'s `repo-document` subject, so a
   completed run means the document answers queries on the search port.
+- The `replay-documents` action re-runs a stored workflow over a drive's
+  documents (one durable run each): the operation behind a chunking-policy
+  or mapping change, with the door's atomic replace-by-identity keeping
+  replays duplicate-free.
 - The search door serves the `repo-document` mapping subject over the index
   at `DOCUMENT_PLATFORM_SEARCH_INDEX_DIR` (default `/data/search-index`).
   The lexical lane always works; the vector lane activates when a Model2Vec

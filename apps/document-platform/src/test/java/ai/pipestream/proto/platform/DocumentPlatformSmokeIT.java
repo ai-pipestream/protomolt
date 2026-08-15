@@ -272,6 +272,54 @@ class DocumentPlatformSmokeIT {
 
     @Test
     @Order(5)
+    void replayResubmitsTheCorpusAndNeverDuplicates() throws Exception {
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("drive", "intake");
+        input.put("accountId", ACCOUNT);
+        JsonNode replayed = postAction("replay-documents", input);
+        assertThat(replayed.path("submitted").asInt()).isGreaterThanOrEqualTo(1);
+
+        for (JsonNode jobId : replayed.path("jobIds")) {
+            String status = "";
+            for (int i = 0; i < 120 && !"COMPLETED".equals(status); i++) {
+                ObjectNode get = MAPPER.createObjectNode();
+                get.put("jobId", jobId.asText());
+                JsonNode job = postAction("get-job", get);
+                status = job.path("job").path("status").asText(job.path("status").asText());
+                if ("FAILED".equals(status) || "DEAD".equals(status)) {
+                    throw new AssertionError("replayed job " + status + ": " + job);
+                }
+                if (!"COMPLETED".equals(status)) {
+                    Thread.sleep(500);
+                }
+            }
+            assertThat(status).isEqualTo("COMPLETED");
+        }
+
+        // The replay re-indexed everything; nothing duplicated.
+        ManagedChannel searchChannel = NettyChannelBuilder
+                .forAddress("127.0.0.1", platform.searchPort())
+                .usePlaintext()
+                .build();
+        try {
+            SearchResponse hits = SearchServiceGrpc.newBlockingStub(searchChannel)
+                    .search(SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("container works")
+                            .setK(10)
+                            .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                            .build());
+            assertThat(hits.getHitsList()).hasSize(1);
+            assertThat(hits.getHits(0).getDocId()).isEqualTo(receipt.getDocId());
+        } finally {
+            searchChannel.shutdownNow();
+        }
+    }
+
+    @Test
+    @Order(6)
     void thePlaygroundServes() throws Exception {
         HttpResponse<String> page = HTTP.send(
                 HttpRequest.newBuilder(

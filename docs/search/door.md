@@ -64,3 +64,16 @@ then the door indexes it under the request's mapping subject
 the workflow at wire time, so operators submit it by name through the jobs
 verbs. The [document platform](../apps/document-platform.md) mounts all of
 this by default and its smoke IT proves ingest-to-search-hit over real TCP.
+
+## Replay
+
+`replay-documents` (contributed by the door when `jobs` co-mounts) re-runs
+a stored workflow over every document a repository listing matches: one
+durable run per document, riding the jobs module's own `submit-workflow`
+action. Input: `workflowName`, `mappingSubject`, `drive`, optional
+`accountId` — every identity explicit. This is the operation behind a
+chunking-policy or mapping change: a changed policy is a different digest
+and a different chunk generation, and the door's atomic
+replace-by-identity means replays re-derive and never duplicate
+(`PolicyChangeReindexTest` pins the generation swap; the platform smoke IT
+replays the corpus and asserts a single hit survives).
