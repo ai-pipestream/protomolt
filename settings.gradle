@@ -100,6 +100,9 @@ project(':protomolt-protobuf-validation-conformance').projectDir = file('protobu
 include 'protomolt-protobuf-indexing'
 project(':protomolt-protobuf-indexing').projectDir = file('protobuf/indexing')
 
+include 'protomolt-protobuf-seo'
+project(':protomolt-protobuf-seo').projectDir = file('protobuf/seo')
+
 // transform/ — mapping, shaping, and composition between messages.
 
 include 'protomolt-mapper-core'

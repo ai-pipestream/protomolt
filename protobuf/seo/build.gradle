@@ -1,0 +1,35 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Search-metadata standard — typed schema.org structured data and Dublin Core carrying the validation, metadata, and indexing-hint options'
+
+dependencies {
+    api libs.protobuf.java
+    // Timestamp and Duration ride the contract (dates, schema.org durations).
+    api libs.protobuf.java.util
+    // The standard carries all three house option dialects: validate.v1
+    // rules, meta.v1 descriptions, and the index.hints.v1 field hints.
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+    api project(':protomolt-index-spi')
+
+    // The end-to-end test proves the annotated plan against a real Lucene index.
+    testImplementation project(':protomolt-index-lucene')
+}
+
+// Messages and options only — no gRPC service here.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}
+
+// The Lucene 11 line ships Java 25 bytecode, so the Lucene end-to-end test
+// cannot run on an older JVM: the test launcher stays on the toolchain JDK
+// and -PtestJdk is ignored here (same pin as :protomolt-index-lucene).
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}

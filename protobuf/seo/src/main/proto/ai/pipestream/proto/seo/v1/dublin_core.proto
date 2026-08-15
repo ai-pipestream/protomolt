@@ -1,0 +1,331 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.seo.v1;
+
+import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.seo.v1";
+
+// ============================================================================
+// DUBLIN CORE — the fifteen classic DCMES elements (https://purl.org/dc/
+// elements/1.1/) plus a curated handful of dcterms refinements, strongly
+// typed. Field descriptions quote the DCMI element definitions; validation
+// caps and indexing hints ride the same descriptors, so the one schema drives
+// docs, write-time validation, and index planning.
+// ============================================================================
+
+// A curated set of widely used DCMI Metadata Terms (dcterms) refinements of
+// the classic elements: the date refinements as real timestamps, plus
+// abstract, license, and audience. Deliberately not the full dcterms
+// vocabulary — refinements earn a field here by showing up in real corpora.
+message DcTerms {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Curated dcterms refinements: created/modified/issued dates, abstract, license, audience."
+    owner: "protomolt"
+    labels: {key: "component", value: "seo"}
+    labels: {key: "vocabulary", value: "dcterms"}
+  };
+
+  // Date of creation of the resource (dcterms:created).
+  google.protobuf.Timestamp created = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_DATE
+      sortable: true
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Date of creation of the resource (dcterms:created)."
+    }
+  ];
+  // Date on which the resource was changed (dcterms:modified).
+  google.protobuf.Timestamp modified = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_DATE
+      sortable: true
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Date on which the resource was changed (dcterms:modified)."
+    }
+  ];
+  // Date of formal issuance of the resource (dcterms:issued).
+  google.protobuf.Timestamp issued = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_DATE
+      sortable: true
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Date of formal issuance of the resource (dcterms:issued)."
+    }
+  ];
+  // A summary of the resource (dcterms:abstract).
+  string abstract = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      stored: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 10000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A summary of the resource (dcterms:abstract)."
+    }
+  ];
+  // A legal document giving official permission to do something with the
+  // resource (dcterms:license); typically a license URI or name.
+  string license = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD},
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 2048}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A legal document giving official permission to do something with the resource (dcterms:license)."
+    }
+  ];
+  // A class of agents for whom the resource is intended or useful
+  // (dcterms:audience).
+  string audience = 6 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 500}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A class of agents for whom the resource is intended or useful (dcterms:audience)."
+    }
+  ];
+}
+
+// The fifteen classic Dublin Core Metadata Element Set (DCMES 1.1) elements,
+// strongly typed for the search-metadata standard. Every element is optional
+// (Dublin Core mandates none); caps and formats are validated when a value is
+// present. `terms` carries the curated dcterms refinements.
+message DublinCore {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "The fifteen DCMES 1.1 elements plus curated dcterms refinements."
+    owner: "protomolt"
+    labels: {key: "component", value: "seo"}
+    labels: {key: "vocabulary", value: "dcmes-1.1"}
+  };
+
+  // A name given to the resource (dc:title).
+  string title = 1 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      stored: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 2000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A name given to the resource (dc:title)."
+    }
+  ];
+  // An entity primarily responsible for making the resource (dc:creator).
+  string creator = 2 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "An entity primarily responsible for making the resource (dc:creator)."
+    }
+  ];
+  // The topic of the resource (dc:subject); typically keywords, key phrases,
+  // or classification codes.
+  repeated string subject = 3 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {
+        max_items: 100
+        unique: true
+        items: {
+          string: {max_len: 500}
+        }
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The topic of the resource (dc:subject)."
+    }
+  ];
+  // An account of the resource (dc:description).
+  string description = 4 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      stored: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 10000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "An account of the resource (dc:description)."
+    }
+  ];
+  // An entity responsible for making the resource available (dc:publisher).
+  string publisher = 5 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "An entity responsible for making the resource available (dc:publisher)."
+    }
+  ];
+  // An entity responsible for making contributions to the resource
+  // (dc:contributor).
+  repeated string contributor = 6 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {
+        max_items: 100
+        unique: true
+        items: {
+          string: {max_len: 1000}
+        }
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "An entity responsible for making contributions to the resource (dc:contributor)."
+    }
+  ];
+  // A point or period of time associated with an event in the lifecycle of
+  // the resource (dc:date).
+  google.protobuf.Timestamp date = 7 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_DATE
+      sortable: true
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A point or period of time associated with an event in the lifecycle of the resource (dc:date)."
+    }
+  ];
+  // The nature or genre of the resource (dc:type); DCMI recommends the DCMI
+  // Type Vocabulary (e.g. Text, Image, Dataset).
+  string type = 8 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The nature or genre of the resource (dc:type)."
+    }
+  ];
+  // The file format, physical medium, or dimensions of the resource
+  // (dc:format); typically a MIME type.
+  string format = 9 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The file format, physical medium, or dimensions of the resource (dc:format)."
+    }
+  ];
+  // An unambiguous reference to the resource within a given context
+  // (dc:identifier); typically a URI, DOI, or ISBN.
+  string identifier = 10 [
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD},
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 2048}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "An unambiguous reference to the resource within a given context (dc:identifier)."
+    }
+  ];
+  // A related resource from which the described resource is derived
+  // (dc:source).
+  string source = 11 [
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD},
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 2048}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A related resource from which the described resource is derived (dc:source)."
+    }
+  ];
+  // A language of the resource (dc:language); a BCP 47 tag such as "en" or
+  // "pt-BR".
+  optional string language = 12 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {
+        max_len: 35
+        pattern: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A language of the resource (dc:language); a BCP 47 language tag."
+    }
+  ];
+  // A related resource (dc:relation).
+  repeated string relation = 13 [
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD},
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {
+        max_items: 100
+        unique: true
+        items: {
+          string: {max_len: 2048}
+        }
+      }
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "A related resource (dc:relation)."
+    }
+  ];
+  // The spatial or temporal topic of the resource, spatial applicability, or
+  // jurisdiction (dc:coverage).
+  string coverage = 14 [
+    (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_TEXT},
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "The spatial or temporal topic of the resource, spatial applicability, or jurisdiction (dc:coverage)."
+    }
+  ];
+  // Information about rights held in and over the resource (dc:rights).
+  string rights = 15 [
+    (ai.pipestream.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_TEXT
+      stored: true
+    },
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 2000}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Information about rights held in and over the resource (dc:rights)."
+    }
+  ];
+  // Curated dcterms refinements of the elements above.
+  DcTerms terms = 16 [
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "Curated dcterms refinements (created/modified/issued, abstract, license, audience)."
+    }
+  ];
+}
