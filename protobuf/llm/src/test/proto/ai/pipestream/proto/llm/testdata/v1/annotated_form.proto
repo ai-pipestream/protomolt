@@ -11,19 +11,19 @@ import "ai/pipestream/proto/llm/v1/llm.proto";
 // A form carrying llm.v1 annotations at both scopes, for the reader tests.
 message AnnotatedForm {
   option (ai.pipestream.proto.llm.v1.message) = {
-    directive: "Fill this form from the source text alone."
+    instruction: "Fill this form from the source text alone."
     safeguards: "Do not use outside knowledge."
   };
 
   // The court that issued the opinion.
   string court = 1 [(ai.pipestream.proto.llm.v1.field) = {
-    directive: "Name the court exactly as it appears in the caption."
+    instruction: "Name the court exactly as it appears in the caption."
     safeguards: "Do not abbreviate."
   }];
 
   // The authority the opinion treats as controlling.
   string leading_authority = 2 [(ai.pipestream.proto.llm.v1.field) = {
-    directive: "Cite the controlling authority."
+    instruction: "Cite the controlling authority."
     volatile: true
   }];
 
@@ -32,7 +32,7 @@ message AnnotatedForm {
 
   // A field carrying several safeguards, proving order is preserved.
   repeated string citations = 4 [(ai.pipestream.proto.llm.v1.field) = {
-    directive: "List every authority the text cites."
+    instruction: "List every authority the text cites."
     safeguards: "Do not invent citations."
     safeguards: "Do not cite authority the text does not mention."
   }];

@@ -26,7 +26,7 @@ import java.util.Optional;
  * Renders the instruction prose of a {@link PromptPacket}. Reads every annotation
  * family a descriptor can carry — meta.v1 descriptions, validate.v1 constraints and CEL
  * through the neutral rule-source chain, quality.v1 scoring dimensions, llm.v1
- * directives and safeguards — and lays them out in reading order for the model.
+ * instructions and safeguards — and lays them out in reading order for the model.
  */
 final class InstructionRenderer {
 
@@ -41,8 +41,8 @@ final class InstructionRenderer {
         DescriptorMetadata.message(descriptor).map(MessageMeta::getDescription)
                 .filter(d -> !d.isEmpty()).ifPresent(d -> out.append(d).append(' '));
         DescriptorLlm.message(descriptor).ifPresent(m -> {
-            if (!m.getDirective().isEmpty()) {
-                out.append(m.getDirective()).append(' ');
+            if (!m.getInstruction().isEmpty()) {
+                out.append(m.getInstruction()).append(' ');
             }
         });
         out.append('\n');
@@ -107,8 +107,8 @@ final class InstructionRenderer {
             }
         });
         Optional<FieldLlm> llm = DescriptorLlm.field(field);
-        llm.map(FieldLlm::getDirective).filter(d -> !d.isEmpty())
-                .ifPresent(d -> out.append("   Directive: ").append(d).append('\n'));
+        llm.map(FieldLlm::getInstruction).filter(d -> !d.isEmpty())
+                .ifPresent(d -> out.append("   Instruction: ").append(d).append('\n'));
 
         List<String> requirements = new ArrayList<>();
         for (FieldConstraints constraints : collected) {

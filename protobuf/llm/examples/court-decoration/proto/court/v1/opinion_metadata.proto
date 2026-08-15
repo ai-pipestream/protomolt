@@ -29,7 +29,7 @@ message OpinionMetadata {
     description: "Cataloging metadata extracted from a court opinion."
   };
   option (ai.pipestream.proto.llm.v1.message) = {
-    directive: "Fill this form from the opinion text alone."
+    instruction: "Fill this form from the opinion text alone."
     safeguards: "Do not use outside legal knowledge."
   };
   option (ai.pipestream.proto.validate.v1.message) = {
@@ -51,7 +51,7 @@ message OpinionMetadata {
       description: "The issuing court, as it appears in the caption."
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Name the court exactly as it appears in the caption."
+      instruction: "Name the court exactly as it appears in the caption."
       safeguards: "Do not abbreviate."
     }
   ];
@@ -66,7 +66,7 @@ message OpinionMetadata {
       description: "The parties as named in the caption."
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Use the full caption, including appellant/appellee designations if printed."
+      instruction: "Use the full caption, including appellant/appellee designations if printed."
     }
   ];
 
@@ -83,7 +83,7 @@ message OpinionMetadata {
       description: "The docket number as printed."
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Copy the docket number character-for-character as printed."
+      instruction: "Copy the docket number character-for-character as printed."
       safeguards: "When no docket number is printed, leave this field out entirely; never write 'not specified', an example value, or an invented number."
     }
   ];
@@ -94,7 +94,7 @@ message OpinionMetadata {
       int32: {gte: 1600, lte: 2100}
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "The decision year, not the argument year, when both appear."
+      instruction: "The decision year, not the argument year, when both appear."
     }
   ];
 
@@ -104,7 +104,7 @@ message OpinionMetadata {
       enum: {defined_only: true}
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Take the disposition from the holding, not the procedural history."
+      instruction: "Take the disposition from the holding, not the procedural history."
       safeguards: "When the disposition is genuinely unclear, use POSTURE_UNSPECIFIED rather than guessing."
     }
   ];
@@ -115,7 +115,7 @@ message OpinionMetadata {
       repeated: {max_items: 15, unique: true}
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Last names only, in the order the opinion lists them."
+      instruction: "Last names only, in the order the opinion lists them."
     }
   ];
 
@@ -125,7 +125,7 @@ message OpinionMetadata {
       repeated: {min_items: 1, max_items: 10, unique: true}
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Broad subject labels a researcher would search under."
+      instruction: "Broad subject labels a researcher would search under."
     }
   ];
 
@@ -135,7 +135,7 @@ message OpinionMetadata {
       repeated: {max_items: 20, unique: true}
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Cases the opinion relies on as controlling authority, cited as printed on first use."
+      instruction: "Cases the opinion relies on as controlling authority, cited as printed on first use."
       volatile: true
     }
   ];
@@ -149,7 +149,7 @@ message OpinionMetadata {
       description: "One-paragraph summary of the holding."
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Holding first, present tense, under 120 words."
+      instruction: "Holding first, present tense, under 120 words."
       safeguards: "Do not editorialize; state what the court held, not whether it was right."
     }
   ];
@@ -160,7 +160,7 @@ message OpinionMetadata {
       description: "Set when the document cannot support a truthful fill."
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "Set true only when the text genuinely cannot support a truthful fill — e.g. it is not an opinion, is truncated mid-caption, or lacks the holding. A hard or old document is NOT incomplete; fill what it supports and omit what it does not."
+      instruction: "Set true only when the text genuinely cannot support a truthful fill — e.g. it is not an opinion, is truncated mid-caption, or lacks the holding. A hard or old document is NOT incomplete; fill what it supports and omit what it does not."
       safeguards: "Never set true to avoid difficult extraction; never invent data to avoid setting true."
     }
   ];
@@ -174,7 +174,7 @@ message OpinionMetadata {
       description: "Why the fill was declared incomplete."
     },
     (ai.pipestream.proto.llm.v1.field) = {
-      directive: "One or two sentences naming exactly what the text lacks."
+      instruction: "One or two sentences naming exactly what the text lacks."
     }
   ];
 }

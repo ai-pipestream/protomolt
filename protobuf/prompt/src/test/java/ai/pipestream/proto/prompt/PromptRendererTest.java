@@ -41,17 +41,17 @@ class PromptRendererTest {
 
         String instructions = packet.getInstructions();
         assertThat(instructions)
-                // task line + meta.v1 message description + llm.v1 message directive
+                // task line + meta.v1 message description + llm.v1 message instruction
                 .contains("You are filling the form \""
                         + "ai.pipestream.proto.prompt.testdata.v1.DecoratedOpinion\"")
                 .contains("Metadata extracted from a court opinion.")
                 .contains("Fill this form from the opinion text alone.")
                 // message-level CEL rendered with its human message
                 .contains("rule court.when.summary: a summary requires a court")
-                // field rendering: json name, meta description, llm directive, required
+                // field rendering: json name, meta description, llm instruction, required
                 .contains("\"court\"")
                 .contains("The issuing court, as it appears in the caption.")
-                .contains("Directive: Name the court exactly as it appears in the caption.")
+                .contains("Instruction: Name the court exactly as it appears in the caption.")
                 .contains("must be present and non-empty")
                 .contains("must be at most 200 characters")
                 // repeated constraints
