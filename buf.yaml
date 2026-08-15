@@ -42,6 +42,15 @@ modules:
     name: buf.build/ai-pipestream/inference-structured-testdata
   - path: parse/proto/src/main/proto
     name: buf.build/ai-pipestream/parse
+  # The canonical parser-fleet document model. Vendored byte-identical across
+  # the fleet repos (gRParse owns the reference copy today); local lint fixes
+  # would break byte-identity, so this module keeps the fleet's own bar until
+  # the registry serves it as THE published artifact.
+  - path: parse/document/src/main/proto
+    name: buf.build/ai-pipestream/document
+    lint:
+      ignore:
+        - parse/document/src/main/proto/ai/pipestream/document/v1/document.proto
   - path: acquire/confluence/src/main/proto
     name: buf.build/ai-pipestream/acquire-confluence
   - path: transform/projection/src/main/proto

@@ -332,6 +332,9 @@ project(':protomolt-intake-proto').projectDir = file('intake/proto')
 include 'protomolt-parse-proto'
 project(':protomolt-parse-proto').projectDir = file('parse/proto')
 
+include 'protomolt-parse-document'
+project(':protomolt-parse-document').projectDir = file('parse/document')
+
 // host/ — embedding the toolkit into servers and frameworks.
 
 include 'protomolt-server-common'

@@ -1,0 +1,19 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The parser-fleet document model: the canonical copy of the docling-core v2 parity document.proto (vendored byte-identical across the fleet), plus projections between it and the repo document'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    // The projection targets the repo document contract.
+    api project(':protomolt-repo-proto')
+}
+
+// Messages only: the fleet's parse services own the RPC surfaces.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}
