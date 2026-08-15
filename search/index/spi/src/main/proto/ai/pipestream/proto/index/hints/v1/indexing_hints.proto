@@ -137,7 +137,7 @@ enum BlockRole {
 }
 
 // Deterministic chunking configuration. Everything here participates in the
-// recipe digest: changing any value re-chunks a corpus, so two indexes agree
+// policy digest: changing any value re-chunks a corpus, so two indexes agree
 // on their chunk boundaries exactly when their digests agree.
 message ChunkingSpec {
   // Chunker implementation id, e.g. "sentence-packed".
@@ -159,7 +159,7 @@ message ChunkingSpec {
   string boundary = 7;
 }
 
-// Embedding configuration for derived vectors; participates in the recipe digest.
+// Embedding configuration for derived vectors; participates in the policy digest.
 message EmbeddingSpec {
   // Embedding model id; identifies the derivation pipeline, not a runtime
   // default.
@@ -172,11 +172,11 @@ message EmbeddingSpec {
   bool normalize = 4;
 }
 
-// An index recipe: derive chunks and vectors from the annotated source text
+// An index policy: derive chunks and vectors from the annotated source text
 // field at index time (chunk + embed on the server). Attach to a string field.
-// The recipe digest (spi ChunkRecipe.digest()) identifies the derivation
+// The policy digest (spi ChunkingPolicy.digest()) identifies the derivation
 // pipeline; index consumers pin it the way they pin a schema.
-message ChunkRecipe {
+message ChunkingPolicy {
   // Deterministic chunking configuration for splitting the source text.
   ChunkingSpec chunking = 1;
   // Embedding configuration for the vectors derived from each chunk.
@@ -249,7 +249,7 @@ message FieldIndexHint {
   // Parent/child (block-join) role for block engines; flat engines ignore it.
   BlockRole block_role = 20;
   // Server-side chunk-and-embed derivation from this field's text.
-  ChunkRecipe chunk_recipe = 21;
+  ChunkingPolicy chunking_policy = 21;
   // Applies to google.protobuf.Any fields: when false, payloads unpacked from this
   // field are indexed and rendered without running the AnyPayloadValidators
   // (the declared-rules gate stays off for this field only). Malformed Anys and

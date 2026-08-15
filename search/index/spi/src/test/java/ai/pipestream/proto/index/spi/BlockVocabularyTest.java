@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The block-join vocabulary: CHUNKS-role expansion in the mapping factory,
- * block_role / chunk_recipe translation from proto options, recipe digest
+ * block_role / chunking_policy translation from proto options, policy digest
  * identity, and the engine-id collision guard.
  */
 class BlockVocabularyTest {
@@ -135,10 +135,10 @@ class BlockVocabularyTest {
     }
 
     @Test
-    void chunkRecipeTranslatesFromProtoOptionsAndRequiresAStringField() throws Exception {
+    void chunkingPolicyTranslatesFromProtoOptionsAndRequiresAStringField() throws Exception {
         FieldIndexHint recipeHint = FieldIndexHint.newBuilder()
                 .setType(IndexFieldType.INDEX_FIELD_TYPE_TEXT)
-                .setChunkRecipe(ai.pipestream.proto.index.hints.ChunkRecipe.newBuilder()
+                .setChunkingPolicy(ai.pipestream.proto.index.hints.ChunkingPolicy.newBuilder()
                         .setChunking(ai.pipestream.proto.index.hints.ChunkingSpec.newBuilder()
                                 .setStrategy("sentence-packed").setStrategyVersion(1)
                                 .setTargetTokens(384).setOverlapTokens(64)
@@ -150,7 +150,7 @@ class BlockVocabularyTest {
                         .setStoreChunkText(true))
                 .build();
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
-                .setName("recipe.proto").setPackage("pm").setSyntax("proto3")
+                .setName("policy.proto").setPackage("pm").setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder().setName("Doc")
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("body").setNumber(1)
@@ -166,15 +166,15 @@ class BlockVocabularyTest {
                 .findMessageTypeByName("Doc");
 
         IndexMapping mapping = optionsFactory().create(doc);
-        ChunkRecipe recipe = mapping.find("body").orElseThrow().hint().chunkRecipe();
-        assertThat(recipe).isNotNull();
-        assertThat(recipe.chunking().strategy()).isEqualTo("sentence-packed");
-        assertThat(recipe.chunking().boundary()).isEqualTo("rules-v1");
-        assertThat(recipe.embedding().model()).isEqualTo("test-model-4d");
-        assertThat(recipe.embedding().similarity()).isEqualTo(VectorSimilarity.COSINE);
-        assertThat(recipe.storeChunkText()).isTrue();
+        ChunkingPolicy policy = mapping.find("body").orElseThrow().hint().chunkingPolicy();
+        assertThat(policy).isNotNull();
+        assertThat(policy.chunking().strategy()).isEqualTo("sentence-packed");
+        assertThat(policy.chunking().boundary()).isEqualTo("rules-v1");
+        assertThat(policy.embedding().model()).isEqualTo("test-model-4d");
+        assertThat(policy.embedding().similarity()).isEqualTo(VectorSimilarity.COSINE);
+        assertThat(policy.storeChunkText()).isTrue();
 
-        // The same recipe on a non-string field is a mapping error.
+        // The same policy on a non-string field is a mapping error.
         FieldDescriptorProto badField = FieldDescriptorProto.newBuilder()
                 .setName("count").setNumber(1)
                 .setType(FieldDescriptorProto.Type.TYPE_INT32)
@@ -194,27 +194,27 @@ class BlockVocabularyTest {
 
     @Test
     void recipeDigestIsStableAndSensitiveToEveryComponent() {
-        ChunkRecipe recipe = new ChunkRecipe(
-                new ChunkRecipe.ChunkingSpec("sentence-packed", 1, 384, 64, 32, 512, "rules-v1"),
-                new ChunkRecipe.EmbeddingSpec("test-model-4d", 4, VectorSimilarity.COSINE, true),
+        ChunkingPolicy policy = new ChunkingPolicy(
+                new ChunkingPolicy.ChunkingSpec("sentence-packed", 1, 384, 64, 32, 512, "rules-v1"),
+                new ChunkingPolicy.EmbeddingSpec("test-model-4d", 4, VectorSimilarity.COSINE, true),
                 "", true);
 
-        assertThat(recipe.digest())
-                .isEqualTo(recipe.digest())
+        assertThat(policy.digest())
+                .isEqualTo(policy.digest())
                 .hasSize(64);
 
-        ChunkRecipe bumpedChunker = new ChunkRecipe(
-                new ChunkRecipe.ChunkingSpec("sentence-packed", 2, 384, 64, 32, 512, "rules-v1"),
-                recipe.embedding(), "", true);
+        ChunkingPolicy bumpedChunker = new ChunkingPolicy(
+                new ChunkingPolicy.ChunkingSpec("sentence-packed", 2, 384, 64, 32, 512, "rules-v1"),
+                policy.embedding(), "", true);
         assertThat(bumpedChunker.digest())
                 .as("a chunker implementation bump must change the digest")
-                .isNotEqualTo(recipe.digest());
+                .isNotEqualTo(policy.digest());
 
-        ChunkRecipe otherModel = new ChunkRecipe(
-                recipe.chunking(),
-                new ChunkRecipe.EmbeddingSpec("other-model", 4, VectorSimilarity.COSINE, true),
+        ChunkingPolicy otherModel = new ChunkingPolicy(
+                policy.chunking(),
+                new ChunkingPolicy.EmbeddingSpec("other-model", 4, VectorSimilarity.COSINE, true),
                 "", true);
-        assertThat(otherModel.digest()).isNotEqualTo(recipe.digest());
+        assertThat(otherModel.digest()).isNotEqualTo(policy.digest());
     }
 
     @Test

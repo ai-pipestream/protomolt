@@ -32,6 +32,8 @@ dependencies {
     testImplementation project(':protomolt-index-lucene')
     testImplementation project(':protomolt-mapper-core')
     testImplementation project(':protomolt-embeddings')
+    testImplementation project(':protomolt-embeddings-model2vec')
+    testImplementation project(':protomolt-chunker')
     testImplementation project(':protomolt-protobuf-seo')
     // The court corpus fixture rides the samples jar's resources.
     testImplementation project(':samples')

@@ -82,8 +82,8 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
         if (hint.hasNullValue()) {
             builder.nullValue(hint.getNullValue());
         }
-        if (hint.hasChunkRecipe()) {
-            builder.chunkRecipe(toRecipe(hint.getChunkRecipe()));
+        if (hint.hasChunkingPolicy()) {
+            builder.chunkingPolicy(toPolicy(hint.getChunkingPolicy()));
         }
         if (hint.hasHnsw()) {
             builder.hnswParams(new ResolvedFieldHint.HnswParams(
@@ -106,11 +106,11 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
         };
     }
 
-    private static ChunkRecipe toRecipe(ai.pipestream.proto.index.hints.ChunkRecipe recipe) {
-        var chunking = recipe.getChunking();
-        var embedding = recipe.getEmbedding();
-        return new ChunkRecipe(
-                new ChunkRecipe.ChunkingSpec(
+    private static ChunkingPolicy toPolicy(ai.pipestream.proto.index.hints.ChunkingPolicy policy) {
+        var chunking = policy.getChunking();
+        var embedding = policy.getEmbedding();
+        return new ChunkingPolicy(
+                new ChunkingPolicy.ChunkingSpec(
                         chunking.getStrategy(),
                         chunking.getStrategyVersion(),
                         chunking.getTargetTokens(),
@@ -118,13 +118,13 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
                         chunking.getMinTokens(),
                         chunking.getMaxTokens(),
                         chunking.getBoundary()),
-                new ChunkRecipe.EmbeddingSpec(
+                new ChunkingPolicy.EmbeddingSpec(
                         embedding.getModel(),
                         embedding.getDims(),
                         toSimilarity(embedding.getSimilarity()),
                         embedding.getNormalize()),
-                recipe.getVectorField(),
-                recipe.getStoreChunkText());
+                policy.getVectorField(),
+                policy.getStoreChunkText());
     }
 
     private static VectorSimilarity toSimilarity(ai.pipestream.proto.index.hints.VectorSimilarity similarity) {

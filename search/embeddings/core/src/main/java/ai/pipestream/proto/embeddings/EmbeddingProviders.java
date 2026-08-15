@@ -1,7 +1,9 @@
 package ai.pipestream.proto.embeddings;
 
+import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.ServiceLoader;
 
 /**
@@ -33,6 +35,33 @@ public final class EmbeddingProviders {
         if (provider == null) {
             throw new IllegalArgumentException("Unknown embedding provider '" + providerId
                     + "'. Available providers: " + String.join(", ", providers.keySet()));
+        }
+        return provider;
+    }
+
+    /**
+     * The provider a chunking policy's embedding spec names, validated against the
+     * spec before any text is embedded: the provider registered under the spec's
+     * model id must produce vectors of the spec's dimension. This is the lane's
+     * provider resolution; a policy can never silently derive with the wrong model
+     * or the wrong vector space.
+     *
+     * <p>Resolution may load the model (a lazily configured provider learns its
+     * dimension by loading), so an unconfigured provider fails here, naming its
+     * configuration knobs, rather than partway through a corpus.
+     *
+     * @throws IllegalArgumentException when no provider is registered under the
+     *         spec's model id
+     * @throws IllegalStateException when the provider's dimension is not the
+     *         spec's dims
+     */
+    public static EmbeddingProvider forSpec(ChunkingPolicy.EmbeddingSpec spec) {
+        Objects.requireNonNull(spec, "spec");
+        EmbeddingProvider provider = byId(spec.model());
+        if (provider.dimension() != spec.dims()) {
+            throw new IllegalStateException("Embedding provider '" + spec.model()
+                    + "' produces " + provider.dimension()
+                    + "-dimensional vectors, but the policy pins dims=" + spec.dims());
         }
         return provider;
     }
