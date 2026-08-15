@@ -32,7 +32,7 @@ spring-boot = "4.0.7"
 vertx = "5.1.6"
 netty = "4.2.17.Final"
 # Micronaut 4.x is the JDK 21-compatible line (5.x requires JVM 25+)
-micronaut = "4.9.4"
+micronaut = "4.10.26"
 protobuf-gradle = "0.10.0"
 wire = "5.5.1"
 jgit = "7.7.1.202607240634-r"
@@ -46,7 +46,7 @@ graalvm-buildtools = "1.1.8"
 # Persistence stack (framework-free): Hibernate ORM + HikariCP + Flyway.
 hibernate = "7.4.5.Final"
 hikari = "7.1.0"
-flyway = "13.0.0"
+flyway = "13.3.0"
 postgresql = "42.7.13"
 jedis = "7.5.3"
 
