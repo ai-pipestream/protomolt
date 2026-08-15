@@ -23,6 +23,7 @@ import ai.pipestream.proto.embeddings.model2vec.Model2VecEmbeddingProvider;
 import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.schema.confluent.ConfluentSchemaPublisher;
+import ai.pipestream.proto.search.console.SearchConsoleModule;
 import ai.pipestream.proto.search.door.RepoDocumentMapping;
 import ai.pipestream.proto.search.door.SearchDoorModule;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -63,6 +64,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private final IntakeModule intake;
     private final PlaygroundModule playground;
     private final SearchDoorModule search;
+    private final SearchConsoleModule searchConsole;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -106,6 +108,9 @@ public final class DocumentPlatform implements AutoCloseable {
                 config.searchIndexDir(),
                 Map.of(RepoDocumentMapping.SUBJECT,
                         RepoDocumentMapping.served(defaultChunkingPolicy()))));
+        this.searchConsole = new SearchConsoleModule(new SearchConsoleModule.Config(
+                config.searchConsolePort(),
+                () -> "http://127.0.0.1:" + registry.httpPort() + "/protomolt/actions"));
 
         Composer composer = Composer.emptyBuilder()
                 .module(repo)
@@ -116,13 +121,14 @@ public final class DocumentPlatform implements AutoCloseable {
                 .module(intake)
                 .module(playground)
                 .module(search)
+                .module(searchConsole)
                 .environment(Map.of())
                 .remoteOpener(target -> NettyChannelBuilder.forTarget(target).usePlaintext().build())
                 .build();
         this.node = composer.boot(List.of(
                 RepoServiceModule.ROLE, TextParserModule.ROLE, RegistryModule.ROLE,
                 ParseModule.ROLE, JobsModule.ROLE, IntakeModule.ROLE, PlaygroundModule.ROLE,
-                SearchDoorModule.ROLE));
+                SearchDoorModule.ROLE, SearchConsoleModule.ROLE));
         try {
             publishDocumentModel();
         } catch (RuntimeException | IOException e) {
@@ -132,9 +138,10 @@ public final class DocumentPlatform implements AutoCloseable {
 
         LOG.info(
                 "document platform up: repo gRPC {}, intake gRPC {}, parse gRPC {},"
-                        + " search gRPC {}, registry http {}, playground http {}",
+                        + " search gRPC {}, registry http {}, playground http {},"
+                        + " search console http {}",
                 repo.grpcPort(), intake.grpcPort(), parse.grpcPort(), search.grpcPort(),
-                registry.httpPort(), playground.port());
+                registry.httpPort(), playground.port(), searchConsole.port());
     }
 
     /**
@@ -184,6 +191,11 @@ public final class DocumentPlatform implements AutoCloseable {
     /** The bound search door gRPC port. */
     public int searchPort() {
         return search.grpcPort();
+    }
+
+    /** The bound search console HTTP port. */
+    public int searchConsolePort() {
+        return searchConsole.port();
     }
 
     /** The in-process name repo-service answers on inside this JVM. */

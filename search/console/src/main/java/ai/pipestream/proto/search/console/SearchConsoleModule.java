@@ -1,0 +1,84 @@
+package ai.pipestream.proto.search.console;
+
+import ai.pipestream.proto.composer.NodeContext;
+import ai.pipestream.proto.composer.ServiceMount;
+import ai.pipestream.proto.composer.ServiceModule;
+
+import java.util.Set;
+import java.util.function.Supplier;
+
+/**
+ * The search console as a mountable role. The door target comes from the node's channels
+ * (in-process when the search role is co-mounted); the actions route is plain configuration
+ * because the registry serves HTTP, not gRPC — pass blank to mount the console without the
+ * operations panel.
+ */
+public final class SearchConsoleModule implements ServiceModule {
+
+    /** The role name. */
+    public static final String ROLE = "search-console";
+
+    /**
+     * Module configuration.
+     *
+     * @param port the HTTP port (0 for ephemeral)
+     * @param actionsBaseUrl supplies the registry actions route the operations panel proxies
+     *        to, e.g. {@code http://127.0.0.1:8081/protomolt/actions} — a supplier because a
+     *        co-mounted registry's port is only known once it starts; a blank answer disables
+     *        the panel
+     */
+    public record Config(int port, Supplier<String> actionsBaseUrl) {
+    }
+
+    private final Config config;
+    private SearchConsoleServer server;
+
+    /**
+     * Creates the module.
+     *
+     * @param config the module configuration
+     */
+    public SearchConsoleModule(Config config) {
+        if (config == null) {
+            throw new IllegalArgumentException("config must not be null");
+        }
+        this.config = config;
+    }
+
+    @Override
+    public String role() {
+        return ROLE;
+    }
+
+    @Override
+    public Set<String> requires() {
+        return Set.of("search");
+    }
+
+    @Override
+    public ServiceMount wire(NodeContext context) throws Exception {
+        server = new SearchConsoleServer(
+                config.port(),
+                context.channels().targetOf("search"),
+                config.actionsBaseUrl());
+        return new ServiceMount() {
+            @Override
+            public void start() {
+                server.start();
+            }
+
+            @Override
+            public void close() {
+                server.close();
+            }
+        };
+    }
+
+    /** The bound HTTP port; only valid after start. */
+    public int port() {
+        if (server == null) {
+            throw new IllegalStateException("search console module has not wired");
+        }
+        return server.port();
+    }
+}

@@ -121,7 +121,8 @@ class DocumentPlatformSmokeIT {
                         60L,
                         1,
                         0,
-                        work.resolve("search-index")),
+                        work.resolve("search-index"),
+                        0),
                 new InMemoryApiKeyIdentityResolver()
                         .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
 
@@ -328,6 +329,48 @@ class DocumentPlatformSmokeIT {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(page.statusCode()).isEqualTo(200);
         assertThat(page.body()).contains("Parser Playground");
+    }
+
+    @Test
+    @Order(7)
+    void theSearchConsoleServesAndBridgesTheDoor() throws Exception {
+        String base = "http://127.0.0.1:" + platform.searchConsolePort();
+        HttpResponse<String> page = HTTP.send(
+                HttpRequest.newBuilder(URI.create(base + "/")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.body()).contains("Search Console");
+
+        HttpResponse<String> subjects = HTTP.send(
+                HttpRequest.newBuilder(URI.create(base + "/subjects")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(subjects.statusCode()).isEqualTo(200);
+        JsonNode surface = MAPPER.readTree(subjects.body());
+        assertThat(surface.path("subjects").get(0).path("subject").asText())
+                .isEqualTo(RepoDocumentMapping.SUBJECT);
+
+        HttpResponse<String> hits = HTTP.send(
+                HttpRequest.newBuilder(URI.create(base + "/search"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(
+                                "{\"mappingSubject\":\"" + RepoDocumentMapping.SUBJECT
+                                        + "\",\"query\":\"container works\",\"k\":5,"
+                                        + "\"lane\":\"SEARCH_LANE_LEXICAL\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(hits.statusCode()).isEqualTo(200);
+        assertThat(MAPPER.readTree(hits.body()).path("hits").get(0).path("docId").asText())
+                .isEqualTo(receipt.getDocId());
+
+        // The operations panel rides the actions proxy onto the registry route.
+        HttpResponse<String> jobs = HTTP.send(
+                HttpRequest.newBuilder(URI.create(base + "/actions/list-jobs"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(jobs.statusCode()).isEqualTo(200);
+        assertThat(MAPPER.readTree(jobs.body()).path("jobs").isArray()).isTrue();
     }
 
     static JsonNode postAction(String name, ObjectNode input) throws Exception {

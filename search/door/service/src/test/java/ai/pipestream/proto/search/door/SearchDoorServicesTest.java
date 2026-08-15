@@ -11,6 +11,8 @@ import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
 import ai.pipestream.proto.search.v1.IndexDocumentRequest;
 import ai.pipestream.proto.search.v1.IndexDocumentResponse;
+import ai.pipestream.proto.search.v1.ListSubjectsRequest;
+import ai.pipestream.proto.search.v1.SubjectInfo;
 import ai.pipestream.proto.search.v1.SearchHit;
 import ai.pipestream.proto.search.v1.SearchIndexServiceGrpc;
 import ai.pipestream.proto.search.v1.SearchLane;
@@ -228,5 +230,28 @@ class SearchDoorServicesTest {
         assertThatThrownBy(() -> index("doc-missing"))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+    }
+
+    @Test
+    void listSubjectsDescribesTheServedSurface() {
+        List<SubjectInfo> subjects = searchStub
+                .listSubjects(ListSubjectsRequest.getDefaultInstance())
+                .getSubjectsList();
+        assertThat(subjects).hasSize(2);
+
+        SubjectInfo withLane = subjects.stream()
+                .filter(s -> s.getSubject().equals(RepoDocumentMapping.SUBJECT))
+                .findFirst().orElseThrow();
+        assertThat(withLane.getDocIdField()).isEqualTo("doc_id");
+        assertThat(withLane.getTextFieldsList())
+                .contains("search_metadata_title", RepoDocumentMapping.BODY_FIELD);
+        assertThat(withLane.getHasVectorLane()).isTrue();
+        assertThat(withLane.getPolicyDigest()).isEqualTo(policy().digest());
+
+        SubjectInfo lexicalOnly = subjects.stream()
+                .filter(s -> s.getSubject().equals("repo-document-lexical"))
+                .findFirst().orElseThrow();
+        assertThat(lexicalOnly.getHasVectorLane()).isFalse();
+        assertThat(lexicalOnly.getPolicyDigest()).isEmpty();
     }
 }

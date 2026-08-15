@@ -24,7 +24,7 @@ ENV HOME=/home/protomolt
 WORKDIR /home/protomolt
 
 # repo gRPC; intake gRPC; parse gRPC; registry HTTP; playground HTTP.
-EXPOSE 9090 9092 9093 8081 8095
+EXPOSE 9090 9092 9093 8081 8095 8096 9094
 
 # The registry HTTP port answers /health once the whole platform is up; probe
 # it with bash's /dev/tcp so the image needs no curl/wget layer.

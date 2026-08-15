@@ -44,7 +44,8 @@ public record DocumentPlatformConfig(
         long parseDeadlineSeconds,
         int workerCount,
         int searchGrpcPort,
-        Path searchIndexDir) {
+        Path searchIndexDir,
+        int searchConsolePort) {
 
     /** Env var for the jobs database JDBC URL (required). */
     public static final String ENV_JOBS_JDBC_URL = "DOCUMENT_PLATFORM_JOBS_JDBC_URL";
@@ -110,6 +111,12 @@ public record DocumentPlatformConfig(
     /** The default search index directory. */
     public static final String DEFAULT_SEARCH_INDEX_DIR = "/data/search-index";
 
+    /** Env var for the search console HTTP port. */
+    public static final String ENV_SEARCH_CONSOLE_PORT = "DOCUMENT_PLATFORM_SEARCH_CONSOLE_PORT";
+
+    /** The default search console HTTP port. */
+    public static final int DEFAULT_SEARCH_CONSOLE_PORT = 8096;
+
     public DocumentPlatformConfig {
         if (repo == null) {
             throw new IllegalArgumentException("repo config is required");
@@ -168,7 +175,8 @@ public record DocumentPlatformConfig(
                 60L,
                 intEnv(ENV_WORKER_COUNT, 2),
                 intEnv(ENV_SEARCH_GRPC_PORT, DEFAULT_SEARCH_GRPC_PORT),
-                Path.of(env(ENV_SEARCH_INDEX_DIR, DEFAULT_SEARCH_INDEX_DIR)));
+                Path.of(env(ENV_SEARCH_INDEX_DIR, DEFAULT_SEARCH_INDEX_DIR)),
+                intEnv(ENV_SEARCH_CONSOLE_PORT, DEFAULT_SEARCH_CONSOLE_PORT));
     }
 
     private static String env(String name, String fallback) {
