@@ -1,0 +1,25 @@
+description = 'The intake service: authenticated ingest lanes (unary, streaming) in front of repo-service, with API-key scope resolution behind a key-store SPI — embeddable in-JVM or standalone over Netty, no framework'
+
+dependencies {
+    api project(':protomolt-intake-proto')
+
+    // Intake rides the repo wire contract only — the DocumentServiceGrpc
+    // blocking stub, never repo container/service internals.
+    implementation project(':protomolt-repo-proto')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    // The full-stack IT boots a real repo-service (Postgres + S3) behind the
+    // intake door; the contract tests use an in-package fake DocumentService.
+    testImplementation project(':protomolt-repo-service')
+    // LedgerConfig for the IT's RepoServiceConfig — config surface only.
+    testImplementation project(':protomolt-repo-container')
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}

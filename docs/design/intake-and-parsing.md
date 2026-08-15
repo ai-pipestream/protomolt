@@ -1,8 +1,8 @@
 # Intake and parsing
 
 Intake and parsing define the boundary between external content and document
-pipelines. The contracts live in `intake/proto` and `parse/proto`. Runtime
-service implementations are planned separately.
+pipelines. The contracts live in `intake/proto` and `parse/proto`. The intake
+runtime lives in `intake/service`; the parsing runtime is planned separately.
 
 ## Intake service
 
@@ -14,16 +14,25 @@ instead of accepting another copy of the original payload.
 The contract supports three lanes:
 
 - unary ingest for small or already-typed documents;
-- client-streaming ingest for large payloads; and
-- by-reference ingest for content already stored behind an approved claim
-  check.
+- client-streaming ingest for payloads whose bytes should not fit one
+  message; and
+- an HTTP POST raw-binary route mirroring repo-service's upload route with
+  `x-api-key` replacing the raw account headers (not yet implemented).
 
-All lanes return the same receipt fields: document ID, node ID, account ID,
-graph ID, manifest checksum, and deduplication result.
+Every lane answers the same receipt vocabulary: document ID, node ID, the
+canonical `NodeAddress`, drive, payload size, the payload's SHA-256, and the
+deduplication result.
 
-API keys resolve to an account, allowed drives, payload limits, and optional
-content-type restrictions. The request cannot widen those host-owned limits.
-Only repository service accesses object storage.
+API keys resolve to an `IntakeScope`: the owning account plus optional
+datasource, drive, and content-type restrictions and a payload cap. The
+request cannot widen those host-owned limits — targeting outside the scope is
+`PERMISSION_DENIED`, an unknown key is `UNAUTHENTICATED`. Resolution runs
+through the `ApiKeyIdentityResolver` key-store SPI
+(`intake/service`): the default production store is an external IdP treating
+API keys as client credentials (rotation-with-grace falls out of several keys
+resolving to one scope), with in-memory and env-seeded stores for tests,
+demos, and single-tenant deployments. Only repository service accesses object
+storage.
 
 ## Parsing coordinator
 
@@ -108,8 +117,6 @@ exists, a coordinator must serialize parser-result writes per document.
 
 ## Open runtime choices
 
-- Whether API-key identity resolution runs through an in-process
-  `IdentityResolver` or an account-service RPC.
 - Whether event-driven parsing is enabled by default.
 - Whether metadata arbitration needs per-field policies beyond parser
   priority.

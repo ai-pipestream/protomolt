@@ -56,6 +56,10 @@ enum DocIdDerivationMethod {
   DOC_ID_DERIVATION_METHOD_SOURCE_URI = 3;
   // Derived from a source filesystem path.
   DOC_ID_DERIVATION_METHOD_SOURCE_PATH = 4;
+  // Derived (name-based UUID) from the payload's SHA-256 — the raw ingest
+  // lanes' idempotent scheme when no source identity exists; source_value
+  // carries the hex digest.
+  DOC_ID_DERIVATION_METHOD_CONTENT_HASH = 5;
 }
 
 // Records the derivation method and input used to create a doc_id.
