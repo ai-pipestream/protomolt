@@ -6,6 +6,10 @@ description = 'The parsing coordinator contract: CEL routing rules, dry-run and 
 
 dependencies {
     api project(':protomolt-repo-proto')
+    // The plugin contract dogfoods the house standards: validate.v1 rules
+    // and meta.v1 descriptions on the wire messages.
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
     api libs.protobuf.java
     api libs.protobuf.java.util
     api libs.grpc.api

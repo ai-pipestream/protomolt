@@ -74,6 +74,25 @@ parser won each field.
 Priority order is the initial arbitration policy. A future policy may define
 per-field precedence or CEL selectors.
 
+## Parser plugin contract
+
+`parse/proto`'s `plugin/v1` package defines `ParserPluginService`, the
+contract every parser service implements — the formalization of the idiom
+the parser fleet converged on:
+
+- `GetParserInfo` returns the parser's identity (`parser_name` is THE
+  identity: routing rules match it, `parser_results` keys on it, service
+  profiles register under it), version, capabilities, and limits;
+- `Parse` takes an options-first chunked request stream and returns a typed
+  event stream: progress, per-page content, page preview images, document
+  claims for the metadata fold, and the final `ParserOutput` emitted exactly
+  once before the stream closes.
+
+Streaming honesty is contractual: events fire when the underlying work
+completes, never faked from a finished result. A parse that produces nothing
+fails the stream with a gRPC status (stored as a FAILED result); a degraded
+parse reports its losses through `ParserOutput.warnings` (stored PARTIAL).
+
 ## Trigger model
 
 The contract supports event-driven and on-demand execution. An event-driven

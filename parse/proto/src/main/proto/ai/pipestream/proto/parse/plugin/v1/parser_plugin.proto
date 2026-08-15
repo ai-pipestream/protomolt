@@ -1,0 +1,297 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.parse.plugin.v1;
+
+import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/pipestream/proto/repo/v1/document.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.parse.plugin.v1";
+
+// ============================================================================
+// PARSER PLUGIN — the contract every parser service implements.
+//
+// This formalizes the idiom the parser fleet converged on independently:
+// an options-first chunked request stream in, a typed event stream out with
+// the full parsed document emitted exactly once before the stream closes,
+// and a GetParserInfo identity/capability surface. A parser that implements
+// this service is discoverable and invokable by the parsing coordinator with
+// zero bespoke client code.
+//
+// Streaming honesty: events are emitted when the underlying work completes,
+// never faked from a finished result. A parser that cannot stream pages
+// simply advertises emits_pages=false and sends progress + the final
+// document. Page and preview events exist so front ends can materialize a
+// document progressively while the parse is still running.
+//
+// Failure model: a parse that produces nothing terminates the stream with a
+// gRPC status error. The coordinator records that as a FAILED ParserResult —
+// a failed parse is stored, never silently absent. A parse that degrades
+// (some pages unreadable, one internal collector down) still emits its final
+// document and reports the loss through ParserOutput.warnings; the
+// coordinator stores it as PARTIAL when warnings are present.
+//
+// Identity: GetParserInfoResponse.parser_name is THE parser identity — the
+// routing rules' parser_name, the coordinator's parser_results map key, and
+// the service-profile registration name are all this string.
+// ============================================================================
+
+// The parser's identity, capabilities, and limits.
+service ParserPluginService {
+  // Identity, capabilities, and limits. Cheap and side-effect free; the
+  // coordinator calls it at registration and caches the answer.
+  rpc GetParserInfo(GetParserInfoRequest) returns (GetParserInfoResponse);
+
+  // Parse one document: one options frame, then data frames; typed events
+  // out until the final document has been emitted and the stream closes.
+  rpc Parse(stream ParseRequest) returns (stream ParseResponse);
+}
+
+// Empty by design; identity needs no parameters.
+message GetParserInfoRequest {}
+
+// Server identity, capabilities, and limits.
+message GetParserInfoResponse {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "A parser's identity, capabilities, and limits; cached by the coordinator at registration."
+    owner: "protomolt"
+    labels: {key: "component", value: "parse"}
+  };
+
+  // The parser identity: routing rules match it, parser_results key on it,
+  // service profiles register under it.
+  string parser_name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 100}
+    },
+    (ai.pipestream.proto.meta.v1.field) = {
+      description: "THE parser identity across routing, results, and registration."
+    }
+  ];
+
+  // Version of the parser build, for reparse and migration auditability.
+  string parser_version = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {max_len: 100}
+  }];
+
+  // Wire API version of this contract; "v1".
+  string api_version = 3;
+
+  // MIME types this parser accepts. Advisory for operators writing routing
+  // rules; the rules, not this list, decide routing.
+  repeated string supported_mime_types = 4;
+
+  // Filename extensions (lowercase, no dot) this parser accepts. Advisory,
+  // like supported_mime_types.
+  repeated string supported_extensions = 5;
+
+  // Per-document byte cap; input above it is RESOURCE_EXHAUSTED.
+  uint64 max_document_bytes = 6;
+
+  // Documents parsed concurrently before further parses queue.
+  uint32 max_concurrent_parses = 7;
+
+  // Whether the parser emits ParsedPage events as pages complete.
+  bool emits_pages = 8;
+
+  // Whether the parser can emit PagePreview images.
+  bool emits_previews = 9;
+
+  // Whether the parser emits DocumentClaims for the search-metadata fold.
+  bool emits_claims = 10;
+
+  // JSON Schema describing the parser_config this parser accepts; empty
+  // when the parser takes no configuration.
+  google.protobuf.Struct config_schema = 11;
+}
+
+// Per-parse options: the first frame of every Parse call.
+message ParseOptions {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Per-parse targeting, configuration, and feature selection; the mandatory first frame."
+    owner: "protomolt"
+    labels: {key: "component", value: "parse"}
+  };
+
+  // Caller-chosen correlation id, echoed on every event. May be empty for
+  // ad-hoc calls; the coordinator passes the repo doc_id.
+  string document_id = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    string: {max_len: 200}
+  }];
+
+  // Advisory source filename. Recorded, never used for format detection.
+  string filename = 2;
+
+  // Content type as the coordinator routed it (sniffed unless the routing
+  // context says otherwise). Advisory: parsers detect from bytes.
+  string content_type = 3;
+
+  // Parser-specific configuration (the routing rule's parser_config,
+  // verbatim). The coordinator fingerprints it; a changed config means a
+  // changed fingerprint means the stored result is stale.
+  google.protobuf.Struct config = 4;
+
+  // Ask for ParsedPage events (ignored when the parser does not emit pages).
+  bool emit_pages = 5;
+
+  // Ask for PagePreview images (ignored when the parser cannot render them).
+  bool emit_previews = 6;
+
+  // Preview rendering parameters; meaningful only with emit_previews.
+  PreviewSpec preview = 7;
+}
+
+// Preview rendering parameters.
+message PreviewSpec {
+  // Image MIME type: image/png, image/jpeg, image/webp. Empty means the
+  // parser's default.
+  string mime_type = 1;
+  // Render resolution in dots per inch; 0 means the parser's default.
+  uint32 dpi = 2;
+  // Cap on the longest image edge in pixels; 0 means uncapped.
+  uint32 max_edge_pixels = 3;
+}
+
+// One client-to-server frame of a Parse call.
+//
+// Frame discipline: the FIRST frame MUST carry options; every subsequent
+// frame MUST carry data, concatenated in stream order. Violations are
+// INVALID_ARGUMENT.
+message ParseRequest {
+  // Which kind of frame this is; see the frame discipline above.
+  oneof frame {
+    // First frame only.
+    ParseOptions options = 1;
+    // All later frames: the document bytes.
+    bytes data = 2;
+  }
+}
+
+// One server-to-client event of a Parse call (the parse event envelope).
+message ParseResponse {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "One typed event of a running parse; sequence-numbered, document emitted exactly once."
+    owner: "protomolt"
+    labels: {key: "component", value: "parse"}
+  };
+
+  // Echo of ParseOptions.document_id.
+  string document_id = 1;
+
+  // Monotonic per-stream sequence. Receivers reconstruct order from this,
+  // not from arrival time.
+  uint64 sequence_number = 2;
+
+  // Exactly one payload per envelope.
+  oneof event {
+    // Phase and progress updates; safe to drop, purely informational.
+    ParseProgress progress = 10;
+    // One completed page's typed content, released as soon as it exists.
+    ParsedPage page = 11;
+    // One page's rendered preview image.
+    PagePreview preview = 12;
+    // Document-level claims for the coordinator's search-metadata fold.
+    DocumentClaims claims = 13;
+    // The final parsed document. Emitted EXACTLY ONCE, after which the
+    // stream completes.
+    ParserOutput document = 14;
+  }
+}
+
+// Phase and progress of a running parse.
+message ParseProgress {
+  // Coarse lifecycle phase.
+  enum Phase {
+    // Unset.
+    PHASE_UNSPECIFIED = 0;
+    // Accepted, waiting for capacity.
+    PHASE_QUEUED = 1;
+    // Work has begun.
+    PHASE_STARTED = 2;
+    // Content is being parsed.
+    PHASE_PROCESSING = 3;
+    // Output is being assembled.
+    PHASE_EXPORTING = 4;
+  }
+
+  // The current phase.
+  Phase phase = 1;
+  // Human-readable progress note; never required for correctness.
+  string message = 2;
+  // Completion fraction 0.0-1.0 when known; 0 when unknown.
+  float progress = 3;
+  // Pages finished so far, when the notion applies.
+  uint32 pages_completed = 4;
+  // Total pages once discovered; 0 until known.
+  uint32 total_pages = 5;
+}
+
+// One completed page's content.
+message ParsedPage {
+  // One-based page number.
+  uint32 page_number = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    uint32: {gte: 1}
+  }];
+  // Total pages once discovered; 0 until known.
+  uint32 total_pages = 2;
+  // The page's typed content in the parser's native model (e.g. a docling
+  // page fragment). Consumers that only want text use `text`.
+  google.protobuf.Any content = 3;
+  // The page's plain text, for consumers that do not speak the native model.
+  string text = 4;
+}
+
+// One page's rendered preview image.
+message PagePreview {
+  // One-based page number the image renders.
+  uint32 page_number = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    uint32: {gte: 1}
+  }];
+  // Image MIME type actually rendered.
+  string mime_type = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {max_len: 100}
+  }];
+  // The image bytes.
+  bytes image = 3;
+  // Image width in pixels.
+  uint32 width = 4;
+  // Image height in pixels.
+  uint32 height = 5;
+  // Resolution the page was rendered at, when meaningful.
+  uint32 dpi = 6;
+}
+
+// Document-level claims (title, author, language, page_count, ...) offered
+// to the coordinator's search-metadata fold. A parser may send several as
+// understanding improves; later claims replace earlier ones per key. The
+// coordinator arbitrates across parsers; claims never overwrite stored
+// metadata directly.
+message DocumentClaims {
+  // The claims, keyed by SearchMetadata field name.
+  google.protobuf.Struct claims = 1;
+}
+
+// The final parsed document: what the coordinator stores.
+message ParserOutput {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "The parse's final product: the ParserDocument the coordinator persists, plus degradation warnings."
+    owner: "protomolt"
+    labels: {key: "component", value: "parse"}
+  };
+
+  // The parser-native document plus extracted doc-level fields — stored
+  // verbatim as ParserResult.document under the parser's name.
+  ai.pipestream.proto.repo.v1.ParserDocument document = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+  }];
+
+  // Degradation warnings, verbatim. Non-empty warnings make the stored
+  // result PARTIAL instead of OK.
+  repeated string warnings = 2;
+}
