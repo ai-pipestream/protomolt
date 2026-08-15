@@ -65,6 +65,8 @@ say "health-gated mesh publisher"
 PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/protomolt-pycache" \
   python3 -m py_compile ../../scripts/nano1-mesh-publisher.py \
   || fail "mesh publisher must compile"
+PYTHONDONTWRITEBYTECODE=1 python3 ../../scripts/test_nano1_mesh_publisher.py \
+  || fail "mesh publisher contract test must pass"
 grep -q 'probe_tei' ../../scripts/nano1-mesh-publisher.py \
   || fail "mesh publisher must gate the TEI lease"
 grep -q 'probe_djl' ../../scripts/nano1-mesh-publisher.py \
