@@ -15,7 +15,7 @@ import java.util.Set;
  * Descriptor-grounded mapping suggestions: given named sources and a target type, propose
  * candidate {@code target = source.path} rules an author (human or agent) can review, edit,
  * and adopt. Every emitted candidate has already passed {@link RuleChecker}, the same static
- * gate chains are verified with — a suggestion is never a rule the runtime would reject, and
+ * gate workflows are verified with — a suggestion is never a rule the runtime would reject, and
  * nothing here executes or bypasses validation.
  *
  * <p>Candidates are found by name: a target field matches a source field whose normalized
@@ -66,7 +66,7 @@ public final class MappingSuggester {
                 .thenComparingInt(candidate -> rank(candidate.basis()))
                 .thenComparing(Candidate::sourcePath));
 
-        // The checker speaks last: nothing leaves here that the chain verifier would reject.
+        // The checker speaks last: nothing leaves here that the workflow verifier would reject.
         RuleChecker checker = new RuleChecker();
         List<String> rules = new ArrayList<>(
                 candidates.stream().map(Candidate::rule).toList());

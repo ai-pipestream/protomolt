@@ -132,7 +132,7 @@ public final class DelegationWorker implements AutoCloseable {
     public TaskMessage sendMessage(String taskId,
                                    ai.pipestream.proto.delegation.v1.TaskMessageKind kind,
                                    String text, String replyTo,
-                                   java.util.List<ai.pipestream.proto.grpc.recipe.v1.ArtifactReference> artifacts) {
+                                   java.util.List<ai.pipestream.proto.grpc.workflow.v1.ArtifactReference> artifacts) {
         Objects.requireNonNull(taskId, "taskId");
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(text, "text");

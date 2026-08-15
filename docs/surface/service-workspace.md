@@ -155,5 +155,5 @@ them, so a process failure cannot create a profile with a missing artifact. A
 failure between those writes can leave an unreferenced artifact. Registry
 maintenance may remove unreferenced artifacts later.
 
-See the [gRPC recipe workbench plan](../transform/recipes.md) for the
-recipe, run-evidence, structured-inference, and standalone-application phases.
+See the [gRPC workflow workbench plan](../transform/workflows.md) for the
+workflow, run-evidence, structured-inference, and standalone-application phases.

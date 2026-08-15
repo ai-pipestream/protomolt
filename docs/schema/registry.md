@@ -74,8 +74,8 @@ configured native path prefix (`/protomolt` by default):
   message name) is required because a subject's descriptor set can hold
   many messages, and `version` pins the schema version, defaulting to
   latest.
-- `GET /protomolt/chains` and `GET/PUT /protomolt/chains/{name}`: named
-  chain definitions, versioned by Git commits, with `check-chain` as the
+- `GET /protomolt/workflows` and `GET/PUT /protomolt/workflows/{name}`: named
+  workflow definitions, versioned by Git commits, with `check-workflow` as the
   write gate when the action catalog is mounted.
 - `GET /protomolt/actions` and `POST /protomolt/actions/{name}`: the
   [action catalog](../surface/actions.md) mounted on the registry: the list route

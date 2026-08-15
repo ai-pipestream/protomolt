@@ -218,88 +218,88 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         assertThat(commitMessages(dir)).hasSize(2 * perStore);
     }
 
-    // ---------------------------------------------------------------- chains
+    // ---------------------------------------------------------------- workflows
 
     @Test
-    void aChainRoundTripsAndEachPutIsOneCommit() throws Exception {
-        Path dir = tempDir.resolve("chain-roundtrip");
-        String chainJson = """
+    void aWorkflowRoundTripsAndEachPutIsOneCommit() throws Exception {
+        Path dir = tempDir.resolve("workflow-roundtrip");
+        String workflowJson = """
                 {"steps":[{"call":"enrich"},{"call":"index"}]}""";
         try (GitSchemaRegistryStore store = storeAt(dir)) {
-            store.putChain("ingest.v1", chainJson);
+            store.putWorkflow("ingest.v1", workflowJson);
 
-            assertThat(store.chain("ingest.v1")).contains(chainJson);
+            assertThat(store.workflow("ingest.v1")).contains(workflowJson);
         }
-        assertThat(dir.resolve("chains").resolve("ingest.v1.json")).content().isEqualTo(chainJson);
-        assertThat(commitMessages(dir)).containsExactly("Put chain ingest.v1");
+        assertThat(dir.resolve("workflows").resolve("ingest.v1.json")).content().isEqualTo(workflowJson);
+        assertThat(commitMessages(dir)).containsExactly("Put workflow ingest.v1");
     }
 
     @Test
     void puttingAnExistingNameReplacesTheDocumentAndKeepsTheOldOneInHistory() throws Exception {
-        Path dir = tempDir.resolve("chain-overwrite");
+        Path dir = tempDir.resolve("workflow-overwrite");
         try (GitSchemaRegistryStore store = storeAt(dir)) {
-            store.putChain("ingest", "{\"v\":1}");
-            store.putChain("ingest", "{\"v\":2}");
+            store.putWorkflow("ingest", "{\"v\":1}");
+            store.putWorkflow("ingest", "{\"v\":2}");
 
-            assertThat(store.chain("ingest")).contains("{\"v\":2}");
-            assertThat(store.chains()).containsExactly("ingest");
+            assertThat(store.workflow("ingest")).contains("{\"v\":2}");
+            assertThat(store.workflows()).containsExactly("ingest");
         }
         // Overwriting is a second commit, not an edit in place: the v1 document stays in the log.
-        assertThat(commitMessages(dir)).containsExactly("Put chain ingest", "Put chain ingest");
+        assertThat(commitMessages(dir)).containsExactly("Put workflow ingest", "Put workflow ingest");
     }
 
     @Test
-    void anUnknownChainNameReadsAsEmpty() throws Exception {
-        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-missing"))) {
-            assertThat(store.chains()).isEmpty();
-            assertThat(store.chain("never-stored")).isEmpty();
+    void anUnknownWorkflowNameReadsAsEmpty() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("workflow-missing"))) {
+            assertThat(store.workflows()).isEmpty();
+            assertThat(store.workflow("never-stored")).isEmpty();
 
-            store.putChain("stored", "{}");
-            assertThat(store.chain("never-stored")).isEmpty();
+            store.putWorkflow("stored", "{}");
+            assertThat(store.workflow("never-stored")).isEmpty();
         }
     }
 
     @Test
-    void chainsAreListedSortedRegardlessOfWriteOrder() throws Exception {
-        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-order"))) {
-            store.putChain("zeta", "{}");
-            store.putChain("alpha", "{}");
-            store.putChain("Beta_2", "{}");
-            store.putChain("mid.chain-1", "{}");
+    void workflowsAreListedSortedRegardlessOfWriteOrder() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("workflow-order"))) {
+            store.putWorkflow("zeta", "{}");
+            store.putWorkflow("alpha", "{}");
+            store.putWorkflow("Beta_2", "{}");
+            store.putWorkflow("mid.workflow-1", "{}");
 
-            assertThat(store.chains())
-                    .containsExactly("Beta_2", "alpha", "mid.chain-1", "zeta");
+            assertThat(store.workflows())
+                    .containsExactly("Beta_2", "alpha", "mid.workflow-1", "zeta");
         }
     }
 
     @Test
-    void chainNamesOutsideTheAllowedCharacterSetAreRejected() throws Exception {
-        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-names"))) {
+    void workflowNamesOutsideTheAllowedCharacterSetAreRejected() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("workflow-names"))) {
             for (String rejected : List.of("", "   ", "has space", "a/b", "a\\b", "a:b", "a$b",
-                    "chains/../escape", "naïve")) {
-                assertThatThrownBy(() -> store.putChain(rejected, "{}"))
-                        .as("putChain(%s)", rejected)
+                    "workflows/../escape", "naïve")) {
+                assertThatThrownBy(() -> store.putWorkflow(rejected, "{}"))
+                        .as("putWorkflow(%s)", rejected)
                         .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage("Chain names use [A-Za-z0-9._-]; got '" + rejected + "'");
-                assertThatThrownBy(() -> store.chain(rejected))
-                        .as("chain(%s)", rejected)
+                        .hasMessage("Workflow names use [A-Za-z0-9._-]; got '" + rejected + "'");
+                assertThatThrownBy(() -> store.workflow(rejected))
+                        .as("workflow(%s)", rejected)
                         .isInstanceOf(IllegalArgumentException.class);
             }
-            assertThatThrownBy(() -> store.putChain(null, "{}"))
+            assertThatThrownBy(() -> store.putWorkflow(null, "{}"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Chain names use [A-Za-z0-9._-]; got 'null'");
+                    .hasMessage("Workflow names use [A-Za-z0-9._-]; got 'null'");
 
             // Rejected names are refused before anything is written.
-            assertThat(store.chains()).isEmpty();
+            assertThat(store.workflows()).isEmpty();
         }
     }
 
     @Test
-    void putChainRejectsANullDocument() throws Exception {
-        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("chain-null-doc"))) {
-            assertThatThrownBy(() -> store.putChain("ingest", null))
+    void putWorkflowRejectsANullDocument() throws Exception {
+        try (GitSchemaRegistryStore store = storeAt(tempDir.resolve("workflow-null-doc"))) {
+            assertThatThrownBy(() -> store.putWorkflow("ingest", null))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("chainJson");
+                    .hasMessage("workflowJson");
         }
     }
 

@@ -1,7 +1,7 @@
 package ai.pipestream.proto.pipeline;
 
-import ai.pipestream.proto.grpc.recipe.v1.CelMappingRule;
-import ai.pipestream.proto.grpc.recipe.v1.StepCompletion;
+import ai.pipestream.proto.grpc.workflow.v1.CelMappingRule;
+import ai.pipestream.proto.grpc.workflow.v1.StepCompletion;
 import ai.pipestream.proto.pipeline.v1.EdgeCardinality;
 import ai.pipestream.proto.pipeline.v1.GrpcCallStep;
 import ai.pipestream.proto.pipeline.v1.MethodShape;
@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Mapping, projection, and fan-out rejections: the checker runs every rule through the same
- * scoped rule checker the chain verifier uses, and every failure names the step, the kind
+ * scoped rule checker the workflow verifier uses, and every failure names the step, the kind
  * of problem, and the rule or field path involved.
  */
 class PipelineCheckerMappingTest {
@@ -30,7 +30,7 @@ class PipelineCheckerMappingTest {
     }
 
     private static Pipeline pipelineWithEdge(
-            ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge) {
+            ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge) {
         return unaryBase()
                 .addSteps(PipelineFixtures.grpcStep("fetch", "pipeline.test.Lookup",
                         PipelineFixtures.FETCH, MethodShape.METHOD_SHAPE_UNARY,
@@ -115,11 +115,11 @@ class PipelineCheckerMappingTest {
 
     @Test
     void unsupportedProjectionSourceIsRejected() {
-        var fanOut = ai.pipestream.proto.grpc.recipe.v1.FanOutSpec.newBuilder()
+        var fanOut = ai.pipestream.proto.grpc.workflow.v1.FanOutSpec.newBuilder()
                 .setItems("items")
                 .setMaxItems(10)
                 .setMaxConcurrency(4)
-                .setFailurePolicy(ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                .setFailurePolicy(ai.pipestream.proto.grpc.workflow.v1.BranchFailurePolicy
                         .BRANCH_FAILURE_POLICY_FAIL_FAST)
                 .setCollectType(PipelineFixtures.TICKET_BOX)
                 .setCollectInto("tickets")
@@ -169,11 +169,11 @@ class PipelineCheckerMappingTest {
     @Test
     void fanOutItemsPathEndingAtSingularFieldIsRejected() {
         // Ticket.title is singular: a fan-out items path must end at a repeated field.
-        var fanOut = ai.pipestream.proto.grpc.recipe.v1.FanOutSpec.newBuilder()
+        var fanOut = ai.pipestream.proto.grpc.workflow.v1.FanOutSpec.newBuilder()
                 .setItems("title")
                 .setMaxItems(10)
                 .setMaxConcurrency(4)
-                .setFailurePolicy(ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                .setFailurePolicy(ai.pipestream.proto.grpc.workflow.v1.BranchFailurePolicy
                         .BRANCH_FAILURE_POLICY_FAIL_FAST)
                 .setCollectType(PipelineFixtures.TICKET_BOX)
                 .setCollectInto("tickets")
@@ -205,11 +205,11 @@ class PipelineCheckerMappingTest {
 
     @Test
     void fanOutCollectElementMismatchIsRejected() {
-        var fanOut = ai.pipestream.proto.grpc.recipe.v1.FanOutSpec.newBuilder()
+        var fanOut = ai.pipestream.proto.grpc.workflow.v1.FanOutSpec.newBuilder()
                 .setItems("items")
                 .setMaxItems(10)
                 .setMaxConcurrency(4)
-                .setFailurePolicy(ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                .setFailurePolicy(ai.pipestream.proto.grpc.workflow.v1.BranchFailurePolicy
                         .BRANCH_FAILURE_POLICY_CONTINUE)
                 .setCollectType(PipelineFixtures.RESULTS)
                 .setCollectInto("results")
@@ -226,11 +226,11 @@ class PipelineCheckerMappingTest {
 
     @Test
     void fanOutOnStreamingMethodIsRejected() {
-        var fanOut = ai.pipestream.proto.grpc.recipe.v1.FanOutSpec.newBuilder()
+        var fanOut = ai.pipestream.proto.grpc.workflow.v1.FanOutSpec.newBuilder()
                 .setItems("items")
                 .setMaxItems(10)
                 .setMaxConcurrency(4)
-                .setFailurePolicy(ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                .setFailurePolicy(ai.pipestream.proto.grpc.workflow.v1.BranchFailurePolicy
                         .BRANCH_FAILURE_POLICY_FAIL_FAST)
                 .setCollectType(PipelineFixtures.RESULTS)
                 .setCollectInto("results")
@@ -314,11 +314,11 @@ class PipelineCheckerMappingTest {
     }
 
     private static Pipeline fanOutPipeline(String itemsPath) {
-        var fanOut = ai.pipestream.proto.grpc.recipe.v1.FanOutSpec.newBuilder()
+        var fanOut = ai.pipestream.proto.grpc.workflow.v1.FanOutSpec.newBuilder()
                 .setItems(itemsPath)
                 .setMaxItems(10)
                 .setMaxConcurrency(4)
-                .setFailurePolicy(ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                .setFailurePolicy(ai.pipestream.proto.grpc.workflow.v1.BranchFailurePolicy
                         .BRANCH_FAILURE_POLICY_FAIL_FAST)
                 .setCollectType(PipelineFixtures.TICKET_BOX)
                 .setCollectInto("tickets")
@@ -327,7 +327,7 @@ class PipelineCheckerMappingTest {
     }
 
     private static Pipeline fanOutPipeline(
-            ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fanOut) {
+            ai.pipestream.proto.grpc.workflow.v1.FanOutSpec fanOut) {
         return PipelineFixtures.base("map", PipelineFixtures.BATCH)
                 .addDependencies(PipelineFixtures.dependency("pipeline.test.Worker"))
                 .addSteps(PipelineStep.newBuilder()

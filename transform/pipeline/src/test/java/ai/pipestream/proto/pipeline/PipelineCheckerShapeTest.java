@@ -1,6 +1,6 @@
 package ai.pipestream.proto.pipeline;
 
-import ai.pipestream.proto.grpc.recipe.v1.StepCompletion;
+import ai.pipestream.proto.grpc.workflow.v1.StepCompletion;
 import ai.pipestream.proto.pipeline.v1.CollectStep;
 import ai.pipestream.proto.pipeline.v1.EdgeCardinality;
 import ai.pipestream.proto.pipeline.v1.GrpcCallStep;
@@ -195,12 +195,12 @@ class PipelineCheckerShapeTest {
         assertThat(checker.verify(pipeline, PipelineFixtures.files())).isEmpty();
     }
 
-    private static ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fanOut() {
-        return ai.pipestream.proto.grpc.recipe.v1.FanOutSpec.newBuilder()
+    private static ai.pipestream.proto.grpc.workflow.v1.FanOutSpec fanOut() {
+        return ai.pipestream.proto.grpc.workflow.v1.FanOutSpec.newBuilder()
                 .setItems("items")
                 .setMaxItems(10)
                 .setMaxConcurrency(4)
-                .setFailurePolicy(ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy
+                .setFailurePolicy(ai.pipestream.proto.grpc.workflow.v1.BranchFailurePolicy
                         .BRANCH_FAILURE_POLICY_FAIL_FAST)
                 .setCollectType(PipelineFixtures.TICKET_BOX)
                 .setCollectInto("tickets")

@@ -32,10 +32,10 @@ the jobs store) and RustFS for object storage. Ports:
   (`ai/pipestream/document/v1/document.proto`) from the build's own
   classpath, so the registry serves it as a subject from the start. The
   registry is not optional here: the platform runs it by default.
-- The `parse-document` chain registers under that name, so a durable parse
-  is one `submit-chain` call:
-  `POST /protomolt/actions/submit-chain` with
-  `{"chainName": "parse-document", "input": {"address": {...}}}`; poll with
+- The `parse-document` workflow registers under that name, so a durable parse
+  is one `submit-workflow` call:
+  `POST /protomolt/actions/submit-workflow` with
+  `{"workflowName": "parse-document", "input": {"address": {...}}}`; poll with
   `get-job`. The platform's own worker fleet claims and completes it.
 - The embedded reference text parser serves text and markdown. A fleet of
   external parsers replaces it by pointing
@@ -59,5 +59,5 @@ platform's own variables are javadoc'd on `DocumentPlatformConfig`; the
 compose file is the worked example.
 
 `DocumentPlatformSmokeIT` drives every external surface over real TCP:
-registry subjects, authenticated ingest, submit-chain to completion, the
+registry subjects, authenticated ingest, submit-workflow to completion, the
 parsed result read back, and the playground page.

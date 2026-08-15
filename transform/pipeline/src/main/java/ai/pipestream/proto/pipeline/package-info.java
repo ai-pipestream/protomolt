@@ -2,11 +2,11 @@
  * The pipeline execution contract, offline static checker, and in-process executor.
  *
  * <p>A {@link ai.pipestream.proto.pipeline.v1.Pipeline} is the compiled, streaming-aware form
- * of a {@link ai.pipestream.proto.grpc.recipe.v1.GrpcRecipe}: every gRPC or structured step is
- * fed by an explicit typed edge (embedded unchanged from the recipe contract, so mapping, CEL,
+ * of a {@link ai.pipestream.proto.grpc.workflow.v1.Workflow}: every gRPC or structured step is
+ * fed by an explicit typed edge (embedded unchanged from the workflow contract, so mapping, CEL,
  * projection, bounded fan-out, and branch failure policy keep exactly one meaning), every
  * method's streaming shape is declared, and every scope binding carries an explicit
- * cardinality. {@link RecipePipelineCompiler} performs the recipe-to-pipeline compilation;
+ * cardinality. {@link WorkflowPipelineCompiler} performs the workflow-to-pipeline compilation;
  * {@link PipelineChecker} verifies a pipeline against a descriptor set without any network,
  * reflection call, or execution, rejecting cardinality and streaming-shape mismatches with
  * descriptor-precise messages.</p>

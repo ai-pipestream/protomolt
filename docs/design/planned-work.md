@@ -14,7 +14,7 @@ of profiles, descriptor artifacts, summaries, logs, and errors.
 
 ### Shared outbound policy
 
-Use one policy boundary for reflection, invocation, chains, pipelines, and
+Use one policy boundary for reflection, invocation, workflows, pipelines, and
 schema gathering. Add scheme, host, port, resolved-address, deadline, payload,
 and concurrency limits. Recheck resolved addresses before connecting.
 
@@ -34,7 +34,7 @@ approval, and worker reassignment.
 
 ### Standalone application generation
 
-Generate a runnable application from a checked recipe or pipeline. Each output
+Generate a runnable application from a checked workflow or pipeline. Each output
 should contain:
 
 - protobuf messages and gRPC clients;
@@ -42,7 +42,7 @@ should contain:
 - credential-provider hooks and health endpoints;
 - recorded replay fixtures and contract tests;
 - dependency locks and container files; and
-- recipe, schema, generator, and template fingerprints.
+- workflow, schema, generator, and template fingerprints.
 
 Java and Python are the first targets. Go and TypeScript follow after their
 gRPC generators are available through the code-generation runtime.
@@ -141,7 +141,7 @@ in-flight count as the complete device load.
 ### Authorization scopes
 
 Separate authentication from authorization. Define scopes for schema reads and
-writes, service invocation, chain and pipeline execution, artifact access, and
+writes, service invocation, workflow and pipeline execution, artifact access, and
 worker coordination. Test every route and action against its required scope.
 
 ### Console sessions

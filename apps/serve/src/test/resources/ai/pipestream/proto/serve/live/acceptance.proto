@@ -6,7 +6,7 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 import "ai/pipestream/proto/projection/v1/projection.proto";
 import "ai/pipestream/proto/meta/v1/metadata.proto";
 
-// The prior typed result the chain receives as its input: ordinary fields,
+// The prior typed result the workflow receives as its input: ordinary fields,
 // one field the grounding projection excludes, and one sensitivity-annotated
 // field. The live acceptance test carries sentinel values in the last two and
 // proves they never reach the provider request or the persisted evidence.

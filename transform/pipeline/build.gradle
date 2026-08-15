@@ -6,22 +6,22 @@ description = 'The compiled streaming-aware pipeline contract, checker, and in-p
 
 dependencies {
     api libs.protobuf.java
-    // The pipeline contract embeds the recipe's ServiceDependency, TypedEdge,
+    // The pipeline contract embeds the workflow's ServiceDependency, TypedEdge,
     // FanOutSpec, StructuredGenerationSpec, StepCompletion, and CelMappingRule
-    // unchanged, and validates them with RecipeValidation.
-    api project(':protomolt-grpc-recipe')
+    // unchanged, and validates them with WorkflowValidation.
+    api project(':protomolt-grpc-workflow')
     // Persisted pipeline fields carry the house validation and sensitivity
     // metadata options.
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-metadata')
 
     // The checker type-checks mappings, CEL, and gates with the same rule
-    // checker the chain verifier uses.
+    // checker the workflow verifier uses.
     implementation project(':protomolt-shapes')
     // Edge projection targets resolve through the compiled projection.
     implementation project(':protomolt-projection')
     implementation project(':protomolt-descriptors')
-    // The executor applies the same CEL mappings and declared validation rules as chains.
+    // The executor applies the same CEL mappings and declared validation rules as workflows.
     implementation project(':protomolt-protobuf-validation-protovalidate')
     // Structured pipeline steps delegate to the bounded structured-generation coordinator.
     implementation project(':protomolt-inference-structured')
@@ -29,9 +29,9 @@ dependencies {
     implementation libs.protobuf.java.util
 
     testImplementation project(':protomolt-proto-sources')
-    // The end-to-end tests compile chains into recipes with the existing
-    // compiler before compiling recipes into pipelines.
-    testImplementation project(':protomolt-chain')
+    // The end-to-end tests compile workflows into workflows with the existing
+    // compiler before compiling workflows into pipelines.
+    testImplementation project(':protomolt-workflow')
 }
 
 protobuf {

@@ -51,11 +51,11 @@ implementations:
 | Structural validation | `validate.v1`, protovalidate, `ProtoValidator` |
 | Mapping | scoped text rules and typed CEL selectors |
 | Projection | descriptor-declared `MessageProjection` |
-| Static checking | `RuleChecker`, `ChainVerifier`, `PipelineChecker` |
+| Static checking | `RuleChecker`, `WorkflowVerifier`, `PipelineChecker` |
 | Streaming execution | `PipelineExecutor` and all four gRPC method shapes |
 | Fan-out | bounded virtual-thread fan-out and explicit collect |
 | Structured LLM output | `StructuredGenerator` and inference providers |
-| Evidence | recipes, run evidence, artifact references, offline replay |
+| Evidence | workflows, run evidence, artifact references, offline replay |
 | Sensitivity controls | metadata annotations and `SensitivityMasker` |
 | Agent lifecycle | delegation contract, leases, checkpoints, evidence review |
 | Storage | Git registry, filesystem artifacts, RustFS deployment |

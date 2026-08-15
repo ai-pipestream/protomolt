@@ -59,8 +59,8 @@ export function routerForTests(): Router {
         component: { template: '<div />' },
       },
       {
-        path: '/schema-registry/chains',
-        name: 'schema-registry-chains',
+        path: '/schema-registry/workflows',
+        name: 'schema-registry-workflows',
         component: { template: '<div />' },
       },
       { path: '/:pathMatch(.*)*', component: { template: '<div />' } },

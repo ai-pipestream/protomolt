@@ -21,8 +21,8 @@ final class DescriptorSets {
 
     /**
      * The descriptor set's stable identity: files serialized in name order, hashed with
-     * SHA-256, so the fingerprint depends on content alone. This is exactly the recipe
-     * compiler's convention, so a recipe's dependency fingerprints bind to the same
+     * SHA-256, so the fingerprint depends on content alone. This is exactly the workflow
+     * compiler's convention, so a workflow's dependency fingerprints bind to the same
      * descriptor set its compiled pipeline declares.
      */
     static String fingerprint(List<FileDescriptor> files) {

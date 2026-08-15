@@ -108,11 +108,11 @@ class ProtoMoltServeTest {
         assertThat(paths.size()).isEqualTo(41);
         assertThat(paths.has("/grpc-json/ProtoMoltService/GrpcInvoke")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/GenerateStubs")).isTrue();
-        assertThat(paths.has("/grpc-json/ProtoMoltService/SubmitChain")).isTrue();
+        assertThat(paths.has("/grpc-json/ProtoMoltService/SubmitWorkflow")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/CompleteStep")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/ServiceRegister")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/ServiceInspect")).isTrue();
-        assertThat(paths.has("/grpc-json/ProtoMoltService/RecordRecipeRun")).isTrue();
+        assertThat(paths.has("/grpc-json/ProtoMoltService/RecordWorkflowRun")).isTrue();
     }
 
     @Test

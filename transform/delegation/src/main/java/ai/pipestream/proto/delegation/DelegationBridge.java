@@ -13,7 +13,7 @@ import ai.pipestream.proto.delegation.v1.TaskMessageKind;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
 import ai.pipestream.proto.delegation.v1.TaskSpec;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
-import ai.pipestream.proto.grpc.recipe.v1.ArtifactReference;
+import ai.pipestream.proto.grpc.workflow.v1.ArtifactReference;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
 import io.grpc.stub.StreamObserver;

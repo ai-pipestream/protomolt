@@ -2,23 +2,23 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.chain.ChainRepository;
-import ai.pipestream.proto.chain.ChainRunner;
+import ai.pipestream.proto.workflow.WorkflowRepository;
+import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.delegation.DelegationActions;
 import ai.pipestream.proto.delegation.DelegationBridge;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
-import ai.pipestream.proto.grpc.recipe.ArtifactRepository;
-import ai.pipestream.proto.grpc.recipe.FileSystemArtifactRepository;
-import ai.pipestream.proto.grpc.recipe.FileSystemRunEvidenceRepository;
-import ai.pipestream.proto.grpc.recipe.RecipeRepository;
-import ai.pipestream.proto.grpc.recipe.RunEvidenceRepository;
+import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
+import ai.pipestream.proto.grpc.workflow.FileSystemArtifactRepository;
+import ai.pipestream.proto.grpc.workflow.FileSystemRunEvidenceRepository;
+import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
+import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
-import ai.pipestream.proto.jobs.service.ChainJobsConfig;
-import ai.pipestream.proto.jobs.service.events.ChainJobEventRelay;
-import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
+import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.jobs.service.events.WorkflowRunEventRelay;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunDatabase;
 import ai.pipestream.proto.inference.spi.CredentialResolutionException;
 import ai.pipestream.proto.inference.spi.CredentialResolver;
 import ai.pipestream.proto.inference.spi.InferenceCatalog;
@@ -26,9 +26,9 @@ import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.structured.StructuredGenerator;
 import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
-import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
-import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
-import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
+import ai.pipestream.proto.jobs.service.store.JdbcWorkflowRunStore;
+import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
 import ai.pipestream.proto.mcp.McpServer;
 import ai.pipestream.proto.mcp.CompositeResources;
 import ai.pipestream.proto.mcp.DelegationResources;
@@ -37,7 +37,7 @@ import ai.pipestream.proto.mcp.ServiceProfileResources;
 import ai.pipestream.proto.mesh.cluster.ClusterActions;
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
-import ai.pipestream.proto.registry.RegistryRecipeRepository;
+import ai.pipestream.proto.registry.RegistryWorkflowVersionRepository;
 import ai.pipestream.proto.registry.server.SchemaRegistryServer;
 import ai.pipestream.proto.registry.server.SchemaRegistryServerConfig;
 import ai.pipestream.proto.rest.ApiTokenRequirement;
@@ -68,7 +68,7 @@ import org.slf4j.LoggerFactory;
  * protomolt-serve [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080]
  *                 [--registry-git /srv/schemas.git [--registry-port 8081]]
  *                 [--service-workspace /srv/protomolt-services]
- *                 [--recipe-workspace /srv/protomolt-recipes]
+ *                 [--workflow-workspace /srv/protomolt-workflows]
  * </pre>
  */
 public final class ProtoMoltServe implements AutoCloseable {
@@ -80,7 +80,7 @@ public final class ProtoMoltServe implements AutoCloseable {
      * every operational surface (gRPC calls, REST verbs, the MCP endpoint) with a shared
      * secret; documentation surfaces (health, OpenAPI, Swagger UI) stay open.
      *
-     * @param jobs chain-jobs configuration; null disables the jobs worker (the jobs
+     * @param jobs workflow-runs configuration; null disables the jobs worker (the jobs
      *        verbs stay in the catalog and answer {@code unavailable})
      * @param outboundPolicy one process-wide policy shared by catalog actions and the jobs worker;
      *        null selects the permissive defaults
@@ -89,7 +89,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                           Path registryGit, int registryPort, String apiToken, boolean demo,
                           Path gatherCache, JobsOptions jobs,
                           java.util.List<String> inferenceModels, Path serviceWorkspace,
-                          OutboundChannelPolicy outboundPolicy, Path recipeWorkspace,
+                          OutboundChannelPolicy outboundPolicy, Path workflowWorkspace,
                           DelegationOptions delegation, TaskConsoleOptions taskConsole,
                           MeshClusterOptions meshCluster) {
 
@@ -156,10 +156,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                        int registryPort, String apiToken, boolean demo, Path gatherCache,
                        JobsOptions jobs, java.util.List<String> inferenceModels,
                        Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
-                       Path recipeWorkspace) {
+                       Path workflowWorkspace) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
                     gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
-                    recipeWorkspace, null);
+                    workflowWorkspace, null);
         }
 
         /** Binary/source-compatible constructor retaining the pre-console options surface. */
@@ -167,10 +167,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                        int registryPort, String apiToken, boolean demo, Path gatherCache,
                        JobsOptions jobs, java.util.List<String> inferenceModels,
                        Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
-                       Path recipeWorkspace, DelegationOptions delegation) {
+                       Path workflowWorkspace, DelegationOptions delegation) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
                     gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
-                    recipeWorkspace, delegation, null);
+                    workflowWorkspace, delegation, null);
         }
 
         /** Binary/source-compatible constructor retaining the pre-mesh options surface. */
@@ -178,11 +178,11 @@ public final class ProtoMoltServe implements AutoCloseable {
                        int registryPort, String apiToken, boolean demo, Path gatherCache,
                        JobsOptions jobs, java.util.List<String> inferenceModels,
                        Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
-                       Path recipeWorkspace, DelegationOptions delegation,
+                       Path workflowWorkspace, DelegationOptions delegation,
                        TaskConsoleOptions taskConsole) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
                     gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
-                    recipeWorkspace, delegation, taskConsole, null);
+                    workflowWorkspace, delegation, taskConsole, null);
         }
 
         public static Options defaults() {
@@ -212,9 +212,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             String serviceWorkspaceEnv = System.getenv("PROTOMOLT_SERVICE_WORKSPACE");
             Path serviceWorkspace = serviceWorkspaceEnv == null || serviceWorkspaceEnv.isBlank()
                     ? null : Path.of(serviceWorkspaceEnv);
-            String recipeWorkspaceEnv = System.getenv("PROTOMOLT_RECIPE_WORKSPACE");
-            Path recipeWorkspace = recipeWorkspaceEnv == null || recipeWorkspaceEnv.isBlank()
-                    ? null : Path.of(recipeWorkspaceEnv);
+            String workflowWorkspaceEnv = System.getenv("PROTOMOLT_WORKFLOW_WORKSPACE");
+            Path workflowWorkspace = workflowWorkspaceEnv == null || workflowWorkspaceEnv.isBlank()
+                    ? null : Path.of(workflowWorkspaceEnv);
             String allowedSchemes = System.getenv("PROTOMOLT_GRPC_ALLOWED_SCHEMES");
             String allowedHosts = System.getenv("PROTOMOLT_GRPC_ALLOWED_HOSTS");
             String allowedPorts = System.getenv("PROTOMOLT_GRPC_ALLOWED_PORTS");
@@ -281,8 +281,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--mesh-created-at" -> meshCreatedAt = requireValue(args, ++i);
                     case "--service-workspace" ->
                             serviceWorkspace = Path.of(requireValue(args, ++i));
-                    case "--recipe-workspace" ->
-                            recipeWorkspace = Path.of(requireValue(args, ++i));
+                    case "--workflow-workspace" ->
+                            workflowWorkspace = Path.of(requireValue(args, ++i));
                     case "--grpc-allowed-schemes" ->
                             allowedSchemes = requireValue(args, ++i);
                     case "--grpc-allowed-hosts" ->
@@ -313,7 +313,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[|backend[|k:v,...[|capability,...[|credential-ref]]]]> ...] "
                                 + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
                                 + "[--service-workspace <dir>] (or PROTOMOLT_SERVICE_WORKSPACE) "
-                                + "[--recipe-workspace <dir>] (or PROTOMOLT_RECIPE_WORKSPACE) "
+                                + "[--workflow-workspace <dir>] (or PROTOMOLT_WORKFLOW_WORKSPACE) "
                                 + "[--grpc-allowed-schemes <csv>] [--grpc-allowed-hosts <csv>] "
                                 + "[--grpc-allowed-ports <csv>] "
                                 + "[--grpc-allow-plaintext <true|false>] "
@@ -410,7 +410,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
-                    serviceWorkspace, outboundPolicy, recipeWorkspace, delegation, taskConsole,
+                    serviceWorkspace, outboundPolicy, workflowWorkspace, delegation, taskConsole,
                     meshCluster);
         }
 
@@ -600,7 +600,7 @@ public final class ProtoMoltServe implements AutoCloseable {
     }
 
     /**
-     * Chain-jobs launcher options. {@code kafkaBootstrap} is optional: without it the
+     * Workflow-runs launcher options. {@code kafkaBootstrap} is optional: without it the
      * worker fleet runs verb-submitted jobs with no event relay and no request topic,
      * useful for a single-box deployment; with it, lifecycle events publish to the
      * events topic and the request topic is consumed. Zero {@code workers} /
@@ -699,17 +699,17 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final SchemaRegistryServer registry;
     private final int httpPort;
     private final int registryPort;
-    private final ChainJobDatabase jobsDatabase;
-    private final ChainJobWorker jobsWorker;
-    private final ChainJobEventRelay jobsRelay;
+    private final WorkflowRunDatabase jobsDatabase;
+    private final WorkflowRunWorker jobsWorker;
+    private final WorkflowRunEventRelay jobsRelay;
     private final DelegationRuntime delegation;
     private final MeshClusterRuntime meshCluster;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
                            McpHttpHandler mcp, int httpPort,
                            GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
-                           int registryPort, ChainJobDatabase jobsDatabase,
-                           ChainJobWorker jobsWorker, ChainJobEventRelay jobsRelay,
+                           int registryPort, WorkflowRunDatabase jobsDatabase,
+                           WorkflowRunWorker jobsWorker, WorkflowRunEventRelay jobsRelay,
                            DelegationRuntime delegation, MeshClusterRuntime meshCluster) {
         this.grpc = grpc;
         this.http = http;
@@ -733,9 +733,9 @@ public final class ProtoMoltServe implements AutoCloseable {
         JdkProtoRestServer http = null;
         GitSchemaRegistryStore store = null;
         SchemaRegistryServer registry = null;
-        ChainJobDatabase jobsDatabase = null;
-        ChainJobWorker jobsWorker = null;
-        ChainJobEventRelay jobsRelay = null;
+        WorkflowRunDatabase jobsDatabase = null;
+        WorkflowRunWorker jobsWorker = null;
+        WorkflowRunEventRelay jobsRelay = null;
         ServiceProfileRepository serviceProfiles = null;
         ArtifactRepository artifacts = null;
         RunEvidenceRepository runEvidence = null;
@@ -758,8 +758,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                         .repositoryDir(registryGit)
                         .build();
             }
-            ChainRepository chains = store == null ? null : chainRepository(store);
-            RecipeRepository recipes = store == null ? null : new RegistryRecipeRepository(store);
+            WorkflowRepository workflows = store == null ? null : workflowRepository(store);
+            WorkflowVersionRepository workflowVersions = store == null
+                    ? null : new RegistryWorkflowVersionRepository(store);
             if (options.serviceWorkspace() != null) {
                 try {
                     serviceProfiles = new FileSystemServiceProfileRepository(
@@ -769,64 +770,64 @@ public final class ProtoMoltServe implements AutoCloseable {
                             + options.serviceWorkspace(), e);
                 }
             }
-            Path recipeWorkspace = options.recipeWorkspace();
-            if (recipeWorkspace == null && options.demo()) {
+            Path workflowWorkspace = options.workflowWorkspace();
+            if (workflowWorkspace == null && options.demo()) {
                 try {
-                    recipeWorkspace = java.nio.file.Files
-                            .createTempDirectory("protomolt-demo-recipes");
+                    workflowWorkspace = java.nio.file.Files
+                            .createTempDirectory("protomolt-demo-workflows");
                 } catch (java.io.IOException e) {
-                    throw new IllegalStateException("Failed to create the demo recipe workspace", e);
+                    throw new IllegalStateException("Failed to create the demo workflow workspace", e);
                 }
             }
-            if (recipeWorkspace != null) {
+            if (workflowWorkspace != null) {
                 try {
                     artifacts = new FileSystemArtifactRepository(
-                            recipeWorkspace.resolve("artifacts"));
+                            workflowWorkspace.resolve("artifacts"));
                     runEvidence = new FileSystemRunEvidenceRepository(
-                            recipeWorkspace.resolve("runs"));
+                            workflowWorkspace.resolve("runs"));
                 } catch (java.io.IOException e) {
-                    throw new IllegalStateException("Failed to open recipe workspace at "
-                            + recipeWorkspace, e);
+                    throw new IllegalStateException("Failed to open workflow workspace at "
+                            + workflowWorkspace, e);
                 }
             }
 
-            // Chain jobs: the store boots (and Flyway-migrates) before the catalog so
+            // Workflow runs: the store boots (and Flyway-migrates) before the catalog so
             // the jobs verbs serve from the same truth the worker fleet executes from.
             if (options.jobs() != null) {
                 JobsOptions jobs = options.jobs();
-                jobsDatabase = new ChainJobDatabase(
-                        new ChainJobStoreConfig(jobs.jdbcUrl(), jobs.username(), jobs.password()));
-                JdbcChainJobStore jobStore = new JdbcChainJobStore(jobsDatabase);
+                jobsDatabase = new WorkflowRunDatabase(
+                        new WorkflowRunStoreConfig(jobs.jdbcUrl(), jobs.username(), jobs.password()));
+                JdbcWorkflowRunStore jobStore = new JdbcWorkflowRunStore(jobsDatabase);
                 String requestTopic = jobs.kafkaBootstrap() == null
                         ? null
-                        : jobs.requestTopic() != null ? jobs.requestTopic() : "chain-job-requests";
-                ChainJobsConfig jobsConfig = new ChainJobsConfig(
+                        : jobs.requestTopic() != null ? jobs.requestTopic() : "workflow-run-requests";
+                WorkflowRunsConfig jobsConfig = new WorkflowRunsConfig(
                         "serve-" + ManagementFactory.getRuntimeMXBean().getName(),
                         jobs.workers(), null, null, 0, 0, jobs.targetConcurrency(),
                         requestTopic, null, jobs.kafkaBootstrap(), null);
-                jobsWorker = new ChainJobWorker(jobStore, context, chains,
-                        new ChainRunner(outboundPolicy, structured),
+                jobsWorker = new WorkflowRunWorker(jobStore, context, workflows,
+                        new WorkflowRunner(outboundPolicy, structured),
                         jobsConfig);
                 if (jobs.kafkaBootstrap() != null) {
-                    jobsRelay = new ChainJobEventRelay(jobStore,
-                            ChainJobEventRelay.newProducer(jobs.kafkaBootstrap(), null),
+                    jobsRelay = new WorkflowRunEventRelay(jobStore,
+                            WorkflowRunEventRelay.newProducer(jobs.kafkaBootstrap(), null),
                             jobsConfig.eventsTopic(), jobsConfig.pollInterval(), 100);
                 }
 
-                // The catalog sees the store so run-chain resolves stored chain names and
+                // The catalog sees the store so run-workflow resolves stored workflow names and
                 // the jobs verbs serve the live job rows.
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                        chains, jobStore, jobsConfig.maxAttemptsDefault(),
+                        workflows, jobStore, jobsConfig.maxAttemptsDefault(),
                         inference, serviceProfiles,
-                        outboundPolicy, artifacts, runEvidence, recipes, store);
-                return startWithJobsCatalog(options, context, catalog, store, chains,
+                        outboundPolicy, artifacts, runEvidence, workflowVersions, store);
+                return startWithJobsCatalog(options, context, catalog, store, workflows,
                         serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
             }
-            // The catalog sees the store so run-chain resolves stored chain names.
+            // The catalog sees the store so run-workflow resolves stored workflow names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                    chains, null, 0, inference, serviceProfiles,
-                    outboundPolicy, artifacts, runEvidence, recipes, store);
-            return startWithJobsCatalog(options, context, catalog, store, chains,
+                    workflows, null, 0, inference, serviceProfiles,
+                    outboundPolicy, artifacts, runEvidence, workflowVersions, store);
+            return startWithJobsCatalog(options, context, catalog, store, workflows,
                     serviceProfiles, null, null, null);
         } catch (RuntimeException e) {
             if (registry != null) {
@@ -850,11 +851,11 @@ public final class ProtoMoltServe implements AutoCloseable {
     private static ProtoMoltServe startWithJobsCatalog(Options options, ActionContext context,
                                                        ActionCatalog catalog,
                                                        GitSchemaRegistryStore store,
-                                                       ChainRepository chains,
+                                                       WorkflowRepository workflows,
                                                        ServiceProfileRepository serviceProfiles,
-                                                       ChainJobDatabase jobsDatabase,
-                                                       ChainJobWorker jobsWorker,
-                                                       ChainJobEventRelay jobsRelay) {
+                                                       WorkflowRunDatabase jobsDatabase,
+                                                       WorkflowRunWorker jobsWorker,
+                                                       WorkflowRunEventRelay jobsRelay) {
         ProtoMoltGrpcServer grpc = null;
         JdkProtoRestServer http = null;
         McpHttpHandler mcpHandler = null;
@@ -880,9 +881,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
                     options.apiToken());
             if (options.demo() && store != null) {
-                // The demo chain composes this server's own verbs, so it needs the bound
+                // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
-                DemoSchemas.seedChain(store, grpc.port());
+                DemoSchemas.seedWorkflow(store, grpc.port());
             }
 
             // The jobs fleet starts once the catalog is bound: workers execute and the
@@ -986,17 +987,17 @@ public final class ProtoMoltServe implements AutoCloseable {
         }
     }
 
-    private static ai.pipestream.proto.chain.ChainRepository chainRepository(
+    private static ai.pipestream.proto.workflow.WorkflowRepository workflowRepository(
             GitSchemaRegistryStore store) {
         com.fasterxml.jackson.databind.ObjectMapper json =
                 new com.fasterxml.jackson.databind.ObjectMapper();
         return name -> {
             try {
-                return store.chain(name).map(text -> {
+                return store.workflow(name).map(text -> {
                     try {
                         var node = json.readTree(text);
-                        return node instanceof com.fasterxml.jackson.databind.node.ObjectNode chain
-                                ? chain : null;
+                        return node instanceof com.fasterxml.jackson.databind.node.ObjectNode workflow
+                                ? workflow : null;
                     } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
                         return null;
                     }
@@ -1077,7 +1078,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     options.host(), serve.registryPort());
         }
         if (options.jobs() != null) {
-            LOG.info("  Jobs  {} (verbs: submit-chain, get-job, list-jobs, complete-step{})",
+            LOG.info("  Jobs  {} (verbs: submit-workflow, get-job, list-jobs, complete-step{})",
                     options.jobs().jdbcUrl(),
                     options.jobs().kafkaBootstrap() != null
                             ? "; Kafka " + options.jobs().kafkaBootstrap()

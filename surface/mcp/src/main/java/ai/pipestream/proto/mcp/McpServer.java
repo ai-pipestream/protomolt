@@ -59,10 +59,10 @@ public final class McpServer {
      */
     public static final String DEFAULT_INSTRUCTIONS =
             "ProtoMolt: read `protomolt://workspace`; reconnect if its tool count differs. Use "
-                    + "`service-register`, `service-inspect`, then `service-invoke`; use `reflect` and "
-                    + "`grpc-invoke` for ad hoc targets. Use descriptor-defined fields. "
-                    + "Compose with `suggest-mappings`, `check-chain`, "
-                    + "`compile-recipe`, `record-recipe-run`, `replay-recipe`, and `promote-recipe`. "
+                    + "`service-register`, `service-inspect`, then `service-invoke`; `reflect` and "
+                    + "`grpc-invoke` for ad hoc calls. Use descriptor-defined fields. "
+                    + "Compose: `suggest-mappings`, `check-workflow`, "
+                    + "`compile-workflow`, `record-workflow-run`, `replay-workflow`, `promote-workflow`. "
                     + "With mesh tools, read `mesh-snapshot`; renew leases after readiness. Use "
                     + "`generate-stubs` for native clients. Check `ok` and status; never guess "
                     + "payloads.";

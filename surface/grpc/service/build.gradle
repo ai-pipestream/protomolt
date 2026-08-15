@@ -9,12 +9,12 @@ dependencies {
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-gather-git')
     implementation project(':protomolt-emit-okf')
-    implementation project(':protomolt-chain')
+    implementation project(':protomolt-workflow')
     implementation project(':protomolt-grpc-invoke')
     api project(':protomolt-grpc-service-workspace')
     implementation project(':protomolt-registry')
     implementation project(':protomolt-codegen')
-    // The four chain-jobs verbs (submit-chain, get-job, list-jobs,
+    // The four workflow-runs verbs (submit-workflow, get-job, list-jobs,
     // complete-step) ride the catalog; the store is injected by the server.
     implementation project(':protomolt-jobs-service')
     // The three inference verbs (inference-generate, inference-list-models,

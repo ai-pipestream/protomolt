@@ -11,7 +11,7 @@ dependencies {
     api project(':protomolt-grpc-invoke')
     api project(':protomolt-grpc-service-workspace')
     api project(':protomolt-codegen')
-    api project(':protomolt-chain')
+    api project(':protomolt-workflow')
     // DelegationResources exposes a live delegation bridge's workers, tasks, and
     // transcripts as bounded MCP resources.
     api project(':protomolt-delegation')

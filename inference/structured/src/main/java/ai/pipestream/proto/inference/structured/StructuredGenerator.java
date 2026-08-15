@@ -122,13 +122,13 @@ public final class StructuredGenerator {
     }
 
     /**
-     * Fills an explicitly resolved target descriptor. Chain and recipe callers use
+     * Fills an explicitly resolved target descriptor. Workflow callers use
      * this overload because inline schemas are deliberately scoped to one action and
      * are not installed into the host's shared descriptor registry. Grounding types
      * resolve against the descriptor's file set.
      *
      * @param request the validated structured-generation request
-     * @param descriptor the exact target descriptor resolved with the chain
+     * @param descriptor the exact target descriptor resolved with the workflow
      * @return the validated, packed form with attempt history and provenance
      * @throws StructuredGenerationException when the request target and descriptor
      *     disagree, the grounding type is not visible from the descriptor's file

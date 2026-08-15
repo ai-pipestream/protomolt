@@ -1,6 +1,6 @@
 package ai.pipestream.proto.mesh;
 
-import ai.pipestream.proto.grpc.recipe.v1.ArtifactReference;
+import ai.pipestream.proto.grpc.workflow.v1.ArtifactReference;
 import ai.pipestream.proto.mesh.v1.ClaimCheck;
 import ai.pipestream.proto.mesh.v1.CompletionPolicy;
 import ai.pipestream.proto.mesh.v1.EntityEnvelope;

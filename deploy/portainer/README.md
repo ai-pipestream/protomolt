@@ -68,12 +68,12 @@ development-services ports. Every binding and hostname can be overridden with
 the corresponding variable in `compose.yml`.
 
 The server starts with a durable Git registry, durable service-profile and
-recipe workspaces, and the demo seed. An MCP client can therefore connect and
+workflow workspaces, and the demo seed. An MCP client can therefore connect and
 immediately discover useful resources and verbs. Registered gRPC targets need
 only be routable from the NAS; they do not have to share this Compose network.
 Unauthenticated reflection targets can be registered now. Authenticated
 service-profile reflection remains a bounded delegatable work item in
-`docs/transform/recipes.md`; the coordinator keeps its API token
+`docs/transform/workflows.md`; the coordinator keeps its API token
 enabled until that host credential boundary lands.
 
 The coordinator runs with durable delegation transcripts
@@ -113,7 +113,7 @@ imports the `protomolt` realm only when it does not already exist.
 
 Back up the `protomolt-data`, `rustfs-data`, `keycloak-data`, and
 `repo-postgres-data` volumes before upgrading or replacing the stack. The first
-holds the schema Git history, service registrations, recipes, and evidence.
+holds the schema Git history, service registrations, workflows, and evidence.
 `rustfs-data` and `repo-postgres-data` together hold the encrypted delegation
 transcript; both are useless without `PROTOMOLT_TRANSCRIPT_KEY`, so back the
 key up with the same care as the volumes.

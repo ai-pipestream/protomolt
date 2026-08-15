@@ -35,9 +35,9 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `transform/shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
 | `transform/projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
 | `transform/pipeline/` | `pipeline` | Checked pipeline execution across every gRPC streaming shape, with typed edges, structured generation, unnest, collect, and bounded fan-out |
-| `transform/chain/` | `chain` | Checked serial gRPC compositions with gates, deadlines, named registry storage, and keyed or zip joins over two live streams |
+| `transform/workflow/` | `workflow` | Checked serial gRPC compositions with gates, deadlines, named registry storage, and keyed or zip joins over two live streams |
 | `transform/delegation/` | `delegation` | Coordinator and worker bidirectional contract, transcript reduction, encrypted repository-service persistence, and restart restoration |
-| `jobs/` | `jobs-proto`, `jobs-service` | Durable chain jobs with step checkpoints, external completion, Kafka request and event topics, typed failures, and retries |
+| `jobs/` | `jobs-proto`, `jobs-service` | Durable workflow runs with step checkpoints, external completion, Kafka request and event topics, typed failures, and retries |
 | `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Indexing plans and hints; NDJSON output; engine plugins |
 | `search/embeddings/` | `embeddings` | Embedding-provider SPI and the plan-driven embedder that fills a document's VECTOR field from its TEXT field |
 | `search/embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
@@ -51,7 +51,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `sink/emit/` | `emit`, `emit-okf`, `emit-parquet` | Bundles of rendered files and the sinks that deliver them (directory, git, zip); the OKF v0.1 knowledge-bundle renderer; descriptor-driven Parquet with no generated classes and no native Hadoop |
 | `sink/` | `iceberg`, `iceberg-s3` | Apache Iceberg: descriptor-driven table schemas and an append sink writing ProtoMolt Parquet through any catalog; `S3FileIO` wiring so tables live on any S3-compatible store |
 | `sink/kafka/` | `connect`, `connect-iceberg`, `serde`, `serde-micrometer` | Kafka Connect plugin: the sink drives any gRPC method from topics, the source feeds topics from server streams with CEL resume-token offsets, and four protobuf-aware transforms (validate, map, redact, CEL filter) drop into any pipeline; a separate sink lands records as Iceberg snapshots; a protobuf serde speaking the Confluent wire format, enforcing declared rules on write, with a Micrometer metrics binding |
-| `surface/grpc/` | `grpc-channel-policy`, `grpc-invoke`, `grpc-service-profile`, `grpc-service-workspace`, `grpc-recipe`, `grpc-service`, `grpc-validation`, `grpc-validation-micrometer` | Validated, host-configurable outbound gRPC channel policy; dynamic gRPC invocation and server reflection; durable service profiles and content-addressed descriptor artifacts; protobuf recipe and run-evidence contracts; actions for registering, listing, inspecting, and refreshing services; the catalog as a typed gRPC service; validating interceptors with a Micrometer binding |
+| `surface/grpc/` | `grpc-channel-policy`, `grpc-invoke`, `grpc-service-profile`, `grpc-service-workspace`, `grpc-workflow`, `grpc-service`, `grpc-validation`, `grpc-validation-micrometer` | Validated, host-configurable outbound gRPC channel policy; dynamic gRPC invocation and server reflection; durable service profiles and content-addressed descriptor artifacts; protobuf workflow and run-evidence contracts; actions for registering, listing, inspecting, and refreshing services; the catalog as a typed gRPC service; validating interceptors with a Micrometer binding |
 | `surface/http/` | `json`, `rest`, `openapi`, `jsonschema` | Protobuf/JSON transcoding, framework-agnostic REST gateway, OpenAPI 3 and JSON Schema generation |
 | `surface/mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
 | `surface/acp/` | `acp` | The action catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio, on the `acp-core` transport |
@@ -189,7 +189,7 @@ layout. Start with these workflows:
 
 - [Connect an agent over MCP](docs/surface/mcp.md)
 - [Register and inspect a gRPC service](docs/surface/service-workspace.md)
-- [Build, replay, and promote a recipe](docs/transform/recipes.md)
+- [Build, replay, and promote a workflow](docs/transform/workflows.md)
 - [Run a checked streaming pipeline](docs/transform/pipeline.md)
 - [Generate a Python client without protoc](docs/tutorials/python.md)
 - [Build and test ProtoMolt](docs/operations/building.md)

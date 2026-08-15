@@ -19,12 +19,12 @@ ChannelFactory channels = ChannelFactory.standard(policy);
 ```
 
 Pass that factory to `ServiceWorkspaceActions.register`, `GrpcInvokeAction`, and
-`ReflectAction`, or pass the policy to `ChainRunner` and the policy-aware
+`ReflectAction`, or pass the policy to `WorkflowRunner` and the policy-aware
 `ProtoMoltCatalog.full` overload. Existing `standard()` callers receive the permissive host
 defaults: DNS/IP targets, either transport, a 60-second maximum deadline, and 64 active
 channels.
 
-`protomolt-serve` builds one policy per process and shares it with catalog actions and the chain
+`protomolt-serve` builds one policy per process and shares it with catalog actions and the workflow
 job worker. The policy can be configured with command-line options or matching environment
 variables (`PROTOMOLT_GRPC_ALLOWED_SCHEMES`, `PROTOMOLT_GRPC_ALLOWED_HOSTS`,
 `PROTOMOLT_GRPC_ALLOWED_PORTS`, `PROTOMOLT_GRPC_ALLOW_PLAINTEXT`,

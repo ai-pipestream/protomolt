@@ -23,8 +23,8 @@ class McpMainTest {
             "synthesize-shape", "join-messages", "merge-schemas", "check-rules", "infer-schema",
             "mask-message", "extract-metadata", "list-types", "grpc-invoke", "reflect",
             "generate-stubs", "gather-git", "service-register", "service-list",
-            "service-inspect", "service-refresh", "service-invoke", "compile-recipe", "suggest-mappings",
-            "record-recipe-run", "replay-recipe", "promote-recipe");
+            "service-inspect", "service-refresh", "service-invoke", "compile-workflow", "suggest-mappings",
+            "record-workflow-run", "replay-workflow", "promote-workflow");
 
     @Test
     void helpPrintsUsageToStderrAndReturns() throws Exception {
@@ -38,7 +38,7 @@ class McpMainTest {
         }
         assertThat(captured.toString(StandardCharsets.UTF_8))
                 .contains("usage: protomolt-mcp")
-                .contains("--registry-git", "--service-workspace", "--recipe-workspace");
+                .contains("--registry-git", "--service-workspace", "--workflow-workspace");
     }
 
     @Test

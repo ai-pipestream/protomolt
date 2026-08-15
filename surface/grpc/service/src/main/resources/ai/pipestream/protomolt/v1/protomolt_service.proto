@@ -85,28 +85,28 @@ service ProtoMoltService {
   // (ai.pipestream.proto.meta.v1.field.sensitivity).
   rpc MaskMessage(MaskMessageRequest) returns (MaskMessageResponse);
 
-  // Executes an inline chain: serial typed gRPC calls, each request mapped
-  // from the chain input and every prior step's response.
-  rpc RunChain(RunChainRequest) returns (RunChainResponse);
+  // Executes an inline workflow: serial typed gRPC calls, each request mapped
+  // from the workflow input and every prior step's response.
+  rpc RunWorkflow(RunWorkflowRequest) returns (RunWorkflowResponse);
 
-  // Statically verifies a chain: methods resolve and are unary, every
+  // Statically verifies a workflow: methods resolve and are unary, every
   // mapping and CEL expression type-checks at each step's scope.
-  rpc CheckChain(CheckChainRequest) returns (CheckChainResponse);
+  rpc CheckWorkflow(CheckWorkflowRequest) returns (CheckWorkflowResponse);
 
-  // Compiles a checked chain into the durable descriptor-grounded recipe contract.
-  rpc CompileRecipe(CompileRecipeRequest) returns (CompileRecipeResponse);
+  // Compiles a checked workflow into the durable descriptor-grounded workflow contract.
+  rpc CompileWorkflow(CompileWorkflowRequest) returns (CompileWorkflowResponse);
 
   // Suggests conservative, statically verifiable mappings onto a target type.
   rpc SuggestMappings(SuggestMappingsRequest) returns (SuggestMappingsResponse);
 
-  // Executes a live chain and records redacted content-addressed fixtures.
-  rpc RecordRecipeRun(RecordRecipeRunRequest) returns (RecordRecipeRunResponse);
+  // Executes a live workflow and records redacted content-addressed fixtures.
+  rpc RecordWorkflowRun(RecordWorkflowRunRequest) returns (RecordWorkflowRunResponse);
 
   // Replays recorded fixtures offline and reports any drift.
-  rpc ReplayRecipe(ReplayRecipeRequest) returns (ReplayRecipeResponse);
+  rpc ReplayWorkflow(ReplayWorkflowRequest) returns (ReplayWorkflowResponse);
 
-  // Promotes recipe content as an immutable version in the git registry.
-  rpc PromoteRecipe(PromoteRecipeRequest) returns (PromoteRecipeResponse);
+  // Promotes workflow content as an immutable version in the git registry.
+  rpc PromoteWorkflow(PromoteWorkflowRequest) returns (PromoteWorkflowResponse);
 
   // Fetches a live gRPC server's schema over server reflection, given only
   // its address. Servers without reflection return ok=false.
@@ -147,23 +147,23 @@ service ProtoMoltService {
   // service, cross-linked into the knowledge graph agents and catalogs read.
   rpc EmitOkf(EmitOkfRequest) returns (EmitOkfResponse);
 
-  // Submits a chain for asynchronous execution as a job: the same chain
-  // definition and serial semantics as run-chain, detached. The worker
+  // Submits a workflow for asynchronous execution as a job: the same workflow
+  // definition and serial semantics as run-workflow, detached. The worker
   // checkpoints every step response, parks on steps declared with
   // completion='external', and resumes on complete-step. Requires the server
   // to be started with jobs storage configured.
-  rpc SubmitChain(SubmitChainRequest) returns (SubmitChainResponse);
+  rpc SubmitWorkflow(SubmitWorkflowRequest) returns (SubmitWorkflowResponse);
 
-  // Reads one chain job by id: status, per-step checkpoints, the result when
+  // Reads one workflow run by id: status, per-step checkpoints, the result when
   // completed, and the last error verbatim when failed.
   rpc GetJob(GetJobRequest) returns (GetJobResponse);
 
-  // Lists chain jobs, optionally filtered by status and chain name; summary
+  // Lists workflow runs, optionally filtered by status and workflow name; summary
   // rows only (checkpoints and result are omitted — use GetJob for those).
   rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
 
   // Completes a parked ('external') step of a waiting job with the supplied
-  // response message and resumes the chain. This is the human-in-the-loop
+  // response message and resumes the workflow. This is the human-in-the-loop
   // lane: a judge, reviewer, or external agent resolves the step the worker
   // parked on. Idempotent on job_id + step_name.
   rpc CompleteStep(CompleteStepRequest) returns (CompleteStepResponse);
@@ -873,9 +873,9 @@ message CheckRulesResponse {
   string dry_run_error = 6;
 }
 
-// One step of a chain: a unary call whose request is mapped from the chain
+// One step of a workflow: a unary call whose request is mapped from the workflow
 // scope ('input' plus every prior step's response, by step name).
-message ChainStep {
+message WorkflowStep {
   // The step name; later steps see this step's response under it.
   string name = 1;
   // gRPC target, e.g. 'host:9090'.
@@ -892,12 +892,12 @@ message ChainStep {
   repeated CelRule cel_rules = 7;
   // Validate the response against its declared rules before proceeding.
   bool validate = 8;
-  // Per-step deadline, bounded by what remains of the chain's.
+  // Per-step deadline, bounded by what remains of the workflow's.
   int32 deadline_ms = 9;
   // How the step obtains its response: '' (the default) invokes 'method' on
   // 'target'; 'external' parks the job until complete-step supplies the
   // response — the human-in-the-loop lane. External steps are rejected by
-  // synchronous run-chain; they only execute as jobs.
+  // synchronous run-workflow; they only execute as jobs.
   string completion = 10;
   // Structured-generation spec; when set the step fills 'structured.target_type'
   // with the named catalog model and must not declare target, method, or tls.
@@ -906,10 +906,10 @@ message ChainStep {
   // the named scope entries are mapped into 'produce_type', optionally
   // projected and validated, and the delivered value becomes the step's
   // request (or, on a structured step, the generation's grounding).
-  ChainEdge edge = 12;
+  WorkflowEdge edge = 12;
   // Optional bounded fan-out over a repeated message field produced by 'edge'.
   // Branch outputs are collected deterministically into 'fan_out.collect_into'.
-  ChainFanOut fan_out = 13;
+  WorkflowFanOut fan_out = 13;
 }
 
 // A structured-generation step: fills one message type with a catalog model
@@ -926,7 +926,7 @@ message StructuredStep {
 // A typed inter-step edge: map the named scope entries ('input' or prior step
 // names) into 'produce_type', optionally project the produced value to a
 // projection-annotated consumer form, and validate it before the step runs.
-message ChainEdge {
+message WorkflowEdge {
   // Scope entries the edge reads: 'input' or prior step names.
   repeated string sources = 1;
   // Fully qualified type the edge rules build.
@@ -943,10 +943,10 @@ message ChainEdge {
   bool validate = 6;
 }
 
-// Bounded fan-out for one typed edge. The chain verifier resolves every path
+// Bounded fan-out for one typed edge. The workflow verifier resolves every path
 // and type, applies the item and concurrency bounds, and accepts only the
 // FAIL_FAST or CONTINUE failure policies before execution.
-message ChainFanOut {
+message WorkflowFanOut {
   // Dotted path of the repeated message field whose elements become branches.
   string items = 1;
   // Maximum number of elements accepted; must be within the verifier's bound.
@@ -961,8 +961,8 @@ message ChainFanOut {
   string collect_into = 6;
 }
 
-// The chain's output mapping; without it the last step's response returns.
-message ChainOutput {
+// The workflow's output mapping; without it the last step's response returns.
+message WorkflowOutput {
   // Fully qualified output message type.
   string type = 1;
   // Scoped text rules building the output message.
@@ -971,37 +971,37 @@ message ChainOutput {
   repeated CelRule cel_rules = 3;
 }
 
-// A chain: an input type and serial steps whose requests are mapped from
-// the chain scope.
-message ChainDefinition {
-  // The chain name.
+// A workflow: an input type and serial steps whose requests are mapped from
+// the workflow scope.
+message CompiledWorkflow {
+  // The workflow name.
   string name = 1;
   // Declares every step's service and message types (e.g. from reflect,
   // gather-git, or a registry descriptor set).
   SchemaSource schema = 2;
-  // Fully qualified type of the chain input.
+  // Fully qualified type of the workflow input.
   string input_type = 3;
   // Overall deadline; default 30000.
   int32 deadline_ms = 4;
   // The steps, executed in order.
-  repeated ChainStep steps = 5;
+  repeated WorkflowStep steps = 5;
   // Optional output mapping; without it the last step's response returns.
-  ChainOutput output = 6;
+  WorkflowOutput output = 6;
 }
 
-// The input of run-chain: an inline chain or the name of a stored one.
-message RunChainRequest {
-  // The inline chain definition to execute.
-  ChainDefinition chain = 1;
-  // The chain input, as proto3 JSON of input_type.
+// The input of run-workflow: an inline workflow or the name of a stored one.
+message RunWorkflowRequest {
+  // The inline workflow definition to execute.
+  CompiledWorkflow workflow = 1;
+  // The workflow input, as proto3 JSON of input_type.
   google.protobuf.Struct input = 2;
-  // A stored chain to run instead of an inline 'chain' (registered via the
-  // registry's chains endpoint).
-  string chain_name = 3;
+  // A stored workflow to run instead of an inline 'workflow' (registered via the
+  // registry's workflows endpoint).
+  string workflow_name = 3;
 }
 
-// The outcome of one chain step.
-message ChainStepResult {
+// The outcome of one workflow step.
+message WorkflowStepResult {
   // The step name.
   string name = 1;
   // True when the step's 'when' gate evaluated false and the step did not
@@ -1009,59 +1009,59 @@ message ChainStepResult {
   bool skipped = 2;
 }
 
-// The outcome of run-chain.
-message RunChainResponse {
-  // True when the chain ran to completion and produced an output.
+// The outcome of run-workflow.
+message RunWorkflowResponse {
+  // True when the workflow ran to completion and produced an output.
   bool ok = 1;
   // Fully qualified type of the output message.
   string output_type = 2;
-  // The chain output, as proto3 JSON of 'output_type'.
+  // The workflow output, as proto3 JSON of 'output_type'.
   google.protobuf.Struct output = 3;
   // Per-step outcomes, in execution order.
-  repeated ChainStepResult steps = 4;
+  repeated WorkflowStepResult steps = 4;
   // When ok=false: which step failed and why (gRPC status, gate error, or
   // validation violations).
   string failed_step = 5;
-  // Why the chain failed, when ok=false.
+  // Why the workflow failed, when ok=false.
   string error = 6;
 }
 
-// The input of check-chain.
-message CheckChainRequest {
-  // The chain definition to verify.
-  ChainDefinition chain = 1;
+// The input of check-workflow.
+message CheckWorkflowRequest {
+  // The workflow definition to verify.
+  CompiledWorkflow workflow = 1;
 }
 
-// One problem found while verifying a chain.
-message ChainFinding {
-  // The step name, or '' for chain-level findings.
+// One problem found while verifying a workflow.
+message WorkflowFinding {
+  // The step name, or '' for workflow-level findings.
   string step = 1;
-  // 'method', 'when', 'rule', 'celRule', 'output', or 'chain'.
+  // 'method', 'when', 'rule', 'celRule', 'output', or 'workflow'.
   string kind = 2;
   // Why the element failed verification.
   string error = 3;
 }
 
-// The verdict of check-chain.
-message CheckChainResponse {
-  // True when the chain verified clean.
+// The verdict of check-workflow.
+message CheckWorkflowResponse {
+  // True when the workflow verified clean.
   bool ok = 1;
   // One entry per problem; empty when 'ok' is true.
-  repeated ChainFinding findings = 2;
+  repeated WorkflowFinding findings = 2;
 }
 
-// A checked chain to compile into a recipe.
-message CompileRecipeRequest {
-  // Descriptor-grounded chain to check and compile.
-  ChainDefinition chain = 1;
+// A checked workflow to compile into a workflow.
+message CompileWorkflowRequest {
+  // Descriptor-grounded workflow to check and compile.
+  CompiledWorkflow workflow = 1;
 }
 
-// Deterministic recipe content and its SHA-256 identity.
-message CompileRecipeResponse {
-  // Compiled GrpcRecipe rendered as protobuf JSON.
-  google.protobuf.Struct recipe = 1;
-  // Lowercase SHA-256 fingerprint of the compiled recipe bytes.
-  string recipe_fingerprint = 2;
+// Deterministic workflow content and its SHA-256 identity.
+message CompileWorkflowResponse {
+  // Compiled Workflow rendered as protobuf JSON.
+  google.protobuf.Struct workflow = 1;
+  // Lowercase SHA-256 fingerprint of the compiled workflow bytes.
+  string workflow_fingerprint = 2;
 }
 
 // Descriptor-grounded mapping suggestion input.
@@ -1078,7 +1078,7 @@ message MappingCandidate {
   string target_path = 1;
   // Named source field path read by this candidate.
   string source_path = 2;
-  // Chain mapping rule in target=source.path form.
+  // Workflow mapping rule in target=source.path form.
   string rule = 3;
   // Deterministic reason this candidate was proposed.
   string basis = 4;
@@ -1092,34 +1092,34 @@ message SuggestMappingsResponse {
   repeated MappingCandidate candidates = 2;
 }
 
-// A live draft-recipe probe to record for offline replay.
-message RecordRecipeRunRequest {
-  // Descriptor-grounded chain to execute.
-  ChainDefinition chain = 1;
-  // Chain input encoded as proto3 JSON.
+// A live draft-workflow probe to record for offline replay.
+message RecordWorkflowRunRequest {
+  // Descriptor-grounded workflow to execute.
+  CompiledWorkflow workflow = 1;
+  // Workflow input encoded as proto3 JSON.
   google.protobuf.Struct input = 2;
   // Client-selected path-safe run identity.
   string run_id = 3;
-  // Promoted recipe version, or empty for a draft probe.
-  string recipe_version = 4;
+  // Promoted workflow version, or empty for a draft probe.
+  string workflow_version = 4;
 }
 
 // The persisted run evidence; failed executions still return their evidence.
-message RecordRecipeRunResponse {
-  // True when every chain step and output mapping succeeded.
+message RecordWorkflowRunResponse {
+  // True when every workflow step and output mapping succeeded.
   bool ok = 1;
   // Step name that failed, when ok is false.
   string failed_step = 2;
-  // Chain execution failure category, when ok is false.
+  // Workflow execution failure category, when ok is false.
   string failure_kind = 3;
   // Persisted RunEvidence rendered as protobuf JSON.
   google.protobuf.Struct evidence = 4;
 }
 
-// Exact recipe, evidence identity, and descriptor set for offline replay.
-message ReplayRecipeRequest {
-  // GrpcRecipe encoded as protobuf JSON.
-  google.protobuf.Struct recipe = 1;
+// Exact workflow, evidence identity, and descriptor set for offline replay.
+message ReplayWorkflowRequest {
+  // Workflow encoded as protobuf JSON.
+  google.protobuf.Struct workflow = 1;
   // Stored run-evidence identity to replay.
   string run_id = 2;
   // Exact descriptor set used to decode and verify fixtures.
@@ -1127,52 +1127,52 @@ message ReplayRecipeRequest {
 }
 
 // One step's offline replay verdict.
-message RecipeStepReplay {
-  // Recipe step whose evidence was checked.
+message WorkflowStepReplay {
+  // Workflow step whose evidence was checked.
   string step_name = 1;
   // RunEvidence StepStatus enum name.
   string recorded_status = 2;
-  // True when the recorded step evidence matches the recipe and fixtures.
+  // True when the recorded step evidence matches the workflow and fixtures.
   bool ok = 3;
   // Bounded explanation of the replay verdict.
   string detail = 4;
 }
 
 // Whole-run offline replay verdict.
-message ReplayRecipeResponse {
+message ReplayWorkflowResponse {
   // True when the complete recorded run replays without drift.
   bool ok = 1;
   // Whole-run failure summary, or empty when replay succeeds.
   string failure = 2;
   // Ordered per-step replay verdicts.
-  repeated RecipeStepReplay steps = 3;
+  repeated WorkflowStepReplay steps = 3;
 }
 
-// Recipe content to promote under one immutable version.
-message PromoteRecipeRequest {
-  // GrpcRecipe encoded as protobuf JSON.
-  google.protobuf.Struct recipe = 1;
+// Workflow content to promote under one immutable version.
+message PromoteWorkflowRequest {
+  // Workflow encoded as protobuf JSON.
+  google.protobuf.Struct workflow = 1;
   // Path-safe immutable version identity.
   string version = 2;
 }
 
 // The immutable promotion envelope stored in the registry.
-message PromoteRecipeResponse {
+message PromoteWorkflowResponse {
   // True when the version is present with the requested content.
   bool promoted = 1;
-  // Stored VersionedRecipe rendered as protobuf JSON.
-  google.protobuf.Struct versioned_recipe = 2;
+  // Stored VersionedWorkflow rendered as protobuf JSON.
+  google.protobuf.Struct versioned_workflow = 2;
 }
 
-// The input of submit-chain: an inline chain or the name of a stored one,
-// the chain input, and an optional client-generated job id.
-message SubmitChainRequest {
-  // The inline chain definition to execute.
-  ChainDefinition chain = 1;
-  // A stored chain to run instead of an inline 'chain' (registered via the
-  // registry's chains endpoint).
-  string chain_name = 2;
-  // The chain input, as proto3 JSON of input_type.
+// The input of submit-workflow: an inline workflow or the name of a stored one,
+// the workflow input, and an optional client-generated job id.
+message SubmitWorkflowRequest {
+  // The inline workflow definition to execute.
+  CompiledWorkflow workflow = 1;
+  // A stored workflow to run instead of an inline 'workflow' (registered via the
+  // registry's workflows endpoint).
+  string workflow_name = 2;
+  // The workflow input, as proto3 JSON of input_type.
   google.protobuf.Struct input = 3;
   // Optional client-generated job id (a UUID). Supplying one makes submit
   // idempotent: a second submit with the same id returns the existing job.
@@ -1180,8 +1180,8 @@ message SubmitChainRequest {
   string job_id = 4;
 }
 
-// The outcome of submit-chain.
-message SubmitChainResponse {
+// The outcome of submit-workflow.
+message SubmitWorkflowResponse {
   // True when the job was accepted (or already existed under 'job_id').
   bool ok = 1;
   // The job id, for get-job / complete-step / topic correlation.
@@ -1189,14 +1189,14 @@ message SubmitChainResponse {
   // The job's status after the call: 'QUEUED', or the existing job's status
   // on an idempotent resubmit.
   string status = 3;
-  // Why submission failed, when ok=false (chain does not parse or verify,
+  // Why submission failed, when ok=false (workflow does not parse or verify,
   // jobs not configured, malformed input).
   string error = 4;
 }
 
-// One checkpointed step of a chain job: the persisted response the chain
+// One checkpointed step of a workflow run: the persisted response the workflow
 // resumes from after a restart or a park.
-message ChainJobCheckpoint {
+message WorkflowRunCheckpoint {
   // The step name.
   string name = 1;
   // True when the step's 'when' gate evaluated false and the step did not
@@ -1206,26 +1206,26 @@ message ChainJobCheckpoint {
   google.protobuf.Struct response = 3;
 }
 
-// One chain job. Job statuses: QUEUED (awaiting a worker), RUNNING (claimed),
+// One workflow run. Job statuses: QUEUED (awaiting a worker), RUNNING (claimed),
 // WAITING (parked on an 'external' step, expecting complete-step), COMPLETED,
 // FAILED (a verdict: validation gate or non-retryable failure), DEAD
 // (attempts exhausted — the dead-letter row).
-message ChainJob {
+message WorkflowRun {
   // The job id (a UUID).
   string job_id = 1;
-  // The chain's name.
-  string chain_name = 2;
+  // The workflow's name.
+  string workflow_name = 2;
   // QUEUED, RUNNING, WAITING, COMPLETED, FAILED, or DEAD.
   string status = 3;
   // Execution attempts so far.
   int32 attempt = 4;
   // The parked step's name; set only while WAITING.
   string outstanding_step = 5;
-  // The chain input, as proto3 JSON.
+  // The workflow input, as proto3 JSON.
   google.protobuf.Struct input = 6;
   // Persisted per-step responses, in execution order.
-  repeated ChainJobCheckpoint checkpoints = 7;
-  // The chain output, as proto3 JSON; set only when COMPLETED.
+  repeated WorkflowRunCheckpoint checkpoints = 7;
+  // The workflow output, as proto3 JSON; set only when COMPLETED.
   google.protobuf.Struct result = 8;
   // The last failure, verbatim; set when FAILED or DEAD.
   string error = 9;
@@ -1239,7 +1239,7 @@ message ChainJob {
 
 // The input of get-job.
 message GetJobRequest {
-  // The job id returned by submit-chain.
+  // The job id returned by submit-workflow.
   string job_id = 1;
 }
 
@@ -1248,7 +1248,7 @@ message GetJobResponse {
   // True when the job exists.
   bool ok = 1;
   // The full job record, checkpoints and result included.
-  ChainJob job = 2;
+  WorkflowRun job = 2;
   // Why the read failed, when ok=false (unknown job, jobs not configured).
   string error = 3;
 }
@@ -1258,8 +1258,8 @@ message ListJobsRequest {
   // Optional status filter (QUEUED, RUNNING, WAITING, COMPLETED, FAILED,
   // DEAD); empty lists every status.
   string status = 1;
-  // Optional chain-name filter.
-  string chain_name = 2;
+  // Optional workflow-name filter.
+  string workflow_name = 2;
   // Maximum jobs returned; default 50, capped at 500.
   int32 limit = 3;
   // Offset into the created_at-descending ordering.
@@ -1272,7 +1272,7 @@ message ListJobsResponse {
   bool ok = 1;
   // The matching jobs, newest first; summary rows (checkpoints and result
   // are omitted — use get-job for those).
-  repeated ChainJob jobs = 2;
+  repeated WorkflowRun jobs = 2;
   // Why the listing failed, when ok=false.
   string error = 3;
 }
@@ -1286,7 +1286,7 @@ message CompleteStepRequest {
   string step_name = 2;
   // The step's response, as proto3 JSON of the step's output type. When the
   // step declares 'validate', the response is checked against its declared
-  // rules before the chain resumes — a rejection fails the job as a verdict.
+  // rules before the workflow resumes — a rejection fails the job as a verdict.
   google.protobuf.Struct response = 3;
 }
 

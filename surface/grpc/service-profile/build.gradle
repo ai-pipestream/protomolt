@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'Protobuf service profiles and durable descriptor artifacts for the gRPC recipe workbench'
+description = 'Protobuf service profiles and durable descriptor artifacts for the gRPC workflow workbench'
 
 dependencies {
     api libs.protobuf.java

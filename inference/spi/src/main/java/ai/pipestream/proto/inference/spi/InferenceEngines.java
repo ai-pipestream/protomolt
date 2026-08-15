@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.ServiceLoader;
 
 /**
- * The resolution facade every inference surface (the gRPC service, chain
+ * The resolution facade every inference surface (the gRPC service, workflow
  * steps, jobs) shares: it maps a catalog model id to the entry and the
  * {@link InferenceProvider} that executes it.
  *

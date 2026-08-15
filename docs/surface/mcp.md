@@ -26,7 +26,7 @@ stdio loop, the tests, and any future transport drive it the same way.
 ./gradlew :protomolt-mcp:installDist
 surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp \
   [--registry-git <path>] [--service-workspace <path>] \
-  [--recipe-workspace <path>]
+  [--workflow-workspace <path>]
 ```
 
 Register it with an MCP client, for example Claude Code:
@@ -36,7 +36,7 @@ claude mcp add protomolt -- \
   /path/to/protomolt-mcp/bin/protomolt-mcp \
   --registry-git /srv/schemas.git \
   --service-workspace /srv/protomolt-services \
-  --recipe-workspace /srv/protomolt-recipes
+  --workflow-workspace /srv/protomolt-workflows
 ```
 
 `--registry-git` adds git-backed schema resources. `--service-workspace` adds
@@ -44,15 +44,15 @@ durable service profiles, reflected descriptor storage, and service/method
 resources. The five service tools remain discoverable without the latter but
 answer `unavailable` with the configuration remedy.
 
-`--recipe-workspace` stores content-addressed redacted fixtures and immutable
-run evidence. Recipe tools remain discoverable without storage: compilation
+`--workflow-workspace` stores content-addressed redacted fixtures and immutable
+run evidence. Workflow tools remain discoverable without storage: compilation
 and mapping suggestions still work, while record and replay answer
-`unavailable` with the remedy. `promote-recipe` requires `--registry-git`.
+`unavailable` with the remedy. `promote-workflow` requires `--registry-git`.
 
-The recipe workflow advertised during initialization is: inspect or reflect
+The workbench flow advertised during initialization is: inspect or reflect
 the services, use `suggest-mappings` where useful, verify and
-`compile-recipe`, then `record-recipe-run`, `replay-recipe`, and finally
-`promote-recipe`.
+`compile-workflow`, then `record-workflow-run`, `replay-workflow`, and finally
+`promote-workflow`.
 
 Initialization and `tools/list` both carry the same tool count and SHA-256
 catalog fingerprint in `_meta`. Read `protomolt://workspace` for that identity,
@@ -130,7 +130,7 @@ for the exact names.
 | `service-refresh` | Re-reflect a registered endpoint and report whether its schema fingerprint changed |
 | `service-invoke` | Invoke a registered method without sending its descriptor or target on each call |
 
-Chains, jobs, inference, and `emit-okf` are not in the standalone binary's
+Workflows, jobs, inference, and `emit-okf` are not in the standalone binary's
 catalog because they require host-side wiring. `protomolt-serve` mounts the
 full catalog over HTTP, plus the live delegation surface: one coordinator per
 server, adapted to catalog verbs by the delegation bridge, in-memory by

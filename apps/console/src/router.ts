@@ -21,9 +21,9 @@ export const router = createRouter({
           component: () => import('./views/SubjectsView.vue'),
         },
         {
-          path: 'chains',
-          name: 'schema-registry-chains',
-          component: () => import('./views/ChainsView.vue'),
+          path: 'workflows',
+          name: 'schema-registry-workflows',
+          component: () => import('./views/WorkflowsView.vue'),
         },
         {
           path: 'merge',

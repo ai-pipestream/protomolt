@@ -87,7 +87,7 @@ message GenerateStructuredRequest {
     }
   ];
 
-  // Per-document grounding projected by the recipe edge; rendered into the
+  // Per-document grounding projected by the workflow edge; rendered into the
   // prompt as document-specific context (RenderPromptRequest.overrides), so
   // the prompt fingerprint covers it. The model may not contradict it. An
   // unresolvable grounding type fails before any model invocation.

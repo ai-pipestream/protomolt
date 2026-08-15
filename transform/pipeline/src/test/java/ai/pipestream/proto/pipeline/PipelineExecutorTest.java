@@ -1,9 +1,9 @@
 package ai.pipestream.proto.pipeline;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.grpc.recipe.v1.BranchFailurePolicy;
-import ai.pipestream.proto.grpc.recipe.v1.FanOutSpec;
-import ai.pipestream.proto.grpc.recipe.v1.StepCompletion;
+import ai.pipestream.proto.grpc.workflow.v1.BranchFailurePolicy;
+import ai.pipestream.proto.grpc.workflow.v1.FanOutSpec;
+import ai.pipestream.proto.grpc.workflow.v1.StepCompletion;
 import ai.pipestream.proto.inference.spi.ChunkObserver;
 import ai.pipestream.proto.inference.spi.InferenceCatalog;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
@@ -398,7 +398,7 @@ class PipelineExecutorTest {
 
         @Override
         public List<DynamicMessage> invoke(
-                ai.pipestream.proto.grpc.recipe.v1.ServiceDependency dependency,
+                ai.pipestream.proto.grpc.workflow.v1.ServiceDependency dependency,
                 com.google.protobuf.Descriptors.MethodDescriptor method,
                 List<DynamicMessage> requests, long deadlineMillis, int maxResponses) {
             calls.incrementAndGet();

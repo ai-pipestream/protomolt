@@ -1,11 +1,11 @@
-description = 'The chain-jobs service: durable asynchronous chain execution — Postgres is the truth, a Kafka request topic in, lifecycle events out via the transactional outbox, no framework'
+description = 'The workflow-runs service: durable asynchronous workflow execution — Postgres is the truth, a Kafka request topic in, lifecycle events out via the transactional outbox, no framework'
 
 dependencies {
     api project(':protomolt-jobs-proto')
 
-    // The chain engine the worker executes with (ChainJson/ChainVerifier/
-    // ChainRunner/ChainRepository); the actions implement ProtoAction.
-    api project(':protomolt-chain')
+    // The workflow engine the worker executes with (WorkflowJson/WorkflowVerifier/
+    // WorkflowRunner/WorkflowRepository); the actions implement ProtoAction.
+    api project(':protomolt-workflow')
     api project(':protomolt-actions')
 
     // complete-step runs the parked step's declared validation rules as a

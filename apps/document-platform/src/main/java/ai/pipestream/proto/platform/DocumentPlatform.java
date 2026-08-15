@@ -2,21 +2,21 @@ package ai.pipestream.proto.platform;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.chain.ChainRepository;
-import ai.pipestream.proto.chain.ChainRunner;
+import ai.pipestream.proto.workflow.WorkflowRepository;
+import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.pipestream.proto.intake.service.IntakeServiceConfig;
 import ai.pipestream.proto.intake.service.IntakeServices;
 import ai.pipestream.proto.intake.service.identity.ApiKeyIdentityResolver;
-import ai.pipestream.proto.jobs.service.ChainJobsConfig;
+import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
 import ai.pipestream.proto.jobs.service.actions.GetJobAction;
 import ai.pipestream.proto.jobs.service.actions.ListJobsAction;
-import ai.pipestream.proto.jobs.service.actions.SubmitChainAction;
-import ai.pipestream.proto.jobs.service.store.ChainJobDatabase;
-import ai.pipestream.proto.jobs.service.store.JdbcChainJobStore;
-import ai.pipestream.proto.jobs.service.worker.ChainJobWorker;
+import ai.pipestream.proto.jobs.service.actions.SubmitWorkflowAction;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunDatabase;
+import ai.pipestream.proto.jobs.service.store.JdbcWorkflowRunStore;
+import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
 import ai.pipestream.proto.parse.playground.ParsePlaygroundServer;
-import ai.pipestream.proto.parse.service.ParseChains;
+import ai.pipestream.proto.parse.service.ParseWorkflows;
 import ai.pipestream.proto.parse.service.ParseCoordinatorConfig;
 import ai.pipestream.proto.parse.service.ParseCoordinatorServices;
 import ai.pipestream.proto.parse.service.ParserRegistry;
@@ -58,11 +58,11 @@ import org.slf4j.LoggerFactory;
  *   for external callers), lifecycle loops running;</li>
  *   <li>the git-backed schema registry, ON by default, serving the fleet
  *   document model as a published artifact from first boot, with the jobs
- *   verbs (submit-chain, get-job, list-jobs) mounted on its actions
+ *   verbs (submit-workflow, get-job, list-jobs) mounted on its actions
  *   route;</li>
  *   <li>the parsing coordinator with the embedded reference text parser (or
  *   a service-profile fleet when configured), and the {@code parse-document}
- *   chain registered so a durable parse is one submit-chain call;</li>
+ *   workflow registered so a durable parse is one submit-workflow call;</li>
  *   <li>the durable jobs worker claiming from its own Postgres;</li>
  *   <li>the authenticated intake door;</li>
  *   <li>the streaming parser playground.</li>
@@ -87,8 +87,8 @@ public final class DocumentPlatform implements AutoCloseable {
     private final GitSchemaRegistryStore registry;
     private final SchemaRegistryServer registryServer;
     private final int registryHttpPort;
-    private final ChainJobDatabase jobsDatabase;
-    private final ChainJobWorker worker;
+    private final WorkflowRunDatabase jobsDatabase;
+    private final WorkflowRunWorker worker;
     private final IntakeServices intake;
     private final Server intakeGrpc;
     private final ParsePlaygroundServer playground;
@@ -137,15 +137,15 @@ public final class DocumentPlatform implements AutoCloseable {
                 rules,
                 parsers);
         // The coordinator tracks one server; the platform owns the extra
-        // in-process mount (the chain's target) and closes it itself.
+        // in-process mount (the workflow's target) and closes it itself.
         this.parseInProcess = coordinator.startInProcess(parseInProcessName);
         this.parseGrpc = coordinator.startNetty(config.parseGrpcPort());
 
         // 4. The jobs store and worker (its own database, its own Flyway
         // history; the disjoint per-module migration directories are what
         // make this classpath legal).
-        this.jobsDatabase = new ChainJobDatabase(config.jobs());
-        JdbcChainJobStore jobs = new JdbcChainJobStore(jobsDatabase);
+        this.jobsDatabase = new WorkflowRunDatabase(config.jobs());
+        JdbcWorkflowRunStore jobs = new JdbcWorkflowRunStore(jobsDatabase);
         ActionContext context = ActionContext.create();
         // Parse checkpoints carry the parser's docling document as an Any;
         // the checkpoint transcoder resolves it through this registry.
@@ -155,15 +155,15 @@ public final class DocumentPlatform implements AutoCloseable {
         this.registry = GitSchemaRegistryStore.builder()
                 .repositoryDir(config.registryGit())
                 .build();
-        registry.putChain(
-                ParseChains.PARSE_DOCUMENT_CHAIN,
-                ParseChains.parseDocumentChain(
+        registry.putWorkflow(
+                ParseWorkflows.PARSE_DOCUMENT_WORKFLOW,
+                ParseWorkflows.parseDocumentWorkflow(
                                 ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + parseInProcessName,
                                 config.parseDeadlineSeconds() * 1000)
                         .toString());
-        ChainRepository chains = chainRepository(registry);
+        WorkflowRepository workflows = workflowRepository(registry);
         ActionCatalog catalog = ActionCatalog.defaults(context)
-                .register(new SubmitChainAction(jobs, chains, ChainJobsConfig.DEFAULT_MAX_ATTEMPTS))
+                .register(new SubmitWorkflowAction(jobs, workflows, WorkflowRunsConfig.DEFAULT_MAX_ATTEMPTS))
                 .register(new GetJobAction(jobs))
                 .register(new ListJobsAction(jobs));
         this.registryServer = new SchemaRegistryServer(
@@ -174,7 +174,7 @@ public final class DocumentPlatform implements AutoCloseable {
         publishDocumentModel();
 
         // 6. The worker fleet.
-        ChainRunner runner = new ChainRunner(step -> {
+        WorkflowRunner runner = new WorkflowRunner(step -> {
             String target = step.target();
             if (target.startsWith(ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX)) {
                 return InProcessChannelBuilder.forName(
@@ -184,16 +184,16 @@ public final class DocumentPlatform implements AutoCloseable {
             }
             return NettyChannelBuilder.forTarget(target).usePlaintext().build();
         });
-        this.worker = new ChainJobWorker(jobs, context, chains, runner, new ChainJobsConfig(
+        this.worker = new WorkflowRunWorker(jobs, context, workflows, runner, new WorkflowRunsConfig(
                 "document-platform",
                 config.workerCount(),
-                ChainJobsConfig.DEFAULT_LEASE_DURATION,
-                ChainJobsConfig.DEFAULT_POLL_INTERVAL,
-                ChainJobsConfig.DEFAULT_BACKOFF_BASE_SECONDS,
-                ChainJobsConfig.DEFAULT_MAX_ATTEMPTS,
-                ChainJobsConfig.DEFAULT_MAX_CONCURRENT_PER_TARGET,
+                WorkflowRunsConfig.DEFAULT_LEASE_DURATION,
+                WorkflowRunsConfig.DEFAULT_POLL_INTERVAL,
+                WorkflowRunsConfig.DEFAULT_BACKOFF_BASE_SECONDS,
+                WorkflowRunsConfig.DEFAULT_MAX_ATTEMPTS,
+                WorkflowRunsConfig.DEFAULT_MAX_CONCURRENT_PER_TARGET,
                 null,
-                ChainJobsConfig.DEFAULT_EVENTS_TOPIC,
+                WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC,
                 null,
                 null));
         worker.start();
@@ -327,14 +327,14 @@ public final class DocumentPlatform implements AutoCloseable {
                 .build()));
     }
 
-    private static ChainRepository chainRepository(GitSchemaRegistryStore store) {
+    private static WorkflowRepository workflowRepository(GitSchemaRegistryStore store) {
         ObjectMapper json = new ObjectMapper();
         return name -> {
-            Optional<String> text = store.chain(name);
+            Optional<String> text = store.workflow(name);
             return text.map(t -> {
                 try {
                     var node = json.readTree(t);
-                    return node instanceof ObjectNode chain ? chain : null;
+                    return node instanceof ObjectNode workflow ? workflow : null;
                 } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
                     return null;
                 }

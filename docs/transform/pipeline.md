@@ -1,13 +1,13 @@
 # Pipelines
 
-A pipeline is the checked, streaming-aware execution form of a gRPC recipe.
+A pipeline is the checked, streaming-aware execution form of a gRPC workflow.
 Its protobuf contract is
 [`pipeline.proto`](../../transform/pipeline/src/main/proto/ai/pipestream/proto/pipeline/v1/pipeline.proto).
 
 Each step receives data through an explicit typed edge. The edge selects
-recipe input or prior step outputs, applies mapping and CEL rules, optionally
+workflow input or prior step outputs, applies mapping and CEL rules, optionally
 projects the result, and validates it before delivery. The same edge contract
-is used by recipes and pipelines.
+is used by workflows and pipelines.
 
 ## Step types
 
@@ -69,12 +69,12 @@ semaphore enforces the declared concurrency cap.
 Pipeline and step deadlines bound the run. External-completion steps require a
 durable job coordinator and are rejected by the in-process executor.
 
-## Recipes
+## Workflows
 
-`RecipePipelineCompiler` converts a `GrpcRecipe` into a pipeline, preserves its
+`WorkflowPipelineCompiler` converts a `Workflow` into a pipeline, preserves its
 typed edges and fan-out policy, derives method shapes from descriptors, and
-records the recipe fingerprint. `PipelineChecker` then verifies the compiled
+records the workflow fingerprint. `PipelineChecker` then verifies the compiled
 contract independently.
 
-See [recipes and run evidence](recipes.md) for compilation, recording, replay,
+See [workflows and run evidence](workflows.md) for compilation, recording, replay,
 and promotion.

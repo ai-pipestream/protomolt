@@ -76,19 +76,19 @@ class McpServerTest {
         assertThat(instructions.asText().length()).isLessThanOrEqualTo(512);
         assertThat(instructions.asText()).contains("protomolt://workspace", "service-register",
                 "service-inspect", "service-invoke",
-                "reflect", "grpc-invoke", "suggest-mappings", "compile-recipe",
-                "record-recipe-run", "replay-recipe", "promote-recipe");
+                "reflect", "grpc-invoke", "suggest-mappings", "compile-workflow",
+                "record-workflow-run", "replay-workflow", "promote-workflow");
     }
 
     @Test
     void initializeUsesConfiguredInstructions() {
         McpServer configured = new McpServer(ActionCatalog.defaults(ActionContext.create()), null,
-                "configured", "1", "Use the supplied recipe.");
+                "configured", "1", "Use the supplied workflow.");
 
         JsonNode result = configured.handle(request(1, "initialize", null)).orElseThrow()
                 .get("result");
 
-        assertThat(result.get("instructions").asText()).isEqualTo("Use the supplied recipe.");
+        assertThat(result.get("instructions").asText()).isEqualTo("Use the supplied workflow.");
     }
 
     @Test

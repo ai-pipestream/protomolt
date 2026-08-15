@@ -11,7 +11,7 @@ option java_package = "ai.pipestream.proto.grpc.profile.v1";
 // service. Credentials and key material are resolved by the host; this contract carries only
 // opaque references to them.
 message ServiceProfile {
-  // Stable service identity used by recipes and repository paths.
+  // Stable service identity used by workflows and repository paths.
   string name = 1;
   // Named connection choices for this service, such as "local" or "production".
   repeated ServiceEndpoint endpoints = 2;

@@ -1,7 +1,7 @@
 package ai.pipestream.proto.pipeline;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.grpc.recipe.RecipeValidation;
+import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
 import ai.pipestream.proto.pipeline.v1.CollectStep;
 import ai.pipestream.proto.pipeline.v1.EdgeCardinality;
 import ai.pipestream.proto.pipeline.v1.GrpcCallStep;
@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
  * cardinality from the dataflow, and rejects drift between the declared contract and the
  * descriptors with messages that name the file, type, field path, and flags involved.
  *
- * <p>The typed-edge checks are the chain verifier's, carried onto every streaming shape:
+ * <p>The typed-edge checks are the workflow verifier's, carried onto every streaming shape:
  * edge sources must be {@code input} or prior steps, mapping and CEL rules type-check
  * against exactly the declared source scope (stream sources bind their element type),
  * projections must support the value they project, fan-out items paths, caps, and collect
@@ -176,7 +176,7 @@ public final class PipelineChecker {
                             + " (files: " + DescriptorSets.fileNames(files) + ")"));
             return;
         }
-        MethodShape derived = RecipePipelineCompiler.shapeOf(method);
+        MethodShape derived = WorkflowPipelineCompiler.shapeOf(method);
         if (call.getMethodShape() != derived) {
             findings.add(new Finding(step.getName(), "shape",
                     "method " + method.getFullName() + " in file "
@@ -205,7 +205,7 @@ public final class PipelineChecker {
         }
 
         boolean external = call.getCompletion()
-                == ai.pipestream.proto.grpc.recipe.v1.StepCompletion
+                == ai.pipestream.proto.grpc.workflow.v1.StepCompletion
                         .STEP_COMPLETION_EXTERNAL;
         if (external) {
             bind(step.getName(), scope, call, method.getOutputType(),
@@ -315,8 +315,8 @@ public final class PipelineChecker {
      *         edges), or null when the edge is too broken to reason about
      */
     private static Descriptor verifyEdge(String stepName,
-                                         ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge,
-                                         ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fanOut,
+                                         ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge,
+                                         ai.pipestream.proto.grpc.workflow.v1.FanOutSpec fanOut,
                                          Descriptor branchOutput,
                                          DescriptorRegistry registry, RuleChecker checker,
                                          Map<String, Binding> scope,
@@ -394,14 +394,14 @@ public final class PipelineChecker {
     }
 
     private static Descriptor projectToDelivery(
-            ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge, DescriptorRegistry registry,
+            ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge, DescriptorRegistry registry,
             Descriptor projectedSource) {
         Descriptor projectTo = registry.findDescriptorByFullName(edge.getProjectTo());
         return projectTo != null ? projectTo : projectedSource;
     }
 
     private static void verifyFanOut(String stepName,
-                                     ai.pipestream.proto.grpc.recipe.v1.FanOutSpec fanOut,
+                                     ai.pipestream.proto.grpc.workflow.v1.FanOutSpec fanOut,
                                      Descriptor branchOutput,
                                      DescriptorRegistry registry,
                                      List<Finding> findings) {
@@ -571,7 +571,7 @@ public final class PipelineChecker {
 
     /** The live stream bindings among an edge's declared sources, in source order. */
     private static List<String> streamSources(
-            ai.pipestream.proto.grpc.recipe.v1.TypedEdge edge,
+            ai.pipestream.proto.grpc.workflow.v1.TypedEdge edge,
             Map<String, Binding> scope) {
         List<String> streams = new ArrayList<>();
         for (String source : edge.getSourcesList()) {
@@ -614,7 +614,7 @@ public final class PipelineChecker {
     }
 
     private static List<ai.pipestream.proto.cel.CelMappingRule> records(
-            List<ai.pipestream.proto.grpc.recipe.v1.CelMappingRule> rules) {
+            List<ai.pipestream.proto.grpc.workflow.v1.CelMappingRule> rules) {
         return rules.stream()
                 .map(rule -> new ai.pipestream.proto.cel.CelMappingRule(
                         rule.getFilter().isBlank() ? null : rule.getFilter(),

@@ -1,6 +1,6 @@
 package ai.pipestream.proto.platform;
 
-import ai.pipestream.proto.jobs.service.store.ChainJobStoreConfig;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
 import java.nio.file.Path;
 
@@ -14,7 +14,7 @@ import java.nio.file.Path;
  * default: a platform without its schema registry is not the product.
  *
  * @param repo the repository service configuration (ledger, S3, ports)
- * @param jobs the chain-jobs store configuration
+ * @param jobs the workflow-runs store configuration
  * @param registryGit path of the git-backed registry repository
  * @param registryPort HTTP port of the registry server; {@code 0} picks free
  * @param intakeGrpcPort intake door gRPC port; {@code 0} picks free
@@ -32,7 +32,7 @@ import java.nio.file.Path;
  */
 public record DocumentPlatformConfig(
         RepoServiceConfig repo,
-        ChainJobStoreConfig jobs,
+        WorkflowRunStoreConfig jobs,
         Path registryGit,
         int registryPort,
         int intakeGrpcPort,
@@ -133,12 +133,12 @@ public record DocumentPlatformConfig(
         }
         return new DocumentPlatformConfig(
                 RepoServiceConfig.fromEnvironment(),
-                new ChainJobStoreConfig(
+                new WorkflowRunStoreConfig(
                         jobsUrl,
                         env(ENV_JOBS_USERNAME, ""),
                         env(ENV_JOBS_PASSWORD, ""),
-                        ChainJobStoreConfig.DEFAULT_POOL_SIZE,
-                        ChainJobStoreConfig.DEFAULT_MIGRATION_LOCATION),
+                        WorkflowRunStoreConfig.DEFAULT_POOL_SIZE,
+                        WorkflowRunStoreConfig.DEFAULT_MIGRATION_LOCATION),
                 Path.of(env(ENV_REGISTRY_GIT, DEFAULT_REGISTRY_GIT)),
                 intEnv(ENV_REGISTRY_PORT, DEFAULT_REGISTRY_PORT),
                 intEnv(ENV_INTAKE_GRPC_PORT, DEFAULT_INTAKE_GRPC_PORT),

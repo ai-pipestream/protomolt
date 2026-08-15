@@ -100,6 +100,6 @@ constructs the catalog with no operator configuration:
 - `gather-git` caches its clones under the library default,
   `~/.cache/protomolt/gather/git`. A server takes `--gather-cache` instead;
   the CLI has no equivalent flag.
-- `run-chain` is inline-only. `chainName` needs a chain repository, which
+- `run-workflow` is inline-only. `workflowName` needs a workflow repository, which
   is mounted by the registry, so on the CLI it returns
-  `{"ok": false, "error": "No chain repository is mounted; …"}`.
+  `{"ok": false, "error": "No workflow repository is mounted; …"}`.

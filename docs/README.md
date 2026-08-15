@@ -28,8 +28,8 @@ The guides below follow the repository's module layout.
 - [Validation](transform/validation.md): rule dialects, protovalidate, and gRPC enforcement
 - [Quality scoring](transform/quality.md): CEL-based dimensions and weighted scores
 - [Joins and derived shapes](transform/join-shapes.md): joins, unions, merges, and generated shapes
-- [Chain manager](transform/chain-manager.md): checked serial compositions of gRPC calls
-- [Recipes and run evidence](transform/recipes.md): record, replay, promotion, and structured steps
+- [Workflow manager](transform/workflow-manager.md): checked serial compositions of gRPC calls
+- [Workflows and run evidence](transform/workflows.md): record, replay, promotion, and structured steps
 - [Pipelines](transform/pipeline.md): checked execution across all gRPC streaming shapes
 - [Agent delegation](transform/delegation.md): coordinator and worker streaming contract
 

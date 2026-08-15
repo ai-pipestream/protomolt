@@ -3,11 +3,11 @@ package ai.pipestream.proto.jobs.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
-import ai.pipestream.proto.chain.ChainDefinition;
-import ai.pipestream.proto.chain.ChainJson;
-import ai.pipestream.proto.jobs.service.events.ChainJobEventFactory;
-import ai.pipestream.proto.jobs.service.store.ChainJobRecord;
-import ai.pipestream.proto.jobs.service.store.ChainJobStore;
+import ai.pipestream.proto.workflow.CompiledWorkflow;
+import ai.pipestream.proto.workflow.WorkflowJson;
+import ai.pipestream.proto.jobs.service.events.WorkflowRunEventFactory;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import ai.pipestream.proto.jobs.service.store.ParkedCompletion;
 import ai.pipestream.proto.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.validate.ProtoValidator;
@@ -32,17 +32,17 @@ import java.util.UUID;
  * error). Accepted, the checkpoint appends and the job requeues in one
  * transaction; the worker fleet runs the next segment.
  * <p>
- * A null store means chain jobs are not configured on this server; every
+ * A null store means workflow runs are not configured on this server; every
  * call then answers {@code unavailable}.
  */
 public final class CompleteStepAction implements ProtoAction {
 
-    private final ChainJobStore store;
+    private final WorkflowRunStore store;
 
     /**
      * @param store the jobs store, or null when jobs are not configured
      */
-    public CompleteStepAction(ChainJobStore store) {
+    public CompleteStepAction(WorkflowRunStore store) {
         this.store = store;
     }
 
@@ -53,7 +53,7 @@ public final class CompleteStepAction implements ProtoAction {
 
     @Override
     public String description() {
-        return "Completes a chain job's parked external step: validates the supplied "
+        return "Completes a workflow run's parked external step: validates the supplied "
                 + "response against the step's output type (and its declared validation "
                 + "rules — a rejection fails the job as a verdict), checkpoints it, and "
                 + "requeues the job for its next segment. Idempotent: redelivering a "
@@ -94,19 +94,19 @@ public final class CompleteStepAction implements ProtoAction {
         } catch (IllegalArgumentException e) {
             throw ActionSupport.invalidInput("'jobId' must be a uuid; got '" + jobIdText + "'");
         }
-        Optional<ChainJobRecord> found = store.get(jobId);
+        Optional<WorkflowRunRecord> found = store.get(jobId);
         if (found.isEmpty()) {
             ObjectNode result = JsonNodeFactory.instance.objectNode();
             result.put("ok", false);
-            result.put("error", "no chain job " + jobId);
+            result.put("error", "no workflow run " + jobId);
             return result;
         }
-        ChainJobRecord job = found.get();
+        WorkflowRunRecord job = found.get();
 
         // The wrong-state gate comes first — fail fast without mutating
         // anything. The store re-gates under the row lock when the entry is
         // appended, so a race between the two answers the same way.
-        if (!ChainJobRecord.STATUS_WAITING.equals(job.status)
+        if (!WorkflowRunRecord.STATUS_WAITING.equals(job.status)
                 || !stepName.equals(job.outstandingStep)) {
             if (alreadyCheckpointed(job, stepName)) {
                 return ok(job.status);
@@ -117,7 +117,7 @@ public final class CompleteStepAction implements ProtoAction {
         // Build the checkpoint entry: the response parsed against the step's
         // output type from the job's snapshotted definition. A parse failure
         // is the caller's error; the job is untouched.
-        ChainDefinition.Step step = resolveStep(job, stepName, context);
+        CompiledWorkflow.Step step = resolveStep(job, stepName, context);
         DynamicMessage parsed;
         try {
             parsed = context.transcoder().fromJsonDynamic(response.toString(),
@@ -135,10 +135,10 @@ public final class CompleteStepAction implements ProtoAction {
                 String detail = "VALIDATION: complete-step response failed validation: "
                         + violations;
                 store.markFailed(jobId, detail,
-                        ChainJobEventFactory.failed(job, stepName, detail));
+                        WorkflowRunEventFactory.failed(job, stepName, detail));
                 ObjectNode result = JsonNodeFactory.instance.objectNode();
                 result.put("ok", false);
-                result.put("status", ChainJobRecord.STATUS_FAILED);
+                result.put("status", WorkflowRunRecord.STATUS_FAILED);
                 result.put("error", violations);
                 return result;
             }
@@ -149,9 +149,9 @@ public final class CompleteStepAction implements ProtoAction {
         entry.put("skipped", false);
         entry.set("response", response);
         ParkedCompletion completion = store.completeParkedStep(jobId, stepName,
-                entry.toString(), ChainJobEventFactory.stepCheckpoint(job, stepName));
+                entry.toString(), WorkflowRunEventFactory.stepCheckpoint(job, stepName));
         if (completion instanceof ParkedCompletion.Completed) {
-            return ok(ChainJobRecord.STATUS_QUEUED);
+            return ok(WorkflowRunRecord.STATUS_QUEUED);
         }
         if (completion instanceof ParkedCompletion.AlreadyDone alreadyDone) {
             return ok(alreadyDone.currentStatus());
@@ -160,32 +160,32 @@ public final class CompleteStepAction implements ProtoAction {
         return wrongState(wrong.currentStatus(), wrong.outstandingStep(), stepName, jobId);
     }
 
-    /** The step's definition from the job's snapshotted chain. */
-    private ChainDefinition.Step resolveStep(ChainJobRecord job, String stepName,
+    /** The step's definition from the job's snapshotted workflow. */
+    private CompiledWorkflow.Step resolveStep(WorkflowRunRecord job, String stepName,
             ActionContext context) throws ActionException {
         JsonNode tree;
         try {
-            tree = context.objectMapper().readTree(job.chainDefinition);
+            tree = context.objectMapper().readTree(job.workflowDefinition);
         } catch (Exception e) {
             throw new ActionException("job-corrupt",
-                    "the job's stored chain definition is not readable: " + e.getMessage());
+                    "the job's stored workflow definition is not readable: " + e.getMessage());
         }
-        ChainDefinition definition;
+        CompiledWorkflow definition;
         try {
-            definition = ChainJson.parse((ObjectNode) tree, context);
-        } catch (ChainJson.ChainParseException | ClassCastException e) {
+            definition = WorkflowJson.parse((ObjectNode) tree, context);
+        } catch (WorkflowJson.WorkflowParseException | ClassCastException e) {
             throw new ActionException("job-corrupt",
-                    "the job's stored chain definition does not parse: " + e.getMessage());
+                    "the job's stored workflow definition does not parse: " + e.getMessage());
         }
-        for (ChainDefinition.Step step : definition.steps()) {
+        for (CompiledWorkflow.Step step : definition.steps()) {
             if (step.name().equals(stepName)) {
                 return step;
             }
         }
-        throw ActionSupport.invalidInput("the chain has no step named '" + stepName + "'");
+        throw ActionSupport.invalidInput("the workflow has no step named '" + stepName + "'");
     }
 
-    private static boolean alreadyCheckpointed(ChainJobRecord job, String stepName) {
+    private static boolean alreadyCheckpointed(WorkflowRunRecord job, String stepName) {
         try {
             JsonNode tree = new com.fasterxml.jackson.databind.ObjectMapper()
                     .readTree(job.checkpoints == null ? "[]" : job.checkpoints);
@@ -197,7 +197,7 @@ public final class CompleteStepAction implements ProtoAction {
                 }
             }
         } catch (Exception e) {
-            // Unreadable checkpoints are the worker's CHAIN failure to
+            // Unreadable checkpoints are the worker's WORKFLOW failure to
             // report; the gate simply cannot confirm idempotency.
             return false;
         }

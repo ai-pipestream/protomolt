@@ -1,8 +1,8 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.jobs.service.store.ChainJobRecord;
-import ai.pipestream.proto.jobs.service.store.InMemoryChainJobStore;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
+import ai.pipestream.proto.jobs.service.store.InMemoryWorkflowRunStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
@@ -46,7 +46,7 @@ class ActionSupportTest {
                     assertThat(e.code()).isEqualTo("unavailable");
                     assertThat(e.getMessage()).isEqualTo(ActionSupport.UNAVAILABLE_MESSAGE);
                 });
-        InMemoryChainJobStore store = new InMemoryChainJobStore();
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
         assertThat(ActionSupport.requireStore(store)).isSameAs(store);
     }
 
@@ -124,14 +124,14 @@ class ActionSupportTest {
                 "Field 'text' must be a non-negative integer");
     }
 
-    /** A fully-populated row, straight out of a completed chain's lifecycle. */
-    private static ChainJobRecord completedJob() {
-        ChainJobRecord job = new ChainJobRecord();
+    /** A fully-populated row, straight out of a completed workflow's lifecycle. */
+    private static WorkflowRunRecord completedJob() {
+        WorkflowRunRecord job = new WorkflowRunRecord();
         job.jobId = UUID.randomUUID();
-        job.chainName = "embed-text";
-        job.chainDefinition = "{\"name\": \"embed-text\"}";
+        job.workflowName = "embed-text";
+        job.workflowDefinition = "{\"name\": \"embed-text\"}";
         job.input = "{\"text\": \"hi\"}";
-        job.status = ChainJobRecord.STATUS_COMPLETED;
+        job.status = WorkflowRunRecord.STATUS_COMPLETED;
         job.attempt = 2;
         job.checkpoints = "[{\"name\": \"tokenize\", \"skipped\": false}]";
         job.result = "{\"sourceText\": \"hi\"}";
@@ -144,13 +144,13 @@ class ActionSupportTest {
 
     @Test
     void jobJsonFullCarriesTheWholeRowWithParsedJsonbColumns() {
-        ChainJobRecord job = completedJob();
+        WorkflowRunRecord job = completedJob();
         job.outstandingStep = "review";
         job.error = "something";
         ObjectNode node = ActionSupport.jobJson(job, true);
 
         assertThat(node.get("jobId").asText()).isEqualTo(job.jobId.toString());
-        assertThat(node.get("chainName").asText()).isEqualTo("embed-text");
+        assertThat(node.get("workflowName").asText()).isEqualTo("embed-text");
         assertThat(node.get("status").asText()).isEqualTo("COMPLETED");
         assertThat(node.get("attempt").asInt()).isEqualTo(2);
         assertThat(node.get("outstandingStep").asText()).isEqualTo("review");
@@ -180,9 +180,9 @@ class ActionSupportTest {
 
     @Test
     void jobJsonOmitsNullsAndDefaultsNullCheckpointsToAnEmptyArray() {
-        ChainJobRecord job = new ChainJobRecord();
+        WorkflowRunRecord job = new WorkflowRunRecord();
         job.jobId = UUID.randomUUID();
-        job.chainName = "embed-text";
+        job.workflowName = "embed-text";
         job.input = "{}";
         job.checkpoints = null;
         ObjectNode node = ActionSupport.jobJson(job, true);
@@ -199,9 +199,9 @@ class ActionSupportTest {
 
     @Test
     void unreadableStoredJsonbFailsLoud() {
-        ChainJobRecord job = new ChainJobRecord();
+        WorkflowRunRecord job = new WorkflowRunRecord();
         job.jobId = UUID.randomUUID();
-        job.chainName = "embed-text";
+        job.workflowName = "embed-text";
         job.input = "{not json";
         assertThatThrownBy(() -> ActionSupport.jobJson(job, true))
                 .isInstanceOf(IllegalStateException.class)

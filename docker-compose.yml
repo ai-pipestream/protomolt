@@ -17,7 +17,7 @@ services:
       context: apps/serve
       dockerfile: Dockerfile
     image: protomolt-serve:local
-    # --demo seeds a throwaway git registry plus a sample schema and chain, so every
+    # --demo seeds a throwaway git registry plus a sample schema and workflow, so every
     # surface has something to answer. Swap for --registry-git to keep schemas (below).
     command: ["--demo"]
     ports:

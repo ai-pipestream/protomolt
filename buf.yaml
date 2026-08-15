@@ -64,8 +64,8 @@ modules:
     name: buf.build/ai-pipestream/acquire-confluence
   - path: transform/projection/src/main/proto
     name: buf.build/ai-pipestream/projection
-  - path: surface/grpc/recipe/src/main/proto
-    name: buf.build/ai-pipestream/grpc-recipe
+  - path: surface/grpc/workflow/src/main/proto
+    name: buf.build/ai-pipestream/grpc-workflow
   - path: transform/pipeline/src/main/proto
     name: buf.build/ai-pipestream/pipeline
   - path: transform/delegation/src/main/proto
@@ -115,6 +115,21 @@ breaking:
     - protobuf/llm/src/main/proto/ai/pipestream/proto/llm/v1/llm.proto
     - protobuf/llm/src/test/proto/ai/pipestream/proto/llm/v1/llm.proto
     - protobuf/prompt/src/test/proto/ai/pipestream/proto/llm/v1/llm.proto
+    # temporary: V1 workflow rename, drop after merge. The grpc-recipe module
+    # moved to surface/grpc/workflow with every Recipe* message renamed, and
+    # jobs, pipeline, delegation, mesh and the ProtoMoltService surface renamed
+    # their own messages, fields and type references in place. Same per-module
+    # matching rule as the llm entries above: whole module source dirs are used
+    # here because the moved ArtifactReference reaches every module that
+    # imports the mesh options.
+    - surface/grpc/workflow/src/main/proto
+    - jobs/proto/src/main/proto
+    - transform/pipeline/src/main/proto
+    - transform/delegation/src/main/proto
+    - mesh/proto/src/main/proto
+    - mesh/cluster/src/main/proto
+    - mesh/contracts/src/test/proto
+    - surface/grpc/service/src/main/resources
     # Standing note (pre-dates the waiver above): repo/ and
     # acquire-confluence are pre-release, but the
     # ignore mechanism breaks the workspace image comparison for any PR
