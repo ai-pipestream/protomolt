@@ -115,6 +115,7 @@ def supportedModules = [
         'protomolt-parse-service',
         'protomolt-parse-text',
         'protomolt-parse-playground',
+        'protomolt-document-platform',
 ]
 
 javaPlatform {

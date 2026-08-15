@@ -387,6 +387,9 @@ project(':protomolt-spring').projectDir = file('host/integrations/spring')
 include 'protomolt-serve'
 project(':protomolt-serve').projectDir = file('apps/serve')
 
+include 'protomolt-document-platform'
+project(':protomolt-document-platform').projectDir = file('apps/document-platform')
+
 include 'protomolt-cli'
 project(':protomolt-cli').projectDir = file('apps/cli')
 

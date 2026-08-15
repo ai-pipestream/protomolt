@@ -119,6 +119,7 @@ import os, sys
 pairs = [
     ("apps/serve/Dockerfile", "build/install/protomolt-serve", "apps/serve/build.gradle", "protomolt-serve"),
     ("repo/service/Dockerfile", "build/install/protomolt-repo-service", "repo/service/build.gradle", "protomolt-repo-service"),
+    ("apps/document-platform/Dockerfile", "build/install/protomolt-document-platform", "apps/document-platform/build.gradle", "protomolt-document-platform"),
     ("apps/agent-host/Dockerfile", "build/install/protomolt-agent-host", "apps/agent-host/build.gradle", "protomolt-agent-host"),
     ("apps/agent-host/Dockerfile.workers", "build/install/protomolt-agent-host", "apps/agent-host/build.gradle", "protomolt-agent-host"),
 ]
