@@ -1,6 +1,7 @@
 description = 'The reference parser: a pure-JDK ParserPluginService for plain text and markdown, producing the fleet document model — the in-JVM parser for tests, demos, and the all-in-one container'
 
 dependencies {
+    api project(':protomolt-composer')
     api project(':protomolt-parse-proto')
     // Produces the fleet document model and projects it via DoclingProjection.
     api project(':protomolt-parse-document')

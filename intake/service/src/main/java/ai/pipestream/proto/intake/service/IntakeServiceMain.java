@@ -80,8 +80,15 @@ public final class IntakeServiceMain {
      * is attempted); else the env-seeded in-memory store. Setting both urls
      * is rejected by name — the door must have exactly one authentication
      * authority.
+     *
+     * <p>Public because it is THE selection logic: every composition root
+     * (this main, the platform main, the intake module) calls it rather
+     * than duplicating the precedence.
+     *
+     * @param env the configuration environment
+     * @return the selected key store
      */
-    static ApiKeyIdentityResolver selectResolver(java.util.Map<String, String> env) {
+    public static ApiKeyIdentityResolver selectResolver(java.util.Map<String, String> env) {
         String oidcUrl = env.get(ENV_OIDC_URL);
         String jdbcUrl = env.get(IntakeKeyStoreConfig.ENV_JDBC_URL);
         boolean oidcConfigured = oidcUrl != null && !oidcUrl.isBlank();

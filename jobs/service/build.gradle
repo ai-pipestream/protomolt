@@ -1,6 +1,7 @@
 description = 'The workflow-runs service: durable asynchronous workflow execution — Postgres is the truth, a Kafka request topic in, lifecycle events out via the transactional outbox, no framework'
 
 dependencies {
+    api project(':protomolt-composer')
     api project(':protomolt-jobs-proto')
 
     // The workflow engine the worker executes with (WorkflowJson/WorkflowVerifier/
@@ -23,6 +24,7 @@ dependencies {
     implementation libs.slf4j.api
     // The worker's default channel factory reaches step targets over Netty.
     implementation libs.grpc.netty.shaded
+    implementation libs.grpc.inprocess
     // Kafka eventing: the outbox relay publishes and the request-topic
     // consumer reads through the protomolt serde (Confluent wire format over
     // the packaged jobs.proto contract).

@@ -16,6 +16,12 @@ import io.grpc.ManagedChannel;
 public interface Channels {
 
     /**
+     * The target-string prefix naming an in-process endpoint, shared with
+     * every service config that accepts {@code inprocess:<name>} targets.
+     */
+    String IN_PROCESS_PREFIX = "inprocess:";
+
+    /**
      * Publishes this node's in-process endpoint for a role. Called by the
      * role's own module during {@link ServiceModule#wire}; later-wired
      * modules then resolve it via {@link #to}.
@@ -24,6 +30,16 @@ public interface Channels {
      * @param inProcessName the started in-process server's name
      */
     void publishInProcess(String role, String inProcessName);
+
+    /**
+     * The role's endpoint as a target string, for services that manage
+     * their own channels: {@code inprocess:<name>} when co-mounted, the
+     * validated {@code PROTOMOLT_<ROLE>_TARGET} value when remote.
+     *
+     * @throws ComposerException when the role is neither co-mounted nor
+     *         configured with a remote target
+     */
+    String targetOf(String role);
 
     /**
      * A channel to the given role, co-mounted or remote.

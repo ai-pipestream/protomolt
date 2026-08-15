@@ -310,6 +310,22 @@ public final class Composer {
                 return inProcess.containsKey(role);
             }
 
+            @Override
+            public synchronized String targetOf(String role) {
+                String local = inProcess.get(role);
+                if (local != null) {
+                    return Channels.IN_PROCESS_PREFIX + local;
+                }
+                String variable = Channels.targetVariable(role);
+                String target = environment.get(variable);
+                if (target == null || target.isBlank()) {
+                    throw new ComposerException("role " + role
+                            + " is not mounted on this node and " + variable + " is not set");
+                }
+                policy.validateTarget(target, false);
+                return target;
+            }
+
             private ManagedChannel openFor(String role) {
                 String local = inProcess.get(role);
                 if (local != null) {

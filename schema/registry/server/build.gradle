@@ -1,6 +1,8 @@
 description = 'Schema registry server: Confluent subjects protocol and descriptor-set serving over the store'
 
 dependencies {
+    api project(':protomolt-composer')
+    api project(':protomolt-workflow')
     api project(':protomolt-registry')
     api project(':protomolt-actions')
 

@@ -1,6 +1,7 @@
 description = 'The intake service: authenticated ingest lanes (unary, streaming) in front of repo-service, with API-key scope resolution behind a key-store SPI — embeddable in-JVM or standalone over Netty, no framework'
 
 dependencies {
+    api project(':protomolt-composer')
     api project(':protomolt-intake-proto')
 
     // Intake rides the repo wire contract only — the DocumentServiceGrpc
