@@ -138,6 +138,10 @@ service ProtoMoltService {
   // Re-reflects a registered endpoint and advances its descriptor fingerprint.
   rpc ServiceRefresh(ServiceRefreshRequest) returns (google.protobuf.Struct);
 
+  // Invokes a registered service while resolving its endpoint and pinned
+  // descriptor inside ProtoMolt.
+  rpc ServiceInvoke(ServiceInvokeRequest) returns (google.protobuf.Struct);
+
   // Renders a schema as an Open Knowledge Format (OKF v0.1) bundle: markdown
   // concept documents with YAML frontmatter for every message, enum, and
   // service, cross-linked into the knowledge graph agents and catalogs read.
@@ -227,6 +231,24 @@ message ServiceRefreshRequest {
   string endpoint = 2;
   // Reflection deadline in milliseconds; zero selects the action default.
   int32 deadline_ms = 3;
+}
+
+// Invokes a method through a stored service profile. The action contract
+// validates the profile and method names, requires a request object, and
+// bounds deadline_ms and max_responses before resolving registry state.
+message ServiceInvokeRequest {
+  // Stable profile name.
+  string name = 1;
+  // Fully qualified method as package.Service/Method.
+  string method = 2;
+  // Request message as canonical proto3 JSON.
+  google.protobuf.Struct request = 3;
+  // Named profile endpoint; empty selects the first endpoint.
+  string endpoint = 4;
+  // Call deadline in milliseconds; zero selects the registered/default value.
+  int32 deadline_ms = 5;
+  // Maximum server-streaming responses; zero selects the action default.
+  int32 max_responses = 6;
 }
 
 // The input of compile: the inline .proto sources to compile.

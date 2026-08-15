@@ -818,14 +818,14 @@ public final class ProtoMoltServe implements AutoCloseable {
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         chains, jobStore, jobsConfig.maxAttemptsDefault(),
                         inference, serviceProfiles,
-                        outboundPolicy, artifacts, runEvidence, recipes);
+                        outboundPolicy, artifacts, runEvidence, recipes, store);
                 return startWithJobsCatalog(options, context, catalog, store, chains,
                         serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
             }
             // The catalog sees the store so run-chain resolves stored chain names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                     chains, null, 0, inference, serviceProfiles,
-                    outboundPolicy, artifacts, runEvidence, recipes);
+                    outboundPolicy, artifacts, runEvidence, recipes, store);
             return startWithJobsCatalog(options, context, catalog, store, chains,
                     serviceProfiles, null, null, null);
         } catch (RuntimeException e) {
@@ -925,7 +925,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     CompositeResources.of(
                             store != null ? new RegistryResources(store) : null,
                             serviceProfiles != null
-                                    ? new ServiceProfileResources(serviceProfiles) : null,
+                                    ? new ServiceProfileResources(serviceProfiles, store) : null,
                             new DelegationResources(bridge)),
                     "protomolt", version != null ? version : "dev");
             int boundRegistryPort = registryPort;

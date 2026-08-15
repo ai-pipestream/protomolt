@@ -7,6 +7,7 @@ import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.ReflectionException;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
+import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -15,9 +16,12 @@ public final class ServiceRegisterAction implements ProtoAction {
 
     private final ServiceProfileRepository repository;
     private final ChannelFactory channels;
+    private final SchemaRegistryStore registry;
 
-    public ServiceRegisterAction(ServiceProfileRepository repository, ChannelFactory channels) {
+    public ServiceRegisterAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                                 ChannelFactory channels) {
         this.repository = repository;
+        this.registry = registry;
         this.channels = channels;
     }
 
@@ -29,7 +33,7 @@ public final class ServiceRegisterAction implements ProtoAction {
     @Override
     public String description() {
         return "Registers a stable gRPC service profile, reflects one named endpoint, stores the "
-                + "descriptor set as a content-addressed artifact, and returns only profile and "
+                + "descriptor set in the schema registry, and returns only profile and "
                 + "schema summaries. Credential and key fields are opaque host references.";
     }
 
@@ -62,11 +66,12 @@ public final class ServiceRegisterAction implements ProtoAction {
         try {
             ServiceProfile saved = ServiceActionSupport.reflectAndStore(profile,
                     endpoint == null ? null : endpoint.asText(), ServiceActionSupport.deadline(input),
-                    store, channels);
+                    store, registry, channels);
             ObjectNode result = context.objectMapper().createObjectNode();
             result.put("ok", true);
             result.set("profile", ServiceActionSupport.profileJson(saved, context.objectMapper()));
-            result.set("services", ServiceActionSupport.services(saved, store, context.objectMapper()));
+            result.set("services", ServiceActionSupport.services(
+                    saved, store, registry, context.objectMapper()));
             return result;
         } catch (ReflectionException e) {
             ObjectNode result = context.objectMapper().createObjectNode();

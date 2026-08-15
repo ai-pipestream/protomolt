@@ -12,6 +12,7 @@ dependencies {
     implementation project(':protomolt-chain')
     implementation project(':protomolt-grpc-invoke')
     api project(':protomolt-grpc-service-workspace')
+    implementation project(':protomolt-registry')
     implementation project(':protomolt-codegen')
     // The four chain-jobs verbs (submit-chain, get-job, list-jobs,
     // complete-step) ride the catalog; the store is injected by the server.

@@ -75,7 +75,7 @@ class McpServerTest {
         assertThat(instructions.asText()).isEqualTo(McpServer.DEFAULT_INSTRUCTIONS);
         assertThat(instructions.asText().length()).isLessThanOrEqualTo(512);
         assertThat(instructions.asText()).contains("protomolt://workspace", "service-register",
-                "service-inspect",
+                "service-inspect", "service-invoke",
                 "reflect", "grpc-invoke", "suggest-mappings", "compile-recipe",
                 "record-recipe-run", "replay-recipe", "promote-recipe");
     }

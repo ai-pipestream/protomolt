@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.ByteString;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.PersonIdent;
 
@@ -44,6 +45,7 @@ import java.util.stream.Stream;
  * subjects/&lt;url-encoded-subject&gt;/v&lt;N&gt;.json   metadata: references, globalId, contentHash
  * subjects/&lt;url-encoded-subject&gt;/config.json per-subject compatibility mode, when set
  * recipes/&lt;url-encoded-name&gt;/&lt;url-encoded-version&gt;.pb  immutable promoted recipe
+ * descriptors/sha256/&lt;fingerprint&gt;.pb         content-addressed descriptor set
  * </pre>
  *
  * <h2>Concurrency</h2>
@@ -62,6 +64,7 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
     private static final String SUBJECTS_DIR = "subjects";
     private static final String CHAINS_DIR = "chains";
     private static final String RECIPE_DIR = "recipes";
+    private static final String DESCRIPTORS_DIR = "descriptors/sha256";
     private static final String REGISTRY_FILE = "registry.json";
     private static final String LOCK_FILE = "registry.lock";
     private static final String CONFIG_FILE = "config.json";
@@ -148,6 +151,42 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
     @Override
     public Optional<StoredSchema> byGlobalId(int globalId) {
         return Optional.ofNullable(index().byGlobalId().get(globalId));
+    }
+
+    @Override
+    public boolean supportsDescriptorSets() {
+        return true;
+    }
+
+    @Override
+    public Optional<ByteString> descriptorSet(String fingerprint) {
+        DescriptorSetArtifacts.requireFingerprint(fingerprint);
+        Path path = descriptorPath(fingerprint);
+        if (!Files.isRegularFile(path)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(DescriptorSetArtifacts.read(path, fingerprint));
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to read descriptor " + fingerprint, e);
+        }
+    }
+
+    @Override
+    public void putDescriptorSet(String fingerprint, ByteString descriptorSet) {
+        DescriptorSetArtifacts.validate(fingerprint, descriptorSet);
+        locked(() -> {
+            Path target = descriptorPath(fingerprint);
+            if (Files.isRegularFile(target)) {
+                DescriptorSetArtifacts.read(target, fingerprint);
+                return null;
+            }
+            Files.createDirectories(target.getParent());
+            Files.write(target, descriptorSet.toByteArray());
+            String relative = DESCRIPTORS_DIR + "/" + fingerprint + ".pb";
+            commit(List.of(relative), "Store descriptor " + fingerprint);
+            return null;
+        });
     }
 
     @Override
@@ -377,6 +416,16 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
                     "recipe identity does not name a file under " + RECIPE_DIR);
         }
         return relative;
+    }
+
+    private Path descriptorPath(String fingerprint) {
+        DescriptorSetArtifacts.requireFingerprint(fingerprint);
+        Path directory = repoDir.resolve(DESCRIPTORS_DIR).normalize();
+        Path resolved = directory.resolve(fingerprint + ".pb").normalize();
+        if (!resolved.startsWith(directory)) {
+            throw new IllegalArgumentException("descriptor fingerprint escapes registry storage");
+        }
+        return resolved;
     }
 
     private static void requireChainName(String name) {

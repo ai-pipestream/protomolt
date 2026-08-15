@@ -1,10 +1,13 @@
 package ai.pipestream.proto.registry;
 
+import com.google.protobuf.ByteString;
+
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Subject/version schema store — the persistence contract behind the registry server.
+ * Subject/version schema and descriptor-artifact store, the persistence contract behind the
+ * registry server.
  *
  * <p>Subjects hold ascending 1-based versions; every registered schema also gets a
  * {@code globalId} unique and monotonic across the whole store. Content identity (schema text
@@ -42,6 +45,32 @@ public interface SchemaRegistryStore extends AutoCloseable {
 
     /** The schema registered under the given store-wide id. */
     Optional<StoredSchema> byGlobalId(int globalId);
+
+    /** Whether this store persists compiled descriptor-set artifacts. */
+    default boolean supportsDescriptorSets() {
+        return false;
+    }
+
+    /**
+     * Loads a compiled descriptor set by its lowercase SHA-256 content fingerprint.
+     *
+     * <p>Implementations that do not support descriptor artifacts return empty. The built-in
+     * in-memory and Git stores support them.</p>
+     */
+    default Optional<ByteString> descriptorSet(String fingerprint) {
+        return Optional.empty();
+    }
+
+    /**
+     * Stores a compiled descriptor set under its lowercase SHA-256 content fingerprint.
+     * Repeating the same write is idempotent.
+     *
+     * @throws UnsupportedOperationException when the implementation has no descriptor store
+     * @throws IllegalArgumentException when the fingerprint is malformed or does not match bytes
+     */
+    default void putDescriptorSet(String fingerprint, ByteString descriptorSet) {
+        throw new UnsupportedOperationException("descriptor artifacts are not supported");
+    }
 
     /**
      * The subject's version whose content (schema text plus references) is identical to the

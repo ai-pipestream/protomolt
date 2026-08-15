@@ -88,7 +88,7 @@ public final class McpMain {
         String version = McpMain.class.getPackage().getImplementationVersion();
         if (registryPath == null) {
             ActionCatalog catalog = catalog(ActionContext.create(), serviceProfiles,
-                    artifacts, runs, null);
+                    artifacts, runs, null, null);
             McpServer server = new McpServer(catalog,
                     serviceProfiles == null ? null : new ServiceProfileResources(serviceProfiles),
                     "protomolt", version != null ? version : "dev");
@@ -100,10 +100,10 @@ public final class McpMain {
                 .repositoryDir(registryPath)
                 .build()) {
             ActionCatalog catalog = catalog(ActionContext.create(), serviceProfiles,
-                    artifacts, runs, new RegistryRecipeRepository(store));
+                    artifacts, runs, new RegistryRecipeRepository(store), store);
             McpServer server = new McpServer(catalog, CompositeResources.of(
                     new RegistryResources(store), serviceProfiles == null
-                            ? null : new ServiceProfileResources(serviceProfiles)),
+                            ? null : new ServiceProfileResources(serviceProfiles, store)),
                     "protomolt", version != null ? version : "dev");
             LOG.info("protomolt-mcp: serving {} tools and registry resources from {} on stdio",
                     catalog.names().size(), registryPath);
@@ -118,20 +118,22 @@ public final class McpMain {
 
     /** Builds the standalone MCP inventory with optional durable service-profile storage. */
     static ActionCatalog catalog(ActionContext context, ServiceProfileRepository serviceProfiles) {
-        return catalog(context, serviceProfiles, null, null, null);
+        return catalog(context, serviceProfiles, null, null, null, null);
     }
 
     private static ActionCatalog catalog(ActionContext context,
                                          ServiceProfileRepository serviceProfiles,
                                          ArtifactRepository artifacts,
                                          RunEvidenceRepository runs,
-                                         RecipeRepository recipes) {
+                                         RecipeRepository recipes,
+                                         ai.pipestream.proto.registry.SchemaRegistryStore registry) {
         ActionCatalog catalog = ActionCatalog.defaults(context)
                 .register(new GrpcInvokeAction())
                 .register(new ReflectAction())
                 .register(new GenerateStubsAction())
                 .register(new GatherGitAction());
-        ServiceWorkspaceActions.register(catalog, serviceProfiles);
+        ServiceWorkspaceActions.register(catalog, serviceProfiles, registry,
+                ai.pipestream.proto.grpc.invoke.ChannelFactory.standard());
         return RecipeWorkbenchActions.register(catalog, new ChainRunner(), artifacts, runs,
                 recipes);
     }

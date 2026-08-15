@@ -1,11 +1,16 @@
 package ai.pipestream.proto.registry;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
+import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -157,6 +162,53 @@ abstract class SchemaRegistryStoreContractTest {
         assertThat(store.findByContent(USER_SUBJECT, USER_PROTO, List.of())).isEmpty();
         assertThat(store.findByContent(USER_SUBJECT, USER_PROTO + "//x\n", refs)).isEmpty();
         assertThat(store.findByContent("unknown", CORE_PROTO, List.of())).isEmpty();
+    }
+
+    @Test
+    void descriptorSetsAreContentAddressedAndIdempotent() throws Exception {
+        SchemaRegistryStore store = store();
+        ByteString descriptorSet = descriptorSet();
+        String fingerprint = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(descriptorSet.toByteArray()));
+
+        assertThat(store.supportsDescriptorSets()).isTrue();
+        store.putDescriptorSet(fingerprint, descriptorSet);
+        store.putDescriptorSet(fingerprint, descriptorSet);
+
+        assertThat(store.descriptorSet(fingerprint)).contains(descriptorSet);
+        assertThat(store.descriptorSet("0".repeat(64))).isEmpty();
+    }
+
+    @Test
+    void descriptorSetIdentityIsValidatedBeforeStorage() throws Exception {
+        SchemaRegistryStore store = store();
+
+        assertThatThrownBy(() -> store.putDescriptorSet("not-a-fingerprint",
+                descriptorSet()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> store.putDescriptorSet("0".repeat(64),
+                descriptorSet()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not match");
+        assertThatThrownBy(() -> store.putDescriptorSet("0".repeat(64), ByteString.EMPTY))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be empty");
+
+        ByteString invalid = ByteString.copyFromUtf8("not a descriptor set");
+        String invalidFingerprint = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(invalid.toByteArray()));
+        assertThatThrownBy(() -> store.putDescriptorSet(invalidFingerprint, invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("FileDescriptorSet");
+    }
+
+    static ByteString descriptorSet() {
+        return FileDescriptorSet.newBuilder()
+                .addFile(FileDescriptorProto.newBuilder()
+                        .setName("registry-test.proto")
+                        .setSyntax("proto3"))
+                .build()
+                .toByteString();
     }
 
     // ---------------------------------------------------------------- reference enforcement

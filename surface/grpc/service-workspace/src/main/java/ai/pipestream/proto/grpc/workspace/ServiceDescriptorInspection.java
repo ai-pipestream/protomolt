@@ -4,6 +4,7 @@ import ai.pipestream.proto.descriptors.GoogleDescriptorLoader;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.DescriptorArtifact;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
+import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -28,11 +29,11 @@ public final class ServiceDescriptorInspection {
 
     /** Inspects every non-reflection service in a profile's descriptor artifact. */
     public static ArrayNode services(ServiceProfile profile, ServiceProfileRepository repository,
-                                     ObjectMapper mapper) throws IOException {
+                                     SchemaRegistryStore registry, ObjectMapper mapper)
+            throws IOException {
         String fingerprint = profile.getSchemaSource().getDescriptorFingerprint();
-        DescriptorArtifact artifact = repository.findDescriptorArtifact(fingerprint)
-                .orElseThrow(() -> new IOException("descriptor artifact '" + fingerprint
-                        + "' for service '" + profile.getName() + "' was not found"));
+        DescriptorArtifact artifact = ServiceActionSupport.descriptorArtifact(
+                profile, repository, registry);
         FileDescriptorSet set = FileDescriptorSet.parseFrom(artifact.getDescriptorSet());
         List<FileDescriptor> files;
         try {

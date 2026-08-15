@@ -16,6 +16,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -58,6 +60,22 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
     }
 
     // ---------------------------------------------------------------- git behavior
+
+    @Test
+    void descriptorSetsSurviveRegistryRestart() throws Exception {
+        Path dir = tempDir.resolve("descriptors");
+        var bytes = descriptorSet();
+        String fingerprint = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            store.putDescriptorSet(fingerprint, bytes);
+        }
+        try (GitSchemaRegistryStore reopened = storeAt(dir)) {
+            assertThat(reopened.descriptorSet(fingerprint)).contains(bytes);
+        }
+        assertThat(Files.isRegularFile(dir.resolve(
+                "descriptors/sha256/" + fingerprint + ".pb"))).isTrue();
+    }
 
     @Test
     void everyWriteIsExactlyOneCommitWithADescriptiveMessage() throws Exception {

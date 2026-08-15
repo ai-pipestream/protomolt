@@ -13,6 +13,7 @@ import ai.pipestream.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.grpc.profile.v1.SourceKind;
 import ai.pipestream.proto.grpc.profile.v1.Transport;
+import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -22,6 +23,7 @@ import com.google.protobuf.util.JsonFormat;
 import io.grpc.ManagedChannel;
 
 import java.io.IOException;
+import java.util.Optional;
 
 /** Shared validation, persistence, reflection, and descriptor rendering for workspace actions. */
 final class ServiceActionSupport {
@@ -93,7 +95,9 @@ final class ServiceActionSupport {
     }
 
     static ServiceProfile reflectAndStore(ServiceProfile profile, String endpointName, int deadlineMs,
-                                          ServiceProfileRepository repository, ChannelFactory channels)
+                                          ServiceProfileRepository repository,
+                                          SchemaRegistryStore registry,
+                                          ChannelFactory channels)
             throws ActionException, ReflectionException {
         try {
             ServiceProfileValidation.validateConnectionProfile(profile);
@@ -152,7 +156,11 @@ final class ServiceActionSupport {
                 .build();
         try {
             ServiceProfileValidation.validate(updated);
-            repository.saveDescriptorArtifact(artifact);
+            if (supportsDescriptorSets(registry)) {
+                registry.putDescriptorSet(fingerprint, artifact.getDescriptorSet());
+            } else {
+                repository.saveDescriptorArtifact(artifact);
+            }
             repository.save(updated);
         } catch (IllegalArgumentException e) {
             throw invalid(e.getMessage(), "/profile");
@@ -183,11 +191,44 @@ final class ServiceActionSupport {
         return result;
     }
 
+    static DescriptorArtifact descriptorArtifact(ServiceProfile profile,
+                                                 ServiceProfileRepository repository,
+                                                 SchemaRegistryStore registry)
+            throws IOException {
+        String fingerprint = profile.getSchemaSource().getDescriptorFingerprint();
+        if (supportsDescriptorSets(registry)) {
+            Optional<com.google.protobuf.ByteString> registered = registry.descriptorSet(fingerprint);
+            if (registered.isPresent()) {
+                DescriptorArtifact artifact = DescriptorArtifact.newBuilder()
+                        .setFingerprint(fingerprint)
+                        .setDescriptorSet(registered.get())
+                        .build();
+                ServiceProfileValidation.validate(artifact);
+                return artifact;
+            }
+        }
+        DescriptorArtifact legacy = repository.findDescriptorArtifact(fingerprint)
+                .orElseThrow(() -> new IOException("descriptor artifact '" + fingerprint
+                        + "' for service '" + profile.getName() + "' was not found"));
+        ServiceProfileValidation.validate(legacy);
+        if (supportsDescriptorSets(registry)) {
+            registry.putDescriptorSet(fingerprint, legacy.getDescriptorSet());
+        }
+        return legacy;
+    }
+
+    private static boolean supportsDescriptorSets(SchemaRegistryStore registry) {
+        return registry != null && registry.supportsDescriptorSets();
+    }
+
     static ArrayNode services(ServiceProfile profile, ServiceProfileRepository repository,
+                              SchemaRegistryStore registry,
                               ObjectMapper mapper) throws ActionException {
         try {
-            return ServiceDescriptorInspection.services(profile, repository, mapper);
+            return ServiceDescriptorInspection.services(profile, repository, registry, mapper);
         } catch (IOException e) {
+            throw new ActionException("invalid-descriptor", e.getMessage());
+        } catch (IllegalArgumentException e) {
             throw new ActionException("invalid-descriptor", e.getMessage());
         }
     }

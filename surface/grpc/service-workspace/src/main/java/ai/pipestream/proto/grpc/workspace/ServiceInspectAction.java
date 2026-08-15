@@ -5,6 +5,7 @@ import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
+import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
@@ -13,9 +14,11 @@ import java.io.IOException;
 public final class ServiceInspectAction implements ProtoAction {
 
     private final ServiceProfileRepository repository;
+    private final SchemaRegistryStore registry;
 
-    public ServiceInspectAction(ServiceProfileRepository repository) {
+    public ServiceInspectAction(ServiceProfileRepository repository, SchemaRegistryStore registry) {
         this.repository = repository;
+        this.registry = registry;
     }
 
     @Override
@@ -46,7 +49,8 @@ public final class ServiceInspectAction implements ProtoAction {
         }
         ObjectNode result = context.objectMapper().createObjectNode();
         result.set("profile", ServiceActionSupport.profileJson(profile, context.objectMapper()));
-        result.set("services", ServiceActionSupport.services(profile, store, context.objectMapper()));
+        result.set("services", ServiceActionSupport.services(
+                profile, store, registry, context.objectMapper()));
         return result;
     }
 }

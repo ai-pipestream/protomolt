@@ -23,7 +23,7 @@ class McpMainTest {
             "synthesize-shape", "join-messages", "merge-schemas", "check-rules", "infer-schema",
             "mask-message", "extract-metadata", "list-types", "grpc-invoke", "reflect",
             "generate-stubs", "gather-git", "service-register", "service-list",
-            "service-inspect", "service-refresh", "compile-recipe", "suggest-mappings",
+            "service-inspect", "service-refresh", "service-invoke", "compile-recipe", "suggest-mappings",
             "record-recipe-run", "replay-recipe", "promote-recipe");
 
     @Test

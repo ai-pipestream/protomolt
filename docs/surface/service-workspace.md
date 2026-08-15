@@ -1,7 +1,8 @@
 # gRPC service workspaces
 
 A service workspace gives a live gRPC endpoint a stable identity. ProtoMolt
-reflects the endpoint once, persists its service profile and descriptor set,
+reflects the endpoint once, persists its service profile, and stores its
+descriptor set in the schema registry,
 and exposes bounded service and method contracts to MCP clients. An agent can
 inspect the service again after either process restarts without carrying a
 large base64 descriptor through model context.
@@ -17,12 +18,16 @@ protomolt-mcp --service-workspace /srv/protomolt-services
 
 Set `PROTOMOLT_SERVICE_WORKSPACE` instead when the host supplies configuration
 through the environment. The directory is created on first use. Profiles are
-stored as binary protobuf messages under `profiles/`; descriptor artifacts are
-stored separately under `descriptor-artifacts/`, keyed by their SHA-256
-fingerprint. Replacements are atomic.
+stored as binary protobuf messages under `profiles/`. When `--registry-git` is
+configured, reflected descriptor sets are stored under `descriptors/sha256/`
+in that Git repository. Existing artifacts under the service workspace are
+migrated into the registry when first read. A standalone service workspace
+without a registry retains the legacy artifact store for compatibility.
+Profile replacements are atomic.
 
 Without configured storage, `service-register`, `service-list`,
-`service-inspect`, and `service-refresh` stay discoverable but return the
+`service-inspect`, `service-refresh`, and `service-invoke` stay discoverable
+but return the
 structured `unavailable` error and the required launcher option.
 
 ## Register a reflected service
@@ -51,7 +56,7 @@ curl -sS -H 'content-type: application/json' \
 
 Registration validates the profile before opening the network connection,
 uses gRPC server reflection, fingerprints the returned `FileDescriptorSet`,
-and stores it as a content-addressed artifact. The response includes service
+and stores it as a content-addressed registry artifact. The response includes service
 and method summaries but never the descriptor bytes.
 
 ProtoMolt tries the stable `grpc.reflection.v1` protocol first. It falls back
@@ -94,6 +99,28 @@ Refresh only when the deployed schema may have changed:
 `service-refresh` re-runs reflection, advances the stored schema identity, and
 returns `changed: true` only when the descriptor fingerprint differs.
 
+## Invoke a registered service
+
+Use the profile identity after registration. The target, TLS mode, and pinned
+descriptor are resolved inside ProtoMolt:
+
+```json
+{
+  "name": "orders-local",
+  "method": "orders.v1.Orders/GetOrder",
+  "request": {"id": "order-123"},
+  "endpoint": "local",
+  "deadlineMs": 5000
+}
+```
+
+This is the `service-invoke` input. The descriptor set is never part of the MCP
+or REST request. ProtoMolt verifies the registry artifact against the profile's
+SHA-256 fingerprint before parsing the request or opening a channel. The action
+supports unary and server-streaming methods and makes one attempt. A configured
+method deadline is enforced as a ceiling. Methods marked as requiring approval
+are refused because a tool call cannot approve itself.
+
 ## MCP resources
 
 Once a workspace is configured, service contracts are available as JSON MCP
@@ -111,23 +138,22 @@ Resource discovery lists the root and profile URIs only; read a profile to
 discover its exact method names, then address an individual method URI.
 
 The intended agent loop is `service-register` once, inspect the stored method
-contract, invoke the exact method with `grpc-invoke`, verify its status, and
+contract, invoke the exact method with `service-invoke`, verify its status, and
 refresh only on an explicit schema-change boundary. Use raw `reflect` for
-short-lived exploration that should not become workspace state.
+short-lived exploration and `grpc-invoke` for unregistered targets.
 
 ## Current boundary
 
-This first slice registers reflection-enabled services. Registry and uploaded
-descriptor sources are represented in the profile contract but are not yet
-registration inputs. Service profiles also carry health-probe and per-method
-operational policy fields for the recipe verification layer; this slice
-persists and validates them but does not yet execute approval, retry, or probe
-policy.
+Reflection-enabled services can be registered and invoked. Registry subjects
+and uploaded descriptor sources are represented in the profile contract but
+are not yet registration inputs. Service profiles also carry health-probe and
+per-method operational policy fields. Invocation enforces approval and deadline
+policy. Automatic retries and health probes are not executed yet.
 
 Descriptor artifacts are immutable and saved before the profile that points to
 them, so a process failure cannot create a profile with a missing artifact. A
-failure between those writes can leave an unreferenced artifact; automatic
-garbage collection is reserved for a later repository-maintenance phase.
+failure between those writes can leave an unreferenced artifact. Registry
+maintenance may remove unreferenced artifacts later.
 
 See the [gRPC recipe workbench plan](../transform/recipes.md) for the
 recipe, run-evidence, structured-inference, and standalone-application phases.

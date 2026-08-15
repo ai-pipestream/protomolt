@@ -4,6 +4,7 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
+import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -98,6 +99,81 @@ class ServiceWorkspaceActionsTest {
     }
 
     @Test
+    void registryBackedInvokeKeepsDescriptorBytesInsideProtoMolt() throws Exception {
+        InMemorySchemaRegistryStore registry = new InMemorySchemaRegistryStore();
+        ActionCatalog registryCatalog = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, registry,
+                (target, tls) -> channel());
+        ObjectNode registered = registryCatalog.execute("service-register", registerInput(false));
+        String fingerprint = registered.path("profile").path("schemaSource")
+                .path("descriptorFingerprint").asText();
+
+        ObjectNode invocation = MAPPER.createObjectNode();
+        invocation.put("name", "health-local");
+        invocation.put("method", "grpc.health.v1.Health/Check");
+        invocation.putObject("request").put("service", "");
+        ObjectNode result = registryCatalog.execute("service-invoke", invocation);
+
+        assertThat(result.path("ok").asBoolean()).isTrue();
+        assertThat(result.path("status").asText()).isEqualTo("OK");
+        assertThat(result.path("serviceProfile").asText()).isEqualTo("health-local");
+        assertThat(result.path("endpoint").asText()).isEqualTo("local");
+        assertThat(result.path("descriptorFingerprint").asText()).isEqualTo(fingerprint);
+        assertThat(result.toString()).doesNotContain("descriptorSetBase64");
+        assertThat(repository.findDescriptorArtifact(fingerprint)).isEmpty();
+        assertThat(registry.descriptorSet(fingerprint)).isPresent();
+    }
+
+    @Test
+    void invokingAnExistingProfileMigratesItsLegacyArtifactIntoTheRegistry() throws Exception {
+        ObjectNode registered = catalog.execute("service-register", registerInput(false));
+        String fingerprint = registered.path("profile").path("schemaSource")
+                .path("descriptorFingerprint").asText();
+        InMemorySchemaRegistryStore registry = new InMemorySchemaRegistryStore();
+        ActionCatalog migrated = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, registry,
+                (target, tls) -> channel());
+
+        ObjectNode invocation = MAPPER.createObjectNode();
+        invocation.put("name", "health-local");
+        invocation.put("method", "grpc.health.v1.Health/Check");
+        invocation.putObject("request");
+        assertThat(migrated.execute("service-invoke", invocation).path("ok").asBoolean()).isTrue();
+        assertThat(registry.descriptorSet(fingerprint)).isPresent();
+    }
+
+    @Test
+    void approvalPolicyStopsInvocationBeforeOpeningAChannel() throws Exception {
+        InMemorySchemaRegistryStore registry = new InMemorySchemaRegistryStore();
+        ActionCatalog registryCatalog = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, registry,
+                (target, tls) -> channel());
+        ObjectNode registration = registerInput(false);
+        ObjectNode policy = ((ObjectNode) registration.path("profile"))
+                .putArray("methodPolicies").addObject();
+        policy.put("method", "grpc.health.v1.Health/Check");
+        policy.putArray("operation").add("OPERATION_READ_ONLY")
+                .add("OPERATION_APPROVAL_REQUIRED");
+        policy.put("approvalRequired", true);
+        registryCatalog.execute("service-register", registration);
+
+        ActionCatalog guarded = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, registry,
+                (target, tls) -> {
+                    throw new AssertionError("approval-required method must not open a channel");
+                });
+        ObjectNode invocation = MAPPER.createObjectNode();
+        invocation.put("name", "health-local");
+        invocation.put("method", "grpc.health.v1.Health/Check");
+        invocation.putObject("request");
+
+        assertThatThrownBy(() -> guarded.execute("service-invoke", invocation))
+                .isInstanceOf(ActionException.class)
+                .extracting(error -> ((ActionException) error).code())
+                .isEqualTo("approval-required");
+    }
+
+    @Test
     void refusesToUseOpaqueCredentialReferencesWithoutAResolver() throws Exception {
         assertThatThrownBy(() -> catalog.execute("service-register", registerInput(true)))
                 .isInstanceOf(ActionException.class)
@@ -141,7 +217,7 @@ class ServiceWorkspaceActionsTest {
                 (target, tls) -> channel());
 
         assertThat(unconfigured.names()).contains("service-register", "service-list",
-                "service-inspect", "service-refresh");
+                "service-inspect", "service-refresh", "service-invoke");
         assertThatThrownBy(() -> unconfigured.execute("service-list", MAPPER.createObjectNode()))
                 .isInstanceOf(ActionException.class)
                 .extracting(error -> ((ActionException) error).code())

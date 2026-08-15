@@ -3,6 +3,7 @@ package ai.pipestream.proto.mcp;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.grpc.workspace.ServiceDescriptorInspection;
+import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -20,9 +21,16 @@ public final class ServiceProfileResources implements McpResources {
     private static final String ROOT = "protomolt://services";
 
     private final ServiceProfileRepository repository;
+    private final SchemaRegistryStore registry;
 
     public ServiceProfileResources(ServiceProfileRepository repository) {
+        this(repository, null);
+    }
+
+    public ServiceProfileResources(ServiceProfileRepository repository,
+                                   SchemaRegistryStore registry) {
         this.repository = java.util.Objects.requireNonNull(repository, "repository");
+        this.registry = registry;
     }
 
     @Override
@@ -75,7 +83,8 @@ public final class ServiceProfileResources implements McpResources {
                 return Optional.empty();
             }
             ServiceProfile profile = found.get();
-            ArrayNode services = ServiceDescriptorInspection.services(profile, repository, mapper);
+            ArrayNode services = ServiceDescriptorInspection.services(
+                    profile, repository, registry, mapper);
             if (methodMarker < 0) {
                 ObjectNode document = mapper.createObjectNode();
                 document.set("profile", profileJson(profile, mapper));

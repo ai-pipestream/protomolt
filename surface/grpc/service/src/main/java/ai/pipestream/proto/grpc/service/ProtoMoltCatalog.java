@@ -29,6 +29,7 @@ import ai.pipestream.proto.jobs.service.actions.GetJobAction;
 import ai.pipestream.proto.jobs.service.actions.ListJobsAction;
 import ai.pipestream.proto.jobs.service.actions.SubmitChainAction;
 import ai.pipestream.proto.jobs.service.store.ChainJobStore;
+import ai.pipestream.proto.registry.SchemaRegistryStore;
 
 import java.nio.file.Path;
 
@@ -39,7 +40,7 @@ import java.nio.file.Path;
  * ({@code run-chain}, {@code check-chain}), {@code emit-okf}, the chain-jobs verbs
  * ({@code submit-chain}, {@code get-job}, {@code list-jobs}, {@code complete-step}),
  * the service-workspace verbs ({@code service-register}, {@code service-list},
- * {@code service-inspect}, {@code service-refresh}), the recipe-workbench verbs
+ * {@code service-inspect}, {@code service-refresh}, {@code service-invoke}), the recipe-workbench verbs
  * ({@code suggest-mappings}, {@code compile-recipe}, {@code record-recipe-run},
  * {@code replay-recipe}, {@code promote-recipe}), and the inference verbs
  * ({@code inference-generate}, {@code inference-list-models},
@@ -114,7 +115,7 @@ public final class ProtoMoltCatalog {
     /**
      * The complete catalog including a durable service workspace when configured.
      *
-     * @param serviceProfiles profile and descriptor-artifact storage; null keeps the four
+     * @param serviceProfiles profile storage; null keeps the service workspace actions
      *        discoverable workspace verbs unavailable until a host configures storage
      */
     public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
@@ -128,7 +129,7 @@ public final class ProtoMoltCatalog {
     /**
      * The complete catalog with one host-owned policy shared by all outbound gRPC actions.
      *
-     * @param serviceProfiles profile and descriptor-artifact storage; null keeps the four
+     * @param serviceProfiles profile storage; null keeps the service workspace actions
      *        discoverable workspace verbs unavailable until a host configures storage
      * @param outboundPolicy host-owned target, transport, deadline, and channel-budget policy;
      *        null uses {@link OutboundChannelPolicy#defaults()}
@@ -139,7 +140,7 @@ public final class ProtoMoltCatalog {
                                      ServiceProfileRepository serviceProfiles,
                                      OutboundChannelPolicy outboundPolicy) {
         return full(context, gatherCacheRoot, chains, jobs, maxAttemptsDefault, inference,
-                serviceProfiles, outboundPolicy, null, null, null);
+                serviceProfiles, outboundPolicy, null, null, null, null);
     }
 
     /** The complete catalog with the durable recipe-workbench repositories when configured. */
@@ -151,6 +152,20 @@ public final class ProtoMoltCatalog {
                                      ArtifactRepository artifacts,
                                      RunEvidenceRepository runEvidence,
                                      RecipeRepository recipes) {
+        return full(context, gatherCacheRoot, chains, jobs, maxAttemptsDefault, inference,
+                serviceProfiles, outboundPolicy, artifacts, runEvidence, recipes, null);
+    }
+
+    /** The complete catalog with the registry that owns reflected descriptor artifacts. */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     ChainRepository chains, ChainJobStore jobs,
+                                     int maxAttemptsDefault, InferenceEngines inference,
+                                     ServiceProfileRepository serviceProfiles,
+                                     OutboundChannelPolicy outboundPolicy,
+                                     ArtifactRepository artifacts,
+                                     RunEvidenceRepository runEvidence,
+                                     RecipeRepository recipes,
+                                     SchemaRegistryStore registry) {
         OutboundChannelPolicy policy = outboundPolicy == null
                 ? OutboundChannelPolicy.defaults() : outboundPolicy;
         ChannelFactory channels = ChannelFactory.standard(policy);
@@ -172,7 +187,7 @@ public final class ProtoMoltCatalog {
                 .register(new GenerateAction(inference))
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
-        ServiceWorkspaceActions.register(catalog, serviceProfiles, channels);
+        ServiceWorkspaceActions.register(catalog, serviceProfiles, registry, channels);
         return RecipeWorkbenchActions.register(catalog, runner, artifacts,
                 runEvidence, recipes);
     }
