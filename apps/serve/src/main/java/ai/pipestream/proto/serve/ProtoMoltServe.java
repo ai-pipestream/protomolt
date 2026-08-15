@@ -34,6 +34,7 @@ import ai.pipestream.proto.mcp.CompositeResources;
 import ai.pipestream.proto.mcp.DelegationResources;
 import ai.pipestream.proto.mcp.RegistryResources;
 import ai.pipestream.proto.mcp.ServiceProfileResources;
+import ai.pipestream.proto.mesh.cluster.ClusterActions;
 import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.RegistryRecipeRepository;
@@ -49,7 +50,9 @@ import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 
 import org.slf4j.Logger;
@@ -87,7 +90,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                           Path gatherCache, JobsOptions jobs,
                           java.util.List<String> inferenceModels, Path serviceWorkspace,
                           OutboundChannelPolicy outboundPolicy, Path recipeWorkspace,
-                          DelegationOptions delegation, TaskConsoleOptions taskConsole) {
+                          DelegationOptions delegation, TaskConsoleOptions taskConsole,
+                          MeshClusterOptions meshCluster) {
 
         public Options {
             if (outboundPolicy == null) {
@@ -169,6 +173,18 @@ public final class ProtoMoltServe implements AutoCloseable {
                     recipeWorkspace, delegation, null);
         }
 
+        /** Binary/source-compatible constructor retaining the pre-mesh options surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
+                       Path recipeWorkspace, DelegationOptions delegation,
+                       TaskConsoleOptions taskConsole) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    recipeWorkspace, delegation, taskConsole, null);
+        }
+
         public static Options defaults() {
             return new Options("0.0.0.0", 9090, 8080, null, 8081, null, false, null);
         }
@@ -217,6 +233,10 @@ public final class ProtoMoltServe implements AutoCloseable {
             String taskConsoleToken = System.getenv("PROTOMOLT_TASK_CONSOLE_TOKEN");
             long taskConsoleSessionSeconds = envLong(
                     "PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS", 43_200L);
+            String meshClusterId = System.getenv("PROTOMOLT_MESH_CLUSTER_ID");
+            String meshClusterName = System.getenv("PROTOMOLT_MESH_CLUSTER_NAME");
+            String meshTrustDomain = System.getenv("PROTOMOLT_MESH_TRUST_DOMAIN");
+            String meshCreatedAt = System.getenv("PROTOMOLT_MESH_CREATED_AT");
             if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
                 for (String spec : inferenceModelsEnv.split(";")) {
                     if (!spec.isBlank()) {
@@ -255,6 +275,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                             delegationTranscriptObject = requireValue(args, ++i);
                     case "--delegation-state-key-ref" ->
                             delegationStateKeyRef = requireValue(args, ++i);
+                    case "--mesh-cluster-id" -> meshClusterId = requireValue(args, ++i);
+                    case "--mesh-cluster-name" -> meshClusterName = requireValue(args, ++i);
+                    case "--mesh-trust-domain" -> meshTrustDomain = requireValue(args, ++i);
+                    case "--mesh-created-at" -> meshCreatedAt = requireValue(args, ++i);
                     case "--service-workspace" ->
                             serviceWorkspace = Path.of(requireValue(args, ++i));
                     case "--recipe-workspace" ->
@@ -301,6 +325,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--delegation-repo-drive <name>] "
                                 + "[--delegation-transcript-object <key>] "
                                 + "[--delegation-state-key-ref <ref>]] "
+                                + "[--mesh-cluster-id <id> --mesh-created-at <ISO-8601> "
+                                + "[--mesh-cluster-name <name>] [--mesh-trust-domain <domain>]] "
                                 + "(task console login: PROTOMOLT_TASK_CONSOLE_TOKEN; "
                                 + "session duration: PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS)");
                         System.exit(0);
@@ -351,6 +377,29 @@ public final class ProtoMoltServe implements AutoCloseable {
                 taskConsole = new TaskConsoleOptions(taskConsoleToken,
                         Duration.ofSeconds(taskConsoleSessionSeconds));
             }
+            MeshClusterOptions meshCluster = null;
+            if (meshClusterId != null && !meshClusterId.isBlank()) {
+                if (meshCreatedAt == null || meshCreatedAt.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "--mesh-cluster-id requires --mesh-created-at so the durable "
+                                    + "cluster fingerprint stays stable across restarts");
+                }
+                try {
+                    meshCluster = new MeshClusterOptions(meshClusterId,
+                            meshClusterName == null || meshClusterName.isBlank()
+                                    ? meshClusterId : meshClusterName,
+                            meshTrustDomain == null ? "" : meshTrustDomain,
+                            Instant.parse(meshCreatedAt));
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw new IllegalArgumentException(
+                            "mesh created-at must be an ISO-8601 instant", e);
+                }
+            } else if ((meshClusterName != null && !meshClusterName.isBlank())
+                    || (meshTrustDomain != null && !meshTrustDomain.isBlank())
+                    || (meshCreatedAt != null && !meshCreatedAt.isBlank())) {
+                throw new IllegalArgumentException(
+                        "mesh cluster name, trust domain, and created-at require a mesh cluster id");
+            }
             Set<String> schemeSet = allowedSchemes == null
                     ? null : parseCsv(allowedSchemes, "grpc allowed schemes");
             Set<String> hostSet = allowedHosts == null
@@ -361,7 +410,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
-                    serviceWorkspace, outboundPolicy, recipeWorkspace, delegation, taskConsole);
+                    serviceWorkspace, outboundPolicy, recipeWorkspace, delegation, taskConsole,
+                    meshCluster);
         }
 
         private static int envInt(String name, int fallback) {
@@ -622,6 +672,26 @@ public final class ProtoMoltServe implements AutoCloseable {
         }
     }
 
+    /** Stable identity of the mesh directory hosted by this serve process. */
+    public record MeshClusterOptions(String clusterId, String displayName, String trustDomain,
+                                     Instant createdAt) {
+
+        public MeshClusterOptions {
+            if (clusterId == null || !clusterId.matches(
+                    "[A-Za-z0-9][A-Za-z0-9._-]{0,127}")) {
+                throw new IllegalArgumentException("mesh cluster id must be path-safe");
+            }
+            if (displayName == null || displayName.length() > 256) {
+                throw new IllegalArgumentException("mesh cluster name is invalid");
+            }
+            if (trustDomain == null || !trustDomain.matches(
+                    "^$|[A-Za-z0-9][A-Za-z0-9._-]{0,127}")) {
+                throw new IllegalArgumentException("mesh trust domain is invalid");
+            }
+            Objects.requireNonNull(createdAt, "createdAt");
+        }
+    }
+
     private final ProtoMoltGrpcServer grpc;
     private final JdkProtoRestServer http;
     private final McpHttpHandler mcp;
@@ -633,13 +703,14 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final ChainJobWorker jobsWorker;
     private final ChainJobEventRelay jobsRelay;
     private final DelegationRuntime delegation;
+    private final MeshClusterRuntime meshCluster;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
                            McpHttpHandler mcp, int httpPort,
                            GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
                            int registryPort, ChainJobDatabase jobsDatabase,
                            ChainJobWorker jobsWorker, ChainJobEventRelay jobsRelay,
-                           DelegationRuntime delegation) {
+                           DelegationRuntime delegation, MeshClusterRuntime meshCluster) {
         this.grpc = grpc;
         this.http = http;
         this.mcp = mcp;
@@ -651,6 +722,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         this.jobsWorker = jobsWorker;
         this.jobsRelay = jobsRelay;
         this.delegation = delegation;
+        this.meshCluster = meshCluster;
     }
 
     /** Starts every configured surface; closing stops them all. */
@@ -788,6 +860,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         McpHttpHandler mcpHandler = null;
         SchemaRegistryServer registry = null;
         DelegationRuntime delegation = null;
+        MeshClusterRuntime meshCluster = null;
         try {
             if (options.demo()) {
                 DemoSchemas.seed(context.registry(), store);
@@ -799,6 +872,10 @@ public final class ProtoMoltServe implements AutoCloseable {
             delegation = DelegationRuntime.open(options.delegation());
             DelegationBridge bridge = delegation.bridge();
             DelegationActions.register(catalog, bridge);
+            meshCluster = MeshClusterRuntime.open(options.meshCluster(), options.delegation());
+            if (meshCluster != null) {
+                ClusterActions.register(catalog, meshCluster.directory());
+            }
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
                     options.apiToken());
@@ -891,8 +968,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             int httpPort = http.start();
             selfPort[0] = httpPort;
             return new ProtoMoltServe(grpc, http, mcpHandler, httpPort, store, registry, registryPort,
-                    jobsDatabase, jobsWorker, jobsRelay, delegation);
+                    jobsDatabase, jobsWorker, jobsRelay, delegation, meshCluster);
         } catch (RuntimeException e) {
+            closeQuietly(meshCluster);
             closeQuietly(delegation);
             closeQuietly(mcpHandler);
             if (registry != null) {
@@ -968,6 +1046,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         closeQuietly(jobsWorker);
         closeQuietly(jobsRelay);
         closeQuietly(jobsDatabase);
+        closeQuietly(meshCluster);
         // Worker streams close before the coordinator so no stream dies mid-frame;
         // the runtime closes the bridge, the coordinator, and the repository channel.
         closeQuietly(delegation);

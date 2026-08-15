@@ -15,6 +15,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,7 +37,11 @@ class McpHttpTest {
 
     @BeforeAll
     static void start() {
-        serve = ProtoMoltServe.start(new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0));
+        serve = ProtoMoltServe.start(new ProtoMoltServe.Options(
+                "127.0.0.1", 0, 0, null, 0, null, false, null,
+                null, java.util.List.of(), null, null, null, null, null,
+                new ProtoMoltServe.MeshClusterOptions("protomolt", "Test mesh", "test",
+                        Instant.parse("2026-08-14T00:00:00Z"))));
         http = HttpClient.newHttpClient();
         endpoint = "http://127.0.0.1:" + serve.httpPort() + "/mcp";
     }
@@ -101,7 +106,7 @@ class McpHttpTest {
         assertThat(result.path("capabilities").has("tools")).isTrue();
         assertThat(result.path("capabilities").has("resources")).isTrue();
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
-                .isEqualTo(52);
+                .isEqualTo(58);
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/workspace").asText())
                 .isEqualTo("protomolt://workspace");
         assertThat(result.path("instructions").asText())
@@ -133,7 +138,7 @@ class McpHttpTest {
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode result = MAPPER.readTree(response.body()).path("result");
         JsonNode tools = result.path("tools");
-        assertThat(tools.size()).isEqualTo(52);
+        assertThat(tools.size()).isEqualTo(58);
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
                 .isEqualTo(tools.size());
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
@@ -143,7 +148,9 @@ class McpHttpTest {
                 "service-list", "service-inspect", "service-refresh", "suggest-mappings",
                 "compile-recipe", "record-recipe-run", "replay-recipe", "promote-recipe",
                 "delegation-worker-register", "delegation-offer", "delegation-watch",
-                "delegation-message", "delegation-review", "delegation-transcript");
+                "delegation-message", "delegation-review", "delegation-transcript",
+                "mesh-node-register", "mesh-node-heartbeat", "mesh-processor-register",
+                "mesh-capacity-update", "mesh-snapshot", "mesh-sweep");
     }
 
     @Test
@@ -166,7 +173,7 @@ class McpHttpTest {
         String text = MAPPER.readTree(read.body()).path("result").path("contents")
                 .get(0).path("text").asText();
         JsonNode workspace = MAPPER.readTree(text);
-        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(52);
+        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(58);
         assertThat(workspace.path("toolCatalog").path("names"))
                 .anySatisfy(name -> assertThat(name.asText()).isEqualTo("service-register"));
 
@@ -195,6 +202,25 @@ class McpHttpTest {
         JsonNode result = MAPPER.readTree(response.body()).path("result");
         assertThat(result.path("isError").asBoolean()).isFalse();
         assertThat(result.path("structuredContent").path("ok").asBoolean()).isTrue();
+    }
+
+    @Test
+    void meshSnapshotIsAvailableOverMcpWhenConfigured() throws Exception {
+        HttpSession session = initializeSession();
+        assertThat(post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+
+        HttpResponse<String> response = post(session, """
+                {"jsonrpc":"2.0","id":31,"method":"tools/call","params":{
+                  "name":"mesh-snapshot","arguments":{}}}
+                """);
+
+        JsonNode content = MAPPER.readTree(response.body()).path("result")
+                .path("structuredContent");
+        assertThat(content.path("ok").asBoolean()).isTrue();
+        assertThat(content.path("snapshot").path("cluster").path("clusterId").asText())
+                .isEqualTo("protomolt");
     }
 
     @Test
