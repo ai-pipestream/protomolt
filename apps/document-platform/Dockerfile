@@ -7,7 +7,10 @@
 # The registry's git repository lives under /data (mount a volume).
 #
 #   docker compose -f deploy/document-platform/compose.yml up
-FROM eclipse-temurin:21-jre
+#
+# JRE 25: the search door links the Lucene 11 line, which ships Java 25
+# bytecode; on an older JRE the first search would fail to load classes.
+FROM eclipse-temurin:25-jre
 
 COPY build/install/protomolt-document-platform /opt/protomolt-document-platform
 
