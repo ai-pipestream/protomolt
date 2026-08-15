@@ -15,6 +15,13 @@ configuration falling back to a global default (`BACKWARD`). Two
 implementations ship: `GitSchemaRegistryStore` and an in-memory store for
 tests and embedding.
 
+The same store owns compiled descriptor sets by lowercase SHA-256 fingerprint.
+The Git implementation writes them under `descriptors/sha256/`. Writes verify
+the hash, enforce a 16 MiB bound, parse the bytes as a non-empty
+`FileDescriptorSet`, and are idempotent. Service profiles pin this fingerprint,
+so reflection and registration send the descriptor once while later inspection
+and invocation resolve it inside ProtoMolt.
+
 ```java
 var store = GitSchemaRegistryStore.builder()
     .repositoryDir(Path.of("/var/lib/protomolt/registry"))

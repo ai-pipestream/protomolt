@@ -1,5 +1,7 @@
 package ai.pipestream.proto.registry;
 
+import com.google.protobuf.ByteString;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -18,6 +20,7 @@ public final class InMemorySchemaRegistryStore implements SchemaRegistryStore {
     private final ReentrantLock lock = new ReentrantLock();
     private final Map<String, Subject> subjects = new TreeMap<>();
     private final Map<Integer, StoredSchema> byGlobalId = new HashMap<>();
+    private final Map<String, ByteString> descriptorSets = new HashMap<>();
     private final WriteGate writeGate;
     private String globalMode = CompatibilityModes.DEFAULT_GLOBAL;
     private int nextGlobalId = 1;
@@ -96,6 +99,33 @@ public final class InMemorySchemaRegistryStore implements SchemaRegistryStore {
         lock.lock();
         try {
             return Optional.ofNullable(byGlobalId.get(globalId));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public boolean supportsDescriptorSets() {
+        return true;
+    }
+
+    @Override
+    public Optional<ByteString> descriptorSet(String fingerprint) {
+        DescriptorSetArtifacts.requireFingerprint(fingerprint);
+        lock.lock();
+        try {
+            return Optional.ofNullable(descriptorSets.get(fingerprint));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void putDescriptorSet(String fingerprint, ByteString descriptorSet) {
+        DescriptorSetArtifacts.validate(fingerprint, descriptorSet);
+        lock.lock();
+        try {
+            descriptorSets.putIfAbsent(fingerprint, descriptorSet);
         } finally {
             lock.unlock();
         }
