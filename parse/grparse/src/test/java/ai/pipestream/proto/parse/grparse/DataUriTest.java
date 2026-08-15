@@ -24,5 +24,11 @@ class DataUriTest {
         assertThat(DataUri.parse("data:image/png,unencoded")).isNull();
         assertThat(DataUri.parse("data:;base64,AAAA")).isNull();
         assertThat(DataUri.parse("data:image/png;base64,not!!base64")).isNull();
+        // An empty payload is not an image.
+        assertThat(DataUri.parse("data:image/png;base64,")).isNull();
+        // ";base64" without the payload comma is not the encoded form.
+        assertThat(DataUri.parse("data:image/png;base64")).isNull();
+        // Whitespace is not legal inside a base64 payload.
+        assertThat(DataUri.parse("data:image/png;base64,QUJD RA==")).isNull();
     }
 }

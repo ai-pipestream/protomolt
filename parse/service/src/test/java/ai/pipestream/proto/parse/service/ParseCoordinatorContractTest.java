@@ -287,6 +287,21 @@ class ParseCoordinatorContractTest {
     }
 
     @Test
+    void aBlankClaimIsIgnoredByTheFold() {
+        alpha.claimsToEmit = List.of(claims("body", "   "));
+
+        ParseDocumentResponse response = stub.parseDocument(
+                ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
+
+        // A whitespace-only claim folds nothing and persists nothing.
+        assertThat(response.getSearchMetadataFold().getFoldedFieldsList())
+                .doesNotContain("body");
+        assertThat(repo.saves).hasSize(1);
+        assertThat(repo.saves.getFirst().getDocument().getSearchMetadata().getBody())
+                .isEmpty();
+    }
+
+    @Test
     void aParserFailureIsRecordedAsFailedAndTheSaveStillHappens() {
         alpha.failWith = Status.INTERNAL.withDescription("docling exploded");
         beta.claimsToEmit = List.of(claims("title", "Beta Title"));

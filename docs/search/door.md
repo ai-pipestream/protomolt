@@ -71,10 +71,13 @@ this by default and its smoke IT proves ingest-to-search-hit over real TCP.
 a stored workflow over every document a repository listing matches: one
 durable run per document, riding the jobs module's own `submit-workflow`
 action. Input: `workflowName`, `mappingSubject`, `drive`, optional
-`accountId` — every identity explicit. This is the operation behind a
-chunking-policy or mapping change: a changed policy is a different digest
-and a different chunk generation, and the door's atomic
-replace-by-identity means replays re-derive and never duplicate
+`accountId`, optional `replayId` — every identity explicit. With `replayId`
+set, each document's run is submitted under a deterministic job id derived
+from it, so a replay retried after a mid-replay failure resumes instead of
+duplicating runs; without it every run gets a fresh id, as before. This is
+the operation behind a chunking-policy or mapping change: a changed policy
+is a different digest and a different chunk generation, and the door's
+atomic replace-by-identity means replays re-derive and never duplicate
 (`PolicyChangeReindexTest` pins the generation swap; the platform smoke IT
 replays the corpus and asserts a single hit survives).
 

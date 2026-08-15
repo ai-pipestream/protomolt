@@ -38,8 +38,9 @@ public final class MappingEmbedder {
      * Embeds the mapping's single TEXT field into its single VECTOR field.
      *
      * @throws IllegalStateException when the mapping does not have exactly one TEXT field and
-     *         exactly one VECTOR field, on a provider/hint dimension mismatch, or when the
-     *         text field holds a non-String value
+     *         exactly one VECTOR field, on a provider/hint dimension mismatch, when the text
+     *         field holds a non-String value, or when the provider returns a vector that is
+     *         null or not its declared dimension
      */
     public Map<String, Object> embed(Map<String, Object> document) {
         IndexMapping.IndexedField textField = only(IndexFieldKind.TEXT);
@@ -54,8 +55,9 @@ public final class MappingEmbedder {
      *
      * @throws IllegalArgumentException when either name has no field of the required kind
      *         in the mapping
-     * @throws IllegalStateException on a provider/hint dimension mismatch, or when the text
-     *         field holds a non-String value
+     * @throws IllegalStateException on a provider/hint dimension mismatch, when the text
+     *         field holds a non-String value, or when the provider returns a vector that is
+     *         null or not its declared dimension
      */
     public Map<String, Object> embed(Map<String, Object> document, String textFieldName, String vectorFieldName) {
         return embed(document,
@@ -81,6 +83,11 @@ public final class MappingEmbedder {
             return document;
         }
         float[] embedding = provider.embed(text);
+        if (embedding == null || embedding.length != provider.dimension()) {
+            throw new IllegalStateException("Provider '" + provider.providerId() + "' returned "
+                    + (embedding == null ? "null" : embedding.length + " components")
+                    + " for a " + provider.dimension() + "-dimensional provider");
+        }
         List<Float> vector = new ArrayList<>(embedding.length);
         for (float component : embedding) {
             vector.add(component);

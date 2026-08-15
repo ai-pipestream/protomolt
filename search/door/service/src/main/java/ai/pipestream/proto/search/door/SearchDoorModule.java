@@ -78,9 +78,16 @@ public final class SearchDoorModule implements ServiceModule {
     @Override
     public ServiceMount wire(NodeContext context) throws Exception {
         GrpcDocumentFetcher repo = new GrpcDocumentFetcher(context.channels().targetOf("repo"));
-        door = SearchDoorServices.build(
-                new SearchDoorConfig(config.grpcPort(), config.indexDir(), config.subjects()),
-                repo);
+        try {
+            door = SearchDoorServices.build(
+                    new SearchDoorConfig(config.grpcPort(), config.indexDir(), config.subjects()),
+                    repo);
+        } catch (RuntimeException e) {
+            // A failed mount (for instance a subject naming an absent
+            // embedding provider) must not leak the repo channel.
+            repo.close();
+            throw e;
+        }
         String name = ROLE + "-" + context.nodeId();
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
