@@ -18,7 +18,7 @@ The guides below follow the repository's module layout.
 - [JSON Schema generation](schema/json-schema.md): draft 2020-12 output from protobuf descriptors
 - [Schema metadata](schema/metadata.md): ownership, sensitivity, descriptions, and extraction
 - [Publishing schemas](schema/publishing.md): Confluent and Apicurio publishers
-- [Registry](schema/registry.md): Git storage, compatibility gates, and registry protocols
+- [Registry](schema/registry.md): Git storage, compatibility gates, registry protocols, and federation
 
 ## Transform and execution
 
