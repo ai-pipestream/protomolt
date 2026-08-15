@@ -78,6 +78,7 @@ that only needs the built-ins does not pull them in. Each implements the same
 | `service-list` | `protomolt-grpc-service-workspace` | List durable service identities and descriptor fingerprints |
 | `service-inspect` | `protomolt-grpc-service-workspace` | Read a service's methods, streaming modes, and request/response field shapes without returning descriptor bytes |
 | `service-refresh` | `protomolt-grpc-service-workspace` | Re-reflect a registered endpoint and update its schema identity when it changed |
+| `service-invoke` | `protomolt-grpc-service-workspace` | Invoke a registered service while resolving its pinned descriptor inside ProtoMolt |
 
 `ProtoMoltCatalog.full(...)` in `protomolt-grpc-service` assembles the full
 catalog behind the gRPC service, its REST mount, and the console. The standalone

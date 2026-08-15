@@ -7,6 +7,7 @@ import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.ReflectionException;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
+import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -17,9 +18,12 @@ public final class ServiceRefreshAction implements ProtoAction {
 
     private final ServiceProfileRepository repository;
     private final ChannelFactory channels;
+    private final SchemaRegistryStore registry;
 
-    public ServiceRefreshAction(ServiceProfileRepository repository, ChannelFactory channels) {
+    public ServiceRefreshAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                                ChannelFactory channels) {
         this.repository = repository;
+        this.registry = registry;
         this.channels = channels;
     }
 
@@ -31,7 +35,7 @@ public final class ServiceRefreshAction implements ProtoAction {
     @Override
     public String description() {
         return "Re-reflects a registered service endpoint, stores the descriptor as a "
-                + "content-addressed artifact, and updates the profile fingerprint.";
+                + "content-addressed registry artifact, and updates the profile fingerprint.";
     }
 
     @Override
@@ -63,13 +67,14 @@ public final class ServiceRefreshAction implements ProtoAction {
         try {
             ServiceProfile refreshed = ServiceActionSupport.reflectAndStore(profile,
                     endpoint == null ? null : endpoint.asText(), ServiceActionSupport.deadline(input),
-                    store, channels);
+                    store, registry, channels);
             ObjectNode result = context.objectMapper().createObjectNode();
             result.put("ok", true);
             result.put("changed", !refreshed.getSchemaSource().getDescriptorFingerprint().equals(
                     profile.getSchemaSource().getDescriptorFingerprint()));
             result.set("profile", ServiceActionSupport.profileJson(refreshed, context.objectMapper()));
-            result.set("services", ServiceActionSupport.services(refreshed, store, context.objectMapper()));
+            result.set("services", ServiceActionSupport.services(
+                    refreshed, store, registry, context.objectMapper()));
             return result;
         } catch (ReflectionException e) {
             ObjectNode result = context.objectMapper().createObjectNode();

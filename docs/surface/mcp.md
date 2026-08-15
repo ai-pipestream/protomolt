@@ -41,7 +41,7 @@ claude mcp add protomolt -- \
 
 `--registry-git` adds git-backed schema resources. `--service-workspace` adds
 durable service profiles, reflected descriptor storage, and service/method
-resources. The four service tools remain discoverable without the latter but
+resources. The five service tools remain discoverable without the latter but
 answer `unavailable` with the configuration remedy.
 
 `--recipe-workspace` stores content-addressed redacted fixtures and immutable
@@ -128,6 +128,7 @@ for the exact names.
 | `service-list` | List registered service identities and descriptor fingerprints |
 | `service-inspect` | Read a registered service's methods and request/response field shapes without returning descriptor bytes |
 | `service-refresh` | Re-reflect a registered endpoint and report whether its schema fingerprint changed |
+| `service-invoke` | Invoke a registered method without sending its descriptor or target on each call |
 
 Chains, jobs, inference, and `emit-okf` are not in the standalone binary's
 catalog because they require host-side wiring. `protomolt-serve` mounts the
@@ -207,14 +208,15 @@ current conversation, the preferred path is:
 1. **`service-register` once.** Supply a stable profile name and one or more
    endpoints. ProtoMolt validates the caller-authored profile before opening a
    connection, reflects the selected endpoint, and stores the descriptor set
-   outside agent context under its SHA-256 identity.
+   in the schema registry under its SHA-256 identity.
 
 2. **`service-inspect` or read its resources.** Ground method selection and
    request construction in the persisted contract. The profile remains useful
    after the target is offline and after ProtoMolt restarts.
 
-3. **Invoke and verify.** Use `grpc-invoke` with the exact method and proto3
-   JSON shape. Check `ok` and gRPC status before using the result.
+3. **Invoke and verify.** Use `service-invoke` with the profile name, exact
+   method, and proto3 JSON request. ProtoMolt resolves the endpoint and pinned
+   descriptor internally. Check `ok` and gRPC status before using the result.
 
 4. **`service-refresh` explicitly.** Re-reflect only when the deployed schema
    may have changed. The returned `changed` flag compares schema fingerprints.

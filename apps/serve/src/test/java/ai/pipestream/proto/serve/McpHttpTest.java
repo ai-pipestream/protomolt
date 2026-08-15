@@ -106,7 +106,7 @@ class McpHttpTest {
         assertThat(result.path("capabilities").has("tools")).isTrue();
         assertThat(result.path("capabilities").has("resources")).isTrue();
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
-                .isEqualTo(58);
+                .isEqualTo(59);
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/workspace").asText())
                 .isEqualTo("protomolt://workspace");
         assertThat(result.path("instructions").asText())
@@ -138,14 +138,14 @@ class McpHttpTest {
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode result = MAPPER.readTree(response.body()).path("result");
         JsonNode tools = result.path("tools");
-        assertThat(tools.size()).isEqualTo(58);
+        assertThat(tools.size()).isEqualTo(59);
         assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
                 .isEqualTo(tools.size());
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
                 "generate-stubs", "join-messages", "synthesize-shape", "merge-schemas",
                 "check-rules", "run-chain", "check-chain", "infer-schema", "mask-message",
                 "submit-chain", "get-job", "list-jobs", "complete-step", "service-register",
-                "service-list", "service-inspect", "service-refresh", "suggest-mappings",
+                "service-list", "service-inspect", "service-refresh", "service-invoke", "suggest-mappings",
                 "compile-recipe", "record-recipe-run", "replay-recipe", "promote-recipe",
                 "delegation-worker-register", "delegation-offer", "delegation-watch",
                 "delegation-message", "delegation-review", "delegation-transcript",
@@ -173,7 +173,7 @@ class McpHttpTest {
         String text = MAPPER.readTree(read.body()).path("result").path("contents")
                 .get(0).path("text").asText();
         JsonNode workspace = MAPPER.readTree(text);
-        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(58);
+        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(59);
         assertThat(workspace.path("toolCatalog").path("names"))
                 .anySatisfy(name -> assertThat(name.asText()).isEqualTo("service-register"));
 

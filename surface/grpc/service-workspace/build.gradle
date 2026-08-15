@@ -6,6 +6,7 @@ dependencies {
 
     implementation project(':protomolt-descriptors')
     implementation project(':protomolt-grpc-invoke')
+    implementation project(':protomolt-registry')
     implementation libs.protobuf.java.util
 
     testImplementation libs.grpc.inprocess
