@@ -111,8 +111,11 @@ bridges each parse onto gRParse's `StreamProcessDocument` page stream
 (vendored wire surface), maps page events and collector output back onto the
 plugin envelope, and reports collector failures as warnings. It is deployed
 next to gRParse and registered via a service profile under the name
-`grparse`. Preview images are not part of `StreamProcessDocument`, so the
-adapter advertises `emits_previews=false`; previews are future adapter work.
+`grparse`. The streaming wire carries no processing options, so the adapter
+cannot request page renders; when the gRParse fleet is built to render page
+images into `PageData.page_meta.image` (a data URI), the adapter decodes
+and forwards each one live as a `PagePreview`. `emits_previews` advertises
+that deployment fact, set with `PARSE_GRPARSE_EMITS_PREVIEWS`.
 
 ## Trigger model
 

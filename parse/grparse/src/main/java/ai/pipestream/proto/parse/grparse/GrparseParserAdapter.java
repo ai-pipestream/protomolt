@@ -8,6 +8,7 @@ import ai.pipestream.parse.v1.CollectorFailure;
 import ai.pipestream.parse.v1.DocumentChunk;
 import ai.pipestream.parse.v1.DocumentComplete;
 import ai.pipestream.parse.v1.DocumentStreamEvent;
+import ai.pipestream.document.v1.ImageRef;
 import ai.pipestream.parse.v1.PageData;
 import ai.pipestream.parse.v1.ParseStreamingServiceGrpc;
 import ai.pipestream.proto.parse.document.DoclingProjection;
@@ -18,6 +19,7 @@ import ai.pipestream.proto.parse.plugin.v1.ParseOptions;
 import ai.pipestream.proto.parse.plugin.v1.ParseProgress;
 import ai.pipestream.proto.parse.plugin.v1.ParseRequest;
 import ai.pipestream.proto.parse.plugin.v1.ParseResponse;
+import ai.pipestream.proto.parse.plugin.v1.PagePreview;
 import ai.pipestream.proto.parse.plugin.v1.ParsedPage;
 import ai.pipestream.proto.parse.plugin.v1.ParserOutput;
 import ai.pipestream.proto.parse.plugin.v1.ParserPluginServiceGrpc;
@@ -58,9 +60,15 @@ import java.util.concurrent.TimeUnit;
  * into one fleet-model document, claims are offered, and the
  * {@code ParserOutput} is emitted exactly once.
  *
- * <p>Previews: {@code StreamProcessDocument} does not emit preview images,
- * so this adapter honestly advertises {@code emits_previews=false}. Preview
- * rendering rides gRParse's other surfaces and is future adapter work.
+ * <p>Previews: the streaming wire carries no processing options, so the
+ * adapter cannot request page renders; page images arrive exactly when the
+ * gRParse fleet is built to render them into
+ * {@code PageData.page_meta.image} (a data URI). When the caller asked for
+ * previews, each such image is decoded and forwarded live as a
+ * {@code PagePreview}; {@code emits_previews} advertises the deployment
+ * fact from {@link GrparseAdapterOptions#emitsPreviews()}.
+ * {@code PreviewSpec} parameters cannot reach the fleet and are ignored,
+ * as the plugin contract allows for parameters a parser cannot honor.
  *
  * <p>Degradation: gRParse degrades instead of failing while any collector
  * succeeds; each {@code CollectorFailure} becomes one
@@ -143,7 +151,7 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
                         .addSupportedExtensions("webp")
                         .setMaxDocumentBytes(options.maxDocumentBytes())
                         .setEmitsPages(true)
-                        .setEmitsPreviews(false)
+                        .setEmitsPreviews(options.emitsPreviews())
                         .setEmitsClaims(true)
                         .build());
         observer.onCompleted();
@@ -359,6 +367,33 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
                         .setContent(Any.pack(page))
                         .setText(pageText(page))));
             }
+            if (parseOptions.getEmitPreviews()) {
+                emitPreview(page);
+            }
+        }
+
+        /**
+         * Forwards the page's rendered image, when the fleet supplied one
+         * as an embedded data URI. Non-data URIs reference storage this
+         * adapter has no business fetching, and pages without images are
+         * simply pages the fleet did not render; both are skipped, never
+         * failed.
+         */
+        private void emitPreview(PageData page) {
+            if (!page.getPageMeta().hasImage()) {
+                return;
+            }
+            ImageRef image = page.getPageMeta().getImage();
+            DataUri decoded = DataUri.parse(image.getUri());
+            if (decoded == null) {
+                return;
+            }
+            emit(builder -> builder.setPreview(PagePreview.newBuilder()
+                    .setPageNumber(page.getPageNumber())
+                    .setMimeType(decoded.mimeType())
+                    .setImage(decoded.data())
+                    .setWidth((int) Math.round(image.getSize().getWidth()))
+                    .setHeight((int) Math.round(image.getSize().getHeight()))));
         }
 
         private void assembleAndFinish() {
