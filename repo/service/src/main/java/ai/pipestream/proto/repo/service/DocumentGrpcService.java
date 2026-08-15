@@ -366,11 +366,17 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         // service), so this is always a server-side copy — the bytes never
         // transit this service. Carried entries keep their original
         // sha256/size/updated_at/written_by stamps; only the object key moves.
+        // An in-place partial save (copy source == destination address, e.g.
+        // the parsing coordinator re-staging PARSED+CORE onto the same row)
+        // carries a part to the key it already lives at: nothing to copy, and
+        // S3 rejects a metadata-unchanged self-copy outright.
         List<PartStorage.CopySpec> copies = new ArrayList<>(carried.size());
         List<PartManifestEntry> carriedAtDest = new ArrayList<>(carried.size());
         for (PartManifestEntry e : carried) {
             String destKey = DocumentPartCodec.objectKey(basePrefix, e.getPart(), e.getSubKey());
-            copies.add(new PartStorage.CopySpec(e, destKey));
+            if (!(srcDrive.bucket.equals(drive.bucket) && destKey.equals(e.getObjectKey()))) {
+                copies.add(new PartStorage.CopySpec(e, destKey));
+            }
             carriedAtDest.add(e.toBuilder().setObjectKey(destKey).build());
         }
         try {
