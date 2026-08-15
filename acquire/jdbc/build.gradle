@@ -1,0 +1,24 @@
+description = 'JDBC pull connector: runs a watermark query against a source database, wraps each row as a stable-identity JSON document, and feeds it through the intake door'
+
+dependencies {
+    api project(':protomolt-acquire-pull')
+    api project(':protomolt-composer')
+    implementation project(':protomolt-actions')
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+
+    // Packaged default driver; the source URL decides what actually loads.
+    runtimeOnly libs.postgresql
+
+    // The full-stack IT pulls from a Postgres source table into a real
+    // repo-service (Postgres + LocalStack S3) behind the real intake door.
+    testImplementation project(':protomolt-intake-service')
+    testImplementation project(':protomolt-repo-service')
+    testImplementation project(':protomolt-repo-container')
+    testImplementation libs.postgresql
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}

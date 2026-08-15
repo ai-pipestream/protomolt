@@ -57,6 +57,15 @@ project(':protomolt-acquire-confluence').projectDir = file('acquire/confluence')
 include 'protomolt-connector'
 project(':protomolt-connector').projectDir = file('acquire/connector')
 
+include 'protomolt-acquire-pull'
+project(':protomolt-acquire-pull').projectDir = file('acquire/pull')
+
+include 'protomolt-acquire-s3'
+project(':protomolt-acquire-s3').projectDir = file('acquire/s3')
+
+include 'protomolt-acquire-jdbc'
+project(':protomolt-acquire-jdbc').projectDir = file('acquire/jdbc')
+
 // schema/ — the registry and its wire-compatible backends.
 
 include 'protomolt-registry'
