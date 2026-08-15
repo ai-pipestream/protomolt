@@ -1,0 +1,12 @@
+description = 'Role-based node composition: the ServiceModule SPI, two-phase lifecycle, and the channel pivot between co-mounted and remote roles'
+
+dependencies {
+    // Channels hands out ManagedChannels; remote targets go through the
+    // validated outbound policy, co-mounted roles ride in-process.
+    api libs.grpc.api
+    api project(':protomolt-grpc-channel-policy')
+    implementation libs.grpc.inprocess
+    implementation libs.slf4j.api
+
+    testImplementation libs.grpc.inprocess
+}
