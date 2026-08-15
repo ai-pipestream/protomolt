@@ -18,6 +18,36 @@ dependencies {
     testImplementation project(':protomolt-index-opensearch')
     testImplementation libs.jackson.databind
     testImplementation libs.jgit
+
+    // The golden-path system test: the whole document platform in one JVM.
+    testImplementation project(':protomolt-intake-service')
+    testImplementation project(':protomolt-parse-service')
+    testImplementation project(':protomolt-parse-text')
+    testImplementation project(':protomolt-parse-document')
+    testImplementation project(':protomolt-repo-service')
+    testImplementation project(':protomolt-repo-container')
+    testImplementation project(':protomolt-jobs-service')
+    testImplementation project(':protomolt-chain')
+    testImplementation project(':protomolt-actions')
+    testImplementation project(':protomolt-index-lucene')
+    testImplementation project(':protomolt-mapper-core')
+    testImplementation project(':protomolt-embeddings')
+    testImplementation project(':protomolt-protobuf-seo')
+    // The court corpus fixture rides the samples jar's resources.
+    testImplementation project(':samples')
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+}
+
+// The Lucene 11 line ships Java 25 bytecode, so the golden-path system test
+// cannot run on an older JVM: the test launcher stays on the toolchain JDK
+// and -PtestJdk is ignored here (same pin as :protomolt-index-lucene).
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
 // The checked-in action inventory is generated from the actual full and standalone
