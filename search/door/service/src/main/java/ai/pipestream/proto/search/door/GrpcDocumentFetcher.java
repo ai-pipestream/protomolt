@@ -4,6 +4,8 @@ import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.DocumentPart;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import ai.pipestream.proto.repo.v1.GetDocumentByReferenceRequest;
+import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
+import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import io.grpc.ManagedChannel;
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -15,7 +17,7 @@ import java.util.concurrent.TimeUnit;
  * parts through the {@code DocumentServiceGrpc} blocking stub. The target is
  * a {@code host:port} authority or {@code inprocess:<name>}.
  */
-public final class GrpcDocumentFetcher implements DocumentFetcher, AutoCloseable {
+public final class GrpcDocumentFetcher implements DocumentFetcher, DocumentLister, AutoCloseable {
 
     /** In-process target prefix, shared vocabulary with the composer: {@value}. */
     public static final String INPROCESS_TARGET_PREFIX = "inprocess:";
@@ -49,6 +51,11 @@ public final class GrpcDocumentFetcher implements DocumentFetcher, AutoCloseable
                         .addParts(DocumentPart.DOCUMENT_PART_PARSED)
                         .build())
                 .getDocument();
+    }
+
+    @Override
+    public ListDocumentsResponse list(ListDocumentsRequest request) {
+        return DocumentServiceGrpc.newBlockingStub(channel).listDocuments(request);
     }
 
     @Override

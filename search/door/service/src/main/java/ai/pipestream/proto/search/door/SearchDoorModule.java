@@ -2,6 +2,7 @@ package ai.pipestream.proto.search.door;
 
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.composer.ServiceMount;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import io.grpc.Server;
@@ -68,17 +69,18 @@ public final class SearchDoorModule implements ServiceModule {
 
     @Override
     public Set<String> requires() {
-        // parse and registry are optional at runtime (workflow registration
-        // is skipped when either is absent) but must wire first when
-        // co-mounted, so the parse-and-index workflow can register.
-        return Set.of("repo", "parse", "registry");
+        // parse, registry, and jobs are optional at runtime (workflow and
+        // replay registration are skipped when absent) but must wire first
+        // when co-mounted, so their contributions exist by this wire.
+        return Set.of("repo", "parse", "registry", "jobs");
     }
 
     @Override
     public ServiceMount wire(NodeContext context) throws Exception {
+        GrpcDocumentFetcher repo = new GrpcDocumentFetcher(context.channels().targetOf("repo"));
         door = SearchDoorServices.build(
                 new SearchDoorConfig(config.grpcPort(), config.indexDir(), config.subjects()),
-                new GrpcDocumentFetcher(context.channels().targetOf("repo")));
+                repo);
         String name = ROLE + "-" + context.nodeId();
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
@@ -98,6 +100,14 @@ public final class SearchDoorModule implements ServiceModule {
                                     60_000)
                             .toString());
         }
+
+        // With a co-mounted jobs module, replay rides its submit action: the
+        // replay-documents action re-runs a stored workflow over a listing.
+        context.contributions().all(ProtoAction.class).stream()
+                .filter(action -> action.name().equals("submit-workflow"))
+                .findFirst()
+                .ifPresent(submit -> context.contributions().contribute(
+                        ProtoAction.class, new ReplayAction(repo, submit)));
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
