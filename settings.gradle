@@ -344,6 +344,9 @@ project(':protomolt-parse-document').projectDir = file('parse/document')
 include 'protomolt-parse-service'
 project(':protomolt-parse-service').projectDir = file('parse/service')
 
+include 'protomolt-parse-text'
+project(':protomolt-parse-text').projectDir = file('parse/text')
+
 // host/ — embedding the toolkit into servers and frameworks.
 
 include 'protomolt-server-common'

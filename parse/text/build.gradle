@@ -1,0 +1,15 @@
+description = 'The reference parser: a pure-JDK ParserPluginService for plain text and markdown, producing the fleet document model — the in-JVM parser for tests, demos, and the all-in-one container'
+
+dependencies {
+    api project(':protomolt-parse-proto')
+    // Produces the fleet document model and projects it via DoclingProjection.
+    api project(':protomolt-parse-document')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    testRuntimeOnly libs.slf4j.simple
+}
