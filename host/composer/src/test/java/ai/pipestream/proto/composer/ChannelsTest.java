@@ -82,6 +82,122 @@ class ChannelsTest {
     }
 
     @Test
+    void nodeCloseShutsDownChannelsItHandedOut() {
+        CallingModule caller = new CallingModule();
+        Composer composer = Composer.emptyBuilder()
+                .module(new PublishingModule("repo"))
+                .module(caller)
+                .environment(Map.of())
+                .build();
+
+        try (Composer.Node node = composer.boot(List.of("repo", "intake"))) {
+            assertThat(caller.seen.get()).isNotNull();
+        }
+        assertThat(caller.seen.get().isShutdown()).isTrue();
+    }
+
+    @Test
+    void aWireFailureClosesChannelsOpenedDuringWiring() {
+        AtomicReference<ManagedChannel> opened = new AtomicReference<>();
+        ServiceModule caller = new ServiceModule() {
+            @Override
+            public String role() {
+                return "intake";
+            }
+
+            @Override
+            public ServiceMount wire(NodeContext context) {
+                opened.set(context.channels().to("repo"));
+                return ServiceMount.inert(() -> {
+                });
+            }
+        };
+        ServiceModule broken = new ServiceModule() {
+            @Override
+            public String role() {
+                return "jobs";
+            }
+
+            @Override
+            public ServiceMount wire(NodeContext context) {
+                throw new IllegalStateException("jobs refuses to wire");
+            }
+        };
+        Composer composer = Composer.emptyBuilder()
+                .module(caller)
+                .module(broken)
+                .environment(Map.of("PROTOMOLT_REPO_TARGET", "repo.example.internal:9090"))
+                .remoteOpener(target -> InProcessChannelBuilder
+                        .forName("boot-failure-probe-" + System.nanoTime())
+                        .build())
+                .build();
+
+        assertThatThrownBy(() -> composer.boot(List.of("intake", "jobs")))
+                .isInstanceOf(ComposerException.class)
+                .hasMessageContaining("refuses to wire");
+        assertThat(opened.get()).isNotNull();
+        assertThat(opened.get().isShutdown()).isTrue();
+    }
+
+    @Test
+    void aStartFailureClosesChannelsOpenedDuringWiring() {
+        AtomicReference<ManagedChannel> opened = new AtomicReference<>();
+        ServiceModule caller = new ServiceModule() {
+            @Override
+            public String role() {
+                return "intake";
+            }
+
+            @Override
+            public ServiceMount wire(NodeContext context) {
+                opened.set(context.channels().to("repo"));
+                return ServiceMount.inert(() -> {
+                });
+            }
+        };
+        ServiceModule broken = new ServiceModule() {
+            @Override
+            public String role() {
+                return "jobs";
+            }
+
+            @Override
+            public ServiceMount wire(NodeContext context) {
+                return new ServiceMount() {
+                    @Override
+                    public void start() {
+                        throw new IllegalStateException("jobs refuses to start");
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
+            }
+        };
+        Composer composer = Composer.emptyBuilder()
+                .module(caller)
+                .module(broken)
+                .environment(Map.of("PROTOMOLT_REPO_TARGET", "repo.example.internal:9090"))
+                .remoteOpener(target -> InProcessChannelBuilder
+                        .forName("boot-failure-probe-" + System.nanoTime())
+                        .build())
+                .build();
+
+        assertThatThrownBy(() -> composer.boot(List.of("intake", "jobs")))
+                .isInstanceOf(ComposerException.class)
+                .hasMessageContaining("refuses to start");
+        assertThat(opened.get()).isNotNull();
+        assertThat(opened.get().isShutdown()).isTrue();
+    }
+
+    @Test
+    void targetVariableUppercasesAndUnderscoresTheRoleName() {
+        assertThat(Channels.targetVariable("repo")).isEqualTo("PROTOMOLT_REPO_TARGET");
+        assertThat(Channels.targetVariable("parser-text")).isEqualTo("PROTOMOLT_PARSER_TEXT_TARGET");
+    }
+
+    @Test
     void unmountedRoleWithoutTargetFailsNamingTheVariable() {
         Composer composer = Composer.emptyBuilder()
                 .module(new PublishingModule("repo"))

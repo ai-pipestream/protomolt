@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.util.JsonFormat;
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 /**
  * The replay operation: re-runs a stored workflow over every document a
@@ -23,7 +25,9 @@ import com.google.protobuf.util.JsonFormat;
  * <p>Every identity is explicit: the workflow name, the mapping subject,
  * and the drive all come from the request. Submission rides the jobs
  * module's own {@code submit-workflow} action, so replay inherits its
- * idempotency and validation.
+ * validation; with the optional {@code replayId} input, each document's run
+ * also carries a deterministic {@code jobId} derived from it, so
+ * resubmitting the same replay is idempotent at the jobs layer too.
  */
 public final class ReplayAction implements ProtoAction {
 
@@ -83,6 +87,11 @@ public final class ReplayAction implements ProtoAction {
         properties.putObject("accountId")
                 .put("type", "string")
                 .put("description", "Optional account (tenant) filter");
+        properties.putObject("replayId")
+                .put("type", "string")
+                .put("description", "Optional replay identifier; when set, every document's"
+                        + " run gets a deterministic jobId derived from it, so re-running"
+                        + " the same replay resubmits nothing");
         schema.putArray("required").add("workflowName").add("mappingSubject").add("drive");
         return schema;
     }
@@ -93,6 +102,7 @@ public final class ReplayAction implements ProtoAction {
         String mappingSubject = requiredString(input, "mappingSubject");
         String drive = requiredString(input, "drive");
         JsonNode account = input.get("accountId");
+        String replayId = optionalString(input, "replayId");
 
         ObjectNode output = MAPPER.createObjectNode();
         ArrayNode jobIds = output.putArray("jobIds");
@@ -114,6 +124,11 @@ public final class ReplayAction implements ProtoAction {
                 ObjectNode envelope = MAPPER.createObjectNode();
                 envelope.put("workflowName", workflowName);
                 envelope.set("input", workflowInput);
+                if (replayId != null) {
+                    envelope.put("jobId", runJobId(
+                            replayId, workflowName, mappingSubject, drive,
+                            document.getDocId()));
+                }
                 ObjectNode result = submit.execute(envelope, context);
                 jobIds.add(result.path("jobId").asText());
                 submitted++;
@@ -140,5 +155,25 @@ public final class ReplayAction implements ProtoAction {
             throw new ActionException("invalid-input", "'" + field + "' is required");
         }
         return value.asText();
+    }
+
+    private static String optionalString(ObjectNode input, String field) {
+        JsonNode value = input.get(field);
+        return value == null || !value.isTextual() || value.asText().isBlank()
+                ? null
+                : value.asText();
+    }
+
+    /**
+     * The deterministic run id one document of one replay gets: resubmitting
+     * the same replay names the same ids, and {@code submit-workflow} treats
+     * {@code jobId} as its idempotency key.
+     */
+    private static String runJobId(String replayId, String workflowName,
+            String mappingSubject, String drive, String docId) {
+        return UUID.nameUUIDFromBytes(String.join("\n",
+                        replayId, workflowName, mappingSubject, drive, docId)
+                .getBytes(StandardCharsets.UTF_8))
+                .toString();
     }
 }

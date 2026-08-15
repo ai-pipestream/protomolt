@@ -14,6 +14,7 @@ import com.google.protobuf.Descriptors;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * The git-backed schema registry as a mountable role. Wiring creates the
@@ -104,19 +105,31 @@ public final class RegistryModule implements ServiceModule {
         return httpPort;
     }
 
-    /** A read view of the store's workflow definitions as parsed JSON. */
+    /**
+     * A read view of the store's workflow definitions as parsed JSON. A stored
+     * workflow that is not a JSON object is corrupt state, not a missing
+     * workflow: it fails loudly instead of reading as "not found".
+     */
     public static WorkflowRepository workflowRepository(GitSchemaRegistryStore store) {
+        return workflowRepository(store::workflow);
+    }
+
+    /** The same view over any workflow-text lookup; the seam for tests. */
+    static WorkflowRepository workflowRepository(Function<String, Optional<String>> store) {
         ObjectMapper json = new ObjectMapper();
-        return name -> {
-            Optional<String> text = store.workflow(name);
-            return text.map(t -> {
-                try {
-                    var node = json.readTree(t);
-                    return node instanceof ObjectNode workflow ? workflow : null;
-                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                    return null;
-                }
-            });
-        };
+        return name -> store.apply(name).map(t -> {
+            final com.fasterxml.jackson.databind.JsonNode node;
+            try {
+                node = json.readTree(t);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalStateException(
+                        "Stored workflow '" + name + "' is not valid JSON", e);
+            }
+            if (!(node instanceof ObjectNode workflow)) {
+                throw new IllegalStateException(
+                        "Stored workflow '" + name + "' is not a JSON object");
+            }
+            return workflow;
+        });
     }
 }

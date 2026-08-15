@@ -29,6 +29,8 @@ import java.nio.file.Path;
  *        required exactly when {@code profilesDir} is set
  * @param parseDeadlineSeconds per-parse deadline for coordinator fan-out
  * @param workerCount jobs worker claim loops
+ * @param searchGrpcPort search door gRPC port; {@code 0} picks free
+ * @param searchIndexDir directory of the search door's Lucene index
  */
 public record DocumentPlatformConfig(
         RepoServiceConfig repo,

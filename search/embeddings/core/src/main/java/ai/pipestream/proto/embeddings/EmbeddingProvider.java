@@ -12,8 +12,9 @@ import java.util.List;
  *
  * <p>Remote providers hold network resources, so the SPI is {@link AutoCloseable}
  * and lookups hand lifecycle to the caller: {@link EmbeddingProviders} builds a fresh
- * instance per lookup, and whoever obtained a provider closes it. The default
- * {@link #close()} is a no-op for in-process providers with nothing to release.
+ * instance per lookup, returns one owned instance, and closes the instances it
+ * did not select. The default {@link #close()} is a no-op for in-process
+ * providers with nothing to release.
  */
 public interface EmbeddingProvider extends AutoCloseable {
     /** Stable id, e.g. {@code model2vec}. */

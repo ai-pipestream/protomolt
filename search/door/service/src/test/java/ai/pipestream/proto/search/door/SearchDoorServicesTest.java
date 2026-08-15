@@ -229,4 +229,44 @@ class SearchDoorServicesTest {
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
     }
+
+    @Test
+    void indexingUnderAnUnknownSubjectIsRefusedWithTheServedList() {
+        assertThatThrownBy(() -> indexStub.indexDocument(IndexDocumentRequest.newBuilder()
+                .setAddress(NodeAddress.newBuilder().setDocId("doc-1")
+                        .setGraphAddressId("ds").setAccountId("acct").setGraphId("intake:acct"))
+                .setMappingSubject("no-such-subject")
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("no-such-subject")
+                            .contains(RepoDocumentMapping.SUBJECT);
+                });
+    }
+
+    @Test
+    void indexingWithoutAnAddressOrSubjectIsRefused() {
+        assertThatThrownBy(() -> indexStub.indexDocument(IndexDocumentRequest.newBuilder()
+                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.INVALID_ARGUMENT));
+        assertThatThrownBy(() -> indexStub.indexDocument(IndexDocumentRequest.newBuilder()
+                .setAddress(NodeAddress.newBuilder().setDocId("doc-1"))
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.INVALID_ARGUMENT));
+    }
+
+    @Test
+    void aBlankQueryIsRefused() {
+        assertThatThrownBy(() -> searchStub.search(
+                query(SearchLane.SEARCH_LANE_LEXICAL, "   ").build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.INVALID_ARGUMENT));
+    }
 }

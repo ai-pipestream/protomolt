@@ -98,4 +98,62 @@ class MappingEmbedderTest {
         assertThat(new MappingEmbedder(provider, singleTextMapping(3)).embed(document))
                 .containsOnlyKeys("title");
     }
+
+    /**
+     * A provider whose vectors do not match its declared dimension is broken;
+     * writing such a vector would poison the index, so the embedder refuses it
+     * even when the field hint leaves the dimension unset. Declares 3, returns 4.
+     */
+    @Test
+    void aVectorLongerOrShorterThanTheDeclaredDimensionFails() {
+        EmbeddingProvider lying = new EmbeddingProvider() {
+            @Override
+            public String providerId() {
+                return "lying";
+            }
+
+            @Override
+            public int dimension() {
+                return 3;
+            }
+
+            @Override
+            public float[] embed(String text) {
+                return new float[] {0.1f, 0.2f, 0.3f, 0.4f};
+            }
+        };
+        Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world"));
+
+        assertThatThrownBy(() -> new MappingEmbedder(lying, singleTextMapping(3)).embed(document))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("lying")
+                .hasMessageContaining("3");
+        assertThat(document).containsOnlyKeys("title");
+    }
+
+    @Test
+    void aNullVectorFailsInsteadOfThrowingNpe() {
+        EmbeddingProvider nullReturning = new EmbeddingProvider() {
+            @Override
+            public String providerId() {
+                return "null-returning";
+            }
+
+            @Override
+            public int dimension() {
+                return 3;
+            }
+
+            @Override
+            public float[] embed(String text) {
+                return null;
+            }
+        };
+        Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world"));
+
+        assertThatThrownBy(() -> new MappingEmbedder(nullReturning, singleTextMapping(3)).embed(document))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("null-returning");
+        assertThat(document).containsOnlyKeys("title");
+    }
 }

@@ -74,7 +74,7 @@ redelivers.
 
 ## Getting the descriptor set
 
-The same recipe as [the gRPC connectors](kafka-connect.md): compile your
+The same procedure as [the gRPC connectors](kafka-connect.md): compile your
 sources with the `compile` verb, reflect a live service, or fetch a registry
 descriptor-set endpoint — anything that yields a serialized
 `FileDescriptorSet` whose file protos carry the hint options. The connector

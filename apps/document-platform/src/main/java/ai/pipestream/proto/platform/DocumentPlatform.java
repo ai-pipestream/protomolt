@@ -40,10 +40,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The document platform in one JVM: the shipped one-container PRESET over
- * the {@link Composer}. The wiring that used to live here as hand-ordered
- * construction is now the role set
- * {@code repo, parser-text, registry, parse, jobs, intake, playground}
- * mounted through the ServiceModule SPI; this class only maps the
+ * the {@link Composer}. The role set
+ * {@code repo, parser-text, registry, parse, jobs, intake, playground,
+ * search} is mounted through the ServiceModule SPI; this class only maps the
  * {@code DOCUMENT_PLATFORM_*} configuration onto module configs, boots the
  * node, and publishes the fleet document model. The same modules booted
  * with a different role list are a specialized node, not a different
@@ -244,14 +243,19 @@ public final class DocumentPlatform implements AutoCloseable {
                     Model2VecEmbeddingProvider.PATH_ENVIRONMENT_VARIABLE);
             return null;
         }
-        EmbeddingProvider provider =
-                EmbeddingProviders.byId(Model2VecEmbeddingProvider.PROVIDER_ID);
+        int dims;
+        // Borrowed only to learn the model's dimension; the derivation loads
+        // its own provider, so this instance goes back.
+        try (EmbeddingProvider provider =
+                EmbeddingProviders.byId(Model2VecEmbeddingProvider.PROVIDER_ID)) {
+            dims = provider.dimension();
+        }
         return new ChunkingPolicy(
                 new ChunkingPolicy.ChunkingSpec(
                         SentencePackedChunker.STRATEGY, SentencePackedChunker.STRATEGY_VERSION,
                         120, 16, 20, 200, SentencePackedChunker.BOUNDARY),
                 new ChunkingPolicy.EmbeddingSpec(
-                        Model2VecEmbeddingProvider.PROVIDER_ID, provider.dimension(),
+                        Model2VecEmbeddingProvider.PROVIDER_ID, dims,
                         VectorSimilarity.COSINE, true),
                 "", true);
     }

@@ -44,6 +44,8 @@ import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.FSDirectory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The door's Lucene state: one index per served mapping subject, written by
@@ -62,6 +64,8 @@ public final class LuceneSearchStore implements Closeable {
 
     /** Reciprocal-rank fusion constant for the hybrid lane. */
     private static final int RRF_K = 60;
+
+    private static final Logger LOG = LoggerFactory.getLogger(LuceneSearchStore.class);
 
     /** Index field name of chunk identity on chunk children: {@value}. */
     public static final String CHUNK_ID_FIELD = "chunk_id";
@@ -123,6 +127,12 @@ public final class LuceneSearchStore implements Closeable {
         } catch (IOException e) {
             close();
             throw new UncheckedIOException("cannot open the search index under " + indexDir, e);
+        } catch (RuntimeException e) {
+            // A misconfigured chunk lane (an absent embedding provider, a
+            // dims mismatch) fails the mount the same way; the subjects
+            // already opened must not leak their write locks.
+            close();
+            throw e;
         }
     }
 
@@ -363,17 +373,31 @@ public final class LuceneSearchStore implements Closeable {
 
     @Override
     public void close() {
+        UncheckedIOException failure = null;
         for (Subject subject : subjects.values()) {
             try {
                 subject.searchers().close();
             } catch (IOException e) {
-                // closing continues; the writer close below is the one that persists
+                // Closing continues; the writer close below is the one that
+                // persists.
+                LOG.warn("cannot close the searcher manager", e);
             }
             try {
                 subject.writer().close();
             } catch (IOException e) {
-                throw new UncheckedIOException("cannot close the search index", e);
+                // Every subject still gets its close; the first failure is
+                // reported after the loop with the rest suppressed.
+                UncheckedIOException wrapped =
+                        new UncheckedIOException("cannot close the search index", e);
+                if (failure == null) {
+                    failure = wrapped;
+                } else {
+                    failure.addSuppressed(wrapped);
+                }
             }
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 }

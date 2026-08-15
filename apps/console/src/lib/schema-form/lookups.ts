@@ -3,7 +3,7 @@
  *
  * A module config schema property annotated with
  * `"x-pipestream-lookup": "<kind>"` declares that the field is a REFERENCE
- * (index plans, vector sets, embedding models, ...). The form renderer asks
+ * (index mappings, vector sets, embedding models, ...). The form renderer asks
  * this registry to resolve the kind to selectable options; the hosting app
  * registers one resolver per kind at startup (using whatever clients it has).
  * Schemas declare WHAT kind of reference a field is; the app owns HOW it is

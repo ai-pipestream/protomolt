@@ -12,8 +12,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Key-store selection is {@link IntakeServiceMain#selectResolver}: OIDC
  * introspection over the JDBC store over the env-seeded table, both-set
- * rejected loudly. The duplicate that used to live here collapsed onto the
- * intake door's public helper when the ServiceModule SPI landed.
+ * rejected loudly.
  */
 public final class DocumentPlatformMain {
 

@@ -146,6 +146,134 @@ class TextParserServiceTest {
                 .isEqualTo(Status.Code.INVALID_ARGUMENT);
     }
 
+    @Test
+    void anEmptyPayloadYieldsAnEmptyDocumentAndNoClaims() throws Exception {
+        List<ParseResponse> events = parse("", "empty.txt");
+        assertThat(events)
+                .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.CLAIMS);
+        ParserOutput output = events.stream()
+                .filter(e -> e.getEventCase() == ParseResponse.EventCase.DOCUMENT)
+                .map(ParseResponse::getDocument)
+                .findFirst()
+                .orElseThrow();
+        Document docling =
+                DoclingProjection.fromParserDocument(output.getDocument()).orElseThrow();
+        assertThat(docling.getTextsList()).isEmpty();
+        assertThat(docling.getName()).isEqualTo("empty.txt");
+    }
+
+    @Test
+    void aWhitespaceOnlyPayloadYieldsAnEmptyDocumentAndNoClaims() throws Exception {
+        List<ParseResponse> events = parse("  \n\n \t \n", "blank.txt");
+        assertThat(events)
+                .noneMatch(e -> e.getEventCase() == ParseResponse.EventCase.CLAIMS);
+        ParserOutput output = events.stream()
+                .filter(e -> e.getEventCase() == ParseResponse.EventCase.DOCUMENT)
+                .map(ParseResponse::getDocument)
+                .findFirst()
+                .orElseThrow();
+        assertThat(DoclingProjection.fromParserDocument(output.getDocument())
+                .orElseThrow().getTextsList()).isEmpty();
+    }
+
+    @Test
+    void aTitleOnlyDocumentClaimsNoBody() throws Exception {
+        List<ParseResponse> events = parse("# Only a Title", "title.md");
+        DocumentClaims claims = events.stream()
+                .filter(e -> e.getEventCase() == ParseResponse.EventCase.CLAIMS)
+                .map(ParseResponse::getClaims)
+                .findFirst()
+                .orElseThrow();
+        assertThat(claims.getClaims().getFieldsOrThrow("title").getStringValue())
+                .isEqualTo("Only a Title");
+        assertThat(claims.getClaims().containsFields("body")).isFalse();
+        ParserOutput output = events.stream()
+                .filter(e -> e.getEventCase() == ParseResponse.EventCase.DOCUMENT)
+                .map(ParseResponse::getDocument)
+                .findFirst()
+                .orElseThrow();
+        Document docling =
+                DoclingProjection.fromParserDocument(output.getDocument()).orElseThrow();
+        assertThat(docling.getTextsList()).hasSize(1);
+        assertThat(docling.getTexts(0).getItemCase()).isEqualTo(BaseTextItem.ItemCase.TITLE);
+    }
+
+    @Test
+    void unicodeLineBreaksSplitBlocksAndFlowWithinThem() throws Exception {
+        // A Unicode paragraph separator pair is a blank line; a lone Unicode
+        // line separator flows into a space inside the block.
+        List<ParseResponse> events = parse(
+                "First block here.\u2029\u2029second\u2028line.", "unicode.txt");
+        ParserOutput output = events.stream()
+                .filter(e -> e.getEventCase() == ParseResponse.EventCase.DOCUMENT)
+                .map(ParseResponse::getDocument)
+                .findFirst()
+                .orElseThrow();
+        Document docling =
+                DoclingProjection.fromParserDocument(output.getDocument()).orElseThrow();
+        assertThat(docling.getTextsList()).hasSize(2);
+        assertThat(docling.getTexts(0).getText().getBase().getText()).isEqualTo("First block here.");
+        assertThat(docling.getTexts(1).getText().getBase().getText())
+                .isEqualTo("second line.");
+    }
+
+    @Test
+    void dataFramesConcatenateAcrossTheStream() throws Exception {
+        List<ParseResponse> events = new ArrayList<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        StreamObserver<ParseRequest> requests = stub.parse(observer(events, failure, done));
+        requests.onNext(ParseRequest.newBuilder()
+                .setOptions(ParseOptions.newBuilder()
+                        .setDocumentId("doc-t1")
+                        .setFilename("split.txt")
+                        .setContentType("text/plain"))
+                .build());
+        requests.onNext(ParseRequest.newBuilder()
+                .setData(ByteString.copyFromUtf8("First para"))
+                .build());
+        requests.onNext(ParseRequest.newBuilder()
+                .setData(ByteString.copyFromUtf8("graph.\n\nSecond paragraph."))
+                .build());
+        requests.onCompleted();
+        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        if (failure.get() != null) {
+            throw new AssertionError("parse failed", failure.get());
+        }
+        DocumentClaims claims = events.stream()
+                .filter(e -> e.getEventCase() == ParseResponse.EventCase.CLAIMS)
+                .map(ParseResponse::getClaims)
+                .findFirst()
+                .orElseThrow();
+        assertThat(claims.getClaims().getFieldsOrThrow("body").getStringValue())
+                .isEqualTo("First paragraph.\n\nSecond paragraph.");
+    }
+
+    @Test
+    void anOversizedPayloadIsResourceExhausted() throws Exception {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        StreamObserver<ParseRequest> requests = stub.parse(observer(new ArrayList<>(), failure, done));
+        requests.onNext(ParseRequest.newBuilder()
+                .setOptions(ParseOptions.newBuilder()
+                        .setDocumentId("doc-t1")
+                        .setFilename("huge.txt")
+                        .setContentType("text/plain"))
+                .build());
+        try {
+            requests.onNext(ParseRequest.newBuilder()
+                    .setData(ByteString.copyFrom(new byte[(int) TextParserService.MAX_DOCUMENT_BYTES + 1]))
+                    .build());
+            requests.onCompleted();
+        } catch (RuntimeException alreadyClosed) {
+            // The server already rejected the stream.
+        }
+        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+        assertThat(((StatusRuntimeException) failure.get()).getStatus().getCode())
+                .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+    }
+
     // ------------------------------------------------------------------
 
     static List<ParseResponse> parse(String text, String filename) throws Exception {

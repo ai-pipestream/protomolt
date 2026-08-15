@@ -37,8 +37,10 @@ record DataUri(String mimeType, ByteString data) {
             return null;
         }
         try {
-            return new DataUri(mime, ByteString.copyFrom(
-                    Base64.getDecoder().decode(uri.substring(encoding + ENCODING.length()))));
+            ByteString data = ByteString.copyFrom(
+                    Base64.getDecoder().decode(uri.substring(encoding + ENCODING.length())));
+            // An empty payload is not an image.
+            return data.isEmpty() ? null : new DataUri(mime, data);
         } catch (IllegalArgumentException e) {
             return null;
         }

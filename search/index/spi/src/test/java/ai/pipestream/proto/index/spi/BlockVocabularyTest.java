@@ -136,7 +136,7 @@ class BlockVocabularyTest {
 
     @Test
     void chunkingPolicyTranslatesFromProtoOptionsAndRequiresAStringField() throws Exception {
-        FieldIndexHint recipeHint = FieldIndexHint.newBuilder()
+        FieldIndexHint policyHint = FieldIndexHint.newBuilder()
                 .setType(IndexFieldType.INDEX_FIELD_TYPE_TEXT)
                 .setChunkingPolicy(ai.pipestream.proto.index.hints.ChunkingPolicy.newBuilder()
                         .setChunking(ai.pipestream.proto.index.hints.ChunkingSpec.newBuilder()
@@ -156,7 +156,7 @@ class BlockVocabularyTest {
                                 .setName("body").setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_STRING)
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)
-                                .setOptions(hint(recipeHint)))
+                                .setOptions(hint(policyHint)))
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("count").setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_INT32)
@@ -179,10 +179,10 @@ class BlockVocabularyTest {
                 .setName("count").setNumber(1)
                 .setType(FieldDescriptorProto.Type.TYPE_INT32)
                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)
-                .setOptions(hint(recipeHint))
+                .setOptions(hint(policyHint))
                 .build();
         FileDescriptorProto badFile = FileDescriptorProto.newBuilder()
-                .setName("bad_recipe.proto").setPackage("pm").setSyntax("proto3")
+                .setName("bad_policy.proto").setPackage("pm").setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder().setName("Bad").addField(badField))
                 .build();
         Descriptor bad = FileDescriptor.buildFrom(badFile, new FileDescriptor[0])
@@ -193,7 +193,7 @@ class BlockVocabularyTest {
     }
 
     @Test
-    void recipeDigestIsStableAndSensitiveToEveryComponent() {
+    void policyDigestIsStableAndSensitiveToEveryComponent() {
         ChunkingPolicy policy = new ChunkingPolicy(
                 new ChunkingPolicy.ChunkingSpec("sentence-packed", 1, 384, 64, 32, 512, "rules-v1"),
                 new ChunkingPolicy.EmbeddingSpec("test-model-4d", 4, VectorSimilarity.COSINE, true),
