@@ -178,6 +178,20 @@ class ProtoMoltServeTest {
     }
 
     @Test
+    void parsesStableMeshIdentityOptions() {
+        ProtoMoltServe.Options options = ProtoMoltServe.Options.parse(new String[]{
+                "--mesh-cluster-id", "protomolt",
+                "--mesh-cluster-name", "ProtoMolt private mesh",
+                "--mesh-trust-domain", "taild24b1c.ts.net",
+                "--mesh-created-at", "2026-08-14T00:00:00Z"});
+
+        assertThat(options.meshCluster().clusterId()).isEqualTo("protomolt");
+        assertThat(options.meshCluster().displayName()).isEqualTo("ProtoMolt private mesh");
+        assertThat(options.meshCluster().createdAt())
+                .isEqualTo(java.time.Instant.parse("2026-08-14T00:00:00Z"));
+    }
+
+    @Test
     void inferenceModelSpecAdvertisesStructuredOutputCapability() {
         InferenceEngines engines = ProtoMoltServe.inferenceEngines(java.util.List.of(
                 "judge|openai|https://models.example.test|backend|machine:krick|"

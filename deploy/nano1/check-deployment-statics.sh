@@ -61,4 +61,14 @@ grep -q 'mem_limit: 3g' compose.yml \
 printf '%s' "$compose" | grep -q 'no-new-privileges:true' \
   || fail "inference services must prevent privilege escalation"
 
+say "health-gated mesh publisher"
+python3 -m py_compile ../../scripts/nano1-mesh-publisher.py \
+  || fail "mesh publisher must compile"
+grep -q 'probe_tei' ../../scripts/nano1-mesh-publisher.py \
+  || fail "mesh publisher must gate the TEI lease"
+grep -q 'probe_djl' ../../scripts/nano1-mesh-publisher.py \
+  || fail "mesh publisher must gate the DJL lease"
+grep -q 'probe_host' ../../scripts/nano1-mesh-publisher.py \
+  || fail "mesh publisher must gate ARM64 build capacity"
+
 say "PASS: Nano1 GPU deployment statics"

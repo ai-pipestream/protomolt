@@ -37,6 +37,14 @@ services:
       - repo-service:9090
       - --delegation-repo-drive
       - ${PROTOMOLT_DELEGATION_REPO_DRIVE:-protomolt}
+      - --mesh-cluster-id
+      - ${PROTOMOLT_MESH_CLUSTER_ID:-protomolt}
+      - --mesh-cluster-name
+      - ${PROTOMOLT_MESH_CLUSTER_NAME:-ProtoMolt private mesh}
+      - --mesh-trust-domain
+      - ${PROTOMOLT_MESH_TRUST_DOMAIN:-taild24b1c.ts.net}
+      - --mesh-created-at
+      - ${PROTOMOLT_MESH_CREATED_AT:-2026-08-14T00:00:00Z}
       - --demo
     environment:
       PROTOMOLT_API_TOKEN: ${PROTOMOLT_API_TOKEN:?set PROTOMOLT_API_TOKEN in Portainer}

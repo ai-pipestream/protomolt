@@ -136,6 +136,48 @@ dimensions, CUDA capability, concurrency limit, and current in-flight count.
 DJL and the ARM64 build processor should publish different capability and
 capacity records.
 
+## Mesh publisher
+
+`scripts/nano1-mesh-publisher.py` advertises Nano1 as one node with three
+independent leased processors:
+
+| Processor | Readiness gate | Advertised capacity |
+|---|---|---|
+| `nano1-tei` | NVIDIA-runtime container, pinned model identity, live normalized 384-dimensional embedding | TEI's reported concurrent-request limit |
+| `nano1-djl` | Live TensorRT CUDA probe with compute capability 8.7 and allocated device memory | One probe at a time |
+| `nano1-arm64-builder` | Full native host gate, including ARM64, JetPack, CUDA, TensorRT, Docker, and power mode | One trusted build at a time |
+
+The publisher renews only processors whose gate passes. A failed processor
+keeps no new lease and becomes ineligible when its previous lease expires. If
+the host gate or publisher stops, the node presence expires and the directory
+cascades expiry to all of its processors. No CPU inference or CPU model offload
+path exists.
+
+The TEI endpoint is advertised only after its live gRPC gate passes. DJL stays
+loopback-only by default, so the publisher records its health and capacity but
+does not claim a directly reachable endpoint. Set
+`NANO1_DJL_ADVERTISE_ADDRESS` to an absolute authenticated proxy URI or an
+explicit tailnet address only after that route exists. The ARM64 advertisement
+uses the `arm64-build-capacity` capability. It describes a healthy build host;
+the bounded task API in planned work will add remote execution without
+exposing Nano1's Docker socket.
+
+Place `PROTOMOLT_MCP_TOKEN` in a root-readable or runner-readable environment
+file outside the repository, then run the publisher as the existing
+`protomolt-runner` account:
+
+```shell
+sudo -u protomolt-runner -H env PROTOMOLT_NANO1_MESH_LIVE=1 \
+  scripts/nano1-mesh-publisher.py
+```
+
+The defaults publish every 30 seconds with 90-second leases. Set
+`PROTOMOLT_NANO1_MESH_INTERVAL_SECONDS`,
+`PROTOMOLT_NANO1_MESH_TTL_SECONDS`, or
+`PROTOMOLT_NANO1_MESH_STATE` when the host needs different scheduling or state
+paths. `--once` performs one publication and returns, which is the live
+acceptance form.
+
 Native `linux/arm64` images produced here run on both the Jetson and the
 Raspberry Pi fleet when their base images support ARM64. GPU images remain
 Jetson-specific. Use the manual smoke workflow to prove a build target before

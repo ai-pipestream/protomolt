@@ -55,6 +55,10 @@ stored in Portainer, not committed.
 | `PROTOMOLT_SERVE_IMAGE` | no | Serve image override; pin with `ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:<digest>` |
 | `PROTOMOLT_REPO_SERVICE_IMAGE` | no | repo-service image override, same pinning form as `PROTOMOLT_SERVE_IMAGE` |
 | `PROTOMOLT_DELEGATION_REPO_DRIVE` | no | Repository drive of the transcript blob; defaults to `protomolt` and must match the drive repo-init creates |
+| `PROTOMOLT_MESH_CLUSTER_ID` | no | Stable path-safe cluster id; defaults to `protomolt` |
+| `PROTOMOLT_MESH_CLUSTER_NAME` | no | Display name returned in mesh snapshots |
+| `PROTOMOLT_MESH_TRUST_DOMAIN` | no | Trust-domain label for eligibility and endpoint policy; defaults to the private tailnet domain |
+| `PROTOMOLT_MESH_CREATED_AT` | no | Stable ISO-8601 cluster identity timestamp; never change it for an existing durable cluster |
 | `PROTOMOLT_REPO_DB_USER` / `PROTOMOLT_REPO_DB_NAME` | no | Ledger database user and name; both default to `documents` |
 | `PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS` | no | Browser session lifetime in seconds; defaults to 43200 (12 hours), maximum 604800 |
 
@@ -84,6 +88,14 @@ coordinator restart restores every task, event cursor, and worker sequence
 scope, so a re-registering agent host resumes where the record left off.
 Losing `PROTOMOLT_TRANSCRIPT_KEY` makes the stored transcript unreadable;
 rotate it only by retiring the old transcript object.
+
+The mesh directory uses the same repository service, drive, and encryption key
+boundary. Its event log is stored separately under
+`mesh/<cluster-id>/events.pb.enc`. Node advertisements, processor leases,
+capacity updates, and expiry events become visible only after the updated log
+is durable. `PROTOMOLT_MESH_CREATED_AT` participates in the cluster
+fingerprint, so changing it would name a different cluster and fail against the
+existing log.
 
 The task console is available at
 `https://protomolt.rokkon.com/console/tasks`. Its login token is deliberately
