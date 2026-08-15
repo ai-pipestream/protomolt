@@ -8,6 +8,8 @@ dependencies {
     implementation project(':protomolt-repo-proto')
     // CelEvaluator drives the routing-rule guards.
     implementation project(':protomolt-mapper-cel')
+    // Parser discovery reads the toolkit's service-profile store.
+    implementation project(':protomolt-grpc-service-profile')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
