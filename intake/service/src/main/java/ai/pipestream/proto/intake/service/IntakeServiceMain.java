@@ -59,6 +59,13 @@ public final class IntakeServiceMain {
                 "intake-service listening on gRPC port {} (repo target {})",
                 services.server().getPort(),
                 config.repoTarget());
+        if (config.httpPort() > 0) {
+            IntakeHttpServer http = services.startHttp(config.httpPort());
+            LOG.info(
+                    "intake HTTP upload lane listening on port {} ({})",
+                    http.port(),
+                    IntakeHttpServer.UPLOAD_PATH);
+        }
         Runtime.getRuntime().addShutdownHook(new Thread(services::close, "intake-shutdown"));
         services.server().awaitTermination();
     }
