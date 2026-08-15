@@ -12,6 +12,9 @@ dependencies {
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
     implementation libs.protobuf.java.util
+    // ParseChains builds the durable-parse chain envelope (Jackson is the
+    // repo-wide JSON library).
+    implementation libs.jackson.databind
     implementation libs.slf4j.api
 
     runtimeOnly libs.slf4j.simple
@@ -21,6 +24,10 @@ dependencies {
     testImplementation project(':protomolt-repo-service')
     // LedgerConfig for the IT's RepoServiceConfig — config surface only.
     testImplementation project(':protomolt-repo-container')
+    // The durable-parse IT drives ParseDocument as a checkpointed chain job.
+    testImplementation project(':protomolt-jobs-service')
+    testImplementation project(':protomolt-chain')
+    testImplementation project(':protomolt-actions')
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.junit.jupiter

@@ -29,7 +29,12 @@ public record ChainJobStoreConfig(
     public static final int DEFAULT_POOL_SIZE = 10;
 
     /** Default Flyway location, resolved from this module's resources. */
-    public static final String DEFAULT_MIGRATION_LOCATION = "classpath:db/migration";
+    // Module-scoped directory: repo, account, and jobs stores must be able
+    // to share one classpath (the all-in-one container), so each module's
+    // migrations live in a disjoint location. Moving the files is safe for
+    // existing databases: Flyway identifies migrations by version and
+    // content checksum, not path.
+    public static final String DEFAULT_MIGRATION_LOCATION = "classpath:db/migration/jobs";
 
     public ChainJobStoreConfig {
         if (jdbcUrl == null || jdbcUrl.isBlank()) {

@@ -31,6 +31,9 @@ final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplB
     final List<SaveDocumentRequest> saves = new CopyOnWriteArrayList<>();
     volatile CountDownLatch saveGate;
     volatile String drive = "";
+    /** Reads to fail UNAVAILABLE before serving (the durable-retry lever). */
+    final java.util.concurrent.atomic.AtomicInteger failReadsRemaining =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /** Seeds the document served for {@code address}. */
     void seed(NodeAddress address, Document document) {
@@ -45,6 +48,12 @@ final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplB
     @Override
     public void getDocumentByReference(
             GetDocumentByReferenceRequest request, StreamObserver<GetDocumentResponse> observer) {
+        if (failReadsRemaining.getAndUpdate(n -> n > 0 ? n - 1 : 0) > 0) {
+            observer.onError(Status.UNAVAILABLE
+                    .withDescription("injected transient read failure")
+                    .asRuntimeException());
+            return;
+        }
         Document document = seeded.get(key(request.getAddress()));
         if (document == null) {
             observer.onError(Status.NOT_FOUND
