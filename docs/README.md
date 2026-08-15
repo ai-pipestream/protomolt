@@ -38,6 +38,7 @@ The guides below follow the repository's module layout.
 - [Search indexing](search/indexing.md): index mappings and Lucene, OpenSearch, and Solr output
 - [Chunking](search/chunking.md): deterministic chunking policies executed by the sentence-packed chunker
 - [Text embeddings](search/embeddings.md): Model2Vec, TEI, and OVMS providers
+- [The search door](search/door.md): the query surface and its workflow-driven indexing RPC
 - [Reranking](search/rerank.md): TEI and OVMS rerank providers
 - [Emitting bundles](sink/emitting.md): directory, Git, zip, OKF, and Parquet sinks
 - [Apache Iceberg](sink/iceberg.md): descriptor-driven tables and snapshot appends

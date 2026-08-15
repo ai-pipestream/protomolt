@@ -149,6 +149,12 @@ project(':protomolt-index-spi').projectDir = file('search/index/spi')
 include 'protomolt-chunker'
 project(':protomolt-chunker').projectDir = file('search/chunk')
 
+include 'protomolt-search-proto'
+project(':protomolt-search-proto').projectDir = file('search/door/proto')
+
+include 'protomolt-search-door'
+project(':protomolt-search-door').projectDir = file('search/door/service')
+
 include 'protomolt-index-ndjson'
 project(':protomolt-index-ndjson').projectDir = file('search/index/ndjson')
 

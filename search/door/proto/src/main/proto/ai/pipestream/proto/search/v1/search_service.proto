@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.search.v1;
+
+import "ai/pipestream/proto/repo/v1/address.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.search.v1";
+
+// ============================================================================
+// SEARCH DOOR — the user-facing query surface and its indexing RPC.
+//
+// The door serves a fixed set of MAPPING SUBJECTS: each subject names an
+// index mapping (and optionally a chunking policy) the door was mounted
+// with. Every request is gated by membership: an unknown subject, a field
+// outside the subject's mapping, or a vector query against a subject with
+// no chunking policy is refused loudly by name — the door never guesses
+// what a caller meant.
+//
+// Indexing is workflow-driven: a durable run's index step calls
+// IndexDocument after the parse step lands, so what is searchable is
+// exactly what the durable pipeline has processed.
+// ============================================================================
+
+// Asks the door to (re-)index one stored document under a mapping subject.
+message IndexDocumentRequest {
+  // The stored document to index; the door fetches CORE+PARSED through the
+  // repository, so the folded search metadata is part of what indexes.
+  ai.pipestream.proto.repo.v1.NodeAddress address = 1;
+  // The mapping subject to index under. Required; the door refuses unknown
+  // subjects by name rather than assuming a default.
+  string mapping_subject = 2;
+}
+
+// What one IndexDocument call landed.
+message IndexDocumentResponse {
+  // The indexed document's id.
+  string doc_id = 1;
+  // Number of chunk children written; 0 when the subject has no chunking
+  // policy or the source text was empty.
+  int32 chunks_indexed = 2;
+  // Digest of the chunking policy the chunks were derived under; empty when
+  // no chunks were written. Chunk identity is <doc_id>#<digest12>#<ordinal>.
+  string policy_digest = 3;
+}
+
+// Which query lane to run.
+enum SearchLane {
+  // Unset. Refused: the caller must choose a lane.
+  SEARCH_LANE_UNSPECIFIED = 0;
+  // Analyzed term matching over the mapping's text fields.
+  SEARCH_LANE_LEXICAL = 1;
+  // KNN over the subject's chunk vectors; requires a chunking policy.
+  SEARCH_LANE_VECTOR = 2;
+  // Both lanes, fused by reciprocal rank.
+  SEARCH_LANE_HYBRID = 3;
+}
+
+// One search query against a mapping subject.
+message SearchRequest {
+  // The mapping subject to search. Required; unknown subjects are refused
+  // with the list of served subjects.
+  string mapping_subject = 1;
+  // The query text. Required.
+  string query = 2;
+  // Maximum hits to return. Required; must be positive.
+  int32 k = 3;
+  // The lane to run. Required.
+  SearchLane lane = 4;
+  // Text fields to match in the lexical lane, named by their index field
+  // names. Empty means every text field in the subject's mapping; a field
+  // outside the mapping is refused by name.
+  repeated string fields = 5;
+}
+
+// One search hit.
+message SearchHit {
+  // The matching document's id.
+  string doc_id = 1;
+  // The matching chunk's identity (<doc_id>#<digest12>#<ordinal>) for
+  // vector-lane chunk hits; empty for document-level hits.
+  string chunk_id = 2;
+  // The lane score: engine score for single-lane queries, reciprocal-rank
+  // fusion score for hybrid.
+  float score = 3;
+  // Stored fields of the matching document or chunk, keyed by index field
+  // name.
+  map<string, string> stored = 4;
+}
+
+// Hits, best first.
+message SearchResponse {
+  // The hits, best first, at most k of them.
+  repeated SearchHit hits = 1;
+}
+
+// The indexing half of the door, driven by durable workflow steps.
+service SearchIndexService {
+  // (Re-)indexes one stored document under a mapping subject. Idempotent:
+  // re-indexing a document atomically replaces its previous index state.
+  rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
+}
+
+// The query half of the door.
+service SearchService {
+  // Runs one query against a mapping subject.
+  rpc Search(SearchRequest) returns (SearchResponse);
+}

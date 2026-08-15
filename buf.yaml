@@ -44,6 +44,8 @@ modules:
     name: buf.build/ai-pipestream/inference-structured-testdata
   - path: parse/proto/src/main/proto
     name: buf.build/ai-pipestream/parse
+  - path: search/door/proto/src/main/proto
+    name: buf.build/ai-pipestream/search
   # The canonical parser-fleet document model. Vendored byte-identical across
   # the fleet repos (gRParse owns the reference copy today); local lint fixes
   # would break byte-identity, so this file is exempted from lint (in the
@@ -106,21 +108,11 @@ lint:
 breaking:
   use:
     - FILE
-  # temporary: admits the ChunkingPolicy wire rename (message ChunkRecipe
-  # and field chunk_recipe) carried by this PR; drop this except block in
-  # the next PR. Rule-level except is the ONLY mechanism that works here:
-  # path-based breaking.ignore entries never match in this multi-module v2
-  # workspace (proven empirically on buf 1.70 with the rename actually
-  # present; the PR #170 waiver was inert and #171 passed only because it
-  # accidentally carried no wire break), and buf reads breaking config from
-  # the INPUT side, so the PR making the break carries its own exception.
-  # The proto diff of a PR using except must touch only the intended files,
-  # since the exception is workspace-wide while it exists.
-  except:
-    - MESSAGE_NO_DELETE
-    - FIELD_SAME_JSON_NAME
-    - FIELD_SAME_TYPE
-    - FIELD_SAME_NAME
+  # For a deliberate pre-GA wire break, carry a temporary rule-level
+  # `except` block here in the SAME PR (buf reads breaking config from the
+  # input side) and drop it in the next PR. Path-based breaking.ignore
+  # entries never match in this multi-module v2 workspace — do not try
+  # them again (proven on buf 1.70 with a real break present).
   # Standing note: repo/ and acquire-confluence are pre-release, but the
   # ignore mechanism breaks the workspace image comparison for any PR
   # that adds a module, and repo/'s NodeAddress wire break (the reason

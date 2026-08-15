@@ -1,0 +1,32 @@
+description = 'The search door: a Lucene-backed query and indexing gRPC service serving mapping subjects, gated by mapping membership, running the chunk-and-embed lane at index time'
+
+dependencies {
+    api project(':protomolt-composer')
+    api project(':protomolt-search-proto')
+    api project(':protomolt-index-spi')
+    implementation project(':protomolt-index-lucene')
+    implementation project(':protomolt-mapper-core')
+    implementation project(':protomolt-descriptors')
+    implementation project(':protomolt-chunker')
+    implementation project(':protomolt-embeddings')
+    // The door rides the repo wire contract only — the DocumentServiceGrpc
+    // blocking stub, never repo container/service internals.
+    implementation project(':protomolt-repo-proto')
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    implementation libs.slf4j.api
+
+    runtimeOnly libs.slf4j.simple
+
+    testRuntimeOnly libs.slf4j.simple
+}
+
+// The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an
+// older JVM: the test launcher stays on the toolchain JDK and -PtestJdk is ignored
+// here (same pin as :protomolt-index-lucene).
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
