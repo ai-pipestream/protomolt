@@ -4,13 +4,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.workflow.WorkflowRunner;
+import ai.pipestream.proto.chunk.PolicyDerivation;
+import ai.pipestream.proto.chunk.SentencePackedChunker;
 import ai.pipestream.proto.embeddings.EmbeddingProvider;
+import ai.pipestream.proto.embeddings.EmbeddingProviders;
+import ai.pipestream.proto.embeddings.model2vec.Model2VecEmbeddingProvider;
 import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
+import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.intake.service.IntakeServiceConfig;
 import ai.pipestream.proto.intake.service.IntakeServices;
 import ai.pipestream.proto.intake.service.identity.ApiKeyServerInterceptor;
@@ -77,11 +83,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.document.KnnFloatVectorField;
+import org.apache.lucene.document.StoredField;
+import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -115,9 +125,13 @@ import org.testcontainers.utility.DockerImageName;
  * vector — brings it back. The schema registry runs throughout and serves
  * the fleet document model as a published artifact.
  *
- * <p>Embeddings use a deterministic token-hashing provider: the golden path
- * proves the mapping/vector wiring, not model quality (model2vec's live proof
- * is its own gated suite).
+ * <p>Vector search runs the embedding lane end to end: a chunking policy
+ * names the product-default model2vec provider, the ServiceLoader resolves
+ * and validates it, and the policy derivation chunks the parsed body and
+ * embeds every chunk. The model is a synthetic corpus-vocabulary Model2Vec
+ * directory ({@link CorpusModel2Vec}), so the lane is proven with the real
+ * provider while staying deterministic (model quality has its own gated
+ * live suite).
  */
 @Testcontainers(disabledWithoutDocker = true)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -411,25 +425,65 @@ class GoldenPathSystemTest {
                 .build();
         IndexMapping seoMapping = SeoIndexing.mappingFor(SearchStandard.getDescriptor());
 
-        EmbeddingProvider embedder = new HashingEmbeddingProvider();
+        // The chunking policy a shape would carry, naming the product-default
+        // model2vec provider. The lane resolves the provider through the
+        // ServiceLoader from the policy alone and validates it before any text.
+        ChunkingPolicy policy = new ChunkingPolicy(
+                new ChunkingPolicy.ChunkingSpec(
+                        SentencePackedChunker.STRATEGY, SentencePackedChunker.STRATEGY_VERSION,
+                        120, 16, 20, 200, SentencePackedChunker.BOUNDARY),
+                new ChunkingPolicy.EmbeddingSpec(
+                        Model2VecEmbeddingProvider.PROVIDER_ID, CorpusModel2Vec.DIMENSION,
+                        VectorSimilarity.COSINE, true),
+                "", true);
+        Path model = Files.createDirectories(work.resolve("model2vec"));
+        CorpusModel2Vec.write(model, indexable.getSearchMetadata().getBody());
+        EmbeddingProvider embedder;
+        System.setProperty(Model2VecEmbeddingProvider.PATH_PROPERTY, model.toString());
+        try {
+            embedder = EmbeddingProviders.forSpec(policy.embedding());
+        } finally {
+            System.clearProperty(Model2VecEmbeddingProvider.PATH_PROPERTY);
+        }
+        List<PolicyDerivation.DerivedChunk> derived = new PolicyDerivation(embedder)
+                .derive(indexable.getSearchMetadata().getBody(), policy);
+        assertThat(derived.size()).as("the opinion body chunks").isGreaterThan(1);
+
+        // Chunk identity is <doc_id>#<generation>#<ordinal>; the generation is
+        // the policy digest (a policy change is a data change, a new chunk set).
+        String generation = policy.digest().substring(0, 12);
+        // The policy's empty vectorField means the engine convention
+        // "<field>#<model>" over the embedded source field.
+        String vectorField = "search_metadata_body#" + policy.embedding().model();
+
         Path indexDir = work.resolve("lucene");
         ProtoLuceneMapper mapper = new ProtoLuceneMapper(
                 new ai.pipestream.proto.mapper.ProtoFieldMapperImpl(
                         new ai.pipestream.proto.descriptors.DescriptorRegistry()));
         try (IndexWriter writer = new IndexWriter(
                 FSDirectory.open(indexDir), new IndexWriterConfig(new StandardAnalyzer()))) {
+            // One Lucene block: the chunk children first, the parent last.
+            List<org.apache.lucene.document.Document> block = new ArrayList<>();
+            for (PolicyDerivation.DerivedChunk chunk : derived) {
+                org.apache.lucene.document.Document child = new org.apache.lucene.document.Document();
+                child.add(new StringField("chunk_id",
+                        indexable.getDocId() + "#" + generation + "#" + chunk.chunk().ordinal(),
+                        Field.Store.YES));
+                child.add(new StringField("doc_id", indexable.getDocId(), Field.Store.YES));
+                if (policy.storeChunkText()) {
+                    child.add(new StoredField("chunk_text", chunk.chunk().text()));
+                }
+                child.add(new KnnFloatVectorField(vectorField, chunk.vector(),
+                        VectorSimilarityFunction.COSINE));
+                block.add(child);
+            }
             org.apache.lucene.document.Document luceneDoc = mapper.map(indexable, documentMapping);
             // Fold the standard's fields into the same indexed document.
             for (var field : mapper.map(standard, seoMapping).getFields()) {
                 luceneDoc.add(field);
             }
-            // Document-level vector from the same text the searcher will embed.
-            luceneDoc.add(new KnnFloatVectorField(
-                    "embedding",
-                    embedder.embed(caseName + "\n" + plainText.substring(
-                            0, Math.min(plainText.length(), 2000))),
-                    VectorSimilarityFunction.COSINE));
-            writer.addDocument(luceneDoc);
+            block.add(luceneDoc);
+            writer.addDocuments(block);
             writer.commit();
         }
 
@@ -444,50 +498,20 @@ class GoldenPathSystemTest {
             TopDocs byLanguage = searcher.search(
                     new TermQuery(new Term("dublin_core_language", "en")), 5);
             assertThat(byLanguage.totalHits.value()).isGreaterThan(0);
-            // Vector: the same text embeds to the same vector, nearest first.
+            // Vector: a query embedded by the same provider ranks the chunk it
+            // was drawn from first, and the chunk carries its parent identity.
+            PolicyDerivation.DerivedChunk probe = derived.get(derived.size() / 2);
             TopDocs byVector = searcher.search(
-                    new KnnFloatVectorQuery("embedding",
-                            embedder.embed(caseName + "\n" + plainText.substring(
-                                    0, Math.min(plainText.length(), 2000))), 1),
-                    1);
+                    new KnnFloatVectorQuery(vectorField,
+                            embedder.embed(probe.chunk().text()), 3),
+                    3);
             assertThat(byVector.totalHits.value()).isGreaterThan(0);
-        }
-    }
-
-    /** Deterministic token-hashing embeddings: wiring proof, not semantics. */
-    static final class HashingEmbeddingProvider implements EmbeddingProvider {
-
-        private static final int DIMENSION = 32;
-
-        @Override
-        public String providerId() {
-            return "hashing-test";
-        }
-
-        @Override
-        public int dimension() {
-            return DIMENSION;
-        }
-
-        @Override
-        public float[] embed(String text) {
-            float[] vector = new float[DIMENSION];
-            for (String token : text.toLowerCase().split("\\W+")) {
-                if (!token.isBlank()) {
-                    vector[Math.floorMod(token.hashCode(), DIMENSION)] += 1.0f;
-                }
-            }
-            double norm = 0;
-            for (float v : vector) {
-                norm += v * v;
-            }
-            norm = Math.sqrt(norm);
-            if (norm > 0) {
-                for (int i = 0; i < DIMENSION; i++) {
-                    vector[i] /= norm;
-                }
-            }
-            return vector;
+            org.apache.lucene.document.Document nearest =
+                    searcher.storedFields().document(byVector.scoreDocs[0].doc);
+            assertThat(nearest.get("chunk_id")).isEqualTo(
+                    indexable.getDocId() + "#" + generation + "#" + probe.chunk().ordinal());
+            assertThat(nearest.get("doc_id")).isEqualTo(indexable.getDocId());
+            assertThat(nearest.get("chunk_text")).isEqualTo(probe.chunk().text());
         }
     }
 }

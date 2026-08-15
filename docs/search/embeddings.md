@@ -48,6 +48,24 @@ failing with the list of available ids when the requested provider is not
 there. Registration is the standard
 `META-INF/services/ai.pipestream.proto.embeddings.EmbeddingProvider` file.
 
+## The embedding lane
+
+A [chunking policy](chunking.md) names its embedding model and pins its
+dimension, and `EmbeddingProviders.forSpec(EmbeddingSpec)` turns that spec
+into a validated provider: the provider registered under the spec's model
+id, refused loudly when it is absent or produces vectors of a different
+dimension. Resolution may load the model (a lazily configured provider
+learns its dimension by loading), so a misconfigured provider fails at
+resolution, naming its configuration knobs, not partway through a corpus.
+
+`PolicyDerivation.discover(policy)` in `protomolt-chunker` composes the
+whole lane from the policy alone: chunk under the policy's chunking spec,
+embed every chunk with the discovered provider. model2vec is the
+product-default model: the standalone CPU fast path with no inference
+runtime to ship. The golden-path system test proves the lane end to end,
+chunking a parsed court opinion and ranking the right chunk first from a
+Lucene KNN query embedded by the same provider.
+
 ## Embedding a mapped document
 
 `MappingEmbedder` joins a provider to an `IndexMapping`. Its input is the

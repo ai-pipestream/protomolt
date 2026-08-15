@@ -35,8 +35,18 @@ changes the policy digest and re-chunks corpora explicitly.
 ## Output
 
 Each `Chunk` carries its ordinal (chunk identity downstream is
-`<doc_id>#<generation>#<ordinal>`), the verbatim source substring, source
-offsets (overlapping ranges when overlap is configured), and its token
-count. Chunks feed the mappers' block scope (`BLOCK_ROLE_CHUNKS`); the
-embedding lane derives one vector per chunk under the policy's
-`EmbeddingSpec`.
+`<doc_id>#<generation>#<ordinal>`, where the generation is the policy
+digest: a policy change is a data change, a new chunk set), the verbatim
+source substring, source offsets (overlapping ranges when overlap is
+configured), and its token count. Chunks feed the mappers' block scope
+(`BLOCK_ROLE_CHUNKS`).
+
+## The derivation
+
+`PolicyDerivation` executes the whole policy: chunk under its chunking
+spec, embed every chunk under its `EmbeddingSpec`. The provider is
+validated against the spec by model name and dimension before any text is
+touched, so a corpus can never be silently derived with the wrong model.
+`PolicyDerivation.discover(policy)` resolves the provider from the policy
+alone through the [embedding lane](embeddings.md)'s ServiceLoader seam;
+model2vec is the product default.

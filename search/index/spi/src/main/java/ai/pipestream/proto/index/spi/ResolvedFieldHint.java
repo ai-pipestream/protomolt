@@ -19,7 +19,7 @@ import java.util.Optional;
  * <p>Unset-vs-default conventions: {@code nullValue} is {@code null} when absent (an empty
  * string is a legal substitute); {@code mapMode} is {@code null} when absent (each engine
  * keeps its documented default); {@code hnswParams} is {@code null} when absent (engine
- * tuning defaults apply); {@code chunkRecipe} is {@code null} when absent (no server-side
+ * tuning defaults apply); {@code chunkingPolicy} is {@code null} when absent (no server-side
  * derivation). Analyzer names, {@code dateFormat}, and {@code name} use the empty string
  * for "unset"; {@code blockRole} uses {@link BlockRole#UNSPECIFIED};
  * {@code validatePayloads} defaults to {@code true} (payloads unpacked from a
@@ -47,7 +47,7 @@ public record ResolvedFieldHint(
         DateResolution dateResolution,
         Map<String, String> engineParams,
         BlockRole blockRole,
-        ChunkRecipe chunkRecipe,
+        ChunkingPolicy chunkingPolicy,
         boolean validatePayloads) {
 
     public ResolvedFieldHint {
@@ -220,7 +220,7 @@ public record ResolvedFieldHint(
         private DateResolution dateResolution;
         private Map<String, String> engineParams;
         private BlockRole blockRole;
-        private ChunkRecipe chunkRecipe;
+        private ChunkingPolicy chunkingPolicy;
         private boolean validatePayloads;
 
         private Builder(ResolvedFieldHint hint) {
@@ -244,7 +244,7 @@ public record ResolvedFieldHint(
             this.dateResolution = hint.dateResolution;
             this.engineParams = hint.engineParams;
             this.blockRole = hint.blockRole;
-            this.chunkRecipe = hint.chunkRecipe;
+            this.chunkingPolicy = hint.chunkingPolicy;
             this.validatePayloads = hint.validatePayloads;
         }
 
@@ -354,8 +354,8 @@ public record ResolvedFieldHint(
             return this;
         }
 
-        public Builder chunkRecipe(ChunkRecipe chunkRecipe) {
-            this.chunkRecipe = chunkRecipe;
+        public Builder chunkingPolicy(ChunkingPolicy chunkingPolicy) {
+            this.chunkingPolicy = chunkingPolicy;
             return this;
         }
 
@@ -368,7 +368,7 @@ public record ResolvedFieldHint(
             return new ResolvedFieldHint(type, stored, indexed, name, vectorDims,
                     vectorSimilarity, vectorElementType, hnswParams, subFields,
                     analyzer, searchAnalyzer, nullValue, skipIfMissing, sortable, facetable,
-                    mapMode, dateFormat, dateResolution, engineParams, blockRole, chunkRecipe,
+                    mapMode, dateFormat, dateResolution, engineParams, blockRole, chunkingPolicy,
                     validatePayloads);
         }
     }

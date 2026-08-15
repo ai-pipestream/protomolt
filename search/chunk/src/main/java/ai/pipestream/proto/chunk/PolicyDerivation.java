@@ -1,6 +1,7 @@
 package ai.pipestream.proto.chunk;
 
 import ai.pipestream.proto.embeddings.EmbeddingProvider;
+import ai.pipestream.proto.embeddings.EmbeddingProviders;
 import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +29,26 @@ public final class PolicyDerivation {
             throw new IllegalArgumentException("provider must not be null");
         }
         this.provider = provider;
+    }
+
+    /**
+     * Creates the derivation for a policy by discovering the embedding
+     * provider the policy names on the classpath
+     * ({@link EmbeddingProviders#forSpec}). This is the whole lane wiring: a
+     * policy served with a shape resolves to its chunker and its embedding
+     * model with no further configuration, and the resolution fails loudly
+     * here, before any text, when the provider is absent, misconfigured, or
+     * of the wrong dimension.
+     *
+     * @param policy the policy to derive under
+     * @return a derivation whose provider satisfies the policy's embedding
+     *         spec
+     */
+    public static PolicyDerivation discover(ChunkingPolicy policy) {
+        if (policy == null) {
+            throw new IllegalArgumentException("policy must not be null");
+        }
+        return new PolicyDerivation(EmbeddingProviders.forSpec(policy.embedding()));
     }
 
     /**

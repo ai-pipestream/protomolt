@@ -116,10 +116,10 @@ public final class IndexMappingFactory {
             throw new IndexMappingException(
                     "BLOCK_ROLE_CHUNKS requires a repeated message field", path);
         }
-        if (hint.chunkRecipe() != null
+        if (hint.chunkingPolicy() != null
                 && field.getJavaType() != FieldDescriptor.JavaType.STRING) {
             throw new IndexMappingException(
-                    "chunk_recipe derives from text and requires a string field", path);
+                    "chunking_policy derives from text and requires a string field", path);
         }
         if (hint.type().isRange()) {
             if (field.isRepeated() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {

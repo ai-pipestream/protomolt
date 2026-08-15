@@ -86,4 +86,30 @@ class PolicyDerivationTest {
     void blankTextDerivesNothing() {
         assertThat(new PolicyDerivation(new FakeProvider()).derive("  ", policy(false))).isEmpty();
     }
+
+    @Test
+    void discoverResolvesThePolicysProviderThroughTheServiceLoader() {
+        ChunkingPolicy discovered = new ChunkingPolicy(
+                policy(false).chunking(),
+                new ChunkingPolicy.EmbeddingSpec(DiscoverableTestProvider.PROVIDER_ID,
+                        DiscoverableTestProvider.DIMENSION, VectorSimilarity.COSINE, false),
+                "", true);
+        List<PolicyDerivation.DerivedChunk> derived = PolicyDerivation.discover(discovered)
+                .derive("One short sentence.", discovered);
+        assertThat(derived).hasSize(1);
+        assertThat(derived.getFirst().vector()).hasSize(DiscoverableTestProvider.DIMENSION);
+    }
+
+    @Test
+    void discoverRefusesAPolicyNamingAnAbsentModel() {
+        ChunkingPolicy absent = new ChunkingPolicy(
+                policy(false).chunking(),
+                new ChunkingPolicy.EmbeddingSpec("no-such-model", 2,
+                        VectorSimilarity.COSINE, false),
+                "", true);
+        assertThatThrownBy(() -> PolicyDerivation.discover(absent))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no-such-model")
+                .hasMessageContaining(DiscoverableTestProvider.PROVIDER_ID);
+    }
 }
