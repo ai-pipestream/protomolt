@@ -29,6 +29,21 @@
   defense in depth). If the job starts failing on auth again, the token
   needs rotation, not a workflow change.
 
+## Vocabulary (ADR-001)
+
+| Domain | Word |
+|---|---|
+| Orchestration definition, authored and compiled | workflow |
+| Durable execution of one | run |
+| In-process transform sequence, and its stages | pipeline, processor |
+| LLM field and message guidance | instruction |
+| Index field and analyzer definitions | mapping |
+| Chunking configuration on a shape | chunking policy |
+
+One word per domain: recipe, chain, directive, and index plan are retired.
+A new noun comes from its domain's anchor vocabulary or is a genuinely new
+word, never a synonym of a term above.
+
 ## Agent collaboration and coding workers
 
 Read these before changing the multi-agent runtime:

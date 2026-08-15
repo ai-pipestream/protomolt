@@ -106,33 +106,8 @@ lint:
 breaking:
   use:
     - FILE
-  ignore:
-    # temporary: V2 instruction rename, drop after merge. In a workspace an
-    # ignore is matched per module as <module dir>/<image path>, so llm.proto
-    # needs one entry for the module that owns it plus one for each module
-    # whose image imports it (the two testdata modules); the latter two paths
-    # do not exist on disk and that is expected.
-    - protobuf/llm/src/main/proto/ai/pipestream/proto/llm/v1/llm.proto
-    - protobuf/llm/src/test/proto/ai/pipestream/proto/llm/v1/llm.proto
-    - protobuf/prompt/src/test/proto/ai/pipestream/proto/llm/v1/llm.proto
-    # temporary: V1 workflow rename, drop after merge. The grpc-recipe module
-    # moved to surface/grpc/workflow with every Recipe* message renamed, and
-    # jobs, pipeline, delegation, mesh and the ProtoMoltService surface renamed
-    # their own messages, fields and type references in place. Same per-module
-    # matching rule as the llm entries above: whole module source dirs are used
-    # here because the moved ArtifactReference reaches every module that
-    # imports the mesh options.
-    - surface/grpc/workflow/src/main/proto
-    - jobs/proto/src/main/proto
-    - transform/pipeline/src/main/proto
-    - transform/delegation/src/main/proto
-    - mesh/proto/src/main/proto
-    - mesh/cluster/src/main/proto
-    - mesh/contracts/src/test/proto
-    - surface/grpc/service/src/main/resources
-    # Standing note (pre-dates the waiver above): repo/ and
-    # acquire-confluence are pre-release, but the
-    # ignore mechanism breaks the workspace image comparison for any PR
-    # that adds a module, and repo/'s NodeAddress wire break (the reason
-    # the waiver existed) is long merged. A future deliberate wire break
-    # gets flagged here and decided in its own PR.
+  # Standing note: repo/ and acquire-confluence are pre-release, but the
+  # ignore mechanism breaks the workspace image comparison for any PR
+  # that adds a module, and repo/'s NodeAddress wire break (the reason
+  # a waiver once existed) is long merged. A future deliberate wire break
+  # gets flagged here and decided in its own PR.
