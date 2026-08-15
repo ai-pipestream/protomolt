@@ -44,13 +44,13 @@ modules:
     name: buf.build/ai-pipestream/parse
   # The canonical parser-fleet document model. Vendored byte-identical across
   # the fleet repos (gRParse owns the reference copy today); local lint fixes
-  # would break byte-identity, so this module keeps the fleet's own bar until
-  # the registry serves it as THE published artifact.
+  # would break byte-identity, so this file is exempted from lint (in the
+  # TOP-LEVEL lint.ignore below: a module-level lint block silently breaks
+  # the workspace image that `buf breaking` compares, making every later
+  # branch report all files deleted) until the registry serves it as THE
+  # published artifact.
   - path: parse/document/src/main/proto
     name: buf.build/ai-pipestream/document
-    lint:
-      ignore:
-        - parse/document/src/main/proto/ai/pipestream/document/v1/document.proto
   - path: acquire/confluence/src/main/proto
     name: buf.build/ai-pipestream/acquire-confluence
   - path: transform/projection/src/main/proto
@@ -71,6 +71,12 @@ lint:
   use:
     - STANDARD
     - COMMENTS
+  ignore:
+    # The vendored parser-fleet document model keeps the fleet's own lint
+    # bar; see the module comment above. Top-level ignore ONLY: a
+    # module-level lint block breaks the workspace image `buf breaking`
+    # compares.
+    - parse/document/src/main/proto/ai/pipestream/document/v1/document.proto
   ignore_only:
     # GetDocument and GetDocumentByReference deliberately share
     # GetDocumentResponse: same payload, two coordinate systems.
