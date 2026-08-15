@@ -146,6 +146,9 @@ project(':protomolt-mesh-cluster').projectDir = file('mesh/cluster')
 include 'protomolt-index-spi'
 project(':protomolt-index-spi').projectDir = file('search/index/spi')
 
+include 'protomolt-chunker'
+project(':protomolt-chunker').projectDir = file('search/chunk')
+
 include 'protomolt-index-ndjson'
 project(':protomolt-index-ndjson').projectDir = file('search/index/ndjson')
 
