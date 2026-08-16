@@ -124,7 +124,7 @@ public final class SearchDoorModule implements ServiceModule {
                 .filter(action -> action.name().equals("submit-workflow"))
                 .findFirst()
                 .ifPresent(submit -> context.contributions().contribute(
-                        ProtoAction.class, new ReplayAction(repo, submit)));
+                        ProtoAction.class, new ReplayAction(repo, submit, door.store())));
         return new ServiceMount() {
             @Override
             public void start() throws Exception {

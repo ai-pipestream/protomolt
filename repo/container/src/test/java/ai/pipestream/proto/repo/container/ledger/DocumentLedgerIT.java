@@ -192,6 +192,27 @@ class DocumentLedgerIT {
     }
 
     @Test
+    void listServesOnlyAvailableRows() {
+        DocumentRecord available = intakeRow(UUID.randomUUID(), "doc-listed", "ds-status");
+        available.connectorId = "con-status";
+        DocumentRecord deleted = intakeRow(UUID.randomUUID(), "doc-delisted", "ds-status");
+        deleted.connectorId = "con-status";
+        ledger.save(available);
+        ledger.save(deleted);
+        ledger.tombstone(deleted.nodeId);
+
+        // A tombstoned row is logically deleted: listers must not
+        // re-discover it (a replay resubmitting it would resurrect the
+        // deleted document's index entry), and the count agrees.
+        ListDocumentsResult listed = ledger.list(new ListDocumentsFilter(
+                null, "con-status", null, ACCOUNT, 100, 0));
+        assertThat(listed.rows())
+                .extracting(r -> r.docId)
+                .containsExactly("doc-listed");
+        assertThat(listed.totalCount()).isEqualTo(1);
+    }
+
+    @Test
     void listFiltersAndPaginates() {
         String docPrefix = "doc-list-";
         for (int i = 0; i < 5; i++) {

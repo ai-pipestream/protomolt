@@ -96,6 +96,11 @@ public final class SearchDoorServices implements AutoCloseable {
         return config;
     }
 
+    /** The door's Lucene state, for wiring that shares it (replay's prune). */
+    LuceneSearchStore store() {
+        return store;
+    }
+
     @Override
     public void close() {
         if (server != null) {

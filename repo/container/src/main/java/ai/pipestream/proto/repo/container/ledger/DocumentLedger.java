@@ -234,8 +234,14 @@ public final class DocumentLedger {
      */
     public ListDocumentsResult list(ListDocumentsFilter filter) {
         return tx.readOnly(em -> {
-            StringBuilder where = new StringBuilder("WHERE 1=1");
+            // The listing serves "the documents": rows tombstoned for purge
+            // (or stuck in PURGE_FAILED) are logically deleted and must not
+            // be re-discovered by listers — a replay resubmitting a
+            // tombstoned row would resurrect a deleted document's index
+            // entry.
+            StringBuilder where = new StringBuilder("WHERE d.status = :status");
             Map<String, Object> params = new HashMap<>();
+            params.put("status", DocumentStatus.AVAILABLE);
             if (filter.driveName() != null) {
                 where.append(" AND d.driveName = :driveName");
                 params.put("driveName", filter.driveName());
