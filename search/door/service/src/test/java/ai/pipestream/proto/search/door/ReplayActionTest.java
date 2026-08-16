@@ -12,7 +12,9 @@ import ai.pipestream.proto.repo.v1.NodeAddress;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -54,6 +56,43 @@ class ReplayActionTest {
         }
     }
 
+    /** A map-backed index surface: one subject and its doc ids. */
+    static class FakeIndex implements SubjectIndex {
+
+        final String subject;
+        final Set<String> ids = new LinkedHashSet<>();
+        final List<String> deleted = new ArrayList<>();
+
+        FakeIndex(String subject, String... initial) {
+            this.subject = subject;
+            ids.addAll(List.of(initial));
+        }
+
+        @Override
+        public Set<String> indexedDocIds(String subjectName) {
+            check(subjectName);
+            return new LinkedHashSet<>(ids);
+        }
+
+        @Override
+        public void delete(String subjectName, String docId) {
+            check(subjectName);
+            ids.remove(docId);
+            deleted.add(docId);
+        }
+
+        private void check(String subjectName) {
+            if (!subject.equals(subjectName)) {
+                throw new IllegalArgumentException(
+                        "unknown mapping subject '" + subjectName + "'");
+            }
+        }
+    }
+
+    static ReplayAction replay(DocumentLister lister, ProtoAction submit) {
+        return new ReplayAction(lister, submit, new FakeIndex(RepoDocumentMapping.SUBJECT));
+    }
+
     static DocumentMetadata document(String docId) {
         return DocumentMetadata.newBuilder()
                 .setDocId(docId)
@@ -68,7 +107,7 @@ class ReplayActionTest {
     @Test
     void replaySubmitsOneRunPerDocumentAcrossPages() throws Exception {
         RecordingSubmit submit = new RecordingSubmit();
-        ReplayAction replay = new ReplayAction(request -> {
+        ReplayAction replay = replay(request -> {
             // Two pages: the first hands back a continuation token.
             if (request.getContinuationToken().isEmpty()) {
                 assertThat(request.getDrive()).isEqualTo("intake");
@@ -106,7 +145,7 @@ class ReplayActionTest {
 
     @Test
     void everyIdentityIsRequiredByName() {
-        ReplayAction replay = new ReplayAction(
+        ReplayAction replay = replay(
                 request -> ListDocumentsResponse.getDefaultInstance(), new RecordingSubmit());
         for (String missing : new String[] {"workflowName", "mappingSubject", "drive"}) {
             ObjectNode input = MAPPER.createObjectNode();
@@ -123,7 +162,7 @@ class ReplayActionTest {
     @Test
     void anEmptyListingSubmitsNothing() throws Exception {
         RecordingSubmit submit = new RecordingSubmit();
-        ReplayAction replay = new ReplayAction(
+        ReplayAction replay = replay(
                 request -> ListDocumentsResponse.getDefaultInstance(), submit);
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
@@ -146,7 +185,7 @@ class ReplayActionTest {
                 return super.execute(input, context);
             }
         };
-        ReplayAction replay = new ReplayAction(
+        ReplayAction replay = replay(
                 request -> ListDocumentsResponse.newBuilder()
                         .addDocuments(document("doc-1"))
                         .addDocuments(document("doc-2"))
@@ -167,7 +206,7 @@ class ReplayActionTest {
     @Test
     void anEmptyPageStillFollowsItsContinuationToken() throws Exception {
         RecordingSubmit submit = new RecordingSubmit();
-        ReplayAction replay = new ReplayAction(request -> {
+        ReplayAction replay = replay(request -> {
             if (request.getContinuationToken().isEmpty()) {
                 // An empty first page with a continuation: paging continues.
                 return ListDocumentsResponse.newBuilder()
@@ -190,7 +229,7 @@ class ReplayActionTest {
     @Test
     void anAbsentAccountIdSendsNoAccountFilter() throws Exception {
         List<String> accountFilters = new ArrayList<>();
-        ReplayAction replay = new ReplayAction(request -> {
+        ReplayAction replay = replay(request -> {
             accountFilters.add(request.getAccountId());
             return ListDocumentsResponse.getDefaultInstance();
         }, new RecordingSubmit());
@@ -203,9 +242,71 @@ class ReplayActionTest {
     }
 
     @Test
+    void pruneRemovesIndexedDocumentsTheListingNoLongerContains() throws Exception {
+        RecordingSubmit submit = new RecordingSubmit();
+        FakeIndex index = new FakeIndex(RepoDocumentMapping.SUBJECT, "doc-1", "doc-stale");
+        ReplayAction action = new ReplayAction(request -> {
+            // Unscoped by design: prune reconciles the whole listing.
+            assertThat(request.getDrive()).isEmpty();
+            assertThat(request.getAccountId()).isEmpty();
+            return ListDocumentsResponse.newBuilder()
+                    .addDocuments(document("doc-1"))
+                    .build();
+        }, submit, index);
+
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("prune", true);
+        ObjectNode output = action.execute(input, ActionContext.create());
+
+        assertThat(output.path("submitted").asInt()).isEqualTo(1);
+        assertThat(output.path("pruned").asInt()).isEqualTo(1);
+        assertThat(output.path("prunedDocIds")).hasSize(1);
+        assertThat(output.path("prunedDocIds").get(0).asText()).isEqualTo("doc-stale");
+        assertThat(index.deleted).containsExactly("doc-stale");
+        assertThat(index.ids).containsExactly("doc-1");
+    }
+
+    @Test
+    void pruneRefusesAnyScopeByName() {
+        ReplayAction action = new ReplayAction(
+                request -> ListDocumentsResponse.getDefaultInstance(),
+                new RecordingSubmit(),
+                new FakeIndex(RepoDocumentMapping.SUBJECT));
+        for (String scope : new String[] {"drive", "accountId"}) {
+            ObjectNode input = MAPPER.createObjectNode();
+            input.put("workflowName", "parse-and-index");
+            input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+            input.put("prune", true);
+            input.put(scope, scope.equals("drive") ? "intake" : "acct");
+            assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+                    .isInstanceOf(ActionException.class)
+                    .hasMessageContaining(scope)
+                    .hasMessageContaining("prune");
+        }
+    }
+
+    @Test
+    void withoutPruneNothingIsPrunedAndTheOutputSaysNothingAboutIt() throws Exception {
+        FakeIndex index = new FakeIndex(RepoDocumentMapping.SUBJECT, "doc-stale");
+        ReplayAction action = new ReplayAction(
+                request -> ListDocumentsResponse.getDefaultInstance(),
+                new RecordingSubmit(), index);
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("drive", "intake");
+        ObjectNode output = action.execute(input, ActionContext.create());
+        assertThat(output.has("pruned")).isFalse();
+        assertThat(index.deleted).isEmpty();
+        assertThat(index.ids).containsExactly("doc-stale");
+    }
+
+    @Test
     void aReplayIdStampsDeterministicRunIdsSoResubmissionDeduplicates() throws Exception {
         RecordingSubmit first = new RecordingSubmit();
-        ReplayAction replay = new ReplayAction(
+        ReplayAction replay = replay(
                 request -> ListDocumentsResponse.newBuilder()
                         .addDocuments(document("doc-1"))
                         .addDocuments(document("doc-2"))
@@ -229,7 +330,7 @@ class ReplayActionTest {
                 assertThat(java.util.UUID.fromString(id)).isNotNull());
 
         RecordingSubmit second = new RecordingSubmit();
-        replay = new ReplayAction(
+        replay = replay(
                 request -> ListDocumentsResponse.newBuilder()
                         .addDocuments(document("doc-1"))
                         .addDocuments(document("doc-2"))
@@ -245,7 +346,7 @@ class ReplayActionTest {
     @Test
     void withoutAReplayIdSubmissionsCarryNoJobId() throws Exception {
         RecordingSubmit submit = new RecordingSubmit();
-        ReplayAction replay = new ReplayAction(
+        ReplayAction replay = replay(
                 request -> ListDocumentsResponse.newBuilder()
                         .addDocuments(document("doc-1"))
                         .build(),

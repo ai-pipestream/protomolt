@@ -35,7 +35,11 @@ import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
@@ -44,7 +48,10 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BytesRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,7 +68,7 @@ import org.slf4j.LoggerFactory;
  * {@link IllegalStateException} (the request needs a lane the subject does
  * not serve); the gRPC layer maps them onto statuses.
  */
-public final class LuceneSearchStore implements Closeable {
+public final class LuceneSearchStore implements SubjectIndex, Closeable {
 
     /** Reciprocal-rank fusion constant for the hybrid lane. */
     private static final int RRF_K = 60;
@@ -233,6 +240,53 @@ public final class LuceneSearchStore implements Closeable {
     }
 
     /**
+     * The doc ids a subject currently serves, walked from the identity
+     * field's term dictionary with deleted-but-unmerged blocks excluded.
+     *
+     * @param subjectName the mapping subject
+     * @return the indexed doc ids
+     */
+    @Override
+    public Set<String> indexedDocIds(String subjectName) {
+        Subject subject = subject(subjectName);
+        try {
+            IndexSearcher searcher = subject.searchers().acquire();
+            try {
+                Set<String> ids = new LinkedHashSet<>();
+                for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
+                    Terms terms = leaf.reader().terms(subject.served().docIdField());
+                    if (terms == null) {
+                        continue;
+                    }
+                    // The term dictionary still lists deleted blocks until a
+                    // merge reclaims them; only a term with a live posting
+                    // counts as indexed.
+                    Bits live = leaf.reader().getLiveDocs();
+                    TermsEnum iterator = terms.iterator();
+                    PostingsEnum postings = null;
+                    BytesRef term;
+                    while ((term = iterator.next()) != null) {
+                        postings = iterator.postings(postings, PostingsEnum.NONE);
+                        int doc;
+                        while ((doc = postings.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+                            if (live == null || live.get(doc)) {
+                                ids.add(term.utf8ToString());
+                                break;
+                            }
+                        }
+                    }
+                }
+                return ids;
+            } finally {
+                subject.searchers().release(searcher);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(
+                    "cannot enumerate '" + subjectName + "'", e);
+        }
+    }
+
+    /**
      * Removes one document's block (parent and chunk children) from a
      * subject's index. Idempotent: deleting an id the index does not hold
      * succeeds — the id is not searchable either way.
@@ -240,6 +294,7 @@ public final class LuceneSearchStore implements Closeable {
      * @param subjectName the mapping subject
      * @param docId the document identity to remove
      */
+    @Override
     public void delete(String subjectName, String docId) {
         Subject subject = subject(subjectName);
         if (docId == null || docId.isBlank()) {

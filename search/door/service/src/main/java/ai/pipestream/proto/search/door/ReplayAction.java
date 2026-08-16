@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -28,6 +30,13 @@ import java.util.UUID;
  * validation; with the optional {@code replayId} input, each document's run
  * also carries a deterministic {@code jobId} derived from it, so
  * resubmitting the same replay is idempotent at the jobs layer too.
+ *
+ * <p>With {@code prune} set, the replay is a reconcile: it runs over the
+ * whole repository listing (a scope would make pruning delete other
+ * scopes' documents, so {@code drive} and {@code accountId} are refused),
+ * and indexed documents the listing no longer contains are removed from
+ * the subject's index. The indexed set is captured before the listing
+ * pages, so a document indexed concurrently is never a prune candidate.
  */
 public final class ReplayAction implements ProtoAction {
 
@@ -39,22 +48,28 @@ public final class ReplayAction implements ProtoAction {
 
     private final DocumentLister lister;
     private final ProtoAction submit;
+    private final SubjectIndex index;
 
     /**
      * Creates the action.
      *
      * @param lister the repository listing
      * @param submit the jobs {@code submit-workflow} action submissions ride
+     * @param index the door's index surface pruning reconciles through
      */
-    public ReplayAction(DocumentLister lister, ProtoAction submit) {
+    public ReplayAction(DocumentLister lister, ProtoAction submit, SubjectIndex index) {
         if (lister == null) {
             throw new IllegalArgumentException("lister must not be null");
         }
         if (submit == null) {
             throw new IllegalArgumentException("submit must not be null");
         }
+        if (index == null) {
+            throw new IllegalArgumentException("index must not be null");
+        }
         this.lister = lister;
         this.submit = submit;
+        this.index = index;
     }
 
     @Override
@@ -83,16 +98,22 @@ public final class ReplayAction implements ProtoAction {
                 .put("description", "Mapping subject the workflow indexes under");
         properties.putObject("drive")
                 .put("type", "string")
-                .put("description", "Drive whose documents replay");
+                .put("description", "Drive whose documents replay; required unless prune,"
+                        + " refused with it");
         properties.putObject("accountId")
                 .put("type", "string")
-                .put("description", "Optional account (tenant) filter");
+                .put("description", "Optional account (tenant) filter; refused with prune");
         properties.putObject("replayId")
                 .put("type", "string")
                 .put("description", "Optional replay identifier; when set, every document's"
                         + " run gets a deterministic jobId derived from it, so re-running"
                         + " the same replay resubmits nothing");
-        schema.putArray("required").add("workflowName").add("mappingSubject").add("drive");
+        properties.putObject("prune")
+                .put("type", "boolean")
+                .put("description", "Reconcile: replay the whole repository listing and"
+                        + " remove indexed documents the listing no longer contains;"
+                        + " unscoped by design, so drive and accountId are refused");
+        schema.putArray("required").add("workflowName").add("mappingSubject");
         return schema;
     }
 
@@ -100,12 +121,36 @@ public final class ReplayAction implements ProtoAction {
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         String workflowName = requiredString(input, "workflowName");
         String mappingSubject = requiredString(input, "mappingSubject");
-        String drive = requiredString(input, "drive");
+        boolean prune = input.path("prune").asBoolean(false);
         JsonNode account = input.get("accountId");
+        String drive;
+        Set<String> indexedBefore = null;
+        if (prune) {
+            if (optionalString(input, "drive") != null) {
+                throw new ActionException("invalid-input", "'drive' cannot be set with"
+                        + " 'prune': prune reconciles the whole mapping subject against"
+                        + " the whole repository listing, and a drive-scoped listing"
+                        + " would prune other drives' documents");
+            }
+            if (account != null && !account.asText().isBlank()) {
+                throw new ActionException("invalid-input", "'accountId' cannot be set"
+                        + " with 'prune': prune reconciles the whole mapping subject"
+                        + " against the whole repository listing, and an account-scoped"
+                        + " listing would prune other accounts' documents");
+            }
+            drive = "";
+            // Captured before the listing pages: a document indexed while
+            // the replay runs is never a prune candidate. Also refuses an
+            // unknown subject before anything resubmits.
+            indexedBefore = index.indexedDocIds(mappingSubject);
+        } else {
+            drive = requiredString(input, "drive");
+        }
         String replayId = optionalString(input, "replayId");
 
         ObjectNode output = MAPPER.createObjectNode();
         ArrayNode jobIds = output.putArray("jobIds");
+        Set<String> listed = new LinkedHashSet<>();
         int submitted = 0;
         String continuation = "";
         do {
@@ -118,6 +163,7 @@ public final class ReplayAction implements ProtoAction {
             }
             ListDocumentsResponse listing = lister.list(page.build());
             for (DocumentMetadata document : listing.getDocumentsList()) {
+                listed.add(document.getDocId());
                 ObjectNode workflowInput = MAPPER.createObjectNode();
                 workflowInput.set("address", addressJson(document));
                 workflowInput.put("mappingSubject", mappingSubject);
@@ -136,6 +182,16 @@ public final class ReplayAction implements ProtoAction {
             continuation = listing.getNextContinuationToken();
         } while (!continuation.isEmpty());
         output.put("submitted", submitted);
+        if (prune) {
+            ArrayNode prunedDocIds = output.putArray("prunedDocIds");
+            for (String docId : indexedBefore) {
+                if (!listed.contains(docId)) {
+                    index.delete(mappingSubject, docId);
+                    prunedDocIds.add(docId);
+                }
+            }
+            output.put("pruned", prunedDocIds.size());
+        }
         return output;
     }
 

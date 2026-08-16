@@ -244,7 +244,9 @@ message DeleteDocumentResponse {
   string message = 4;
 }
 
-// Request to list Documents with optional filtering and pagination.
+// Request to list Documents with optional filtering and pagination. Only
+// AVAILABLE rows list: a document tombstoned for purge is logically
+// deleted and is never re-discovered through this surface.
 message ListDocumentsRequest {
   // Drive identifier to list documents from.
   string drive = 1;

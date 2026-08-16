@@ -14,6 +14,7 @@ import ai.pipestream.proto.parse.v1.ParseDocumentRequest;
 import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
 import ai.pipestream.proto.repo.v1.CreateDriveRequest;
+import ai.pipestream.proto.repo.v1.DeleteDocumentByReferenceCommand;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.DocumentPart;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
@@ -422,6 +423,101 @@ class DocumentPlatformSmokeIT {
                             .setLane(SearchLane.SEARCH_LANE_LEXICAL)
                             .build());
             assertThat(hits.getHitsList()).isEmpty();
+        } finally {
+            searchChannel.shutdownNow();
+        }
+    }
+
+    @Test
+    @Order(9)
+    void replayPruneReconcilesTheIndexAgainstTheRepository() throws Exception {
+        // Two fresh documents enter and index; one is then deleted straight
+        // through repo's gRPC, BYPASSING delete-and-unindex — the drift
+        // prune exists for.
+        Metadata metadata = new Metadata();
+        metadata.put(ApiKeyServerInterceptor.API_KEY, API_KEY);
+        var intake = IntakeServiceGrpc.newBlockingStub(intakeChannel)
+                .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+        IngestDocumentResponse keeper = intake.ingestDocument(IngestDocumentRequest.newBuilder()
+                .setRaw(RawPayload.newBuilder()
+                        .setData(ByteString.copyFromUtf8(
+                                "Prune Keeper\n\nThe lighthouse keeper stays."))
+                        .setFilename("keeper.txt")
+                        .setMimeType("text/plain"))
+                .setDatasourceId("ds-prune")
+                .build());
+        IngestDocumentResponse stale = intake.ingestDocument(IngestDocumentRequest.newBuilder()
+                .setRaw(RawPayload.newBuilder()
+                        .setData(ByteString.copyFromUtf8(
+                                "Prune Stale\n\nThe drifting buoy vanishes."))
+                        .setFilename("stale.txt")
+                        .setMimeType("text/plain"))
+                .setDatasourceId("ds-prune")
+                .build());
+        for (IngestDocumentResponse doc : java.util.List.of(keeper, stale)) {
+            ObjectNode submit = MAPPER.createObjectNode();
+            submit.put("workflowName", "parse-and-index");
+            submit.set("input", MAPPER.readTree(JsonFormat.printer().print(
+                    ParseAndIndexRequest.newBuilder()
+                            .setAddress(doc.getAddress())
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .build())));
+            JsonNode submitted = postAction("submit-workflow", submit);
+            String jobId = submitted.path("jobId").asText();
+            String status = "";
+            for (int i = 0; i < 120 && !"COMPLETED".equals(status); i++) {
+                ObjectNode get = MAPPER.createObjectNode();
+                get.put("jobId", jobId);
+                JsonNode job = postAction("get-job", get);
+                status = job.path("job").path("status").asText(job.path("status").asText());
+                if ("FAILED".equals(status) || "DEAD".equals(status)) {
+                    throw new AssertionError("prune-setup job " + status + ": " + job);
+                }
+                if (!"COMPLETED".equals(status)) {
+                    Thread.sleep(500);
+                }
+            }
+            assertThat(status).isEqualTo("COMPLETED");
+        }
+
+        DocumentServiceGrpc.newBlockingStub(repoChannel).deleteDocument(
+                ai.pipestream.proto.repo.v1.DeleteDocumentRequest.newBuilder()
+                        .setByReference(DeleteDocumentByReferenceCommand.newBuilder()
+                                .setAddress(stale.getAddress()))
+                        .build());
+
+        ObjectNode reconcile = MAPPER.createObjectNode();
+        reconcile.put("workflowName", "parse-and-index");
+        reconcile.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        reconcile.put("prune", true);
+        JsonNode reconciled = postAction("replay-documents", reconcile);
+        // The tombstoned row dropped out of the listing (so it did not
+        // resubmit) and its index entry was pruned.
+        assertThat(reconciled.path("submitted").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(reconciled.path("pruned").asInt()).isGreaterThanOrEqualTo(1);
+
+        ManagedChannel searchChannel = NettyChannelBuilder
+                .forAddress("127.0.0.1", platform.searchPort())
+                .usePlaintext()
+                .build();
+        try {
+            SearchResponse pruned = SearchServiceGrpc.newBlockingStub(searchChannel)
+                    .search(SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("drifting buoy")
+                            .setK(10)
+                            .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                            .build());
+            assertThat(pruned.getHitsList()).isEmpty();
+            SearchResponse kept = SearchServiceGrpc.newBlockingStub(searchChannel)
+                    .search(SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("lighthouse keeper")
+                            .setK(10)
+                            .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                            .build());
+            assertThat(kept.getHitsList()).isNotEmpty();
+            assertThat(kept.getHits(0).getDocId()).isEqualTo(keeper.getDocId());
         } finally {
             searchChannel.shutdownNow();
         }

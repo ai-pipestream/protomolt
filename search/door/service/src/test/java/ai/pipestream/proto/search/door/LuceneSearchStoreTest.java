@@ -79,8 +79,15 @@ class LuceneSearchStoreTest {
                     document("doc-keep", "The evergreen anchor stays behind."));
             store.index(RepoDocumentMapping.SUBJECT,
                     document("doc-gone", "The evergreen anchor leaves town."));
+            assertThat(store.indexedDocIds(RepoDocumentMapping.SUBJECT))
+                    .containsExactlyInAnyOrder("doc-keep", "doc-gone");
 
             store.delete(RepoDocumentMapping.SUBJECT, "doc-gone");
+
+            // The enumeration respects live docs: the deleted block is out
+            // even though no merge has reclaimed its terms yet.
+            assertThat(store.indexedDocIds(RepoDocumentMapping.SUBJECT))
+                    .containsExactly("doc-keep");
 
             List<SearchHit> lexical = store.search(RepoDocumentMapping.SUBJECT,
                     SearchRequest.newBuilder()

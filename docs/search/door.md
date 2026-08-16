@@ -100,6 +100,17 @@ atomic replace-by-identity means replays re-derive and never duplicate
 (`PolicyChangeReindexTest` pins the generation swap; the platform smoke IT
 replays the corpus and asserts a single hit survives).
 
+With `prune` set, the replay is a reconcile: it runs over the whole
+repository listing and removes indexed documents the listing no longer
+contains — the cleanup for anything deleted outside `delete-and-unindex`.
+Prune is unscoped by design (`drive` and `accountId` are refused by name:
+a scoped listing would prune other scopes' documents), and the indexed set
+is captured before the listing pages, so a concurrently indexed document
+is never a prune candidate. This works because the repository listing
+serves only AVAILABLE rows: a tombstoned document drops out of the listing
+the moment it is deleted, so replays never resubmit it and prune removes
+its index entry.
+
 ## The console
 
 `protomolt-search-console` is the product page over the door: one pure-JDK

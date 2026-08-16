@@ -3,7 +3,10 @@ package ai.pipestream.proto.repo.container.ledger;
 /**
  * Filter for {@link DocumentLedger#list(ListDocumentsFilter)}.
  * <p>
- * All fields are optional conjuncts (ANDed when non-null). Pagination is a
+ * All fields are optional conjuncts (ANDed when non-null); rows not in
+ * {@link DocumentStatus#AVAILABLE} never match, whatever the filter — a
+ * tombstoned row is logically deleted and listers must not re-discover it.
+ * Pagination is a
  * plain {@code offset} — deliberately simple: the listing shapes this backs
  * (admin console, per-crawl/per-drive enumeration) are shallow scans, not
  * deep exports, so the stability cost of offset paging under concurrent
