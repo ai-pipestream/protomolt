@@ -1,6 +1,8 @@
 package ai.pipestream.proto.search.door;
 
 import ai.pipestream.proto.repo.v1.Document;
+import ai.pipestream.proto.search.v1.DeleteDocumentRequest;
+import ai.pipestream.proto.search.v1.DeleteDocumentResponse;
 import ai.pipestream.proto.search.v1.IndexDocumentRequest;
 import ai.pipestream.proto.search.v1.IndexDocumentResponse;
 import ai.pipestream.proto.search.v1.ListSubjectsRequest;
@@ -67,6 +69,28 @@ final class SearchDoorGrpcServices {
                         .asRuntimeException());
             } catch (RuntimeException e) {
                 LOG.error("index failed", e);
+                observer.onError(Status.INTERNAL.withDescription(e.getMessage())
+                        .asRuntimeException());
+            }
+        }
+
+        @Override
+        public void deleteDocument(DeleteDocumentRequest request,
+                StreamObserver<DeleteDocumentResponse> observer) {
+            try {
+                if (request.getMappingSubject().isBlank()) {
+                    throw new IllegalArgumentException("mapping_subject is required");
+                }
+                store.delete(request.getMappingSubject(), request.getDocId());
+                observer.onNext(DeleteDocumentResponse.newBuilder()
+                        .setDocId(request.getDocId())
+                        .build());
+                observer.onCompleted();
+            } catch (IllegalArgumentException e) {
+                observer.onError(Status.INVALID_ARGUMENT.withDescription(e.getMessage())
+                        .asRuntimeException());
+            } catch (RuntimeException e) {
+                LOG.error("delete failed", e);
                 observer.onError(Status.INTERNAL.withDescription(e.getMessage())
                         .asRuntimeException());
             }

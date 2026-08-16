@@ -169,11 +169,14 @@ and notice material and keep the binary checksum enforced by the build.
 
 ### Search door hardening (from the Phase 2 review)
 
-The 2026-08-15 review confirmed these as real gaps, deliberately deferred:
+The 2026-08-15 review confirmed these as real gaps, deliberately deferred.
+The delete gap is closed: `search.v1` now carries `DeleteDocument` and the
+`delete-and-unindex` workflow ties un-indexing to repository deletion (see
+[the door guide](../search/door.md)). Still open:
 
-- No delete/tombstone RPC on `search.v1`: a repo-deleted document stays
-  searchable forever, and replay never cleans up what the source no longer
-  has. The door needs an explicit un-index surface tied to repo deletion.
+- Replay never cleans up what the source no longer has: a document deleted
+  outside `delete-and-unindex` lingers in the index until something
+  reconciles the subject against a repository listing.
 - `LuceneSearchStore.index()` commits (fsyncs) per document, a throughput
   ceiling for corpus-wide replays; batch or interval commits with honest
   durability semantics are the fix.

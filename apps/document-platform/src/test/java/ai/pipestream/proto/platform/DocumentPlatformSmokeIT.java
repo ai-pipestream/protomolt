@@ -27,6 +27,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.ManagedChannel;
 import ai.pipestream.proto.search.door.RepoDocumentMapping;
+import ai.pipestream.proto.search.v1.DeleteAndUnindexRequest;
 import ai.pipestream.proto.search.v1.ParseAndIndexRequest;
 import ai.pipestream.proto.search.v1.SearchLane;
 import ai.pipestream.proto.search.v1.SearchRequest;
@@ -62,7 +63,8 @@ import org.testcontainers.utility.DockerImageName;
  * completed by the running worker, the parsed result read back over repo's
  * public gRPC, the registry serving the fleet document model, the playground
  * page serving, the durable parse-and-index workflow producing a search hit
- * through the search door, and a replay that re-derives without duplicating.
+ * through the search door, a replay that re-derives without duplicating, and
+ * the delete-and-unindex workflow leaving the document unsearchable.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -375,6 +377,54 @@ class DocumentPlatformSmokeIT {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(jobs.statusCode()).isEqualTo(200);
         assertThat(MAPPER.readTree(jobs.body()).path("jobs").isArray()).isTrue();
+    }
+
+    @Test
+    @Order(8)
+    void deleteAndUnindexRemovesTheDocumentFromSearch() throws Exception {
+        ObjectNode submit = MAPPER.createObjectNode();
+        submit.put("workflowName", "delete-and-unindex");
+        submit.set("input", MAPPER.readTree(JsonFormat.printer().print(
+                DeleteAndUnindexRequest.newBuilder()
+                        .setAddress(receipt.getAddress())
+                        .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                        .build())));
+        JsonNode submitted = postAction("submit-workflow", submit);
+        assertThat(submitted.path("ok").asBoolean()).as(submitted.toString()).isTrue();
+        String jobId = submitted.path("jobId").asText();
+
+        String status = "";
+        for (int i = 0; i < 120 && !"COMPLETED".equals(status); i++) {
+            ObjectNode get = MAPPER.createObjectNode();
+            get.put("jobId", jobId);
+            JsonNode job = postAction("get-job", get);
+            status = job.path("job").path("status").asText(job.path("status").asText());
+            if ("FAILED".equals(status) || "DEAD".equals(status)) {
+                throw new AssertionError("delete-and-unindex job " + status + ": " + job);
+            }
+            if (!"COMPLETED".equals(status)) {
+                Thread.sleep(500);
+            }
+        }
+        assertThat(status).isEqualTo("COMPLETED");
+
+        // The document no longer answers the query that found it before.
+        ManagedChannel searchChannel = NettyChannelBuilder
+                .forAddress("127.0.0.1", platform.searchPort())
+                .usePlaintext()
+                .build();
+        try {
+            SearchResponse hits = SearchServiceGrpc.newBlockingStub(searchChannel)
+                    .search(SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("container works")
+                            .setK(10)
+                            .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                            .build());
+            assertThat(hits.getHitsList()).isEmpty();
+        } finally {
+            searchChannel.shutdownNow();
+        }
     }
 
     static JsonNode postAction(String name, ObjectNode input) throws Exception {

@@ -9,6 +9,8 @@ import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
+import ai.pipestream.proto.search.v1.DeleteDocumentRequest;
+import ai.pipestream.proto.search.v1.DeleteDocumentResponse;
 import ai.pipestream.proto.search.v1.IndexDocumentRequest;
 import ai.pipestream.proto.search.v1.IndexDocumentResponse;
 import ai.pipestream.proto.search.v1.ListSubjectsRequest;
@@ -72,6 +74,13 @@ class SearchDoorServicesTest {
                 .setSearchMetadata(SearchMetadata.newBuilder()
                         .setTitle("Alpha Treaty Archive")
                         .setBody(BODY))
+                .build());
+        DOCUMENTS.put("doc-del", Document.newBuilder()
+                .setDocId("doc-del")
+                .setSearchMetadata(SearchMetadata.newBuilder()
+                        .setTitle("Zeppelin Cargo Ledger")
+                        .setBody("The zeppelin carries the cargo manifest north."
+                                + " Ballast shifts as the airship climbs."))
                 .build());
         door = SearchDoorServices.build(
                 new SearchDoorConfig(0, work.resolve("index"), Map.of(
@@ -280,6 +289,65 @@ class SearchDoorServicesTest {
                                 .isEqualTo(Status.Code.INVALID_ARGUMENT));
         assertThatThrownBy(() -> indexStub.indexDocument(IndexDocumentRequest.newBuilder()
                 .setAddress(NodeAddress.newBuilder().setDocId("doc-1"))
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.INVALID_ARGUMENT));
+    }
+
+    @Test
+    void deletingRemovesTheDocumentFromEveryLaneAndIsIdempotent() {
+        index("doc-del");
+        assertThat(searchStub.search(
+                query(SearchLane.SEARCH_LANE_LEXICAL, "zeppelin").setK(5).build())
+                .getHitsList()).isNotEmpty();
+
+        DeleteDocumentResponse gone = indexStub.deleteDocument(
+                DeleteDocumentRequest.newBuilder()
+                        .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                        .setDocId("doc-del")
+                        .build());
+        assertThat(gone.getDocId()).isEqualTo("doc-del");
+
+        assertThat(searchStub.search(
+                query(SearchLane.SEARCH_LANE_LEXICAL, "zeppelin").setK(5).build())
+                .getHitsList()).isEmpty();
+        // The chunk children went with the parent: the deleted document's
+        // own sentence no longer answers the vector lane.
+        SearchResponse vector = searchStub.search(
+                query(SearchLane.SEARCH_LANE_VECTOR,
+                        "The zeppelin carries the cargo manifest north.").setK(5).build());
+        assertThat(vector.getHitsList())
+                .allSatisfy(hit -> assertThat(hit.getDocId()).isNotEqualTo("doc-del"));
+
+        // Idempotent: deleting an id the index no longer holds succeeds.
+        indexStub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                .setDocId("doc-del")
+                .build());
+    }
+
+    @Test
+    void deletingOutsideTheServedSurfaceIsRefusedByName() {
+        assertThatThrownBy(() -> indexStub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                .setMappingSubject("no-such-subject")
+                .setDocId("doc-1")
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("no-such-subject")
+                            .contains(RepoDocumentMapping.SUBJECT);
+                });
+        assertThatThrownBy(() -> indexStub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription()).contains("doc_id");
+                });
+        assertThatThrownBy(() -> indexStub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                .setDocId("doc-1")
                 .build()))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode())

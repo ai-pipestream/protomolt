@@ -71,6 +71,58 @@ class LuceneSearchStoreTest {
     }
 
     @Test
+    void deletingADocumentRemovesItsWholeBlockAndLeavesOthers() {
+        try (LuceneSearchStore store = new LuceneSearchStore(work, Map.of(
+                RepoDocumentMapping.SUBJECT,
+                RepoDocumentMapping.served(policyNaming(DoorTestProvider.PROVIDER_ID))))) {
+            store.index(RepoDocumentMapping.SUBJECT,
+                    document("doc-keep", "The evergreen anchor stays behind."));
+            store.index(RepoDocumentMapping.SUBJECT,
+                    document("doc-gone", "The evergreen anchor leaves town."));
+
+            store.delete(RepoDocumentMapping.SUBJECT, "doc-gone");
+
+            List<SearchHit> lexical = store.search(RepoDocumentMapping.SUBJECT,
+                    SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("evergreen anchor")
+                            .setK(10)
+                            .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                            .build());
+            assertThat(lexical).extracting(SearchHit::getDocId).containsExactly("doc-keep");
+
+            // The chunk children went with the parent: the deleted
+            // document's own sentence no longer answers the vector lane.
+            List<SearchHit> vector = store.search(RepoDocumentMapping.SUBJECT,
+                    SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("The evergreen anchor leaves town.")
+                            .setK(10)
+                            .setLane(SearchLane.SEARCH_LANE_VECTOR)
+                            .build());
+            assertThat(vector).extracting(SearchHit::getDocId)
+                    .doesNotContain("doc-gone");
+        }
+    }
+
+    @Test
+    void deletingAnAbsentIdSucceedsAndRefusalsNameTheProblem() {
+        try (LuceneSearchStore store = new LuceneSearchStore(work,
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()))) {
+            // Idempotent: an id the index does not hold is already gone.
+            store.delete(RepoDocumentMapping.SUBJECT, "never-indexed");
+
+            assertThatThrownBy(() -> store.delete("no-such-subject", "doc-x"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("no-such-subject")
+                    .hasMessageContaining(RepoDocumentMapping.SUBJECT);
+            assertThatThrownBy(() -> store.delete(RepoDocumentMapping.SUBJECT, "  "))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("doc_id");
+        }
+    }
+
+    @Test
     void concurrentReplacesOfOneDocumentNeverDuplicate() throws Exception {
         try (LuceneSearchStore store = new LuceneSearchStore(work, Map.of(
                 RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()))) {

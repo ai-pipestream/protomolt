@@ -65,6 +65,25 @@ the workflow at wire time, so operators submit it by name through the jobs
 verbs. The [document platform](../apps/document-platform.md) mounts all of
 this by default and its smoke IT proves ingest-to-search-hit over real TCP.
 
+## Deleting
+
+`SearchIndexService/DeleteDocument` removes one document's block — parent
+and chunk children in one term delete — from a mapping subject's index.
+It is idempotent (deleting an absent id succeeds: "not searchable" already
+holds) and refuses an unknown subject or a blank `doc_id` by name, like
+every door request.
+
+Removal is durable through `delete-and-unindex`, parse-and-index's mirror
+(`SearchWorkflows.deleteAndUnindexWorkflow`): the repository deletes the
+stored document (`DeleteDocumentRequest.purge_storage` chooses immediate
+purge over the default two-phase tombstone), then the door un-indexes it.
+A completed run means the document neither reads back nor answers queries;
+either step's transient failure requeues with backoff, so a repo-deleted
+document cannot stay searchable because the un-index step was lost. The
+module registers the workflow at wire time whenever a registry co-mounts —
+it rides the repo channel the door already requires, so it needs no parse
+coordinator.
+
 ## Replay
 
 `replay-documents` (contributed by the door when `jobs` co-mounts) re-runs
