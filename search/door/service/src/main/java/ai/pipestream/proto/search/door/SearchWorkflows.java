@@ -1,6 +1,7 @@
 package ai.pipestream.proto.search.door;
 
 import ai.pipestream.proto.parse.v1.ParseDocumentRequest;
+import ai.pipestream.proto.search.v1.DeleteAndUnindexRequest;
 import ai.pipestream.proto.search.v1.ParseAndIndexRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -12,17 +13,23 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * The parse-and-index workflow: two checkpointed steps under the jobs
- * executor — the coordinator parses the stored document, then the door
- * indexes it under the request's mapping subject. Submitting it as a
- * workflow run makes ingestion-to-searchable durable end to end: either
- * step's transient failure requeues with backoff, and a completed run
- * means the document answers queries.
+ * The door's workflows, two checkpointed steps each under the jobs
+ * executor. Parse-and-index makes ingestion-to-searchable durable end to
+ * end: the coordinator parses the stored document, then the door indexes
+ * it under the request's mapping subject — either step's transient failure
+ * requeues with backoff, and a completed run means the document answers
+ * queries. Delete-and-unindex is its removal-side mirror: the repository
+ * deletes the stored document, then the door removes it from the subject's
+ * index, so a completed run means the document neither reads back nor
+ * answers queries.
  */
 public final class SearchWorkflows {
 
     /** The workflow name registries and request topics know this workflow by. */
     public static final String PARSE_AND_INDEX_WORKFLOW = "parse-and-index";
+
+    /** The removal-side workflow name: repository delete, then un-index. */
+    public static final String DELETE_AND_UNINDEX_WORKFLOW = "delete-and-unindex";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -81,14 +88,83 @@ public final class SearchWorkflows {
     }
 
     /**
+     * Builds the delete-and-unindex workflow envelope.
+     *
+     * @param repoTarget the repository DocumentService endpoint — a
+     *        {@code host:port} authority or {@code inprocess:<name>}
+     * @param searchTarget the SearchIndexService endpoint, same forms
+     * @param deadlineMs per-step deadline in milliseconds; must be positive
+     * @return the workflow-definition JSON the jobs submitter accepts
+     */
+    public static ObjectNode deleteAndUnindexWorkflow(
+            String repoTarget, String searchTarget, long deadlineMs) {
+        if (repoTarget == null || repoTarget.isBlank()) {
+            throw new IllegalArgumentException("repoTarget must not be blank");
+        }
+        if (searchTarget == null || searchTarget.isBlank()) {
+            throw new IllegalArgumentException("searchTarget must not be blank");
+        }
+        if (deadlineMs <= 0) {
+            throw new IllegalArgumentException("deadlineMs must be positive");
+        }
+        ObjectNode workflow = MAPPER.createObjectNode();
+        workflow.put("name", DELETE_AND_UNINDEX_WORKFLOW);
+        workflow.putObject("schema")
+                .put("descriptorSetBase64", deleteDescriptorSetBase64());
+        workflow.put("inputType", DeleteAndUnindexRequest.getDescriptor().getFullName());
+        ArrayNode steps = workflow.putArray("steps");
+        ObjectNode delete = steps.addObject();
+        delete.put("name", "delete");
+        delete.put("target", repoTarget);
+        delete.put("method",
+                "ai.pipestream.proto.repo.v1.DocumentService/DeleteDocument");
+        delete.put("deadlineMs", deadlineMs);
+        delete.putArray("rules")
+                .add("by_reference.address = input.address")
+                .add("purge_storage = input.purge_storage");
+        ObjectNode unindex = steps.addObject();
+        unindex.put("name", "unindex");
+        unindex.put("target", searchTarget);
+        unindex.put("method",
+                "ai.pipestream.proto.search.v1.SearchIndexService/DeleteDocument");
+        unindex.put("deadlineMs", deadlineMs);
+        unindex.putArray("rules")
+                .add("mapping_subject = input.mapping_subject")
+                .add("doc_id = input.address.doc_id");
+        ObjectNode output = workflow.putObject("output");
+        output.put("type", "ai.pipestream.proto.search.v1.DeleteDocumentResponse");
+        output.putArray("rules")
+                .add("doc_id = unindex.doc_id");
+        return workflow;
+    }
+
+    /**
      * The search and parse contracts and every transitive import as a
-     * base64 {@link FileDescriptorSet} — the workflow envelope's schema
-     * payload.
+     * base64 {@link FileDescriptorSet} — the parse-and-index envelope's
+     * schema payload.
      */
     public static String descriptorSetBase64() {
+        return descriptorSetBase64(
+                ParseAndIndexRequest.getDescriptor().getFile(),
+                ParseDocumentRequest.getDescriptor().getFile());
+    }
+
+    /**
+     * The search and repository contracts and every transitive import as a
+     * base64 {@link FileDescriptorSet} — the delete-and-unindex envelope's
+     * schema payload.
+     */
+    public static String deleteDescriptorSetBase64() {
+        return descriptorSetBase64(
+                DeleteAndUnindexRequest.getDescriptor().getFile(),
+                ai.pipestream.proto.repo.v1.DeleteDocumentRequest.getDescriptor().getFile());
+    }
+
+    private static String descriptorSetBase64(FileDescriptor... roots) {
         Map<String, FileDescriptor> files = new LinkedHashMap<>();
-        collect(ParseAndIndexRequest.getDescriptor().getFile(), files);
-        collect(ParseDocumentRequest.getDescriptor().getFile(), files);
+        for (FileDescriptor root : roots) {
+            collect(root, files);
+        }
         FileDescriptorSet.Builder set = FileDescriptorSet.newBuilder();
         for (FileDescriptor file : files.values()) {
             set.addFile(file.toProto());

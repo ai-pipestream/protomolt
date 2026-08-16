@@ -92,17 +92,27 @@ public final class SearchDoorModule implements ServiceModule {
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
 
-        // With a co-mounted registry and parse coordinator, register the
-        // parse-and-index workflow so operators can submit it by name. A
-        // standalone search node skips this: the workflow spans roles it
-        // does not have.
+        // With a co-mounted registry, register the door's workflows so
+        // operators can submit them by name. Parse-and-index additionally
+        // needs a co-mounted parse coordinator; delete-and-unindex rides
+        // the repo channel the door already requires. A standalone search
+        // node skips both: the workflows span roles it does not have.
         List<GitSchemaRegistryStore> stores =
                 context.contributions().all(GitSchemaRegistryStore.class);
-        if (!stores.isEmpty() && context.channels().isLocal("parse")) {
+        if (!stores.isEmpty()) {
+            if (context.channels().isLocal("parse")) {
+                stores.getFirst().putWorkflow(
+                        SearchWorkflows.PARSE_AND_INDEX_WORKFLOW,
+                        SearchWorkflows.parseAndIndexWorkflow(
+                                        context.channels().targetOf("parse"),
+                                        context.channels().targetOf(ROLE),
+                                        60_000)
+                                .toString());
+            }
             stores.getFirst().putWorkflow(
-                    SearchWorkflows.PARSE_AND_INDEX_WORKFLOW,
-                    SearchWorkflows.parseAndIndexWorkflow(
-                                    context.channels().targetOf("parse"),
+                    SearchWorkflows.DELETE_AND_UNINDEX_WORKFLOW,
+                    SearchWorkflows.deleteAndUnindexWorkflow(
+                                    context.channels().targetOf("repo"),
                                     context.channels().targetOf(ROLE),
                                     60_000)
                             .toString());

@@ -233,6 +233,33 @@ public final class LuceneSearchStore implements Closeable {
     }
 
     /**
+     * Removes one document's block (parent and chunk children) from a
+     * subject's index. Idempotent: deleting an id the index does not hold
+     * succeeds — the id is not searchable either way.
+     *
+     * @param subjectName the mapping subject
+     * @param docId the document identity to remove
+     */
+    public void delete(String subjectName, String docId) {
+        Subject subject = subject(subjectName);
+        if (docId == null || docId.isBlank()) {
+            throw new IllegalArgumentException(
+                    "doc_id is required; cannot delete from '" + subjectName + "'");
+        }
+        try {
+            // The parent and its chunk children all carry the identity
+            // term, so one term delete removes the whole block.
+            subject.writer().deleteDocuments(
+                    new Term(subject.served().docIdField(), docId));
+            subject.writer().commit();
+            subject.searchers().maybeRefresh();
+        } catch (IOException e) {
+            throw new UncheckedIOException(
+                    "cannot delete '" + docId + "' from '" + subjectName + "'", e);
+        }
+    }
+
+    /**
      * Runs one query against a subject.
      *
      * @param subjectName the mapping subject

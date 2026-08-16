@@ -54,6 +54,36 @@ message ParseAndIndexRequest {
   string mapping_subject = 2;
 }
 
+// Asks the door to remove one document from a mapping subject's index.
+message DeleteDocumentRequest {
+  // The mapping subject to delete from. Required; the door refuses unknown
+  // subjects by name rather than assuming a default.
+  string mapping_subject = 1;
+  // The document id whose block (parent and chunk children) is removed.
+  // Required. Deleting an id the index does not hold succeeds: the answer
+  // "this id is not searchable" already holds.
+  string doc_id = 2;
+}
+
+// What one DeleteDocument call removed.
+message DeleteDocumentResponse {
+  // The deleted document's id, echoed.
+  string doc_id = 1;
+}
+
+// Input of the delete-and-unindex workflow: delete one stored document
+// through the repository, then remove it from a mapping subject's index.
+// Both identities are explicit; the workflow never assumes a subject.
+message DeleteAndUnindexRequest {
+  // The stored document to delete.
+  ai.pipestream.proto.repo.v1.NodeAddress address = 1;
+  // The mapping subject the unindex step deletes from. Required.
+  string mapping_subject = 2;
+  // When set, the repository purges the stored bytes immediately; when
+  // unset, rows are tombstoned for the repository's two-phase purge.
+  bool purge_storage = 3;
+}
+
 // Which query lane to run.
 enum SearchLane {
   // Unset. Refused: the caller must choose a lane.
@@ -109,6 +139,10 @@ service SearchIndexService {
   // (Re-)indexes one stored document under a mapping subject. Idempotent:
   // re-indexing a document atomically replaces its previous index state.
   rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
+
+  // Removes one document's block (parent and chunk children) from a
+  // mapping subject's index. Idempotent: deleting an absent id succeeds.
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
 }
 
 // Asks the door what it serves. Deliberately empty: the served surface is
