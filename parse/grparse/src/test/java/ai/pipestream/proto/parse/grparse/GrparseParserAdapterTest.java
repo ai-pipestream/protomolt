@@ -29,8 +29,20 @@ import ai.pipestream.proto.parse.plugin.v1.ParsedPage;
 import ai.pipestream.proto.parse.plugin.v1.ParserOutput;
 import ai.pipestream.proto.parse.plugin.v1.ParserPluginServiceGrpc;
 import com.google.protobuf.ByteString;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.ForwardingClientCall;
+import io.grpc.ForwardingServerCall;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -42,6 +54,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -435,6 +448,131 @@ class GrparseParserAdapterTest {
         } finally {
             tinyChannel.shutdownNow();
             tinyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void anAdapterFailureMidStreamCancelsTheGrparseStream() throws Exception {
+        // A second adapter behind two fault injectors: a server interceptor
+        // breaks the plugin response stream when armed, and a client
+        // interceptor records every ClientCall.cancel toward gRParse. The
+        // recording rides on ClientCall.cancel because gRPC's context
+        // propagation cancels the stream below ClientCall — only the
+        // adapter's explicit cancelUpstream shows up here. The replay parks
+        // after the first page; with the send fault armed, the second page's
+        // emit throws inside the adapter — the fail() path, which must cancel
+        // the gRParse stream instead of leaking it.
+        fake.resetAsyncReplay(List.of(
+                pageEvent(1, 2, "Alpha text."),
+                pageEvent(2, 2, "Beta text."),
+                completeEvent()));
+        AtomicReference<Throwable> upstreamCancelCause = new AtomicReference<>();
+        CountDownLatch upstreamCancelCalled = new CountDownLatch(1);
+        ManagedChannel grparseChannel = InProcessChannelBuilder.forName(grparseName)
+                .intercept(new ClientInterceptor() {
+                    @Override
+                    public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
+                            MethodDescriptor<ReqT, RespT> method, CallOptions callOptions,
+                            Channel next) {
+                        return new ForwardingClientCall.SimpleForwardingClientCall<ReqT, RespT>(
+                                next.newCall(method, callOptions)) {
+                            @Override
+                            public void cancel(String message, Throwable cause) {
+                                upstreamCancelCause.set(cause);
+                                upstreamCancelCalled.countDown();
+                                super.cancel(message, cause);
+                            }
+                        };
+                    }
+                })
+                .build();
+        AtomicBoolean sendFaultArmed = new AtomicBoolean();
+        GrparseParserAdapter faultedAdapter =
+                new GrparseParserAdapter(grparseChannel, GrparseAdapterOptions.defaults());
+        String faultedName = InProcessServerBuilder.generateName();
+        Server faultedServer = InProcessServerBuilder.forName(faultedName)
+                .directExecutor()
+                .addService(ServerInterceptors.intercept(faultedAdapter, new ServerInterceptor() {
+                    @Override
+                    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                            ServerCall<ReqT, RespT> call, Metadata headers,
+                            ServerCallHandler<ReqT, RespT> next) {
+                        ServerCall<ReqT, RespT> faulty =
+                                new ForwardingServerCall.SimpleForwardingServerCall<ReqT, RespT>(
+                                        call) {
+                                    @Override
+                                    public void sendMessage(RespT message) {
+                                        if (sendFaultArmed.get()) {
+                                            throw Status.INTERNAL
+                                                    .withDescription("injected send failure")
+                                                    .asRuntimeException();
+                                        }
+                                        super.sendMessage(message);
+                                    }
+                                };
+                        return next.startCall(faulty, headers);
+                    }
+                }))
+                .build()
+                .start();
+        ManagedChannel faultedChannel = InProcessChannelBuilder.forName(faultedName).build();
+        try {
+            List<ParseResponse> events = new ArrayList<>();
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            CountDownLatch done = new CountDownLatch(1);
+            CountDownLatch firstPage = new CountDownLatch(1);
+            StreamObserver<ParseRequest> requests =
+                    ParserPluginServiceGrpc.newStub(faultedChannel)
+                            .parse(new StreamObserver<>() {
+                                @Override
+                                public void onNext(ParseResponse value) {
+                                    events.add(value);
+                                    if (value.getEventCase() == ParseResponse.EventCase.PAGE) {
+                                        firstPage.countDown();
+                                    }
+                                }
+
+                                @Override
+                                public void onError(Throwable t) {
+                                    failure.set(t);
+                                    done.countDown();
+                                }
+
+                                @Override
+                                public void onCompleted() {
+                                    done.countDown();
+                                }
+                            });
+            requests.onNext(optionsFrame(true));
+            requests.onNext(dataFrame("payload".getBytes()));
+            requests.onCompleted();
+
+            // The first page went out: the gRParse stream is open, fed, and
+            // parked mid-replay.
+            assertThat(firstPage.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(fake.received).hasSize(3);
+            sendFaultArmed.set(true);
+            fake.releaseReplay();
+
+            // The second page's emit throws; fail() cancels the gRParse
+            // stream with its own reason.
+            assertThat(upstreamCancelCalled.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(upstreamCancelCause.get()).isInstanceOf(StatusRuntimeException.class);
+            Status cancelStatus =
+                    ((StatusRuntimeException) upstreamCancelCause.get()).getStatus();
+            assertThat(cancelStatus.getCode()).isEqualTo(Status.Code.CANCELLED);
+            assertThat(cancelStatus.getDescription()).isEqualTo("adapter failed the parse");
+            // The cancellation reached gRParse, and the plugin stream failed
+            // with the injected fault.
+            assertThat(fake.awaitUpstreamCancelled(10)).isTrue();
+            assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+            assertThat(((StatusRuntimeException) failure.get()).getStatus().getDescription())
+                    .isEqualTo("injected send failure");
+        } finally {
+            faultedChannel.shutdownNow();
+            faultedServer.shutdownNow();
+            grparseChannel.shutdownNow();
         }
     }
 

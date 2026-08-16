@@ -26,8 +26,21 @@ public final class GrpcDocumentFetcher implements DocumentFetcher, DocumentListe
     /** In-process target prefix, shared vocabulary with the composer: {@value}. */
     public static final String INPROCESS_TARGET_PREFIX = "inprocess:";
 
+    /** Call deadline applied when no explicit timeout is given. */
+    public static final Duration DEFAULT_CALL_TIMEOUT = Duration.ofSeconds(30);
+
     private final ManagedChannel channel;
     private final Duration rpcTimeout;
+
+    /**
+     * Opens the repo channel with the {@link #DEFAULT_CALL_TIMEOUT} call
+     * deadline.
+     *
+     * @param target a {@code host:port} authority or {@code inprocess:<name>}
+     */
+    public GrpcDocumentFetcher(String target) {
+        this(target, DEFAULT_CALL_TIMEOUT);
+    }
 
     /**
      * Opens the repo channel.

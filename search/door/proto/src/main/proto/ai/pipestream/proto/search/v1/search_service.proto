@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.search.v1;
 
 import "ai/pipestream/proto/repo/v1/address.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.search.v1";
@@ -26,10 +27,17 @@ option java_package = "ai.pipestream.proto.search.v1";
 message IndexDocumentRequest {
   // The stored document to index; the door fetches CORE+PARSED through the
   // repository, so the folded search metadata is part of what indexes.
-  ai.pipestream.proto.repo.v1.NodeAddress address = 1;
+  ai.pipestream.proto.repo.v1.NodeAddress address = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // The mapping subject to index under. Required; the door refuses unknown
   // subjects by name rather than assuming a default.
-  string mapping_subject = 2;
+  string mapping_subject = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
 }
 
 // What one IndexDocument call landed.
@@ -49,26 +57,50 @@ message IndexDocumentResponse {
 // are explicit; the workflow never assumes a subject.
 message ParseAndIndexRequest {
   // The stored document to parse and index.
-  ai.pipestream.proto.repo.v1.NodeAddress address = 1;
+  ai.pipestream.proto.repo.v1.NodeAddress address = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // The mapping subject the index step indexes under. Required.
-  string mapping_subject = 2;
+  string mapping_subject = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
 }
 
-// Asks the door to remove one document from a mapping subject's index.
+// Asks the door to remove one document from a mapping subject's index:
+// the parent and every chunk child, whatever policy digest they were
+// derived under. The request keys on the indexed identity directly rather
+// than an address because the repository copy is typically already gone —
+// that is why the delete is being called.
 message DeleteDocumentRequest {
   // The mapping subject to delete from. Required; the door refuses unknown
   // subjects by name rather than assuming a default.
-  string mapping_subject = 1;
+  string mapping_subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
   // The document id whose block (parent and chunk children) is removed.
   // Required. Deleting an id the index does not hold succeeds: the answer
   // "this id is not searchable" already holds.
-  string doc_id = 2;
+  string doc_id = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
 }
 
 // What one DeleteDocument call removed.
 message DeleteDocumentResponse {
   // The deleted document's id, echoed.
   string doc_id = 1;
+  // Number of chunk children removed; 0 when the document had no chunks or
+  // was never indexed, so a caller can tell a real removal from a no-op.
+  int32 chunks_deleted = 2;
 }
 
 // Input of the delete-and-unindex workflow: delete one stored document
@@ -76,9 +108,16 @@ message DeleteDocumentResponse {
 // Both identities are explicit; the workflow never assumes a subject.
 message DeleteAndUnindexRequest {
   // The stored document to delete.
-  ai.pipestream.proto.repo.v1.NodeAddress address = 1;
+  ai.pipestream.proto.repo.v1.NodeAddress address = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // The mapping subject the unindex step deletes from. Required.
-  string mapping_subject = 2;
+  string mapping_subject = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
   // When set, the repository purges the stored bytes immediately; when
   // unset, rows are tombstoned for the repository's two-phase purge.
   bool purge_storage = 3;
@@ -100,15 +139,32 @@ enum SearchLane {
 message SearchRequest {
   // The mapping subject to search. Required; unknown subjects are refused
   // with the list of served subjects.
-  string mapping_subject = 1;
+  string mapping_subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
   // The query text. Required.
-  string query = 2;
-  // Maximum hits to return. Required; must be positive, and the door
-  // bounds it (refusing an over-limit k by name) so one query cannot ask
-  // for the whole index.
-  int32 k = 3;
+  string query = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1}
+    }
+  ];
+  // Maximum hits to return. Required; must be positive and no more than
+  // the door's per-query cap — over-cap requests are refused by name, not
+  // clamped, so one query cannot ask for the whole index.
+  int32 k = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      int32: {gt: 0, lte: 1000}
+    }
+  ];
   // The lane to run. Required.
-  SearchLane lane = 4;
+  SearchLane lane = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Text fields to match in the lexical lane, named by their index field
   // names. Empty means every text field in the subject's mapping; a field
   // outside the mapping is refused by name.

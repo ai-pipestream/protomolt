@@ -19,10 +19,12 @@ public interface SubjectIndex {
 
     /**
      * Removes one document's block from a subject's index. Idempotent:
-     * deleting an id the index does not hold succeeds.
+     * deleting an id the index does not hold succeeds and removes nothing.
      *
      * @param subjectName the mapping subject
      * @param docId the document identity to remove
+     * @return the number of chunk children removed; 0 when the document had
+     *         no chunks or was never indexed
      */
-    void delete(String subjectName, String docId);
+    int delete(String subjectName, String docId);
 }

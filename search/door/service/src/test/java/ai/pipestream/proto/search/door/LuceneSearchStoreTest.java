@@ -77,12 +77,15 @@ class LuceneSearchStoreTest {
                 RepoDocumentMapping.served(policyNaming(DoorTestProvider.PROVIDER_ID))))) {
             store.index(RepoDocumentMapping.SUBJECT,
                     document("doc-keep", "The evergreen anchor stays behind."));
-            store.index(RepoDocumentMapping.SUBJECT,
+            LuceneSearchStore.IndexResult landed = store.index(RepoDocumentMapping.SUBJECT,
                     document("doc-gone", "The evergreen anchor leaves town."));
             assertThat(store.indexedDocIds(RepoDocumentMapping.SUBJECT))
                     .containsExactlyInAnyOrder("doc-keep", "doc-gone");
 
-            store.delete(RepoDocumentMapping.SUBJECT, "doc-gone");
+            // The delete reports exactly the chunk children the index call
+            // landed, so a caller can tell a real removal from a no-op.
+            assertThat(store.delete(RepoDocumentMapping.SUBJECT, "doc-gone"))
+                    .isEqualTo(landed.chunksIndexed());
 
             // The enumeration respects live docs: the deleted block is out
             // even though no merge has reclaimed its terms yet.
@@ -138,8 +141,9 @@ class LuceneSearchStoreTest {
     void deletingAnAbsentIdSucceedsAndRefusalsNameTheProblem() {
         try (LuceneSearchStore store = new LuceneSearchStore(work,
                 Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()))) {
-            // Idempotent: an id the index does not hold is already gone.
-            store.delete(RepoDocumentMapping.SUBJECT, "never-indexed");
+            // Idempotent: an id the index does not hold is already gone,
+            // and the count says nothing was removed.
+            assertThat(store.delete(RepoDocumentMapping.SUBJECT, "never-indexed")).isZero();
 
             assertThatThrownBy(() -> store.delete("no-such-subject", "doc-x"))
                     .isInstanceOf(IllegalArgumentException.class)

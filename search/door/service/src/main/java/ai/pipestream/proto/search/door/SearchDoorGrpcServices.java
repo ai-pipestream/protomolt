@@ -81,9 +81,11 @@ final class SearchDoorGrpcServices {
                 if (request.getMappingSubject().isBlank()) {
                     throw new IllegalArgumentException("mapping_subject is required");
                 }
-                store.delete(request.getMappingSubject(), request.getDocId());
+                int chunksDeleted =
+                        store.delete(request.getMappingSubject(), request.getDocId());
                 observer.onNext(DeleteDocumentResponse.newBuilder()
                         .setDocId(request.getDocId())
+                        .setChunksDeleted(chunksDeleted)
                         .build());
                 observer.onCompleted();
             } catch (IllegalArgumentException e) {
