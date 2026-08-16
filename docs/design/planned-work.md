@@ -169,19 +169,19 @@ and notice material and keep the binary checksum enforced by the build.
 
 ### Search door hardening (from the Phase 2 review)
 
-The 2026-08-15 review confirmed these as real gaps, deliberately deferred.
-The deletion gaps are closed: `search.v1` carries `DeleteDocument`, the
-`delete-and-unindex` workflow ties un-indexing to repository deletion, and
-`replay-documents` with `prune` reconciles a subject against the
-repository listing (which now serves only AVAILABLE rows) — see
-[the door guide](../search/door.md). Still open:
+The 2026-08-15 review confirmed these as real gaps, deliberately
+deferred; the hardening train closed most of them (see
+[the door guide](../search/door.md)): `search.v1` carries
+`DeleteDocument`, the `delete-and-unindex` workflow ties un-indexing to
+repository deletion, `replay-documents` with `prune` reconciles a subject
+against the repository listing (which now serves only AVAILABLE rows),
+durability commits batch behind a near-real-time searcher, every repo
+read carries a call deadline, and `k` is bounded. Still open:
 
-- `LuceneSearchStore.index()` commits (fsyncs) per document, a throughput
-  ceiling for corpus-wide replays; batch or interval commits with honest
-  durability semantics are the fix.
-- `GrpcDocumentFetcher` blocking stubs carry no call deadline.
-- `SearchRequest` has no validation annotations and an unbounded `k`;
-  `SearchHit.stored` is string-only.
+- `SearchHit.stored` is string-only, and `SearchRequest` constraints are
+  enforced in the door's Java refusals rather than by proto validation
+  annotations (the repo-wide annotation family is not yet enforced
+  anywhere in production).
 - Body derivation belongs in the coordinator: the text parser claiming
   `body` fixed the reference path, but gRParse-parsed documents still index
   with an empty body. The long-term home is coordinator-side derivation

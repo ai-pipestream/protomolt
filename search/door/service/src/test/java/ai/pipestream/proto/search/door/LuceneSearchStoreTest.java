@@ -113,6 +113,28 @@ class LuceneSearchStoreTest {
     }
 
     @Test
+    void writesAreVisibleImmediatelyAndDurableAcrossReopen() {
+        // Fewer writes than a commit batch: visibility rides the
+        // near-real-time searcher, durability rides the close commit.
+        SearchRequest query = SearchRequest.newBuilder()
+                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                .setQuery("durable phrase")
+                .setK(3)
+                .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                .build();
+        try (LuceneSearchStore store = new LuceneSearchStore(work,
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()))) {
+            store.index(RepoDocumentMapping.SUBJECT,
+                    document("doc-d", "the durable phrase survives"));
+            assertThat(store.search(RepoDocumentMapping.SUBJECT, query)).hasSize(1);
+        }
+        try (LuceneSearchStore reopened = new LuceneSearchStore(work,
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()))) {
+            assertThat(reopened.search(RepoDocumentMapping.SUBJECT, query)).hasSize(1);
+        }
+    }
+
+    @Test
     void deletingAnAbsentIdSucceedsAndRefusalsNameTheProblem() {
         try (LuceneSearchStore store = new LuceneSearchStore(work,
                 Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()))) {

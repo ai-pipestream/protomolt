@@ -18,12 +18,16 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
@@ -63,6 +67,12 @@ import org.slf4j.LoggerFactory;
  * providers resolve when the store is built, so a subject naming an absent
  * or misconfigured model fails at mount, not on the first document.
  *
+ * <p>Visibility and durability are decoupled: every write refreshes the
+ * near-real-time searcher, while durability commits batch (per
+ * {@link #COMMIT_MAX_PENDING} writes, a periodic flush, and close). A
+ * crash loses at most the last interval's writes, which a replay
+ * re-derives.
+ *
  * <p>Validation errors throw {@link IllegalArgumentException} (the request
  * named something outside the served surface) or
  * {@link IllegalStateException} (the request needs a lane the subject does
@@ -73,6 +83,15 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     /** Reciprocal-rank fusion constant for the hybrid lane. */
     private static final int RRF_K = 60;
 
+    /** The most hits one query may ask for; larger k is refused by name. */
+    public static final int MAX_K = 1000;
+
+    /** Writes accumulated before a durability commit forces. */
+    private static final int COMMIT_MAX_PENDING = 64;
+
+    /** The longest a pending write waits for its durability commit. */
+    private static final Duration COMMIT_INTERVAL = Duration.ofSeconds(2);
+
     private static final Logger LOG = LoggerFactory.getLogger(LuceneSearchStore.class);
 
     /** Index field name of chunk identity on chunk children: {@value}. */
@@ -81,11 +100,38 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     /** Index field name of stored chunk text on chunk children: {@value}. */
     public static final String CHUNK_TEXT_FIELD = "chunk_text";
 
-    private record Subject(
-            ServedMapping served,
-            EmbeddingProvider embedder,
-            IndexWriter writer,
-            SearcherManager searchers) {
+    /** One subject's mounted state plus its durability-commit bookkeeping. */
+    private static final class Subject {
+
+        final ServedMapping served;
+        final EmbeddingProvider embedder;
+        final IndexWriter writer;
+        final SearcherManager searchers;
+        int pendingWrites;
+
+        Subject(ServedMapping served, EmbeddingProvider embedder,
+                IndexWriter writer, SearcherManager searchers) {
+            this.served = served;
+            this.embedder = embedder;
+            this.writer = writer;
+            this.searchers = searchers;
+        }
+
+        ServedMapping served() {
+            return served;
+        }
+
+        EmbeddingProvider embedder() {
+            return embedder;
+        }
+
+        IndexWriter writer() {
+            return writer;
+        }
+
+        SearcherManager searchers() {
+            return searchers;
+        }
     }
 
     /**
@@ -103,6 +149,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     private final ProtoLuceneMapper mapper =
             new ProtoLuceneMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
     private final Analyzer analyzer = new StandardAnalyzer();
+    private final ScheduledExecutorService committer;
 
     /**
      * Opens one index per subject under {@code indexDir} and resolves every
@@ -119,6 +166,11 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         if (served == null || served.isEmpty()) {
             throw new IllegalArgumentException("at least one served mapping subject is required");
         }
+        committer = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "search-door-committer");
+            thread.setDaemon(true);
+            return thread;
+        });
         try {
             for (Map.Entry<String, ServedMapping> subject : served.entrySet()) {
                 EmbeddingProvider embedder = subject.getValue().chunkLane() == null
@@ -142,6 +194,9 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
             close();
             throw e;
         }
+        committer.scheduleWithFixedDelay(this::commitPending,
+                COMMIT_INTERVAL.toMillis(), COMMIT_INTERVAL.toMillis(),
+                TimeUnit.MILLISECONDS);
     }
 
     /** The served subject names, in configuration order. */
@@ -230,13 +285,56 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
             // identity term and adds the new block in one atomic step.
             subject.writer().updateDocuments(
                     new Term(served.docIdField(), docId), block);
-            subject.writer().commit();
-            subject.searchers().maybeRefresh();
+            afterWrite(subject);
         } catch (IOException e) {
             throw new UncheckedIOException(
                     "cannot index '" + docId + "' under '" + subjectName + "'", e);
         }
         return new IndexResult(docId, chunks, digest);
+    }
+
+    /**
+     * Post-write bookkeeping. Visibility is near-real-time and needs no
+     * commit, so the searcher refreshes per write; durability commits
+     * (fsyncs) once per {@link #COMMIT_MAX_PENDING}-write batch, with the
+     * periodic committer flushing partial batches every
+     * {@link #COMMIT_INTERVAL} and close committing whatever remains. A
+     * crash therefore loses at most the last interval's writes — replay
+     * re-derives them — while a busy subject fsyncs per batch instead of
+     * per document.
+     */
+    private void afterWrite(Subject subject) throws IOException {
+        subject.searchers().maybeRefresh();
+        boolean commit = false;
+        synchronized (subject) {
+            subject.pendingWrites++;
+            if (subject.pendingWrites >= COMMIT_MAX_PENDING) {
+                subject.pendingWrites = 0;
+                commit = true;
+            }
+        }
+        if (commit) {
+            subject.writer().commit();
+        }
+    }
+
+    /** The periodic committer's tick: fsync every subject left dirty. */
+    private void commitPending() {
+        for (Map.Entry<String, Subject> entry : subjects.entrySet()) {
+            Subject subject = entry.getValue();
+            try {
+                if (subject.writer().hasUncommittedChanges()) {
+                    subject.writer().commit();
+                    synchronized (subject) {
+                        subject.pendingWrites = 0;
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                // The next tick retries; writes keep accumulating in the
+                // writer either way, and close still commits.
+                LOG.warn("periodic commit of '{}' failed", entry.getKey(), e);
+            }
+        }
     }
 
     /**
@@ -306,8 +404,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
             // term, so one term delete removes the whole block.
             subject.writer().deleteDocuments(
                     new Term(subject.served().docIdField(), docId));
-            subject.writer().commit();
-            subject.searchers().maybeRefresh();
+            afterWrite(subject);
         } catch (IOException e) {
             throw new UncheckedIOException(
                     "cannot delete '" + docId + "' from '" + subjectName + "'", e);
@@ -328,6 +425,10 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         }
         if (request.getK() <= 0) {
             throw new IllegalArgumentException("k must be positive, got " + request.getK());
+        }
+        if (request.getK() > MAX_K) {
+            throw new IllegalArgumentException(
+                    "k must be at most " + MAX_K + ", got " + request.getK());
         }
         return switch (request.getLane()) {
             case SEARCH_LANE_LEXICAL -> hits(subject, lexical(subject, request), request.getK());
@@ -474,6 +575,14 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
 
     @Override
     public void close() {
+        // The committer stops (and its in-flight tick drains) before any
+        // writer closes, so a tick never commits against a closed writer.
+        committer.shutdownNow();
+        try {
+            committer.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         UncheckedIOException failure = null;
         for (Subject subject : subjects.values()) {
             try {

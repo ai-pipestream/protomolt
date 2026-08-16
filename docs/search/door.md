@@ -41,7 +41,22 @@ convention `"<sourceField>#<model>"`), and writes the block children-first
 parent-last. Re-indexing atomically replaces the document's previous block
 by identity term, so replays never duplicate.
 
+Visibility and durability are decoupled. Every write refreshes the
+near-real-time searcher, so a document answers queries the moment its
+index call returns; durability commits (fsyncs) batch instead — per 64
+writes, on a 2-second flush, and on close — so a corpus-wide replay fsyncs
+per batch rather than per document. The honest trade: a crash loses at
+most the last interval's writes, and a replay re-derives them.
+
+Every repo read the door makes (the indexing fetch and replay's listing)
+carries a 30-second call deadline: a hung repository fails the calling
+workflow step, which requeues with backoff, instead of parking a worker
+forever.
+
 ## Querying
+
+Queries name a subject, a lane, a query text, and `k` — all required, and
+`k` is bounded (1000): one query cannot ask for the whole index.
 
 `SearchService/Search` runs one of three lanes against a subject:
 
