@@ -29,6 +29,16 @@
   defense in depth). If the job starts failing on auth again, the token
   needs rotation, not a workflow change.
 
+## Dependency updates (renovate)
+
+Renovate runs on the Forgejo instance and opens its PRs there, but Forgejo
+runs no build CI for this repo, so a renovate PR is never merged in place.
+The flow: cherry-pick the renovate branches onto one rollup branch cut from
+current main, verify locally (full build plus the console lockfile check),
+open a GitHub PR (the build of record), merge on green, sync Forgejo main,
+then close the Forgejo renovate PRs with a comment pointing at the rollup.
+Renovate detects the updated dependencies on its next run either way.
+
 ## Vocabulary (ADR-001)
 
 | Domain | Word |
