@@ -178,10 +178,10 @@ against the repository listing (which now serves only AVAILABLE rows),
 durability commits batch behind a near-real-time searcher, every repo
 read carries a call deadline, and `k` is bounded. Still open:
 
-- `SearchHit.stored` is string-only, and `SearchRequest` constraints are
-  enforced in the door's Java refusals rather than by proto validation
-  annotations (the repo-wide annotation family is not yet enforced
-  anywhere in production).
+- `SearchHit.stored` is string-only. The `search.v1` request messages now
+  carry `validate.v1` annotations as machine-readable contract, but the
+  live enforcement remains the door's Java refusals: the repo-wide
+  validating interceptors are not yet installed in any production server.
 - Body derivation belongs in the coordinator: the text parser claiming
   `body` fixed the reference path, but gRParse-parsed documents still index
   with an empty body. The long-term home is coordinator-side derivation

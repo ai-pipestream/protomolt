@@ -48,6 +48,7 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
+import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
@@ -391,23 +392,36 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
      *
      * @param subjectName the mapping subject
      * @param docId the document identity to remove
+     * @return the number of chunk children removed, counted across every
+     *         policy digest, so a caller can tell a real removal from a
+     *         no-op
      */
     @Override
-    public void delete(String subjectName, String docId) {
+    public int delete(String subjectName, String docId) {
         Subject subject = subject(subjectName);
         if (docId == null || docId.isBlank()) {
             throw new IllegalArgumentException(
                     "doc_id is required; cannot delete from '" + subjectName + "'");
         }
+        IndexSearcher searcher = null;
         try {
+            // Chunk identity is <doc_id>#<digest12>#<ordinal>: the prefix
+            // counts this document's chunk children whatever digest they
+            // were derived under.
+            searcher = subject.searchers().acquire();
+            int chunks = searcher.count(
+                    new PrefixQuery(new Term(CHUNK_ID_FIELD, docId + "#")));
             // The parent and its chunk children all carry the identity
             // term, so one term delete removes the whole block.
             subject.writer().deleteDocuments(
                     new Term(subject.served().docIdField(), docId));
             afterWrite(subject);
+            return chunks;
         } catch (IOException e) {
             throw new UncheckedIOException(
                     "cannot delete '" + docId + "' from '" + subjectName + "'", e);
+        } finally {
+            release(subject, searcher);
         }
     }
 

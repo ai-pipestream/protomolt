@@ -134,7 +134,8 @@ public final class SearchWorkflows {
         ObjectNode output = workflow.putObject("output");
         output.put("type", "ai.pipestream.proto.search.v1.DeleteDocumentResponse");
         output.putArray("rules")
-                .add("doc_id = unindex.doc_id");
+                .add("doc_id = unindex.doc_id")
+                .add("chunks_deleted = unindex.chunks_deleted");
         return workflow;
     }
 

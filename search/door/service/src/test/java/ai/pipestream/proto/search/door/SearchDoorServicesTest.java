@@ -306,7 +306,7 @@ class SearchDoorServicesTest {
 
     @Test
     void deletingRemovesTheDocumentFromEveryLaneAndIsIdempotent() {
-        index("doc-del");
+        IndexDocumentResponse landed = index("doc-del");
         assertThat(searchStub.search(
                 query(SearchLane.SEARCH_LANE_LEXICAL, "zeppelin").setK(5).build())
                 .getHitsList()).isNotEmpty();
@@ -317,6 +317,8 @@ class SearchDoorServicesTest {
                         .setDocId("doc-del")
                         .build());
         assertThat(gone.getDocId()).isEqualTo("doc-del");
+        // The response reports exactly the chunk children indexing landed.
+        assertThat(gone.getChunksDeleted()).isEqualTo(landed.getChunksIndexed());
 
         assertThat(searchStub.search(
                 query(SearchLane.SEARCH_LANE_LEXICAL, "zeppelin").setK(5).build())
@@ -329,11 +331,24 @@ class SearchDoorServicesTest {
         assertThat(vector.getHitsList())
                 .allSatisfy(hit -> assertThat(hit.getDocId()).isNotEqualTo("doc-del"));
 
-        // Idempotent: deleting an id the index no longer holds succeeds.
-        indexStub.deleteDocument(DeleteDocumentRequest.newBuilder()
+        // Idempotent: deleting an id the index no longer holds succeeds,
+        // with zero removals reported.
+        assertThat(indexStub.deleteDocument(DeleteDocumentRequest.newBuilder()
                 .setMappingSubject(RepoDocumentMapping.SUBJECT)
                 .setDocId("doc-del")
-                .build());
+                .build())
+                .getChunksDeleted()).isZero();
+    }
+
+    @Test
+    void deletingADocumentThatWasNeverIndexedSucceedsWithZeroRemovals() {
+        DeleteDocumentResponse deleted = indexStub.deleteDocument(
+                DeleteDocumentRequest.newBuilder()
+                        .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                        .setDocId("doc-never-indexed")
+                        .build());
+        assertThat(deleted.getDocId()).isEqualTo("doc-never-indexed");
+        assertThat(deleted.getChunksDeleted()).isZero();
     }
 
     @Test

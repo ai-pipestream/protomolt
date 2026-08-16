@@ -989,23 +989,27 @@ public final class ProtoMoltServe implements AutoCloseable {
 
     private static ai.pipestream.proto.workflow.WorkflowRepository workflowRepository(
             GitSchemaRegistryStore store) {
+        return workflowRepository(store::workflow);
+    }
+
+    static ai.pipestream.proto.workflow.WorkflowRepository workflowRepository(
+            java.util.function.Function<String, java.util.Optional<String>> lookup) {
         com.fasterxml.jackson.databind.ObjectMapper json =
                 new com.fasterxml.jackson.databind.ObjectMapper();
-        return name -> {
+        return name -> lookup.apply(name).map(text -> {
+            com.fasterxml.jackson.databind.JsonNode node;
             try {
-                return store.workflow(name).map(text -> {
-                    try {
-                        var node = json.readTree(text);
-                        return node instanceof com.fasterxml.jackson.databind.node.ObjectNode workflow
-                                ? workflow : null;
-                    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                        return null;
-                    }
-                });
-            } catch (Exception e) {
-                return java.util.Optional.empty();
+                node = json.readTree(text);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalStateException(
+                        "Stored workflow '" + name + "' is not valid JSON", e);
             }
-        };
+            if (!(node instanceof com.fasterxml.jackson.databind.node.ObjectNode workflow)) {
+                throw new IllegalStateException(
+                        "Stored workflow '" + name + "' is not a JSON object");
+            }
+            return workflow;
+        });
     }
 
     private static void closeQuietly(AutoCloseable closeable) {

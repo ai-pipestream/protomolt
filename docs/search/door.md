@@ -86,7 +86,9 @@ this by default and its smoke IT proves ingest-to-search-hit over real TCP.
 and chunk children in one term delete — from a mapping subject's index.
 It is idempotent (deleting an absent id succeeds: "not searchable" already
 holds) and refuses an unknown subject or a blank `doc_id` by name, like
-every door request.
+every door request. The response reports `chunks_deleted`, counted across
+every policy digest, so a caller can tell a real removal from a no-op —
+a never-indexed id answers zero, not an error.
 
 Removal is durable through `delete-and-unindex`, parse-and-index's mirror
 (`SearchWorkflows.deleteAndUnindexWorkflow`): the repository deletes the

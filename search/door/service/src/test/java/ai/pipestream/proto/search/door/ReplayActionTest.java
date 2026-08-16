@@ -75,10 +75,11 @@ class ReplayActionTest {
         }
 
         @Override
-        public void delete(String subjectName, String docId) {
+        public int delete(String subjectName, String docId) {
             check(subjectName);
             ids.remove(docId);
             deleted.add(docId);
+            return 0;
         }
 
         private void check(String subjectName) {
