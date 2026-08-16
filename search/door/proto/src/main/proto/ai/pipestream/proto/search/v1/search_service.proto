@@ -103,7 +103,9 @@ message SearchRequest {
   string mapping_subject = 1;
   // The query text. Required.
   string query = 2;
-  // Maximum hits to return. Required; must be positive.
+  // Maximum hits to return. Required; must be positive, and the door
+  // bounds it (refusing an over-limit k by name) so one query cannot ask
+  // for the whole index.
   int32 k = 3;
   // The lane to run. Required.
   SearchLane lane = 4;

@@ -7,6 +7,7 @@ import ai.pipestream.proto.composer.ServiceMount;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import io.grpc.Server;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -75,9 +76,13 @@ public final class SearchDoorModule implements ServiceModule {
         return Set.of("repo", "parse", "registry", "jobs");
     }
 
+    /** Per-call deadline on every repo read the door makes. */
+    private static final Duration REPO_RPC_TIMEOUT = Duration.ofSeconds(30);
+
     @Override
     public ServiceMount wire(NodeContext context) throws Exception {
-        GrpcDocumentFetcher repo = new GrpcDocumentFetcher(context.channels().targetOf("repo"));
+        GrpcDocumentFetcher repo = new GrpcDocumentFetcher(
+                context.channels().targetOf("repo"), REPO_RPC_TIMEOUT);
         try {
             door = SearchDoorServices.build(
                     new SearchDoorConfig(config.grpcPort(), config.indexDir(), config.subjects()),

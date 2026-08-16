@@ -220,6 +220,15 @@ class SearchDoorServicesTest {
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode())
                                 .isEqualTo(Status.Code.INVALID_ARGUMENT));
+        assertThatThrownBy(() -> searchStub.search(
+                query(SearchLane.SEARCH_LANE_LEXICAL, "alpha")
+                        .setK(LuceneSearchStore.MAX_K + 1).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("at most " + LuceneSearchStore.MAX_K);
+                });
     }
 
     @Test

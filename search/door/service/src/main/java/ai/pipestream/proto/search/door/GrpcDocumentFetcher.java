@@ -10,12 +10,16 @@ import ai.pipestream.proto.repo.v1.NodeAddress;
 import io.grpc.ManagedChannel;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
  * {@link DocumentFetcher} over the repo wire contract: reads CORE and PARSED
  * parts through the {@code DocumentServiceGrpc} blocking stub. The target is
- * a {@code host:port} authority or {@code inprocess:<name>}.
+ * a {@code host:port} authority or {@code inprocess:<name>}. Every call
+ * carries the configured deadline, so a hung repository fails the calling
+ * workflow step (which requeues with backoff) instead of parking a worker
+ * thread forever.
  */
 public final class GrpcDocumentFetcher implements DocumentFetcher, DocumentLister, AutoCloseable {
 
@@ -23,16 +27,22 @@ public final class GrpcDocumentFetcher implements DocumentFetcher, DocumentListe
     public static final String INPROCESS_TARGET_PREFIX = "inprocess:";
 
     private final ManagedChannel channel;
+    private final Duration rpcTimeout;
 
     /**
      * Opens the repo channel.
      *
      * @param target a {@code host:port} authority or {@code inprocess:<name>}
+     * @param rpcTimeout per-call deadline; must be positive
      */
-    public GrpcDocumentFetcher(String target) {
+    public GrpcDocumentFetcher(String target, Duration rpcTimeout) {
         if (target == null || target.isBlank()) {
             throw new IllegalArgumentException("target must not be blank");
         }
+        if (rpcTimeout == null || rpcTimeout.isZero() || rpcTimeout.isNegative()) {
+            throw new IllegalArgumentException("rpcTimeout must be positive");
+        }
+        this.rpcTimeout = rpcTimeout;
         if (target.startsWith(INPROCESS_TARGET_PREFIX)) {
             this.channel = InProcessChannelBuilder
                     .forName(target.substring(INPROCESS_TARGET_PREFIX.length()))
@@ -44,7 +54,7 @@ public final class GrpcDocumentFetcher implements DocumentFetcher, DocumentListe
 
     @Override
     public Document fetch(NodeAddress address) {
-        return DocumentServiceGrpc.newBlockingStub(channel)
+        return stub()
                 .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
                         .setAddress(address)
                         .addParts(DocumentPart.DOCUMENT_PART_CORE)
@@ -55,7 +65,13 @@ public final class GrpcDocumentFetcher implements DocumentFetcher, DocumentListe
 
     @Override
     public ListDocumentsResponse list(ListDocumentsRequest request) {
-        return DocumentServiceGrpc.newBlockingStub(channel).listDocuments(request);
+        return stub().listDocuments(request);
+    }
+
+    /** One deadline-carrying stub per call: deadlines are absolute. */
+    private DocumentServiceGrpc.DocumentServiceBlockingStub stub() {
+        return DocumentServiceGrpc.newBlockingStub(channel)
+                .withDeadlineAfter(rpcTimeout.toNanos(), TimeUnit.NANOSECONDS);
     }
 
     @Override
