@@ -252,10 +252,15 @@ unfinished edges.
    refusals, catalog verbs. No Postgres wire, no GraphQL, no DAX, no
    chart builder, no bundled chat UI: agents get aggregates through the
    same catalog and protocols they already use for everything else.
-2. **One mapping, two backends.** The mapping is the contract. Lucene
-   faceting and Iceberg/DuckDB are executors. A query names a subject
-   and a backend; the door (or metric service) refuses a backend the
-   subject was not mounted with.
+2. **One mapping, engines behind an interface.** The mapping is the
+   contract; execution is a `MetricExecutor` SPI, and **Lucene is the
+   shipped default executor** (it reads doc values the door already
+   writes). The subject's mount chooses the engine. A query only names
+   a backend to disambiguate: on a single-engine mount an unset backend
+   means the mount's engine, which is configuration, not a guess; on a
+   multi-engine mount an unset backend is refused naming the mounted
+   engines. A backend the subject was not mounted with is refused. The
+   response's `physical_plan` always says what actually ran.
 3. **Refuse, never guess.** Unknown subject, unknown member, grain on a
    non-`DATE` member, measure used as group-by, empty measures, `limit`
    over the bound: refused by name with the legal set, same voice as
@@ -446,7 +451,9 @@ New package `ai.pipestream.proto.metric.v1` (service file, may live in
 
 ```protobuf
 enum MetricBackend {
-  METRIC_BACKEND_UNSPECIFIED = 0; // refuse; never default
+  // Unset = the mount's engine on a single-engine mount; refused with
+  // the mounted set on a multi-engine mount. Never a silent pick.
+  METRIC_BACKEND_UNSPECIFIED = 0;
   METRIC_BACKEND_LUCENE = 1;
   METRIC_BACKEND_ICEBERG = 2;
 }
@@ -464,7 +471,11 @@ message MetricFilter {
 
 message QueryMetricsRequest {
   string mapping_subject = 1;          // required
-  MetricBackend backend = 2;           // required
+  // Explicit engine selector. Unset on a single-engine mount means the
+  // mount's engine (configuration, not a guess). Unset on a multi-engine
+  // mount is refused naming the mounted engines. A backend the subject
+  // was not mounted with is refused.
+  MetricBackend backend = 2;
   repeated string measures = 3;        // required, min 1
   repeated MemberRef dimensions = 4;   // group-by, may be empty
   repeated MetricFilter filters = 5;
@@ -540,12 +551,38 @@ question, and it costs zero chat-specific code.
 | `query-metrics` | Run a `QueryMetricsRequest` (proto3 JSON) and return rows plus plan |
 
 Refuse with stable kebab-case codes: `unknown-subject`, `unknown-member`,
-`unknown-backend`, `invalid-grain`, `invalid-limit`, `empty-measures`,
-`role-mismatch`. The legal set goes in `details`.
+`unknown-backend`, `ambiguous-backend` (unset on a multi-engine mount),
+`unsupported-aggregate` (executor capability), `invalid-grain`,
+`invalid-limit`, `empty-measures`, `role-mismatch`. The legal set goes
+in `details`.
+
+### Executor SPI
+
+Execution sits behind one interface in `protomolt-metric-spi`, loaded
+via ServiceLoader the same way chunker, embeddings, and rerank
+providers are. The SPI owns mapping build, member resolution, and every
+schema and query refusal; an executor receives a **compiled,
+already-validated** query and returns rows plus its physical plan:
+
+- `MetricExecutor.capabilities()` declares what the engine can run
+  (which aggregates, whether `COUNT_DISTINCT` stays bounded, grain
+  support). A query needing a capability the mounted executor lacks is
+  refused by name with the executor's legal set; capabilities differ
+  per engine and are never flattened to a common denominator.
+- `MetricExecutor.execute(CompiledMetricQuery)` runs the reduction.
+  Executors never see raw request JSON and never make policy choices.
+
+Because everything is gRPC, the SPI seam can be crossed by a wire: an
+executor implementation that is a gRPC client pointed at a remote
+metric node is indistinguishable from the in-process one, the same move
+parse made with `ParserPluginService` and embeddings made with TEI. A
+`metrics` role node then slots into the existing role pattern
+(`PROTOMOLT_ROLES`, `PROTOMOLT_METRICS_TARGET`). Swapping or scaling
+the analytics engine never touches the contract.
 
 ### Execution
 
-**Lucene (interactive, document-native).** Requires the subject already
+**Lucene (interactive, document-native, the shipped default).** Requires the subject already
 indexed by the search door. Group-by members must be `facetable` (or
 `sortable` for single-valued numerics); the doc values are already
 written today, so this backend is a read path over existing storage.
@@ -562,8 +599,10 @@ file-skipping work. DuckDB is an in-process reader over the table's
 files, not a warehouse product we operate. Trino/Spark stay external
 consumers of the same table; they are not v1 backends.
 
-A subject may mount one or both backends. `METRIC_BACKEND_UNSPECIFIED`
-is a failed precondition, not "pick whichever exists."
+A subject may mount one or both backends. On a single-engine mount an
+unset backend resolves to that engine; on a multi-engine mount it is a
+failed precondition naming the mounted set, not "pick whichever
+exists."
 
 `physical_plan` for Lucene is the collector description; for Iceberg it
 is the DuckDB SQL. Both are evidence.
@@ -583,6 +622,41 @@ when a subject is too large for on-the-fly GROUP BY. That later
 workflow, not Cube Store, is this platform's answer to
 pre-aggregations: declared, durable, evidenced, and optional.
 
+### Index snapshots to S3
+
+A door/store feature that metrics inherits, not a metric module. Per
+the separation rule it lands with the search store and is useful with
+no metric code on the classpath.
+
+- **The repository stays the source of truth; a snapshot is a cache.**
+  `replay-documents` already rebuilds any subject's index from the
+  repo. Restore from S3 when a snapshot exists; fall through to replay
+  when it does not, or when it is stale or fails verification. Losing
+  the bucket loses time, never data.
+- **Snapshot at commit points, never a live S3 directory.** The store
+  already batches durability into explicit commits. A commit is an
+  immutable set of segment files: hold the commit point open
+  (`SnapshotDeletionPolicy`), upload files the bucket does not already
+  have, and write the new `segments_N` last as the atomic marker that
+  the snapshot exists. Segment immutability makes uploads incremental
+  for free. Running Lucene's `Directory` live over object storage is
+  refused as a design: S3 is not a filesystem, and locking over it is
+  unsafe.
+- **Identity keys the snapshot to what produced it**:
+  `{subject}/{mapping-digest}/{policy-digest}/...`. Change the mapping
+  or the chunking policy and the old snapshot is automatically not
+  yours to restore; the mount falls through to replay instead of
+  serving a stale shape. No assumed compatibility.
+- **Session lifecycle**: a mount may declare an S3 location; it
+  restores on boot and snapshots on the commit cadence and on close.
+- **This is what makes the remote metrics role cheap.** The indexing
+  node commits and uploads; analytics nodes restore the snapshot and
+  serve `QueryMetrics` read-only, refreshing on the next snapshot. A
+  reader/writer split over object storage with no cluster protocol,
+  behind the same `MetricExecutor` interface. Freshness is the
+  snapshot cadence, and `physical_plan` plus the snapshot id say what
+  was served.
+
 ## Out of scope (do not sneak in)
 
 - Cube Cloud BI surfaces: workbooks, dashboards, chart types, Slack,
@@ -600,7 +674,9 @@ pre-aggregations: declared, durable, evidenced, and optional.
   authorization scopes)
 - RANGE / CEL query filters (v1.1; v1 is equality sets)
 - Mixing retrieval hits into an aggregate in one RPC
-- Default backend, default subject, default limit
+- Default subject, default limit, and any backend guess on a
+  multi-engine mount (a single-engine mount resolving an unset backend
+  is configuration, not a default)
 
 ## Suggested module layout
 
@@ -610,7 +686,7 @@ alone per the platform rule; none requires the others at runtime.
 | Path | Artifact | Role |
 |---|---|---|
 | `protobuf/metric/` or `search/metrics/options/` | `protomolt-protobuf-metric` | Option proto + reader, sibling to `protobuf-metadata` |
-| `search/metrics/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors |
+| `search/metrics/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` SPI |
 | `search/metrics/lucene/` | `protomolt-metric-lucene` | Collector backend |
 | `search/metrics/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend |
 | `search/metrics/door/` or next to `search/door/` | `protomolt-metric-door` | `MetricService`, subject mount, refusals |
@@ -633,8 +709,11 @@ A later implementation is done when all of the following hold:
 4. `QueryMetrics` on Iceberg/DuckDB over a table written by
    `IcebergSink` from the same descriptor returns the same numbers.
 5. Unknown subject, unknown member, grain on a keyword, empty measures,
-   `limit` 0 or 1001, unset backend: each refused by name with the
-   legal set. Covered by tests, not comments.
+   `limit` 0 or 1001, a backend the subject was not mounted with, an
+   unset backend on a multi-engine mount, and an aggregate the mounted
+   executor's capabilities exclude: each refused by name with the
+   legal set. An unset backend on a single-engine mount executes on the
+   mount's engine. Covered by tests, not comments.
 6. The validating interceptor is mounted on `MetricService` and the
    `validate.v1` annotations on the request messages are what enforces
    the shape rules, with the hand-written refusals covering only what
