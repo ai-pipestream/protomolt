@@ -19,6 +19,7 @@ import ai.pipestream.proto.search.v1.SearchHit;
 import ai.pipestream.proto.search.v1.SearchIndexServiceGrpc;
 import ai.pipestream.proto.search.v1.SearchLane;
 import ai.pipestream.proto.search.v1.SearchRequest;
+import ai.pipestream.proto.search.v1.StoredValue;
 import ai.pipestream.proto.search.v1.SearchResponse;
 import ai.pipestream.proto.search.v1.SearchServiceGrpc;
 import io.grpc.ManagedChannel;
@@ -145,7 +146,8 @@ class SearchDoorServicesTest {
         assertThat(byBody.getHits(0).getDocId()).isEqualTo("doc-1");
         assertThat(byBody.getHits(0).getChunkId()).isEmpty();
         assertThat(byBody.getHits(0).getStoredMap())
-                .containsEntry("search_metadata_title", "Alpha Treaty Archive");
+                .containsEntry("search_metadata_title", StoredValue.newBuilder()
+                        .setStringValue("Alpha Treaty Archive").build());
     }
 
     @Test
@@ -160,7 +162,8 @@ class SearchDoorServicesTest {
         assertThat(nearest.getDocId()).isEqualTo("doc-1");
         assertThat(nearest.getChunkId())
                 .startsWith("doc-1#" + policy().digest().substring(0, 12) + "#");
-        assertThat(nearest.getStoredMap().get(LuceneSearchStore.CHUNK_TEXT_FIELD))
+        assertThat(nearest.getStoredMap().get(LuceneSearchStore.CHUNK_TEXT_FIELD)
+                .getStringValue())
                 .contains("Gears and pistons");
     }
 

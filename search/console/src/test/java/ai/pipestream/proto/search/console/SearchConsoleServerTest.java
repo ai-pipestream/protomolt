@@ -7,6 +7,7 @@ import ai.pipestream.proto.search.v1.SearchLane;
 import ai.pipestream.proto.search.v1.SearchRequest;
 import ai.pipestream.proto.search.v1.SearchResponse;
 import ai.pipestream.proto.search.v1.SearchServiceGrpc;
+import ai.pipestream.proto.search.v1.StoredValue;
 import ai.pipestream.proto.search.v1.SubjectInfo;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -66,7 +67,8 @@ class SearchConsoleServerTest {
             observer.onNext(SearchResponse.newBuilder()
                     .addHits(SearchHit.newBuilder()
                             .setDocId("doc-1").setScore(0.5f)
-                            .putStored("title", "First Document"))
+                            .putStored("title", StoredValue.newBuilder()
+                                    .setStringValue("First Document").build()))
                     .build());
             observer.onCompleted();
         }
@@ -173,7 +175,8 @@ class SearchConsoleServerTest {
         JsonNode hits = json.readTree(response.body()).get("hits");
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).get("docId").asText()).isEqualTo("doc-1");
-        assertThat(hits.get(0).get("stored").get("title").asText()).isEqualTo("First Document");
+        assertThat(hits.get(0).get("stored").get("title").get("stringValue").asText())
+                .isEqualTo("First Document");
 
         SearchRequest sent = lastSearch.get();
         assertThat(sent.getQuery()).isEqualTo("first");

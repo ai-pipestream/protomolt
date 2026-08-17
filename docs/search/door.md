@@ -67,7 +67,11 @@ Queries name a subject, a lane, a query text, and `k` — all required, and
 | `SEARCH_LANE_HYBRID` | Both lanes, fused by reciprocal rank (k=60) |
 
 Hits carry the document identity, the chunk identity for chunk hits, the
-lane score, and the stored fields of the matching document or chunk.
+lane score, and the stored fields of the matching document or chunk as
+typed cells (`StoredValue`): the mapping's declared kind decides the arm,
+so a keyword arrives as a string, an `INT64` as an integer, a `DATE` as a
+timestamp, and a caller never re-parses rendered strings. Every stored
+field the engine returns appears, numerics and dates included.
 
 ## The parse-and-index workflow
 

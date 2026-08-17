@@ -272,7 +272,9 @@ class DocumentPlatformSmokeIT {
             assertThat(hits.getHitsList()).isNotEmpty();
             assertThat(hits.getHits(0).getDocId()).isEqualTo(receipt.getDocId());
             assertThat(hits.getHits(0).getStoredMap())
-                    .containsEntry("search_metadata_title", "Platform Smoke");
+                    .containsEntry("search_metadata_title",
+                            ai.pipestream.proto.search.v1.StoredValue.newBuilder()
+                                    .setStringValue("Platform Smoke").build());
         } finally {
             searchChannel.shutdownNow();
         }

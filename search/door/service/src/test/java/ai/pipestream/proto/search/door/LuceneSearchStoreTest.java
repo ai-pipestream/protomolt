@@ -4,13 +4,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.pipestream.proto.chunk.SentencePackedChunker;
+import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.ChunkingPolicy;
+import ai.pipestream.proto.index.spi.IndexFieldKind;
+import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
 import ai.pipestream.proto.search.v1.SearchHit;
 import ai.pipestream.proto.search.v1.SearchLane;
 import ai.pipestream.proto.search.v1.SearchRequest;
+import ai.pipestream.proto.search.v1.StoredValue;
+import com.google.protobuf.DescriptorProtos.DescriptorProto;
+import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
+import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Timestamp;
+import com.google.protobuf.TimestampProto;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -49,6 +63,90 @@ class LuceneSearchStoreTest {
                         .setTitle("Title of " + docId)
                         .setBody(body))
                 .build();
+    }
+
+    @Test
+    void storedValuesCarryTheMappingsTypes() throws Exception {
+        // A deliberately non-uniform fixture: every stored kind the mapper
+        // writes, in one subject, so type coercion cannot hide behind a
+        // strings-only mapping. Numeric and date cells were silently
+        // dropped before stored values were typed.
+        Descriptor order = orderDescriptor();
+        CatalogIndexingHintSource catalog = new CatalogIndexingHintSource();
+        catalog.put("test.Order", "id",
+                ResolvedFieldHint.builder(IndexFieldKind.KEYWORD).stored(true).build());
+        catalog.put("test.Order", "title",
+                ResolvedFieldHint.builder(IndexFieldKind.TEXT).stored(true).build());
+        catalog.put("test.Order", "amount",
+                ResolvedFieldHint.builder(IndexFieldKind.INT64).stored(true).build());
+        catalog.put("test.Order", "ratio",
+                ResolvedFieldHint.builder(IndexFieldKind.DOUBLE).stored(true).build());
+        catalog.put("test.Order", "paying",
+                ResolvedFieldHint.builder(IndexFieldKind.BOOLEAN).stored(true).build());
+        catalog.put("test.Order", "created_at",
+                ResolvedFieldHint.builder(IndexFieldKind.DATE).stored(true).build());
+        IndexMapping mapping = IndexMappingFactory.defaults(catalog).create(order);
+        ServedMapping served = new ServedMapping(mapping, "id",
+                message -> (String) message.getField(order.findFieldByName("id")), null);
+        try (LuceneSearchStore store = new LuceneSearchStore(work, Map.of("orders", served))) {
+            store.index("orders", DynamicMessage.newBuilder(order)
+                    .setField(order.findFieldByName("id"), "order-1")
+                    .setField(order.findFieldByName("title"), "Autumn ledger of gears")
+                    .setField(order.findFieldByName("amount"), 4200L)
+                    .setField(order.findFieldByName("ratio"), 0.5d)
+                    .setField(order.findFieldByName("paying"), true)
+                    .setField(order.findFieldByName("created_at"),
+                            Timestamp.newBuilder().setSeconds(1_700_000_000L).build())
+                    .build());
+            List<SearchHit> hits = store.search("orders", SearchRequest.newBuilder()
+                    .setMappingSubject("orders")
+                    .setQuery("autumn ledger")
+                    .setK(3)
+                    .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                    .build());
+            assertThat(hits).hasSize(1);
+            Map<String, StoredValue> stored = hits.get(0).getStoredMap();
+            assertThat(stored.get("id").getStringValue()).isEqualTo("order-1");
+            assertThat(stored.get("title").getStringValue())
+                    .isEqualTo("Autumn ledger of gears");
+            assertThat(stored.get("amount").getInt64Value()).isEqualTo(4200L);
+            assertThat(stored.get("ratio").getDoubleValue()).isEqualTo(0.5d);
+            assertThat(stored.get("paying").getBoolValue()).isTrue();
+            assertThat(stored.get("created_at").getTimestampValue())
+                    .isEqualTo(Timestamp.newBuilder().setSeconds(1_700_000_000L).build());
+        }
+    }
+
+    /** {@code test.Order}: one field per stored kind, built dynamically. */
+    static Descriptor orderDescriptor() throws Exception {
+        DescriptorProto.Builder message = DescriptorProto.newBuilder().setName("Order");
+        message.addField(scalar("id", 1, FieldDescriptorProto.Type.TYPE_STRING));
+        message.addField(scalar("title", 2, FieldDescriptorProto.Type.TYPE_STRING));
+        message.addField(scalar("amount", 3, FieldDescriptorProto.Type.TYPE_INT64));
+        message.addField(scalar("ratio", 4, FieldDescriptorProto.Type.TYPE_DOUBLE));
+        message.addField(scalar("paying", 5, FieldDescriptorProto.Type.TYPE_BOOL));
+        message.addField(FieldDescriptorProto.newBuilder()
+                .setName("created_at").setNumber(6)
+                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                .setTypeName(".google.protobuf.Timestamp")
+                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL));
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("test/order.proto")
+                .setPackage("test")
+                .setSyntax("proto3")
+                .addDependency("google/protobuf/timestamp.proto")
+                .addMessageType(message)
+                .build();
+        return FileDescriptor
+                .buildFrom(file, new FileDescriptor[] {TimestampProto.getDescriptor()})
+                .findMessageTypeByName("Order");
+    }
+
+    static FieldDescriptorProto.Builder scalar(
+            String name, int number, FieldDescriptorProto.Type type) {
+        return FieldDescriptorProto.newBuilder()
+                .setName(name).setNumber(number).setType(type)
+                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL);
     }
 
     @Test
