@@ -21,6 +21,13 @@ text field it derives from. Every request is gated by membership:
   failed precondition,
 - an unset lane and a non-positive `k` are refused rather than defaulted.
 
+Before any of that, the proto's own declared rules answer at the boundary:
+both door servers mount the gRPC validating interceptor, so a request that
+violates `validate.v1` annotations (an empty query, an out-of-range `k`, a
+missing subject) is refused with the schema's wording before a handler
+runs. Handlers keep only the judgments a schema cannot make, like mapping
+membership.
+
 `RepoDocumentMapping` is the out-of-the-box subject (`repo-document`):
 identity plus the folded search metadata, storage and provenance planes
 skipped, with an optional chunk lane over the folded body.

@@ -16,6 +16,9 @@ dependencies {
     // contract; the module registers it with a co-mounted registry.
     implementation project(':protomolt-parse-proto')
     implementation project(':protomolt-registry')
+    // Boundary enforcement of the search proto's validate.v1 rules; both door
+    // servers mount the interceptor, so no handler re-implements range checks.
+    implementation project(':protomolt-grpc-validation')
     implementation project(':protomolt-actions')
     implementation libs.protobuf.java.util
     implementation libs.jackson.databind
