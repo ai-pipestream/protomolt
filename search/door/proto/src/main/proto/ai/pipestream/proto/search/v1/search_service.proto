@@ -179,6 +179,7 @@ message SearchRequest {
 // therefore never re-parses a rendered string to recover the value the
 // mapping stored.
 message StoredValue {
+  // Exactly one arm, chosen by the mapping's declared field kind.
   oneof kind {
     // TEXT, KEYWORD, and JSON-folded object fields.
     string string_value = 1;
