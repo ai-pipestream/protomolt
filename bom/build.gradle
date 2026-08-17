@@ -76,6 +76,7 @@ def supportedModules = [
         'protomolt-protobuf-metric',
         'protomolt-metric-proto',
         'protomolt-metric-spi',
+        'protomolt-metric-lucene',
         'protomolt-search-door',
         'protomolt-search-console',
         'protomolt-index-ndjson',

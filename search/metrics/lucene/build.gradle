@@ -1,0 +1,21 @@
+description = 'Lucene metric executor — aggregate collectors over the doc values the search door already writes'
+
+dependencies {
+    api project(':protomolt-metric-spi')
+    api project(':protomolt-index-spi')
+    api libs.lucene.core
+    implementation libs.slf4j.api
+
+    // The end-to-end proof runs over the real door store: index documents,
+    // aggregate them, hand-check the numbers.
+    testImplementation project(':protomolt-search-door')
+}
+
+// The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an
+// older JVM: the test launcher stays on the toolchain JDK and -PtestJdk is ignored
+// here (same pin as :protomolt-index-lucene).
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
