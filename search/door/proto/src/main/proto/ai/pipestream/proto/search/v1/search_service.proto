@@ -4,6 +4,7 @@ package ai.pipestream.proto.search.v1;
 
 import "ai/pipestream/proto/repo/v1/address.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.search.v1";
@@ -171,6 +172,30 @@ message SearchRequest {
   repeated string fields = 5;
 }
 
+// One stored field value, typed by the mapping that declared the field.
+// The declared index kind decides the arm: TEXT/KEYWORD and JSON-folded
+// object fields are strings, INT32/INT64 are int64, FLOAT/DOUBLE are
+// double, BOOLEAN is bool, DATE is a timestamp, BINARY is bytes. A caller
+// therefore never re-parses a rendered string to recover the value the
+// mapping stored.
+message StoredValue {
+  // Exactly one arm, chosen by the mapping's declared field kind.
+  oneof kind {
+    // TEXT, KEYWORD, and JSON-folded object fields.
+    string string_value = 1;
+    // INT32 and INT64 fields; int32 widens losslessly.
+    int64 int64_value = 2;
+    // FLOAT and DOUBLE fields; float widens losslessly.
+    double double_value = 3;
+    // BOOLEAN fields.
+    bool bool_value = 4;
+    // DATE fields, from the stored engine-unit epoch.
+    google.protobuf.Timestamp timestamp_value = 5;
+    // BINARY fields.
+    bytes bytes_value = 6;
+  }
+}
+
 // One search hit.
 message SearchHit {
   // The matching document's id.
@@ -182,8 +207,9 @@ message SearchHit {
   // fusion score for hybrid.
   float score = 3;
   // Stored fields of the matching document or chunk, keyed by index field
-  // name.
-  map<string, string> stored = 4;
+  // name and typed by the mapping. Every stored field the engine returns
+  // appears here, numerics and dates included, not only string-valued ones.
+  map<string, StoredValue> stored = 4;
 }
 
 // Hits, best first.

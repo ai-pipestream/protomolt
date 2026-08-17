@@ -129,18 +129,30 @@ final class SearchConsolePage {
               id.className = 'id';
               id.textContent = hit.chunkId || hit.docId || '';
               card.appendChild(id);
+              // Stored values are typed cells (search.v1 StoredValue); the
+              // proto3 JSON form carries exactly one populated arm.
+              const cell = v => {
+                if (v == null || typeof v !== 'object') return String(v);
+                if ('stringValue' in v) return v.stringValue;
+                if ('int64Value' in v) return String(v.int64Value);
+                if ('doubleValue' in v) return String(v.doubleValue);
+                if ('boolValue' in v) return String(v.boolValue);
+                if ('timestampValue' in v) return v.timestampValue;
+                if ('bytesValue' in v) return '(bytes)';
+                return JSON.stringify(v);
+              };
               const stored = hit.stored || {};
               if (stored.chunk_text) {
                 const text = document.createElement('p');
                 text.className = 'text';
-                text.textContent = stored.chunk_text;
+                text.textContent = cell(stored.chunk_text);
                 card.appendChild(text);
               }
               const fields = document.createElement('dl');
               for (const [key, value] of Object.entries(stored)) {
                 if (key === 'chunk_text') continue;
                 const dt = document.createElement('dt'); dt.textContent = key;
-                const dd = document.createElement('dd'); dd.textContent = value;
+                const dd = document.createElement('dd'); dd.textContent = cell(value);
                 fields.append(dt, dd);
               }
               if (fields.childNodes.length) card.appendChild(fields);

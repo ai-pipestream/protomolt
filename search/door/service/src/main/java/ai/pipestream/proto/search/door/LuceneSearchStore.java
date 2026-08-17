@@ -6,14 +6,19 @@ import ai.pipestream.proto.embeddings.EmbeddingProvider;
 import ai.pipestream.proto.embeddings.EmbeddingProviders;
 import ai.pipestream.proto.index.lucene.LuceneFieldSpecs;
 import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
+import ai.pipestream.proto.index.spi.DateResolution;
 import ai.pipestream.proto.index.spi.IndexFieldKind;
 import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.search.v1.SearchHit;
 import ai.pipestream.proto.search.v1.SearchLane;
 import ai.pipestream.proto.search.v1.SearchRequest;
+import ai.pipestream.proto.search.v1.StoredValue;
 import ai.pipestream.proto.search.v1.SubjectInfo;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
+import com.google.protobuf.Timestamp;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -517,14 +522,16 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         IndexSearcher searcher = null;
         try {
             searcher = subject.searchers().acquire();
+            Map<String, ResolvedFieldHint> hints = storedHints(subject.served().mapping());
             List<SearchHit> hits = new ArrayList<>();
             for (ScoreDoc scored : searcher.search(query, k).scoreDocs) {
                 org.apache.lucene.document.Document doc =
                         searcher.storedFields().document(scored.doc);
                 SearchHit.Builder hit = SearchHit.newBuilder().setScore(scored.score);
                 for (IndexableField field : doc.getFields()) {
-                    if (field.stringValue() != null) {
-                        hit.putStored(field.name(), field.stringValue());
+                    StoredValue value = storedValue(hints.get(field.name()), field);
+                    if (value != null) {
+                        hit.putStored(field.name(), value);
                     }
                 }
                 String docId = doc.get(subject.served().docIdField());
@@ -566,6 +573,89 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
             throw new UncheckedIOException("cannot analyze the query", e);
         }
         return tokens;
+    }
+
+    /** The mapping's field hints by index field name, for typing stored values. */
+    private static Map<String, ResolvedFieldHint> storedHints(IndexMapping mapping) {
+        Map<String, ResolvedFieldHint> hints = new LinkedHashMap<>();
+        for (IndexMapping.IndexedField field : mapping.indexable()) {
+            hints.put(field.fieldName(), field.hint());
+        }
+        return hints;
+    }
+
+    /**
+     * One stored Lucene field as a typed cell. The mapping's declared kind
+     * decides the arm; a field the mapping does not declare (chunk text,
+     * chunk identity) or whose stored form disagrees with its kind falls
+     * back to the runtime form. Returns {@code null} only when the field
+     * carries nothing storable.
+     */
+    private static StoredValue storedValue(ResolvedFieldHint hint, IndexableField field) {
+        Number number = field.numericValue();
+        String string = field.stringValue();
+        BytesRef binary = field.binaryValue();
+        if (hint != null) {
+            switch (hint.type()) {
+                case DATE -> {
+                    if (number != null) {
+                        long epoch = number.longValue();
+                        long millis = hint.dateResolution() == DateResolution.SECONDS
+                                ? epoch * 1000L
+                                : epoch;
+                        return StoredValue.newBuilder()
+                                .setTimestampValue(Timestamp.newBuilder()
+                                        .setSeconds(Math.floorDiv(millis, 1000L))
+                                        .setNanos((int) Math.floorMod(millis, 1000L) * 1_000_000))
+                                .build();
+                    }
+                }
+                case INT32, INT64 -> {
+                    if (number != null) {
+                        return StoredValue.newBuilder()
+                                .setInt64Value(number.longValue()).build();
+                    }
+                }
+                case FLOAT, DOUBLE -> {
+                    if (number != null) {
+                        return StoredValue.newBuilder()
+                                .setDoubleValue(number.doubleValue()).build();
+                    }
+                }
+                case BOOLEAN -> {
+                    if (string != null) {
+                        return StoredValue.newBuilder()
+                                .setBoolValue(Boolean.parseBoolean(string)).build();
+                    }
+                }
+                case BINARY -> {
+                    if (binary != null) {
+                        return StoredValue.newBuilder()
+                                .setBytesValue(ByteString.copyFrom(
+                                        binary.bytes, binary.offset, binary.length))
+                                .build();
+                    }
+                }
+                default -> {
+                    // TEXT, KEYWORD, and JSON-folded fields land below.
+                }
+            }
+        }
+        if (string != null) {
+            return StoredValue.newBuilder().setStringValue(string).build();
+        }
+        if (number instanceof Float || number instanceof Double) {
+            return StoredValue.newBuilder().setDoubleValue(number.doubleValue()).build();
+        }
+        if (number != null) {
+            return StoredValue.newBuilder().setInt64Value(number.longValue()).build();
+        }
+        if (binary != null) {
+            return StoredValue.newBuilder()
+                    .setBytesValue(ByteString.copyFrom(binary.bytes, binary.offset, binary.length))
+                    .build();
+        }
+        return null;
     }
 
     private static Set<String> textFields(IndexMapping mapping) {
