@@ -1,5 +1,6 @@
 package ai.pipestream.proto.search.door;
 
+import ai.pipestream.proto.grpc.validate.ValidatingServerInterceptor;
 import io.grpc.Server;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
@@ -59,6 +60,7 @@ public final class SearchDoorServices implements AutoCloseable {
     public Server startInProcess(String name) throws IOException {
         server = InProcessServerBuilder.forName(name)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
+                .intercept(ValidatingServerInterceptor.create())
                 .addService(index)
                 .addService(search)
                 .build()
@@ -77,6 +79,7 @@ public final class SearchDoorServices implements AutoCloseable {
         HealthStatusManager health = new HealthStatusManager();
         server = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
+                .intercept(ValidatingServerInterceptor.create())
                 .addService(index)
                 .addService(search)
                 .addService(health.getHealthService())

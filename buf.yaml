@@ -108,11 +108,6 @@ lint:
 breaking:
   use:
     - FILE
-  # TEMPORARY (drop in the next PR): SearchHit.stored deliberately changes
-  # map<string, string> to map<string, StoredValue> pre-GA so stored values
-  # carry the mapping's types instead of rendered strings.
-  except:
-    - FIELD_SAME_TYPE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

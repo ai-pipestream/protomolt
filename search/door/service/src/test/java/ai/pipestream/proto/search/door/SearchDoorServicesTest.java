@@ -223,6 +223,8 @@ class SearchDoorServicesTest {
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode())
                                 .isEqualTo(Status.Code.INVALID_ARGUMENT));
+        // Over-cap k violates the proto's own declared bound, so the validating
+        // interceptor refuses it at the boundary, before the handler runs.
         assertThatThrownBy(() -> searchStub.search(
                 query(SearchLane.SEARCH_LANE_LEXICAL, "alpha")
                         .setK(LuceneSearchStore.MAX_K + 1).build()))
@@ -230,7 +232,8 @@ class SearchDoorServicesTest {
                     assertThat(e.getStatus().getCode())
                             .isEqualTo(Status.Code.INVALID_ARGUMENT);
                     assertThat(e.getStatus().getDescription())
-                            .contains("at most " + LuceneSearchStore.MAX_K);
+                            .contains("violates the schema's declared rules")
+                            .contains("k");
                 });
     }
 
@@ -388,5 +391,22 @@ class SearchDoorServicesTest {
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode())
                                 .isEqualTo(Status.Code.INVALID_ARGUMENT));
+    }
+
+    @Test
+    void theSchemaRulesAnswerAtTheBoundaryBeforeTheHandler() {
+        // An empty query violates SearchRequest's declared min_len rule. The
+        // refusal wording is the validating interceptor's, not the handler's:
+        // proof the interceptor is mounted in front of the services, so no
+        // handler needs to re-implement the proto's own range checks.
+        assertThatThrownBy(() -> searchStub.search(
+                query(SearchLane.SEARCH_LANE_LEXICAL, "").build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("violates the schema's declared rules")
+                            .contains("query");
+                });
     }
 }
