@@ -85,6 +85,7 @@ built-in action exposed by the standalone and full catalogs.
   contract-driven `Any` routing, service advertisement, recursive processing,
   LLM software generation, and OpenNLP PII policy across mesh nodes
 - [Planned work](design/planned-work.md): open product and hardening work
+- [Metric mappings](design/metric-mapping.md): governed aggregate queries on a mapping subject (Cube comparison, option dialect, `query-metrics`)
 - [Intake and parsing](design/intake-and-parsing.md): platform ingestion architecture
 - [Document platform](design/document-platform.md): repository and account service architecture
 - [Review records](reviews): dated correctness and security reviews

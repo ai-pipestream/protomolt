@@ -96,6 +96,15 @@ prohibited. Apply the rules to projection, merge, join, inference, fan-out,
 and indexing. Reject conflicting sensitivity, validation, or indexing policy
 instead of dropping it.
 
+### Metric mappings
+
+Declare measure and dimension members on a mapping subject and serve
+`describe-mapping` / `query-metrics` over Lucene faceting and
+Iceberg/DuckDB. This is a mapping plus a query compiler, not a BI
+product, and it is sequenced after the search surface lands fully.
+Contract, refusals, backends, and out-of-scope list:
+[metric mapping](metric-mapping.md).
+
 ### Index shapes
 
 Define a protobuf `IndexShape` for one-to-many document projection and map

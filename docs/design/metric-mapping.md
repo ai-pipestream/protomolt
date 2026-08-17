@@ -49,7 +49,9 @@ rewrite. The performance layer is pre-aggregations (rollup,
 original-sql, rollup-join, lambda for streaming) stored in Cube Store, a
 refresh worker, and aggregate awareness that matches queries to rollups.
 The v1.7 "Tesseract" engine (GA July 2026) added multi-fact views,
-multi-stage calculations, and columnar transport. APIs: REST, GraphQL,
+multi-stage calculations, and columnar transport. (Their Tesseract is a
+SQL-generation engine; it has no relation to Tesseract OCR, which sits
+on our parse path below. Keep the names apart.) APIs: REST, GraphQL,
 and a Postgres-wire SQL API with `MEASURE()`.
 
 **Cube Cloud** (commercial) is now a full BI and agentic-analytics
@@ -177,8 +179,11 @@ The last one is the analytics gap, not an agentic gap.
 
 Cube has 28 warehouse drivers and no ingest. ProtoMolt ingests (S3,
 JDBC, Microsoft Graph, Confluence, Kafka Connect, stream connectors
-through the intake door), parses (coordinator plus plugin SPI plus
-streaming gRParse), transforms (mapping, masking, projections, joins,
+through the intake door), parses (coordinator plus plugin SPI plus the
+streaming gRParse adapter; the gRParse service behind it speaks a
+docling-shaped contract with selectable OCR engines including
+Tesseract, PDF backends, table-structure extraction, and a VLM
+pipeline, which is the docling-parity parsing story), transforms (mapping, masking, projections, joins,
 quality), indexes (Lucene, OpenSearch, Solr renderers), retrieves
 (search door: lexical, vector, hybrid lanes with chunk identity and
 membership-gated refusals), and lands lake tables (descriptor-driven
