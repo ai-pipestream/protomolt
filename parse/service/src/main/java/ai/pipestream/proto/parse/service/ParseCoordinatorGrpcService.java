@@ -222,7 +222,7 @@ public final class ParseCoordinatorGrpcService
                     result.setStatus(ParseStatus.PARSE_STATUS_FAILED)
                             .setError("no registered parser '" + plan.getParserName() + "'")
                             .build(),
-                    Map.of());
+                    Map.of(), "");
         }
         try {
             result.setParserVersion(client.get().info().getParserVersion());
@@ -234,11 +234,13 @@ public final class ParseCoordinatorGrpcService
                     .build();
             ParseOutcome outcome = client.get().parse(options, routing.payload(), parseDeadline);
             if (outcome.failed()) {
+                // Text streamed before the failure is carried, not used: the
+                // fold refuses to derive a body from a failed parse.
                 return new TaskResult(plan,
                         result.setStatus(ParseStatus.PARSE_STATUS_FAILED)
                                 .setError(outcome.error())
                                 .build(),
-                        Map.of());
+                        Map.of(), String.join("\n\n", outcome.pageTexts()));
             }
             List<String> warnings = outcome.output().getWarningsList();
             if (warnings.isEmpty()) {
@@ -251,7 +253,8 @@ public final class ParseCoordinatorGrpcService
             // Later claims replace earlier ones per key, per the contract.
             Map<String, Value> claims = new LinkedHashMap<>();
             outcome.claims().forEach(c -> claims.putAll(c.getClaims().getFieldsMap()));
-            return new TaskResult(plan, result.build(), claims);
+            return new TaskResult(plan, result.build(), claims,
+                    String.join("\n\n", outcome.pageTexts()));
         } catch (RuntimeException e) {
             // A crashed task is still a recorded FAILED result.
             String message = e.getMessage();
@@ -260,7 +263,7 @@ public final class ParseCoordinatorGrpcService
                             .setError(message == null || message.isBlank()
                                     ? e.getClass().getSimpleName() : message)
                             .build(),
-                    Map.of());
+                    Map.of(), "");
         }
     }
 
@@ -271,6 +274,13 @@ public final class ParseCoordinatorGrpcService
      * {@link SearchMetadata} field, the claim of the highest-priority parser
      * (plan order) wins. Unknown keys, non-string claims, and blank strings
      * are ignored — a blank claim must never fold over a real value.
+     *
+     * <p>When no parser claims a {@code body}, one is derived from the
+     * streamed page texts: the highest-priority non-failed parser that
+     * streamed text contributes its pages, joined in stream order. An
+     * explicit body claim always outranks derived text, whatever the
+     * claiming parser's priority — a parser saying "this is the body" beats
+     * the coordinator inferring one.</p>
      */
     private static Fold fold(List<TaskResult> outcomes) {
         LinkedHashMap<String, String> values = new LinkedHashMap<>();
@@ -290,6 +300,17 @@ public final class ParseCoordinatorGrpcService
                 }
                 values.put(claim.getKey(), claim.getValue().getStringValue());
                 winners.put(claim.getKey(), outcome.result().getParserName());
+            }
+        }
+        if (!values.containsKey("body")) {
+            for (TaskResult outcome : outcomes) {
+                if (outcome.result().getStatus() == ParseStatus.PARSE_STATUS_FAILED
+                        || outcome.pageText().isBlank()) {
+                    continue;
+                }
+                values.put("body", outcome.pageText());
+                winners.put("body", outcome.result().getParserName());
+                break;
             }
         }
         return new Fold(values, winners);
@@ -445,8 +466,12 @@ public final class ParseCoordinatorGrpcService
     private record Routing(RoutingContext context, Sniff sniff, byte[] payload) {
     }
 
-    /** One planned parse's reduced outcome: the stored result + final claims. */
-    private record TaskResult(PlannedParse plan, ParserResult result, Map<String, Value> claims) {
+    /**
+     * One planned parse's reduced outcome: the stored result, the final
+     * claims, and the streamed pages' joined text (body-derivation fallback).
+     */
+    private record TaskResult(
+            PlannedParse plan, ParserResult result, Map<String, Value> claims, String pageText) {
     }
 
     /** The arbitrated fold: field → value, field → winning parser. */

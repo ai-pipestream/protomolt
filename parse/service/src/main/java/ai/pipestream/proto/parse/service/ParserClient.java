@@ -24,9 +24,11 @@ import java.util.concurrent.TimeUnit;
  * one options frame, then 1 MiB data frames, typed events back — and reduces
  * the event stream to a {@link ParseOutcome} the coordinator can store.
  *
- * <p>Progress, page, and preview events are tolerated and dropped: they exist
- * for front ends materializing a document progressively, not for
- * coordination. Claims are collected for the search-metadata fold; the single
+ * <p>Progress and preview events are tolerated and dropped: they exist for
+ * front ends materializing a document progressively, not for coordination.
+ * Page events contribute their plain text, in stream order, so the
+ * coordinator can derive a body for parsers that stream text but claim
+ * none. Claims are collected for the search-metadata fold; the single
  * {@link ParserOutput} is the product. A stream that terminates with a gRPC
  * status error, or completes without emitting a document, is a failed
  * outcome — recorded, never thrown.
@@ -77,11 +79,13 @@ public final class ParserClient {
      *
      * @param output the final parsed document; {@code null} when failed
      * @param claims every {@code DocumentClaims} event, in stream order
+     * @param pageTexts every page event's non-blank plain text, in stream order
      * @param failed whether the parse failed (status error or no document)
      * @param error the failure reason; empty when not failed
      */
     public record ParseOutcome(
-            ParserOutput output, List<DocumentClaims> claims, boolean failed, String error) {
+            ParserOutput output, List<DocumentClaims> claims, List<String> pageTexts,
+            boolean failed, String error) {
     }
 
     /**
@@ -104,6 +108,7 @@ public final class ParserClient {
             throw new IllegalArgumentException("deadline must be positive");
         }
         List<DocumentClaims> claims = new ArrayList<>();
+        List<String> pageTexts = new ArrayList<>();
         // Single-element holders written by the event observer, read after the latch.
         ParserOutput[] output = new ParserOutput[1];
         String[] error = new String[1];
@@ -117,8 +122,13 @@ public final class ParserClient {
                         switch (event.getEventCase()) {
                             case CLAIMS -> claims.add(event.getClaims());
                             case DOCUMENT -> output[0] = event.getDocument();
-                            // Progress, pages, and previews are front-end fare.
-                            case PROGRESS, PAGE, PREVIEW, EVENT_NOT_SET -> {
+                            case PAGE -> {
+                                if (!event.getPage().getText().isBlank()) {
+                                    pageTexts.add(event.getPage().getText());
+                                }
+                            }
+                            // Progress and previews are front-end fare.
+                            case PROGRESS, PREVIEW, EVENT_NOT_SET -> {
                             }
                         }
                     }
@@ -153,20 +163,23 @@ public final class ParserClient {
         try {
             if (!done.await(deadline.toMillis() + TimeUnit.SECONDS.toMillis(10),
                     TimeUnit.MILLISECONDS)) {
-                return new ParseOutcome(null, List.copyOf(claims), true,
-                        "parse stream did not terminate within its deadline");
+                return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+                        true, "parse stream did not terminate within its deadline");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new ParseOutcome(null, List.copyOf(claims), true, "parse interrupted");
+            return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+                    true, "parse interrupted");
         }
         if (error[0] != null) {
-            return new ParseOutcome(null, List.copyOf(claims), true, error[0]);
+            return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+                    true, error[0]);
         }
         if (output[0] == null) {
-            return new ParseOutcome(null, List.copyOf(claims), true,
-                    "parser completed without emitting a document");
+            return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+                    true, "parser completed without emitting a document");
         }
-        return new ParseOutcome(output[0], List.copyOf(claims), false, "");
+        return new ParseOutcome(output[0], List.copyOf(claims), List.copyOf(pageTexts),
+                false, "");
     }
 }
