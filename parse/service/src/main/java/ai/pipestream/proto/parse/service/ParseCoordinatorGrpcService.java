@@ -234,11 +234,13 @@ public final class ParseCoordinatorGrpcService
                     .build();
             ParseOutcome outcome = client.get().parse(options, routing.payload(), parseDeadline);
             if (outcome.failed()) {
+                // Text streamed before the failure is carried, not used: the
+                // fold refuses to derive a body from a failed parse.
                 return new TaskResult(plan,
                         result.setStatus(ParseStatus.PARSE_STATUS_FAILED)
                                 .setError(outcome.error())
                                 .build(),
-                        Map.of(), "");
+                        Map.of(), String.join("\n\n", outcome.pageTexts()));
             }
             List<String> warnings = outcome.output().getWarningsList();
             if (warnings.isEmpty()) {
