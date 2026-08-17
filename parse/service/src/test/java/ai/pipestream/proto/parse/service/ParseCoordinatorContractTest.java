@@ -302,6 +302,51 @@ class ParseCoordinatorContractTest {
     }
 
     @Test
+    void theBodyIsDerivedFromStreamedPagesWhenNoParserClaimsIt() {
+        // A blank page contributes nothing; the others join in stream order.
+        alpha.pagesToEmit = List.of("Page one text.", "   ", "Page two text.");
+
+        ParseDocumentResponse response = stub.parseDocument(
+                ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
+
+        assertThat(response.getSearchMetadataFold().getFoldedFieldsList()).contains("body");
+        assertThat(response.getSearchMetadataFold().getWinnersMap())
+                .containsEntry("body", "alpha");
+        assertThat(repo.saves.getFirst().getDocument().getSearchMetadata().getBody())
+                .isEqualTo("Page one text.\n\nPage two text.");
+    }
+
+    @Test
+    void anExplicitBodyClaimOutranksDerivedPageText() {
+        // Alpha (higher priority) streams pages but claims nothing; beta
+        // claims a body outright. The explicit claim wins.
+        alpha.pagesToEmit = List.of("Alpha page text.");
+        beta.claimsToEmit = List.of(claims("body", "Beta claimed body."));
+
+        ParseDocumentResponse response = stub.parseDocument(
+                ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
+
+        assertThat(response.getSearchMetadataFold().getWinnersMap())
+                .containsEntry("body", "beta");
+        assertThat(repo.saves.getFirst().getDocument().getSearchMetadata().getBody())
+                .isEqualTo("Beta claimed body.");
+    }
+
+    @Test
+    void aFailedParsersPagesDeriveNoBody() {
+        alpha.pagesToEmit = List.of("Text streamed before the crash.");
+        alpha.failWith = Status.INTERNAL.withDescription("kaboom");
+
+        ParseDocumentResponse response = stub.parseDocument(
+                ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
+
+        assertThat(response.getSearchMetadataFold().getFoldedFieldsList())
+                .doesNotContain("body");
+        assertThat(repo.saves.getFirst().getDocument().getSearchMetadata().getBody())
+                .isEmpty();
+    }
+
+    @Test
     void aParserFailureIsRecordedAsFailedAndTheSaveStillHappens() {
         alpha.failWith = Status.INTERNAL.withDescription("docling exploded");
         beta.claimsToEmit = List.of(claims("title", "Beta Title"));

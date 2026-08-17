@@ -5,6 +5,7 @@ import ai.pipestream.proto.parse.plugin.v1.GetParserInfoRequest;
 import ai.pipestream.proto.parse.plugin.v1.GetParserInfoResponse;
 import ai.pipestream.proto.parse.plugin.v1.ParseOptions;
 import ai.pipestream.proto.parse.plugin.v1.ParseProgress;
+import ai.pipestream.proto.parse.plugin.v1.ParsedPage;
 import ai.pipestream.proto.parse.plugin.v1.ParseRequest;
 import ai.pipestream.proto.parse.plugin.v1.ParseResponse;
 import ai.pipestream.proto.parse.plugin.v1.ParserOutput;
@@ -29,6 +30,7 @@ final class FakeParserPlugin extends ParserPluginServiceGrpc.ParserPluginService
     private final String parserVersion;
 
     volatile List<Struct> claimsToEmit = List.of();
+    volatile List<String> pagesToEmit = List.of();
     volatile List<String> warnings = List.of();
     volatile ParserDocument outputDocument = ParserDocument.getDefaultInstance();
     volatile boolean emitOutput = true;
@@ -45,6 +47,7 @@ final class FakeParserPlugin extends ParserPluginServiceGrpc.ParserPluginService
     /** Resets the per-test behavior and recordings. */
     void reset() {
         claimsToEmit = List.of();
+        pagesToEmit = List.of();
         warnings = List.of();
         outputDocument = ParserDocument.getDefaultInstance();
         emitOutput = true;
@@ -96,6 +99,14 @@ final class FakeParserPlugin extends ParserPluginServiceGrpc.ParserPluginService
                                 .setPhase(ParseProgress.Phase.PHASE_PROCESSING)
                                 .setProgress(0.5f))
                         .build());
+                for (int i = 0; i < pagesToEmit.size(); i++) {
+                    observer.onNext(event(documentId, ++sequence)
+                            .setPage(ParsedPage.newBuilder()
+                                    .setPageNumber(i + 1)
+                                    .setTotalPages(pagesToEmit.size())
+                                    .setText(pagesToEmit.get(i)))
+                            .build());
+                }
                 for (Struct claims : claimsToEmit) {
                     observer.onNext(event(documentId, ++sequence)
                             .setClaims(DocumentClaims.newBuilder().setClaims(claims))

@@ -86,6 +86,14 @@ parser won each field.
 Priority order is the initial arbitration policy. A future policy may define
 per-field precedence or CEL selectors.
 
+When no parser claims a `body`, the coordinator derives one from the parse
+stream's page events: the highest-priority non-failed parser that streamed
+page text contributes its pages, joined in stream order. An explicit body
+claim always outranks derived text, whatever the claiming parser's
+priority. This is how a parser that speaks a native document model but
+volunteers no claims (such as the gRParse adapter) still yields a lexical
+body for search.
+
 ## Parser plugin contract
 
 `parse/proto`'s `plugin/v1` package defines `ParserPluginService`, the
