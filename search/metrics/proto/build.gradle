@@ -1,0 +1,42 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The metric service contract: descriptor-declared measures and dimensions queried over a mapping subject'
+
+dependencies {
+    api project(':protomolt-protobuf-metric')
+    // The request contract dogfoods the house validate.v1 rules (required
+    // subject, bounded limit, non-empty measures).
+    api project(':protomolt-protobuf-validation')
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+
+    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
+    compileOnly libs.javax.annotation.api
+
+    // Extract the option .proto files so protoc can resolve the imports.
+    protobuf project(':protomolt-protobuf-metric')
+    protobuf project(':protomolt-protobuf-validation')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

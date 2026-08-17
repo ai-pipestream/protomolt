@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.metric.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.metric";
+option java_outer_classname = "MetricProto";
+
+import "google/protobuf/descriptor.proto";
+
+// How ProtoMolt declares metric members on protobuf schemas: the descriptor
+// is the semantic layer, so measures and dimensions are field options, not a
+// parallel YAML model. Independent of indexing and validation — a metric
+// mapping reads indexing hints to find storage, but this namespace owns only
+// the metric declarations.
+
+// Role of a field on a metric mapping. UNSPECIFIED is a schema error when
+// the option is present: the option is an explicit declaration, never a
+// default.
+enum MemberRole {
+  // Unset. A schema error when the option is present.
+  MEMBER_ROLE_UNSPECIFIED = 0;
+  // Group-by member: rows split by this field's values.
+  MEMBER_ROLE_DIMENSION = 1;
+  // Aggregated member: rows reduce this field under an aggregate.
+  MEMBER_ROLE_MEASURE = 2;
+}
+
+// The aggregate a measure reduces under.
+enum Aggregate {
+  // Unset. A schema error on a measure without a calculated cel.
+  AGGREGATE_UNSPECIFIED = 0;
+  // Row count of the rows the measure sees.
+  AGGREGATE_COUNT = 1;
+  // Sum of a numeric field.
+  AGGREGATE_SUM = 2;
+  // Arithmetic mean of a numeric field.
+  AGGREGATE_AVG = 3;
+  // Minimum of a numeric field.
+  AGGREGATE_MIN = 4;
+  // Maximum of a numeric field.
+  AGGREGATE_MAX = 5;
+  // Distinct-value count; executors may refuse it when unbounded.
+  AGGREGATE_COUNT_DISTINCT = 6;
+}
+
+// Calendar grain a DATE dimension buckets under.
+enum TimeGrain {
+  // Unset: a DATE dimension falls back to its declared default_grain.
+  TIME_GRAIN_UNSPECIFIED = 0;
+  // Calendar day (UTC).
+  TIME_GRAIN_DAY = 1;
+  // ISO week (UTC).
+  TIME_GRAIN_WEEK = 2;
+  // Calendar month (UTC).
+  TIME_GRAIN_MONTH = 3;
+  // Calendar quarter (UTC).
+  TIME_GRAIN_QUARTER = 4;
+  // Calendar year (UTC).
+  TIME_GRAIN_YEAR = 5;
+}
+
+// One field's metric declaration. Attached via the
+// (ai.pipestream.proto.metric.v1.metric) option on FieldOptions.
+message FieldMetric {
+  // The member's role. Required when the option is present.
+  MemberRole role = 1;
+  // Required when role is MEASURE and cel is empty. Forbidden on DIMENSION.
+  Aggregate aggregate = 2;
+  // Public member name; empty = the proto field name.
+  string name = 3;
+  // Row filter for this measure only: CEL over `this` (the message), must
+  // evaluate to bool. Empty = all rows. Forbidden on DIMENSION.
+  string filter_cel = 4;
+  // Calculated measure: CEL over sibling member names (not raw fields).
+  // When set, aggregate and filter_cel are forbidden. Role must be MEASURE.
+  string cel = 5;
+  // Default grain when this DATE dimension is selected without one.
+  // Forbidden on non-DATE fields.
+  TimeGrain default_grain = 6;
+}
+
+// One message's metric declaration. Attached via the
+// (ai.pipestream.proto.metric.v1.metric) option on MessageOptions.
+message MessageMetric {
+  // Default subject name when a host serves this type without an override.
+  string subject = 1;
+  // Identity field used to count rows / dedupe; empty = no default COUNT.
+  string identity_field = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  // Field-level metric declaration: attach a FieldMetric to any field.
+  FieldMetric metric = 59100541;
+}
+
+extend google.protobuf.MessageOptions {
+  // Message-level metric declaration: attach a MessageMetric to any message.
+  MessageMetric metric_message = 59100542;
+}

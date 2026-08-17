@@ -94,6 +94,9 @@ project(':protomolt-protobuf-quality').projectDir = file('protobuf/quality')
 include 'protomolt-protobuf-llm'
 project(':protomolt-protobuf-llm').projectDir = file('protobuf/llm')
 
+include 'protomolt-protobuf-metric'
+project(':protomolt-protobuf-metric').projectDir = file('protobuf/metric')
+
 include 'protomolt-protobuf-prompt'
 project(':protomolt-protobuf-prompt').projectDir = file('protobuf/prompt')
 
@@ -160,6 +163,9 @@ project(':protomolt-chunker').projectDir = file('search/chunk')
 
 include 'protomolt-search-proto'
 project(':protomolt-search-proto').projectDir = file('search/door/proto')
+
+include 'protomolt-metric-proto'
+project(':protomolt-metric-proto').projectDir = file('search/metrics/proto')
 
 include 'protomolt-search-door'
 project(':protomolt-search-door').projectDir = file('search/door/service')

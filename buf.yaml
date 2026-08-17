@@ -6,6 +6,8 @@ modules:
     name: buf.build/ai-pipestream/protobuf-metadata
   - path: protobuf/llm/src/main/proto
     name: buf.build/ai-pipestream/protobuf-llm
+  - path: protobuf/metric/src/main/proto
+    name: buf.build/ai-pipestream/protobuf-metric
   - path: protobuf/prompt/src/main/proto
     name: buf.build/ai-pipestream/protobuf-prompt
   - path: protobuf/quality/src/main/proto
@@ -44,6 +46,8 @@ modules:
     name: buf.build/ai-pipestream/inference-structured-testdata
   - path: parse/proto/src/main/proto
     name: buf.build/ai-pipestream/parse
+  - path: search/metrics/proto/src/main/proto
+    name: buf.build/ai-pipestream/metric
   - path: search/door/proto/src/main/proto
     name: buf.build/ai-pipestream/search
   # The canonical parser-fleet document model. Vendored byte-identical across
