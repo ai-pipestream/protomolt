@@ -167,6 +167,9 @@ project(':protomolt-search-proto').projectDir = file('search/door/proto')
 include 'protomolt-metric-proto'
 project(':protomolt-metric-proto').projectDir = file('search/metrics/proto')
 
+include 'protomolt-metric-spi'
+project(':protomolt-metric-spi').projectDir = file('search/metrics/spi')
+
 include 'protomolt-search-door'
 project(':protomolt-search-door').projectDir = file('search/door/service')
 

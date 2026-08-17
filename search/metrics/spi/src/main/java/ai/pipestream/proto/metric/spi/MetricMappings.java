@@ -1,0 +1,418 @@
+package ai.pipestream.proto.metric.spi;
+
+import ai.pipestream.proto.cel.CelEnvironmentFactory;
+import ai.pipestream.proto.meta.DescriptorMetadata;
+import ai.pipestream.proto.metric.Aggregate;
+import ai.pipestream.proto.metric.FieldMetric;
+import ai.pipestream.proto.metric.MemberRole;
+import ai.pipestream.proto.metric.MessageMetric;
+import ai.pipestream.proto.metric.TimeGrain;
+import ai.pipestream.proto.metric.spi.CompiledMetricQuery.DimensionKind;
+import ai.pipestream.proto.metric.spi.CompiledMetricQuery.EqualsFilter;
+import ai.pipestream.proto.metric.spi.MetricMapping.FieldKind;
+import ai.pipestream.proto.metric.spi.MetricMapping.MetricMember;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import dev.cel.common.CelAbstractSyntaxTree;
+import dev.cel.common.CelValidationException;
+import dev.cel.common.ast.CelConstant;
+import dev.cel.common.ast.CelExpr;
+import dev.cel.common.types.CelKind;
+import dev.cel.common.types.SimpleType;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Builds a {@link MetricMapping} from a message type's metric.v1
+ * declarations. Every schema error in the standard's list fails the build
+ * here, naming the field path — a mapping that builds is a mapping every
+ * query can trust, so executors and the query compiler never re-validate
+ * declarations.
+ *
+ * <p>filter_cel is translated at build time into the engine-neutral
+ * equality form (equality over string or bool fields, joined by
+ * {@code &&}); a valid-but-untranslatable filter fails the build loudly
+ * rather than surprising the first query. Calculated measures compile
+ * against their sibling physical measure names and record what they read.</p>
+ */
+public final class MetricMappings {
+
+    private static final String TIMESTAMP_TYPE = "google.protobuf.Timestamp";
+
+    private MetricMappings() {
+    }
+
+    /**
+     * Builds the queryable surface of {@code descriptor}.
+     *
+     * @param subject the mapping subject the host serves this type under;
+     *        blank falls back to the MessageMetric declaration's subject
+     * @param descriptor the message type carrying the declarations
+     * @param source where declarations come from
+     * @return the built mapping
+     * @throws MetricSchemaException naming every violation at once
+     */
+    public static MetricMapping build(
+            String subject, Descriptor descriptor, MetricHintSource source) {
+        if (descriptor == null) {
+            throw new IllegalArgumentException("descriptor must not be null");
+        }
+        if (source == null) {
+            throw new IllegalArgumentException("source must not be null");
+        }
+        List<String> violations = new ArrayList<>();
+
+        Optional<MessageMetric> messageMetric = source.message(descriptor);
+        String resolvedSubject = subject != null && !subject.isBlank()
+                ? subject
+                : messageMetric.map(MessageMetric::getSubject).orElse("");
+        if (resolvedSubject.isBlank()) {
+            violations.add("no subject: neither the host nor the message declaration names one");
+        }
+        messageMetric.map(MessageMetric::getIdentityField)
+                .filter(name -> !name.isEmpty())
+                .filter(name -> descriptor.findFieldByName(name) == null)
+                .ifPresent(name -> violations.add(
+                        "identity_field '" + name + "' names no field of "
+                                + descriptor.getFullName()));
+
+        Map<String, MetricMember> members = new LinkedHashMap<>();
+        Map<String, FieldDescriptor> memberFields = new LinkedHashMap<>();
+        Map<String, FieldMetric> declarations = new LinkedHashMap<>();
+        for (FieldDescriptor field : descriptor.getFields()) {
+            Optional<FieldMetric> declared = source.field(field);
+            if (declared.isEmpty()) {
+                continue;
+            }
+            buildMember(field, declared.get(), violations).ifPresent(member -> {
+                if (members.containsKey(member.name())) {
+                    violations.add("member name '" + member.name() + "' on '"
+                            + field.getFullName() + "' collides with another member");
+                    return;
+                }
+                members.put(member.name(), member);
+                memberFields.put(member.name(), field);
+                declarations.put(member.name(), declared.get());
+            });
+        }
+
+        checkCels(descriptor, members, memberFields, declarations, violations);
+
+        if (!violations.isEmpty()) {
+            throw new MetricSchemaException(descriptor.getFullName(), violations);
+        }
+        return new MetricMapping(resolvedSubject, descriptor.getFullName(), members);
+    }
+
+    // ------------------------------------------------------------- one member
+
+    /** One declared field's member, or empty when its violations preclude it. */
+    private static Optional<MetricMember> buildMember(
+            FieldDescriptor field, FieldMetric declared, List<String> violations) {
+        String path = field.getFullName();
+        int before = violations.size();
+
+        if (declared.getRole() == MemberRole.MEMBER_ROLE_UNSPECIFIED) {
+            violations.add("metric option on '" + path
+                    + "' declares no role; the option is an explicit declaration");
+            return Optional.empty();
+        }
+        if (field.isRepeated()) {
+            violations.add("'" + path + "' is repeated; repeated fields cannot be metric members");
+            return Optional.empty();
+        }
+        FieldKind kind = kindOf(field);
+        if (kind == null) {
+            violations.add("'" + path + "' has type " + field.getType()
+                    + ", which no metric member can use");
+            return Optional.empty();
+        }
+        if (declared.getDefaultGrain() != TimeGrain.TIME_GRAIN_UNSPECIFIED && kind != FieldKind.DATE) {
+            violations.add("default_grain on '" + path + "' needs a DATE field, got " + kind);
+        }
+
+        if (declared.getRole() == MemberRole.MEMBER_ROLE_DIMENSION) {
+            if (declared.getAggregate() != Aggregate.AGGREGATE_UNSPECIFIED) {
+                violations.add("dimension '" + path + "' declares an aggregate");
+            }
+            if (!declared.getFilterCel().isEmpty()) {
+                violations.add("dimension '" + path + "' declares a filter_cel");
+            }
+            if (!declared.getCel().isEmpty()) {
+                violations.add("dimension '" + path + "' declares a calculated cel");
+            }
+            if (kind == FieldKind.NUMERIC) {
+                violations.add("dimension '" + path
+                        + "' is numeric; group-by needs a keyword, bool, or date field");
+            }
+        } else {
+            boolean calculated = !declared.getCel().isEmpty();
+            if (calculated && (declared.getAggregate() != Aggregate.AGGREGATE_UNSPECIFIED
+                    || !declared.getFilterCel().isEmpty())) {
+                violations.add("calculated measure '" + path
+                        + "' also declares an aggregate or filter_cel");
+            }
+            if (!calculated && declared.getAggregate() == Aggregate.AGGREGATE_UNSPECIFIED) {
+                violations.add("measure '" + path + "' declares neither an aggregate nor a cel");
+            }
+            if (!calculated) {
+                switch (declared.getAggregate()) {
+                    case AGGREGATE_SUM, AGGREGATE_AVG, AGGREGATE_MIN, AGGREGATE_MAX -> {
+                        if (kind != FieldKind.NUMERIC) {
+                            violations.add("aggregate " + declared.getAggregate() + " on '"
+                                    + path + "' needs a numeric field, got " + kind);
+                        }
+                    }
+                    case AGGREGATE_COUNT_DISTINCT -> {
+                        if (kind != FieldKind.NUMERIC && kind != FieldKind.KEYWORD) {
+                            violations.add("COUNT_DISTINCT on '" + path
+                                    + "' needs a numeric or keyword field, got " + kind);
+                        }
+                    }
+                    default -> {
+                    }
+                }
+            }
+        }
+        if (violations.size() > before) {
+            return Optional.empty();
+        }
+
+        String name = declared.getName().isEmpty() ? field.getName() : declared.getName();
+        String description = DescriptorMetadata.field(field)
+                .map(meta -> meta.getDescription()).orElse("");
+        String sensitivity = DescriptorMetadata.field(field)
+                .map(meta -> meta.getSensitivity()).orElse("");
+        return Optional.of(new MetricMember(
+                name,
+                declared.getRole(),
+                declared.getAggregate(),
+                field.getName(),
+                declared.getCel().isEmpty() ? kind : FieldKind.SYNTHETIC,
+                List.of(),
+                declared.getCel(),
+                List.of(),
+                declared.getDefaultGrain(),
+                description,
+                sensitivity));
+    }
+
+    /** The metric shape of one field; null when no member can use it. */
+    private static FieldKind kindOf(FieldDescriptor field) {
+        return switch (field.getJavaType()) {
+            case STRING, ENUM -> FieldKind.KEYWORD;
+            case BOOLEAN -> FieldKind.BOOLEAN;
+            case INT, LONG, FLOAT, DOUBLE -> FieldKind.NUMERIC;
+            case MESSAGE -> TIMESTAMP_TYPE.equals(field.getMessageType().getFullName())
+                    ? FieldKind.DATE
+                    : null;
+            case BYTE_STRING -> null;
+        };
+    }
+
+    // ------------------------------------------------------------- CEL checks
+
+    /**
+     * Second pass over the collected members: filter_cel compiles typed over
+     * the message and translates to the equality form; calculated cel
+     * compiles over the sibling physical measure names and records what it
+     * reads. Members that fail are replaced by violations.
+     */
+    private static void checkCels(
+            Descriptor descriptor,
+            Map<String, MetricMember> members,
+            Map<String, FieldDescriptor> memberFields,
+            Map<String, FieldMetric> declarations,
+            List<String> violations) {
+        CelEnvironmentFactory messageEnv = CelEnvironmentFactory.builder()
+                .addMessageVar("this", descriptor);
+        CelEnvironmentFactory siblingEnv = CelEnvironmentFactory.builder();
+        for (MetricMember member : members.values()) {
+            if (member.role() == MemberRole.MEMBER_ROLE_MEASURE && !member.calculated()) {
+                siblingEnv.addVar(member.name(), SimpleType.DOUBLE);
+            }
+        }
+
+        for (Map.Entry<String, MetricMember> entry : List.copyOf(members.entrySet())) {
+            MetricMember member = entry.getValue();
+            FieldDescriptor field = memberFields.get(entry.getKey());
+            String filterCel = declarations.get(entry.getKey()).getFilterCel();
+            if (member.calculated()) {
+                checkCalculated(entry.getKey(), member, siblingEnv, members, violations);
+                continue;
+            }
+            if (filterCel.isEmpty()) {
+                continue;
+            }
+            checkFilter(entry.getKey(), member, field, filterCel, descriptor,
+                    messageEnv, members, violations);
+        }
+    }
+
+    private static void checkCalculated(
+            String name,
+            MetricMember member,
+            CelEnvironmentFactory siblingEnv,
+            Map<String, MetricMember> members,
+            List<String> violations) {
+        CelAbstractSyntaxTree ast;
+        try {
+            ast = siblingEnv.build().compile(member.cel()).getAst();
+        } catch (CelValidationException e) {
+            violations.add("cel on member '" + name
+                    + "' does not type-check against its sibling measures: " + e.getMessage());
+            return;
+        }
+        CelKind result = ast.getResultType().kind();
+        if (result != CelKind.DOUBLE && result != CelKind.INT && result != CelKind.UINT) {
+            violations.add("cel on member '" + name + "' must be numeric, got "
+                    + ast.getResultType().name());
+            return;
+        }
+        Set<String> requires = new LinkedHashSet<>();
+        collectIdents(ast.getExpr(), requires);
+        members.put(name, new MetricMember(
+                member.name(), member.role(), member.aggregate(), member.fieldName(),
+                member.kind(), member.rowFilters(), member.cel(),
+                List.copyOf(requires), member.defaultGrain(),
+                member.description(), member.sensitivity()));
+    }
+
+    private static void checkFilter(
+            String name,
+            MetricMember member,
+            FieldDescriptor field,
+            String filterCel,
+            Descriptor descriptor,
+            CelEnvironmentFactory messageEnv,
+            Map<String, MetricMember> members,
+            List<String> violations) {
+        CelAbstractSyntaxTree ast;
+        try {
+            ast = messageEnv.build().compile(filterCel).getAst();
+        } catch (CelValidationException e) {
+            violations.add("filter_cel on '" + field.getFullName()
+                    + "' does not compile: " + e.getMessage());
+            return;
+        }
+        if (ast.getResultType().kind() != CelKind.BOOL) {
+            violations.add("filter_cel on '" + field.getFullName() + "' must be bool, got "
+                    + ast.getResultType().name());
+            return;
+        }
+        List<EqualsFilter> filters = new ArrayList<>();
+        if (!translate(ast.getExpr(), name, descriptor, filters)) {
+            violations.add("filter_cel on '" + field.getFullName()
+                    + "' is beyond the translatable subset: "
+                    + "equality over string or bool fields, joined by &&");
+            return;
+        }
+        members.put(name, new MetricMember(
+                member.name(), member.role(), member.aggregate(), member.fieldName(),
+                member.kind(), List.copyOf(filters), member.cel(), member.celRequires(),
+                member.defaultGrain(), member.description(), member.sensitivity()));
+    }
+
+    // -------------------------------------------------- filter_cel translation
+
+    /**
+     * Translates the bool AST into equality filters: {@code this.f == lit},
+     * bare {@code this.f} and {@code !this.f} on bool fields, joined by
+     * {@code &&}. Returns false when the expression falls outside that
+     * subset.
+     */
+    private static boolean translate(
+            CelExpr expr, String member, Descriptor descriptor, List<EqualsFilter> filters) {
+        return switch (expr.getKind()) {
+            case CALL -> switch (expr.call().function()) {
+                case "_&&_" -> expr.call().args().size() == 2
+                        && translate(expr.call().args().get(0), member, descriptor, filters)
+                        && translate(expr.call().args().get(1), member, descriptor, filters);
+                case "_==_" -> translateEquals(expr, member, descriptor, filters);
+                case "!_" -> expr.call().args().size() == 1
+                        && translateBare(expr.call().args().get(0), member, descriptor,
+                                "false", filters);
+                default -> false;
+            };
+            case SELECT -> translateBare(expr, member, descriptor, "true", filters);
+            default -> false;
+        };
+    }
+
+    private static boolean translateEquals(
+            CelExpr call, String member, Descriptor descriptor, List<EqualsFilter> filters) {
+        if (call.call().args().size() != 2) {
+            return false;
+        }
+        CelExpr left = call.call().args().get(0);
+        CelExpr right = call.call().args().get(1);
+        CelExpr selected = left.getKind() == CelExpr.ExprKind.Kind.SELECT ? left : right;
+        CelExpr constant = selected == left ? right : left;
+        if (selected.getKind() != CelExpr.ExprKind.Kind.SELECT
+                || constant.getKind() != CelExpr.ExprKind.Kind.CONSTANT) {
+            return false;
+        }
+        FieldDescriptor field = selectedField(selected, descriptor);
+        if (field == null) {
+            return false;
+        }
+        FieldKind kind = kindOf(field);
+        CelConstant value = constant.constant();
+        if (kind == FieldKind.KEYWORD && value.getKind() == CelConstant.Kind.STRING_VALUE) {
+            filters.add(new EqualsFilter(member, field.getName(), DimensionKind.TERM,
+                    List.of(value.stringValue())));
+            return true;
+        }
+        if (kind == FieldKind.BOOLEAN && value.getKind() == CelConstant.Kind.BOOLEAN_VALUE) {
+            filters.add(new EqualsFilter(member, field.getName(), DimensionKind.BOOLEAN,
+                    List.of(Boolean.toString(value.booleanValue()))));
+            return true;
+        }
+        return false;
+    }
+
+    /** A bare {@code this.f} (or its negation) over a bool field. */
+    private static boolean translateBare(
+            CelExpr expr, String member, Descriptor descriptor, String value,
+            List<EqualsFilter> filters) {
+        if (expr.getKind() != CelExpr.ExprKind.Kind.SELECT) {
+            return false;
+        }
+        FieldDescriptor field = selectedField(expr, descriptor);
+        if (field == null || kindOf(field) != FieldKind.BOOLEAN) {
+            return false;
+        }
+        filters.add(new EqualsFilter(member, field.getName(), DimensionKind.BOOLEAN,
+                List.of(value)));
+        return true;
+    }
+
+    /** The field a {@code this.f} select names; null outside that shape. */
+    private static FieldDescriptor selectedField(CelExpr select, Descriptor descriptor) {
+        CelExpr operand = select.select().operand();
+        if (operand.getKind() != CelExpr.ExprKind.Kind.IDENT
+                || !"this".equals(operand.ident().name())) {
+            return null;
+        }
+        return descriptor.findFieldByName(select.select().field());
+    }
+
+    private static void collectIdents(CelExpr expr, Set<String> idents) {
+        switch (expr.getKind()) {
+            case IDENT -> idents.add(expr.ident().name());
+            case CALL -> {
+                expr.call().target().ifPresent(target -> collectIdents(target, idents));
+                expr.call().args().forEach(arg -> collectIdents(arg, idents));
+            }
+            case SELECT -> collectIdents(expr.select().operand(), idents);
+            case LIST -> expr.list().elements().forEach(e -> collectIdents(e, idents));
+            default -> {
+            }
+        }
+    }
+}

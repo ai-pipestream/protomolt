@@ -1,0 +1,12 @@
+description = 'Metric SPI — mapping build from metric.v1 declarations, the query compiler and its refusals, and the executor seam engines implement'
+
+dependencies {
+    api project(':protomolt-metric-proto')
+    api project(':protomolt-protobuf-metric')
+    api libs.protobuf.java
+    // Descriptions and sensitivity flow from the metadata standard.
+    implementation project(':protomolt-protobuf-metadata')
+    // filter_cel and calculated measures compile through the house CEL seam.
+    implementation project(':protomolt-mapper-cel')
+    implementation libs.slf4j.api
+}
