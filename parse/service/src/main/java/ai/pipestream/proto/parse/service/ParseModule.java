@@ -60,6 +60,8 @@ public final class ParseModule implements ServiceModule {
     }
 
     private final Config config;
+    private final java.util.concurrent.atomic.AtomicReference<RoutingRules> liveRules =
+            new java.util.concurrent.atomic.AtomicReference<>();
     private ParseCoordinatorServices coordinator;
     private Server inProcess;
     private Server netty;
@@ -102,13 +104,14 @@ public final class ParseModule implements ServiceModule {
             }
             parsers = ParserRegistry.of(targets);
         }
+        liveRules.set(config.rules());
         coordinator = ParseCoordinatorServices.build(
                 new ParseCoordinatorConfig(
                         0,
                         context.channels().targetOf("repo"),
                         "intake",
                         config.deadlineSeconds()),
-                config.rules(),
+                liveRules::get,
                 parsers);
         String name = ROLE + "-" + context.nodeId();
         inProcess = coordinator.startInProcess(name);
@@ -140,6 +143,25 @@ public final class ParseModule implements ServiceModule {
                 coordinator.close();
             }
         };
+    }
+
+    /**
+     * Swaps the live routing rules: every later plan uses the new set.
+     * This is distributed config's seam — the "config reload" the routing
+     * contract always promised, with no CRUD surface.
+     *
+     * @param rules the new compiled rule set
+     */
+    public void swapRules(RoutingRules rules) {
+        if (rules == null) {
+            throw new IllegalArgumentException("rules must not be null");
+        }
+        liveRules.set(rules);
+    }
+
+    /** The currently live routing rules. */
+    public RoutingRules currentRules() {
+        return liveRules.get();
     }
 
     /** The bound external gRPC port; only valid after start. */

@@ -19,6 +19,11 @@ dependencies {
     implementation platform(libs.awssdk.bom)
     implementation libs.awssdk.s3
     implementation libs.awssdk.url.connection.client
+    // The config lane: typed config documents pulled from the registry
+    // with verify-then-swap; the parse routing rules are the first
+    // consumer.
+    implementation project(':protomolt-config')
+    implementation project(':protomolt-config-registry')
     implementation project(':protomolt-search-console')
     implementation project(':protomolt-metric-lucene')
     implementation project(':protomolt-metric-spi')

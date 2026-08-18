@@ -189,6 +189,23 @@ public record DocumentPlatformConfig(
     /** The default local metrics lake directory. */
     public static final String DEFAULT_METRICS_LAKE_DIR = "/data/metrics-lake";
 
+    /**
+     * Env var for the distributed-config refresh interval in seconds: the
+     * switch for the config lane. Set, the node pulls its config subjects
+     * from the registry (the co-mounted one, or
+     * {@link #ENV_CONFIG_URL}) on that interval, verify-then-swap; absent
+     * means environment-only configuration, exactly as before.
+     */
+    public static final String ENV_CONFIG_REFRESH_SECONDS =
+            "DOCUMENT_PLATFORM_CONFIG_REFRESH_SECONDS";
+
+    /**
+     * Env var naming a remote registry's native route prefix for config
+     * documents (e.g. {@code http://registry:8081/protomolt}), for a node
+     * without a co-mounted registry. Ignored when a registry is mounted.
+     */
+    public static final String ENV_CONFIG_URL = "DOCUMENT_PLATFORM_CONFIG_URL";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

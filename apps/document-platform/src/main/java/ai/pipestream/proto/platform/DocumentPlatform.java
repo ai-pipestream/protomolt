@@ -83,6 +83,17 @@ public final class DocumentPlatform implements AutoCloseable {
     /** The registry subject the fleet document model publishes under. */
     public static final String DOCUMENT_SUBJECT = "ai/pipestream/document/v1/document.proto";
 
+    /** The registry subject the routing contract publishes under. */
+    public static final String ROUTING_SUBJECT =
+            "ai/pipestream/proto/parse/v1/routing.proto";
+
+    /** The registry subject the validation dialect publishes under. */
+    public static final String VALIDATE_SUBJECT =
+            "ai/pipestream/proto/validate/v1/validate.proto";
+
+    /** The config subject the parse role's routing rules read: {@value}. */
+    public static final String PARSE_ROUTING_CONFIG_SUBJECT = "parse-routing";
+
     private final Composer.Node node;
     private final RepoServiceModule repo;
     private final ParseModule parse;
@@ -95,6 +106,8 @@ public final class DocumentPlatform implements AutoCloseable {
     private final S3Client snapshotClient;
     private final Catalog metricsCatalog;
     private final LocalLakeRollupSink defaultRollupLake;
+    private final ai.pipestream.proto.config.DistributedConfig distributedConfig;
+    private final java.util.concurrent.ScheduledExecutorService configRefresher;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -251,10 +264,63 @@ public final class DocumentPlatform implements AutoCloseable {
             composer.module(module);
         }
 
+        long configRefreshSeconds = configRefreshSeconds(config.environment());
         this.node = composer.build().boot(config.roles());
         try {
             if (registry != null) {
                 publishDocumentModel();
+            }
+            if (configRefreshSeconds > 0) {
+                if (parse == null) {
+                    throw new IllegalArgumentException(
+                            DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                                    + " is set but this node mounts no config consumer:"
+                                    + " the config lane currently serves the parse"
+                                    + " role's routing rules, so mount 'parse' or"
+                                    + " unset the interval");
+                }
+                String configUrl = config.environment()
+                        .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_URL, "").trim();
+                if (configUrl.isEmpty()) {
+                    if (registry == null) {
+                        throw new IllegalArgumentException(
+                                DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                                        + " is set but this node has no registry to pull"
+                                        + " from: mount 'registry' or set "
+                                        + DocumentPlatformConfig.ENV_CONFIG_URL);
+                    }
+                    configUrl = "http://127.0.0.1:" + registry.httpPort() + "/protomolt";
+                }
+                this.distributedConfig = ai.pipestream.proto.config.DistributedConfig
+                        .over(new ai.pipestream.proto.config.registry.RegistryConfigSource(
+                                configUrl, null));
+                ai.pipestream.proto.config.DistributedConfig
+                        .Subscription<ai.pipestream.proto.parse.v1.RoutingConfig> routing =
+                        distributedConfig.subscribe(PARSE_ROUTING_CONFIG_SUBJECT,
+                                ai.pipestream.proto.parse.v1.RoutingConfig
+                                        .getDefaultInstance());
+                routing.onChange((document, version) -> {
+                    parse.swapRules(RoutingRules.of(document.getRulesList()));
+                    LOG.info("parse routing rules applied from config '{}' version {}"
+                            + " ({} rule(s))", PARSE_ROUTING_CONFIG_SUBJECT, version,
+                            document.getRulesCount());
+                });
+                // The boot pull: a present config document is the routing
+                // truth from the first plan, ahead of the environment's
+                // boot rules.
+                distributedConfig.refresh();
+                this.configRefresher = java.util.concurrent.Executors
+                        .newSingleThreadScheduledExecutor(runnable -> {
+                            Thread thread = new Thread(runnable, "platform-config-refresh");
+                            thread.setDaemon(true);
+                            return thread;
+                        });
+                configRefresher.scheduleWithFixedDelay(distributedConfig::refresh,
+                        configRefreshSeconds, configRefreshSeconds,
+                        java.util.concurrent.TimeUnit.SECONDS);
+            } else {
+                this.distributedConfig = null;
+                this.configRefresher = null;
             }
         } catch (RuntimeException | IOException e) {
             node.close();
@@ -290,6 +356,9 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         if (registry != null) {
             surfaces.add("registry http " + registry.httpPort());
+        }
+        if (distributedConfig != null) {
+            surfaces.add("distributed config every " + configRefreshSeconds + "s");
         }
         if (playground != null) {
             surfaces.add("playground http " + playground.port());
@@ -330,6 +399,11 @@ public final class DocumentPlatform implements AutoCloseable {
             throw new IllegalArgumentException("config must not be null");
         }
         return new DocumentPlatform(config, resolver);
+    }
+
+    /** The parse role's currently live routing rules (tests and probes). */
+    RoutingRules parseRoutingRules() {
+        return mounted(parse, ParseModule.ROLE).currentRules();
     }
 
     /** The bound intake gRPC port. */
@@ -404,6 +478,12 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         if (defaultRollupLake != null) {
             defaultRollupLake.close();
+        }
+        if (configRefresher != null) {
+            configRefresher.shutdownNow();
+        }
+        if (distributedConfig != null) {
+            distributedConfig.close();
         }
     }
 
@@ -604,6 +684,35 @@ public final class DocumentPlatform implements AutoCloseable {
         return seconds;
     }
 
+    /**
+     * The strict read of
+     * {@link DocumentPlatformConfig#ENV_CONFIG_REFRESH_SECONDS}: absent is
+     * environment-only configuration ({@code 0}), anything set must be a
+     * positive whole number of seconds.
+     */
+    static long configRefreshSeconds(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS, "").trim();
+        if (value.isEmpty()) {
+            return 0L;
+        }
+        long seconds;
+        try {
+            seconds = Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                            + " must be a positive number of seconds, got '" + value + "'");
+        }
+        if (seconds <= 0) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                            + " must be a positive number of seconds, got '" + value
+                            + "'; unset it for environment-only configuration");
+        }
+        return seconds;
+    }
+
     /** The strict read of {@link DocumentPlatformConfig#ENV_SEARCH_READ_ONLY}. */
     static boolean searchReadOnly(Map<String, String> environment) {
         String value = environment
@@ -639,17 +748,13 @@ public final class DocumentPlatform implements AutoCloseable {
      * API. Idempotent: an unchanged schema re-registers as the same version.
      */
     private void publishDocumentModel() throws IOException {
-        String documentProto;
-        try (InputStream in = DocumentPlatform.class.getClassLoader()
-                .getResourceAsStream(DOCUMENT_SUBJECT)) {
-            if (in == null) {
-                throw new IllegalStateException(
-                        "the fleet document model is not on the classpath at " + DOCUMENT_SUBJECT);
-            }
-            documentProto = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        }
+        // The routing contract publishes beside the document model, so the
+        // registry's config door can gate parse-routing documents against
+        // it (an unregistered type refuses).
         ProtoSourceSet sources = ProtoSourceSet.builder()
-                .add(DOCUMENT_SUBJECT, documentProto, "platform")
+                .add(DOCUMENT_SUBJECT, classpathProto(DOCUMENT_SUBJECT), "platform")
+                .add(VALIDATE_SUBJECT, classpathProto(VALIDATE_SUBJECT), "platform")
+                .add(ROUTING_SUBJECT, classpathProto(ROUTING_SUBJECT), "platform")
                 .build();
         try (ConfluentSchemaPublisher publisher = new ConfluentSchemaPublisher(
                 URI.create("http://127.0.0.1:" + registry.httpPort()))) {
@@ -659,6 +764,17 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         LOG.info("registry serves {} ({} subject(s) total)", DOCUMENT_SUBJECT,
                 registry.store().subjects().size());
+    }
+
+    private static String classpathProto(String path) throws IOException {
+        try (InputStream in = DocumentPlatform.class.getClassLoader()
+                .getResourceAsStream(path)) {
+            if (in == null) {
+                throw new IllegalStateException(
+                        "the contract is not on the classpath at " + path);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
     /**

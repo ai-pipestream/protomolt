@@ -105,6 +105,27 @@ writable node refuses — refresh is the reader's pull. Combined with the
 `metrics` role this is the remote metrics node — see
 [Role nodes](role-nodes.md).
 
+## Distributed config
+
+`DOCUMENT_PLATFORM_CONFIG_REFRESH_SECONDS` switches the
+[config lane](../core/config.md) on: the node pulls its config subjects
+from the co-mounted registry (or `DOCUMENT_PLATFORM_CONFIG_URL` for a
+node without one) on that interval, verify-then-swap, refusing it on a
+node with no config consumer or no registry to pull from. Absent means
+environment-only configuration, exactly as before.
+
+The first consumer is the parse role's routing rules: the routing
+contract publishes to the registry at boot beside the document model,
+so the registry's config door gates a `parse-routing` document (an
+`ai.pipestream.proto.parse.v1.RoutingConfig`) against it — an empty
+rule set refuses at the door, because a coordinator with no rules
+routes nothing and that must be said, not configured. A valid document
+swaps the live rules on the next interval with no reboot and no CRUD
+surface (the reload the routing contract always promised), and a
+rebooted node reads the distributed config ahead of its environment
+defaults. The applied version — the document's git commit — is the
+evidence in the log line.
+
 ## Lake metrics
 
 The metrics role can mount the [Iceberg engine](../search/metrics.md#the-iceberg-engine)
