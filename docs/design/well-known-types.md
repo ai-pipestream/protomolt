@@ -74,8 +74,11 @@ with at least one platform behavior attached — no shape zoo:
   no hint at all), and all three engine mappers honor open ends,
   per-end inclusivity, and `DateRange`'s day-grain semantics (an
   excluded bound day is dropped whole). The metric surface's
-  `MetricRange` (inclusive both sides) is the first convergence
-  target.
+  `MetricRange` has converged: `MetricFilter.range` IS the canonical
+  `DateRange` (a deliberate pre-GA wire break under a temporary buf
+  waiver), the compiler honors open ends and the exclusivity flags,
+  and the compiled bounds stay inclusive epoch millis so the
+  executors never see the flags.
 - **TreePath** — a delimited taxonomy path with segment rules. The
   platform behavior is hierarchical facets in the search door
   (drill-down), path-prefix filters in metrics, and struct columns in

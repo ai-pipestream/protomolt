@@ -190,9 +190,9 @@ class IcebergMetricExecutorTest {
                 query("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                .setRange(ai.pipestream.proto.types.DateRange
                                         .newBuilder()
-                                        .setGte("2026-07-01").setLte("2026-07-31")))
+                                        .setBegin("2026-07-01").setEnd("2026-07-31")))
                         .build());
         assertThat(july.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(150.0);
         assertThat(july.getPhysicalPlan()).contains("epoch_ms");
@@ -202,8 +202,8 @@ class IcebergMetricExecutorTest {
                 query("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
-                                        .newBuilder().setGte("2026-08-01")))
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder().setBegin("2026-08-01")))
                         .build());
         assertThat(fromAugust.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(250.0);
     }

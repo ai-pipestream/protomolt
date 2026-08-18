@@ -20,6 +20,7 @@ import ai.pipestream.proto.metric.spi.CompiledMetricQuery.EqualsFilter;
 import ai.pipestream.proto.metric.spi.CompiledMetricQuery.Measure;
 import ai.pipestream.proto.metric.spi.MetricMapping.FieldKind;
 import ai.pipestream.proto.metric.spi.MetricMapping.MetricMember;
+import ai.pipestream.proto.types.DateRange;
 import dev.cel.common.types.SimpleType;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -246,39 +247,50 @@ public final class MetricQueries {
                             + member.kind() + "; keyword and bool dimensions filter by"
                             + " equality", List.of());
         }
-        Long gte = dateBound(filter.getMember(), filter.getRange().getGte(), true);
-        Long lte = dateBound(filter.getMember(), filter.getRange().getLte(), false);
+        // The canonical types.v1 day-grain semantics: an unset bound is an open
+        // end, an absent inclusivity flag means included, and excluding a bound
+        // drops that entire day. Compiled bounds stay inclusive epoch millis, so
+        // the executors never see the flags.
+        DateRange range = filter.getRange();
+        Long gte = null;
+        Long lte = null;
+        if (range.hasBegin()) {
+            java.time.LocalDate day = parseDay(filter.getMember(), range.getBegin());
+            if (range.hasIncludeHead() && !range.getIncludeHead()) {
+                day = day.plusDays(1);
+            }
+            gte = day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+        }
+        if (range.hasEnd()) {
+            java.time.LocalDate day = parseDay(filter.getMember(), range.getEnd());
+            if (!(range.hasIncludeTail() && !range.getIncludeTail())) {
+                day = day.plusDays(1);
+            }
+            lte = day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli() - 1;
+        }
         if (gte == null && lte == null) {
             throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                    "range on '" + filter.getMember() + "' has no bounds; give gte,"
-                            + " lte, or both as ISO-8601 dates", List.of());
+                    "range on '" + filter.getMember() + "' has no bounds; give begin,"
+                            + " end, or both as ISO-8601 dates", List.of());
         }
         if (gte != null && lte != null && gte > lte) {
             throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                    "range on '" + filter.getMember() + "' is inverted: gte is after"
-                            + " lte, so it would match nothing", List.of());
+                    "range on '" + filter.getMember() + "' is inverted or empty: no day"
+                            + " is at or after begin and at or before end", List.of());
         }
         return new CompiledMetricQuery.DateRangeFilter(
                 member.name(), member.fieldName(), member.fieldPath(), gte, lte);
     }
 
-    /** An ISO date bound as inclusive UTC epoch millis; null when empty. */
-    private static Long dateBound(String member, String bound, boolean lower) {
-        if (bound.isEmpty()) {
-            return null;
-        }
-        java.time.LocalDate date;
+    /** A strict ISO calendar day, refused by name otherwise. */
+    private static java.time.LocalDate parseDay(String member, String bound) {
         try {
-            date = java.time.LocalDate.parse(bound);
+            return java.time.LocalDate.parse(bound);
         } catch (java.time.format.DateTimeParseException e) {
             throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
                     "range bound '" + bound + "' on '" + member + "' is not an"
                             + " ISO-8601 date (like 2026-07-01)", List.of());
         }
-        return lower
-                ? date.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
-                : date.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC)
-                        .toInstant().toEpochMilli() - 1;
     }
 
     private static Dimension dimensionOf(

@@ -96,10 +96,10 @@ class MetricQueriesTest {
                 request("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                .setRange(ai.pipestream.proto.types.DateRange
                                         .newBuilder()
-                                        .setGte("2026-07-01")
-                                        .setLte("2026-07-31")))
+                                        .setBegin("2026-07-01")
+                                        .setEnd("2026-07-31")))
                         .build());
         CompiledMetricQuery.DateRangeFilter range = executor.executed.dateRanges().get(0);
         assertThat(range.member()).isEqualTo("created_at");
@@ -114,10 +114,46 @@ class MetricQueriesTest {
                 request("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
-                                        .newBuilder().setGte("2026-07-01")))
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder().setBegin("2026-07-01")))
                         .build());
         assertThat(executor.executed.dateRanges().get(0).lteEpochMillis()).isNull();
+    }
+
+    @Test
+    void excludedBoundDaysAreDroppedWhole() throws Exception {
+        // The canonical DateRange semantics: an explicit include_head/include_tail
+        // false drops that entire day, and the compiled bounds stay inclusive
+        // millis so the executors never see the flags.
+        FakeExecutor executor = FakeExecutor.lucene(List.of());
+        MetricQueries.query(mapping(), Map.of(executor.backend(), executor),
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder()
+                                        .setBegin("2026-07-01").setIncludeHead(false)
+                                        .setEnd("2026-07-31").setIncludeTail(false)))
+                        .build());
+        CompiledMetricQuery.DateRangeFilter range = executor.executed.dateRanges().get(0);
+        assertThat(range.gteEpochMillis()).isEqualTo(
+                java.time.Instant.parse("2026-07-02T00:00:00Z").toEpochMilli());
+        assertThat(range.lteEpochMillis()).isEqualTo(
+                java.time.Instant.parse("2026-07-31T00:00:00Z").toEpochMilli() - 1);
+
+        // Excluding both days of a two-day window leaves no day at all.
+        MetricMapping mapping = mapping();
+        assertThat(refusalOf(() -> MetricQueries.query(mapping,
+                Map.of(executor.backend(), executor),
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder()
+                                        .setBegin("2026-07-01").setIncludeHead(false)
+                                        .setEnd("2026-07-02").setIncludeTail(false)))
+                        .build())).getMessage())
+                .contains("inverted or empty");
     }
 
     @Test
@@ -131,8 +167,8 @@ class MetricQueriesTest {
                 request("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("segment")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
-                                        .newBuilder().setGte("2026-07-01")))
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder().setBegin("2026-07-01")))
                         .build())).getMessage())
                 .contains("needs a DATE dimension");
 
@@ -141,8 +177,8 @@ class MetricQueriesTest {
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
                                 .addEquals("2026-07")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
-                                        .newBuilder().setGte("2026-07-01")))
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder().setBegin("2026-07-01")))
                         .build())).getMessage())
                 .contains("pick one form");
 
@@ -150,7 +186,7 @@ class MetricQueriesTest {
                 request("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                .setRange(ai.pipestream.proto.types.DateRange
                                         .newBuilder()))
                         .build())).getMessage())
                 .contains("no bounds");
@@ -159,9 +195,9 @@ class MetricQueriesTest {
                 request("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                .setRange(ai.pipestream.proto.types.DateRange
                                         .newBuilder()
-                                        .setGte("2026-08-01").setLte("2026-07-01")))
+                                        .setBegin("2026-08-01").setEnd("2026-07-01")))
                         .build())).getMessage())
                 .contains("inverted");
 
@@ -169,8 +205,8 @@ class MetricQueriesTest {
                 request("revenue")
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
-                                        .newBuilder().setGte("July 1st")))
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder().setBegin("July 1st")))
                         .build())).getMessage())
                 .contains("not an ISO-8601 date");
 
