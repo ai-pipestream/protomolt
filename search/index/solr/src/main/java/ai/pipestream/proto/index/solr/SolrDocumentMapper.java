@@ -9,6 +9,7 @@ import ai.pipestream.proto.index.spi.MappingValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
+import ai.pipestream.proto.index.spi.TreePaths;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -51,6 +52,9 @@ import java.util.Objects;
  *       declares. Canonical {@code types.v1} ranges normalize an excluded bound to its
  *       inclusive equivalent, omit the subfield of an unset bound, and emit day-grain
  *       {@code DateRange} bounds as ISO instants covering whole days.</li>
+ *   <li><b>Tree paths</b>: each path value emits its ancestor chain ("a", "a/b", "a/b/c")
+ *       into one multi-valued string field, so faceting counts at any depth and a
+ *       path-prefix filter is an exact term match.</li>
  * </ul>
  */
 public final class SolrDocumentMapper implements SearchEngineIndexer {
@@ -117,6 +121,10 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
                 applyRange(document, field.fieldName(), value, hint, field.path());
                 continue;
             }
+            if (hint.type() == IndexFieldKind.TREE_PATH) {
+                document.put(field.fieldName(), treePathTerms(value, field.path()));
+                continue;
+            }
             if (isMapEntryList(value)) {
                 applyMap(document, field.fieldName(), (List<?>) value, hint, field.path());
                 continue;
@@ -127,6 +135,24 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
             }
         }
         return document;
+    }
+
+    /** Flat ancestor-chain terms from one or more tree-path messages. */
+    private static List<String> treePathTerms(Object value, String path) throws MappingException {
+        List<String> terms = new ArrayList<>();
+        for (Object element : value instanceof List<?> values ? values : List.of(value)) {
+            if (!(element instanceof Message treePath)) {
+                throw new MappingException(
+                        "Field is hinted TREE_PATH but the value is "
+                                + element.getClass().getName() + ", not a segments message", path);
+            }
+            var segments = TreePaths.resolve(treePath.getDescriptorForType())
+                    .orElseThrow(() -> new MappingException(
+                            "Message " + treePath.getDescriptorForType().getFullName()
+                                    + " declares no repeated string 'segments' field", path));
+            terms.addAll(TreePaths.ancestorPaths(treePath, segments));
+        }
+        return terms;
     }
 
     /** Two flat fields {@code name_min} / {@code name_max} from a bounds message. */

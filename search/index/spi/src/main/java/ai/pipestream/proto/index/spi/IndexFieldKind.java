@@ -29,7 +29,14 @@ public enum IndexFieldKind {
     LONG_RANGE,
     FLOAT_RANGE,
     DOUBLE_RANGE,
-    DATE_RANGE;
+    DATE_RANGE,
+    /**
+     * Taxonomy path over a message with a repeated string {@code segments} field
+     * (canonically {@code ai.pipestream.proto.types.v1.TreePath}). Engines emit the
+     * ancestor chain ("a", "a/b", "a/b/c") as keyword terms for hierarchical
+     * drill-down facets and path-prefix filters.
+     */
+    TREE_PATH;
 
     /** True for the range kinds, which apply to singular message fields with bound pairs. */
     public boolean isRange() {

@@ -48,8 +48,10 @@ public final class SolrSchemaGenerator {
             }
             ResolvedFieldHint hint = field.hint();
             // A DenseVectorField holds the whole vector in a single value, and Solr rejects the
-            // type outright when the field declares multiValued.
-            boolean multiValued = field.repeated() && hint.type() != IndexFieldKind.VECTOR;
+            // type outright when the field declares multiValued. A TREE_PATH field is always
+            // multi-valued: even a singular path emits its whole ancestor chain.
+            boolean multiValued = (field.repeated() || hint.type() == IndexFieldKind.TREE_PATH)
+                    && hint.type() != IndexFieldKind.VECTOR;
             if (hint.type().isRange()) {
                 fields.add(fieldMap(field.fieldName() + "_min", boundType(hint.type()), hint, multiValued));
                 fields.add(fieldMap(field.fieldName() + "_max", boundType(hint.type()), hint, multiValued));
@@ -150,6 +152,8 @@ public final class SolrSchemaGenerator {
         return switch (kind) {
             case TEXT -> textFieldType(analyzer);
             case KEYWORD -> "string";
+            // Ancestor-chain terms from the document mapper land as exact strings.
+            case TREE_PATH -> "string";
             case INT32 -> "pint";
             case INT64 -> "plong";
             case FLOAT -> "pfloat";

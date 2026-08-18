@@ -79,12 +79,18 @@ with at least one platform behavior attached — no shape zoo:
   waiver), the compiler honors open ends and the exclusivity flags,
   and the compiled bounds stay inclusive epoch millis so the
   executors never see the flags.
-- **TreePath** — a delimited taxonomy path with segment rules. The
-  platform behavior is hierarchical facets in the search door
-  (drill-down), path-prefix filters in metrics, and struct columns in
-  the lake. The audit's dotted-field-path family (identical regexes in
-  three modules) and the flat `facetable` keyword facets are the
-  consumers.
+- **TreePath** (landed) — a taxonomy path as repeated segments, root
+  first, wire-plain; the "/" delimiter exists only in rendered forms,
+  so a segment must not contain it (that rule is what keeps `["a/b"]`
+  and `["a", "b"]` distinguishable). At least one segment; segments
+  may repeat. The platform behavior shipped with the type: the index
+  SPI resolves it by name (a field of the canonical type infers
+  TREE_PATH, facetable, with no hint at all) and every engine mapper
+  emits the ancestor chain ("a", "a/b", "a/b/c") as keyword terms —
+  hierarchical drill-down facets count at any depth and a path-prefix
+  filter is an exact term match. Still to come on this type: a prefix
+  form on the metric surface's `MetricFilter`, and lake struct
+  columns.
 - **Adopt-and-validate `google.type`** (landed) — Money, Date,
   Interval, LatLng are not reinvented; the built-in
   `GoogleTypeRuleSource` (on the default validator chain) carries

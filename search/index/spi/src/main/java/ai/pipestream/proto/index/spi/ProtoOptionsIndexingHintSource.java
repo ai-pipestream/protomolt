@@ -184,6 +184,7 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
             case INDEX_FIELD_TYPE_FLOAT_RANGE -> IndexFieldKind.FLOAT_RANGE;
             case INDEX_FIELD_TYPE_DOUBLE_RANGE -> IndexFieldKind.DOUBLE_RANGE;
             case INDEX_FIELD_TYPE_DATE_RANGE -> IndexFieldKind.DATE_RANGE;
+            case INDEX_FIELD_TYPE_TREE_PATH -> IndexFieldKind.TREE_PATH;
             case INDEX_FIELD_TYPE_UNSPECIFIED, UNRECOGNIZED -> IndexFieldKind.UNSPECIFIED;
         };
     }
