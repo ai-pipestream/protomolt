@@ -126,7 +126,16 @@ class LuceneMetricExecutorTest {
                 .put("test.Order", "zone", FieldMetric.newBuilder()
                         .setRole(MemberRole.MEMBER_ROLE_MEASURE)
                         .setAggregate(Aggregate.AGGREGATE_COUNT_DISTINCT)
-                        .setName("zones").build());
+                        .setName("zones").build())
+                // A synthetic member: paying_count with no phantom field.
+                .putMessage("test.Order", ai.pipestream.proto.metric.MessageMetric
+                        .newBuilder()
+                        .addMembers(FieldMetric.newBuilder()
+                                .setRole(MemberRole.MEMBER_ROLE_MEASURE)
+                                .setAggregate(Aggregate.AGGREGATE_COUNT)
+                                .setName("paying_count")
+                                .setFilterCel("this.paying == true"))
+                        .build());
         mapping = MetricMappings.build("orders", order, metrics);
 
         LuceneMetricExecutor executor = new LuceneMetricExecutor(
@@ -347,6 +356,22 @@ class LuceneMetricExecutorTest {
                             .contains("bound of 2")
                             .contains("Iceberg");
                 });
+    }
+
+    @Test
+    void aSyntheticFilteredCountAnswersWithoutABackingField() {
+        // Hand-checked paying orders: o-1, o-3, o-4.
+        QueryMetricsResponse total = MetricQueries.query(mapping, executors,
+                request("paying_count").build());
+        assertThat(total.getRows(0).getMeasuresOrThrow("paying_count")).isEqualTo(3.0);
+
+        QueryMetricsResponse bySegment = MetricQueries.query(mapping, executors,
+                request("paying_count")
+                        .addDimensions(MemberRef.newBuilder().setName("segment"))
+                        .build());
+        Map<String, MetricRow> rows = bySegment(bySegment);
+        assertThat(rows.get("smb").getMeasuresOrThrow("paying_count")).isEqualTo(2.0);
+        assertThat(rows.get("mid").getMeasuresOrThrow("paying_count")).isEqualTo(1.0);
     }
 
     @Test

@@ -9,7 +9,7 @@ model. Design record: [metric mappings](../design/metric-mapping.md).
 
 | Artifact | Role |
 |---|---|
-| `protomolt-protobuf-metric` | The option dialect: `FieldMetric` (role, aggregate, name, filter_cel, cel, default_grain) and `MessageMetric` (subject, identity_field) |
+| `protomolt-protobuf-metric` | The option dialect: `FieldMetric` (role, aggregate, name, filter_cel, cel, default_grain) and `MessageMetric` (subject, identity_field, synthetic members) |
 | `protomolt-metric-proto` | The query contract: `MetricService` with `DescribeMapping` and `QueryMetrics`, validate.v1 rules on every request |
 | `protomolt-metric-spi` | Mapping build, the query compiler and its refusals, the `MetricExecutor` seam |
 | `protomolt-metric-lucene` | The shipped default engine: collectors over the search door's doc values |
@@ -37,6 +37,15 @@ untranslatable filter fails the build loudly. A calculated measure's
 it reads; at query time the compiler pulls those inputs into the engine
 query, evaluates the calculation per row, and trims what was not
 requested.
+
+A measure that is not a physical field is a **synthetic member**,
+declared on the message (`MessageMetric.members`) instead of a phantom
+field: `paying_count` is a COUNT with a `filter_cel` over `this` and no
+field at all, and a calculated `cel` works the same way. Each needs an
+explicit name and the MEASURE role; anything needing storage — every
+dimension, every SUM — stays a field, and a synthetic declaring one
+refuses at build time naming the member. Prefer a real field when the
+value already exists.
 
 ## Querying and refusing
 
