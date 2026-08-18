@@ -20,6 +20,8 @@ modules:
     name: buf.build/ai-pipestream/protomolt-service
   - path: protobuf/validation/src/main/proto
     name: buf.build/ai-pipestream/protobuf-validation
+  - path: protobuf/types/src/main/proto
+    name: buf.build/ai-pipestream/protobuf-types
   - path: search/index/spi/src/main/proto
     name: buf.build/ai-pipestream/protobuf-indexing-hints
   - path: protobuf/seo/src/main/proto

@@ -7,4 +7,6 @@ dependencies {
     testImplementation libs.jackson.databind
     testImplementation libs.testcontainers.solr
     testImplementation libs.testcontainers.junit.jupiter
+    // Canonical range types for the range-resolution tests.
+    testImplementation project(':protomolt-protobuf-types')
 }

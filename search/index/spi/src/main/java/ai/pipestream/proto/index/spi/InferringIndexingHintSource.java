@@ -40,6 +40,14 @@ public final class InferringIndexingHintSource implements IndexingHintSource {
         if (Timestamp.getDescriptor().getFullName().equals(type.getFullName())) {
             return ResolvedFieldHint.of(IndexFieldKind.DATE);
         }
+        if (!field.isRepeated()) {
+            // A singular field of a canonical range type indexes as that range with no
+            // hint options at all: the type name is the declaration.
+            Optional<IndexFieldKind> canonical = RangeBounds.canonicalKind(type);
+            if (canonical.isPresent()) {
+                return ResolvedFieldHint.of(canonical.get());
+            }
+        }
         if (Any.getDescriptor().getFullName().equals(type.getFullName())) {
             // Write-time unpack; not an opaque OBJECT and not a BINARY blob.
             return ResolvedFieldHint.of(IndexFieldKind.ANY);

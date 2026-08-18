@@ -20,6 +20,8 @@ dependencies {
     // Compile-only need: javac resolves the Tei providers' (String) constructors against
     // their (ManagedChannel) overloads; gRPC itself rides along at runtime from the TEI modules.
     testImplementation libs.grpc.api
+    // Canonical range types for the range-resolution tests.
+    testImplementation project(':protomolt-protobuf-types')
 }
 
 // The TEI lane self-provisions three heavyweight containers (OpenSearch plus two TEI CPU model

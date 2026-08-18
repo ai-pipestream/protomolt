@@ -48,7 +48,9 @@ import java.util.Objects;
  *       document field per map key, JSON one whole-map string, SKIP nothing.</li>
  *   <li><b>Ranges</b>: Solr has no native range type — bounds messages become two document
  *       fields {@code field_min} / {@code field_max}, whichever bound pair the message
- *       declares.</li>
+ *       declares. Canonical {@code types.v1} ranges normalize an excluded bound to its
+ *       inclusive equivalent, omit the subfield of an unset bound, and emit day-grain
+ *       {@code DateRange} bounds as ISO instants covering whole days.</li>
  * </ul>
  */
 public final class SolrDocumentMapper implements SearchEngineIndexer {
@@ -142,9 +144,53 @@ public final class SolrDocumentMapper implements SearchEngineIndexer {
         RangeBounds bounds = RangeBounds.resolve(range.getDescriptorForType(), hint.type())
                 .orElseThrow(() -> new MappingException(
                         "Message " + range.getDescriptorForType().getFullName()
-                                + " declares no (gte,lte) or (min,max) pair matching " + hint.type(), path));
-        document.put(name + "_min", coerce(range.getField(bounds.lower()), path));
-        document.put(name + "_max", coerce(range.getField(bounds.upper()), path));
+                                + " is not a canonical types.v1 range and declares no (gte,lte)"
+                                + " or (min,max) pair matching " + hint.type(), path));
+        // Two flat point fields cannot express exclusivity, so an excluded canonical
+        // bound is normalized to its inclusive equivalent (discrete types move by 1,
+        // doubles by one ulp, day-grain dates drop the whole day) and an unset bound
+        // omits its subfield. Duck-typed bounds emit exactly as before.
+        if (bounds.hasLower(range)) {
+            document.put(name + "_min", solrBound(
+                    range.getField(bounds.lower()), bounds, hint,
+                    bounds.lowerIncluded(range), true, path));
+        }
+        if (bounds.hasUpper(range)) {
+            document.put(name + "_max", solrBound(
+                    range.getField(bounds.upper()), bounds, hint,
+                    bounds.upperIncluded(range), false, path));
+        }
+    }
+
+    private static Object solrBound(
+            Object value,
+            RangeBounds bounds,
+            ResolvedFieldHint hint,
+            boolean included,
+            boolean lowerEnd,
+            String path) throws MappingException {
+        if (bounds.dayGrain()) {
+            long first = RangeBounds.dayFirstMillis((String) value);
+            long millis = lowerEnd
+                    ? (included ? first : first + RangeBounds.DAY_MILLIS)
+                    : (included ? first + RangeBounds.DAY_MILLIS - 1 : first - 1);
+            return java.time.Instant.ofEpochMilli(millis).toString();
+        }
+        if (included) {
+            return coerce(value, path);
+        }
+        int step = lowerEnd ? 1 : -1;
+        return switch (hint.type()) {
+            case INT_RANGE -> ((Number) value).intValue() + step;
+            case LONG_RANGE, DATE_RANGE -> ((Number) value).longValue() + step;
+            case FLOAT_RANGE -> lowerEnd
+                    ? Math.nextUp(((Number) value).floatValue())
+                    : Math.nextDown(((Number) value).floatValue());
+            case DOUBLE_RANGE -> lowerEnd
+                    ? Math.nextUp(((Number) value).doubleValue())
+                    : Math.nextDown(((Number) value).doubleValue());
+            default -> throw new IllegalStateException("not a range kind: " + hint.type());
+        };
     }
 
     private static void applyMap(

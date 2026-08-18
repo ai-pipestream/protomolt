@@ -59,14 +59,23 @@ Values with structure and invariants become messages in
 `protomolt/types/v1`, each carrying cross-field rules and shipping only
 with at least one platform behavior attached — no shape zoo:
 
-- **DateRange / NumericRange** — `{begin, end, include_head,
-  include_tail}` with begin-not-after-end and at-least-one-bound rules.
-  The audit found the need twice over: the indexing SPI declares five
-  `*_RANGE` field types with no canonical bounds message, and the repo
-  holds two *conflicting* span conventions (`PageSpan` closed,
-  `IntSpan` half-open) — the inclusivity flags exist to end exactly
-  that ambiguity. The metric surface's `MetricRange` (inclusive both
-  sides) is the first convergence target.
+- **DateRange / LongRange / DoubleRange** (landed) — `{begin, end,
+  include_head, include_tail}` with begin-not-after-end,
+  at-least-one-bound, and flag-without-bound rules as message-level
+  CEL. Bounds are `optional` (an unset bound is an open end) and an
+  absent inclusivity flag means included — the gte/lte convention —
+  while an explicit `false` excludes the bound. The audit found the
+  need twice over: the indexing SPI declares five `*_RANGE` field
+  types with no canonical bounds message, and the repo holds two
+  *conflicting* span conventions (`PageSpan` closed, `IntSpan`
+  half-open) — the inclusivity flags exist to end exactly that
+  ambiguity. The platform behavior shipped with the types: the index
+  SPI resolves them by name (a field of a canonical range type needs
+  no hint at all), and all three engine mappers honor open ends,
+  per-end inclusivity, and `DateRange`'s day-grain semantics (an
+  excluded bound day is dropped whole). The metric surface's
+  `MetricRange` (inclusive both sides) is the first convergence
+  target.
 - **TreePath** — a delimited taxonomy path with segment rules. The
   platform behavior is hierarchical facets in the search door
   (drill-down), path-prefix filters in metrics, and struct columns in

@@ -114,6 +114,8 @@ project(':protomolt-protobuf-indexing').projectDir = file('protobuf/indexing')
 
 include 'protomolt-protobuf-seo'
 project(':protomolt-protobuf-seo').projectDir = file('protobuf/seo')
+include 'protomolt-protobuf-types'
+project(':protomolt-protobuf-types').projectDir = file('protobuf/types')
 
 // transform/ — mapping, shaping, and composition between messages.
 

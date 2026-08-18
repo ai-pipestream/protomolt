@@ -1,0 +1,18 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Well-known structural types: validated ranges whose invariants ride the schema'
+
+dependencies {
+    api libs.protobuf.java
+    // The types carry validate.v1 rules; the tests prove them with the house validator.
+    api project(':protomolt-protobuf-validation')
+}
+
+// Messages and options only — no gRPC service here.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}
