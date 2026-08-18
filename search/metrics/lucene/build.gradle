@@ -4,11 +4,21 @@ dependencies {
     api project(':protomolt-metric-spi')
     api project(':protomolt-index-spi')
     api libs.lucene.core
+    // The metrics role module: composer types in its signature, the door
+    // services behind it, and the search door's store it aggregates over.
+    api project(':protomolt-composer')
+    implementation project(':protomolt-metric-door')
+    implementation project(':protomolt-search-door')
+    implementation project(':protomolt-actions')
+    implementation libs.grpc.api
     implementation libs.slf4j.api
 
-    // The end-to-end proof runs over the real door store: index documents,
-    // aggregate them, hand-check the numbers.
-    testImplementation project(':protomolt-search-door')
+    // The composed-role proof dials the fake repo and the metric door over
+    // their real wire contracts.
+    testImplementation project(':protomolt-repo-proto')
+    testImplementation libs.grpc.netty.shaded
+    testImplementation libs.grpc.inprocess
+    testRuntimeOnly libs.slf4j.simple
 }
 
 // The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an

@@ -82,6 +82,7 @@ services:
       - "9092:9092"   # intake gRPC
       - "9093:9093"   # parse gRPC
       - "9094:9094"   # search gRPC
+      - "9095:9095"   # metrics gRPC
       - "8081:8081"   # registry HTTP (+ jobs verbs on /protomolt/actions)
       - "8095:8095"   # parser playground
       - "8096:8096"   # search console

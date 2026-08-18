@@ -97,6 +97,10 @@ public final class SearchDoorModule implements ServiceModule {
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
 
+        // The live store, for co-mounted roles that read the same index in
+        // process (the metrics role's executor borrows its searchers).
+        context.contributions().contribute(LuceneSearchStore.class, door.store());
+
         // With a co-mounted registry, register the door's workflows so
         // operators can submit them by name. Parse-and-index additionally
         // needs a co-mounted parse coordinator; delete-and-unindex rides

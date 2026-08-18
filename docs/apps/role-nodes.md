@@ -31,6 +31,7 @@ The roles the platform binary knows
 | `intake` | authenticated ingest gRPC | needs a key store |
 | `playground` | parser playground page | |
 | `search` | search door gRPC | needs the index directory |
+| `metrics` | metric door gRPC (`MetricService`) | needs `search` on the same node: it aggregates over the search index in process |
 | `search-console` | the search page + operations panel | panel needs a local registry or `DOCUMENT_PLATFORM_ACTIONS_URL` |
 | `acquire-s3` | the `pull-s3` verb | opt-in; `PROTOMOLT_ACQUIRE_*` config |
 | `acquire-jdbc` | the `pull-jdbc` verb | opt-in; `PROTOMOLT_ACQUIRE_*` config |
@@ -42,9 +43,14 @@ actions catalog and workflow store from what co-mounted modules contribute
 at wire time. So `registry`, `jobs` and `parse` belong on one node (the
 jobs verbs, the parse-and-index workflow and the replay action all ride the
 registry's route), and the acquire roles belong with `intake` (they feed
-the door in-process). `repo` splits off cleanly today — that is the proven
-topology — and the same target mechanism carries further splits as the
-contribution surfaces grow wire equivalents.
+the door in-process). `metrics` belongs with `search`: the metric
+executor borrows the search door's live store, so a node claiming
+`metrics` without `search` refuses to boot (a remote metrics node,
+restoring its index from a snapshot, is a future composition); its
+`describe-mapping` and `query-metrics` verbs additionally need a
+co-mounted `registry` to be served. `repo` splits off cleanly today —
+that is the proven topology — and the same target mechanism carries
+further splits as the contribution surfaces grow wire equivalents.
 
 ## The worked example
 

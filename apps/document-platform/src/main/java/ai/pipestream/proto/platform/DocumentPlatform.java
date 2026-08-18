@@ -24,6 +24,7 @@ import ai.pipestream.proto.embeddings.EmbeddingProviders;
 import ai.pipestream.proto.embeddings.model2vec.Model2VecEmbeddingProvider;
 import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
+import ai.pipestream.proto.metric.lucene.MetricDoorModule;
 import ai.pipestream.proto.schema.confluent.ConfluentSchemaPublisher;
 import ai.pipestream.proto.search.console.SearchConsoleModule;
 import ai.pipestream.proto.search.door.RepoDocumentMapping;
@@ -68,6 +69,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private final IntakeModule intake;
     private final PlaygroundModule playground;
     private final SearchDoorModule search;
+    private final MetricDoorModule metrics;
     private final SearchConsoleModule searchConsole;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
@@ -136,6 +138,13 @@ public final class DocumentPlatform implements AutoCloseable {
                         Map.of(RepoDocumentMapping.SUBJECT,
                                 RepoDocumentMapping.served(defaultChunkingPolicy()))))
                 : null;
+        this.metrics = config.mounts(MetricDoorModule.ROLE)
+                ? new MetricDoorModule(new MetricDoorModule.Config(
+                        config.metricsGrpcPort(),
+                        Map.of(RepoDocumentMapping.SUBJECT, new MetricDoorModule.Subject(
+                                RepoDocumentMetrics.mapping(),
+                                RepoDocumentMapping.mapping()))))
+                : null;
         this.searchConsole = config.mounts(SearchConsoleModule.ROLE)
                 ? new SearchConsoleModule(new SearchConsoleModule.Config(
                         config.searchConsolePort(), actionsBaseUrl(config)))
@@ -145,7 +154,7 @@ public final class DocumentPlatform implements AutoCloseable {
         for (ai.pipestream.proto.composer.ServiceModule module
                 : new ai.pipestream.proto.composer.ServiceModule[] {
                         repo, registry, parse, jobs, intake, playground, search,
-                        searchConsole}) {
+                        metrics, searchConsole}) {
             if (module != null) {
                 selected.add(module);
             }
@@ -187,6 +196,9 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         if (search != null) {
             surfaces.add("search gRPC " + search.grpcPort());
+        }
+        if (metrics != null) {
+            surfaces.add("metrics gRPC " + metrics.grpcPort());
         }
         if (registry != null) {
             surfaces.add("registry http " + registry.httpPort());
@@ -260,6 +272,11 @@ public final class DocumentPlatform implements AutoCloseable {
     /** The bound search door gRPC port. */
     public int searchPort() {
         return mounted(search, SearchDoorModule.ROLE).grpcPort();
+    }
+
+    /** The bound metric door gRPC port. */
+    public int metricsPort() {
+        return mounted(metrics, MetricDoorModule.ROLE).grpcPort();
     }
 
     /** The bound search console HTTP port. */
