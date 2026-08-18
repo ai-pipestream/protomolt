@@ -111,6 +111,20 @@ class WorkflowDeadlineTest {
         return new WorkflowRunner(step -> InProcessChannelBuilder.forName(serverName).build());
     }
 
+    /** A manually advanced budget clock: the deadline maths race no scheduler. */
+    private static final class FakeNanoClock implements java.util.function.LongSupplier {
+        private long nanos;
+
+        @Override
+        public long getAsLong() {
+            return nanos;
+        }
+
+        void advanceMillis(long millis) {
+            nanos += TimeUnit.MILLISECONDS.toNanos(millis);
+        }
+    }
+
     @Test
     void aStepWithoutItsOwnDeadlineGetsWhatRemainsOfTheWorkflowBudget() throws Exception {
         runner().run(workflow(10_000, step("first", 0)), ping());
@@ -148,19 +162,18 @@ class WorkflowDeadlineTest {
     /**
      * The budget is spent by work between calls too. Dialling the channel is charged to the
      * workflow, so the second step's turn arrives with nothing left and must be refused before
-     * a request goes out rather than dialled with an already-expired deadline.
+     * a request goes out rather than dialled with an already-expired deadline. The budget
+     * clock is injected and advanced by the dial itself, so the arithmetic races no
+     * scheduler: this test once flaked under parallel-build load when a real 600ms sleep
+     * ate a real 200ms budget before the FIRST step's check.
      */
     @Test
     void aStepWhoseTurnComesAfterTheBudgetIsGoneIsRefused() {
+        FakeNanoClock clock = new FakeNanoClock();
         WorkflowRunner slowToDial = new WorkflowRunner(step -> {
-            try {
-                Thread.sleep(600);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(e);
-            }
+            clock.advanceMillis(600);
             return InProcessChannelBuilder.forName(serverName).build();
-        });
+        }, null, clock);
 
         assertThatThrownBy(() -> slowToDial.run(
                 workflow(200, step("first", 0), step("second", 0)), ping()))
@@ -175,18 +188,14 @@ class WorkflowDeadlineTest {
 
     @Test
     void anExhaustedWorkflowClosesTheChannelsItOpened() {
+        FakeNanoClock clock = new FakeNanoClock();
         List<ManagedChannel> opened = new CopyOnWriteArrayList<>();
         WorkflowRunner slowToDial = new WorkflowRunner(step -> {
-            try {
-                Thread.sleep(600);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(e);
-            }
+            clock.advanceMillis(600);
             ManagedChannel channel = InProcessChannelBuilder.forName(serverName).build();
             opened.add(channel);
             return channel;
-        });
+        }, null, clock);
 
         assertThatThrownBy(() -> slowToDial.run(
                 workflow(200, step("first", 0), step("second", 0)), ping()))

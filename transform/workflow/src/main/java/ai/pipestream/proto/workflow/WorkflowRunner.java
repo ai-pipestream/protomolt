@@ -205,6 +205,11 @@ public final class WorkflowRunner {
 
     private final ChannelFactory channels;
     private final StructuredGenerator generator;
+    // The workflow budget's clock. Injectable so the deadline arithmetic is
+    // testable without racing the wall clock (a parallel build's scheduler
+    // noise once flaked a 200ms-budget test); production always ticks real
+    // nanoTime.
+    private final java.util.function.LongSupplier nanoClock;
 
     public WorkflowRunner() {
         this(OutboundChannelPolicy.defaults());
@@ -255,8 +260,15 @@ public final class WorkflowRunner {
      * fails fast, naming the step.
      */
     public WorkflowRunner(ChannelFactory channels, StructuredGenerator generator) {
+        this(channels, generator, System::nanoTime);
+    }
+
+    /** Visible for tests: a runner whose workflow budget ticks {@code nanoClock}. */
+    WorkflowRunner(ChannelFactory channels, StructuredGenerator generator,
+            java.util.function.LongSupplier nanoClock) {
         this.channels = channels;
         this.generator = generator;
+        this.nanoClock = Objects.requireNonNull(nanoClock, "nanoClock");
     }
 
     /**
@@ -320,7 +332,7 @@ public final class WorkflowRunner {
                               ExecutionObserver observer)
             throws WorkflowExecutionException {
         Objects.requireNonNull(observer, "observer");
-        long deadlineNanos = System.nanoTime()
+        long deadlineNanos = nanoClock.getAsLong()
                 + TimeUnit.MILLISECONDS.toNanos(workflow.deadlineMs());
         DescriptorRegistry registry = DescriptorRegistry.create();
         for (FileDescriptor file : workflow.files()) {
@@ -409,7 +421,7 @@ public final class WorkflowRunner {
                         step.method().getInputType(), step.rules(), step.celRules(),
                         step.name());
                 long remainingMs = TimeUnit.NANOSECONDS.toMillis(
-                        deadlineNanos - System.nanoTime());
+                        deadlineNanos - nanoClock.getAsLong());
                 if (remainingMs <= 0) {
                     throw new WorkflowExecutionException(step.name(), FailureKind.DEADLINE, null,
                             "workflow deadline exhausted before the step ran", null);
@@ -529,7 +541,7 @@ public final class WorkflowRunner {
                     "structured step '" + step.name() + "' needs a StructuredGenerator; "
                             + "this runner was built without one", null);
         }
-        long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
+        long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - nanoClock.getAsLong());
         if (remainingMs <= 0) {
             throw new WorkflowExecutionException(step.name(), FailureKind.DEADLINE, null,
                     "workflow deadline exhausted before the step ran", null);
@@ -916,10 +928,10 @@ public final class WorkflowRunner {
     }
 
     /** The per-call budget: the step's own deadline nested in the remaining workflow budget. */
-    private static long remainingMs(CompiledWorkflow.Step step, long deadlineNanos)
+    private long remainingMs(CompiledWorkflow.Step step, long deadlineNanos)
             throws WorkflowExecutionException {
         long remainingMs = TimeUnit.NANOSECONDS.toMillis(
-                deadlineNanos - System.nanoTime());
+                deadlineNanos - nanoClock.getAsLong());
         if (remainingMs <= 0) {
             throw new WorkflowExecutionException(step.name(), FailureKind.DEADLINE, null,
                     "workflow deadline exhausted before the step ran", null);
