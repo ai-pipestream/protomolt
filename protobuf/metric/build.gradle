@@ -1,0 +1,15 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Protobuf metric standard — Field/Message options declaring measures and dimensions on schemas'
+
+dependencies {
+    api libs.protobuf.java
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}

@@ -668,6 +668,41 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         return fields;
     }
 
+    /**
+     * Borrows the subject's live near-real-time searcher for one read. The
+     * acquire/release pair stays inside the store so a borrower can never
+     * leak the manager's reference count; the searcher is valid only within
+     * {@code read}. This is the metric executors' read seam: aggregation is
+     * a read path over the same index the door serves.
+     *
+     * @param subjectName the mapping subject
+     * @param read the work to run against the searcher
+     * @param <T> the read's result type
+     * @return what {@code read} returned
+     */
+    public <T> T withSearcher(String subjectName, SearcherRead<T> read) {
+        Subject subject = subject(subjectName);
+        IndexSearcher searcher;
+        try {
+            searcher = subject.searchers().acquire();
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot acquire a searcher", e);
+        }
+        try {
+            return read.apply(searcher);
+        } catch (IOException e) {
+            throw new UncheckedIOException("searcher read failed", e);
+        } finally {
+            release(subject, searcher);
+        }
+    }
+
+    /** One read over a borrowed {@link IndexSearcher}. */
+    @FunctionalInterface
+    public interface SearcherRead<T> {
+        T apply(IndexSearcher searcher) throws IOException;
+    }
+
     private Subject subject(String subjectName) {
         Subject subject = subjects.get(subjectName);
         if (subject == null) {

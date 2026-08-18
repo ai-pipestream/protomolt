@@ -1,0 +1,182 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.metric.v1;
+
+import "ai/pipestream/proto/metric/v1/metric.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.metric";
+option java_outer_classname = "MetricServiceProto";
+
+// ============================================================================
+// METRIC SERVICE — aggregate queries over a mapping subject.
+//
+// The descriptor is the semantic layer: measures and dimensions are the
+// metric.v1 declarations on the subject's message type, so what is queryable
+// is exactly what the schema declares. Every request is gated by membership:
+// an unknown subject, an unknown member, a role mismatch, or a backend the
+// subject was not mounted with is refused loudly by name — the service never
+// guesses what a caller meant.
+//
+// These request messages carry validate.v1 rules and the service mounts the
+// validating interceptor from day one: shape rules are the schema's job, and
+// hand-written refusals cover only what annotations cannot express
+// (membership, roles, capabilities).
+// ============================================================================
+
+// Which engine runs the reduction.
+enum MetricBackend {
+  // Unset: resolves to the mount's engine on a single-engine mount
+  // (configuration, not a guess); refused with the mounted set on a
+  // multi-engine mount. Never a silent pick.
+  METRIC_BACKEND_UNSPECIFIED = 0;
+  // Interactive, document-native: collectors over the search door's index.
+  METRIC_BACKEND_LUCENE = 1;
+  // Lake-native: a single SELECT over an Iceberg table the sink wrote.
+  METRIC_BACKEND_ICEBERG = 2;
+}
+
+// One group-by member reference.
+message MemberRef {
+  // The mapping member name. Required.
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Bucketing grain; DATE dimensions only. Unset on a DATE dimension falls
+  // back to the member's declared default_grain.
+  TimeGrain grain = 2;
+}
+
+// One equality filter over a member.
+message MetricFilter {
+  // The mapping member name the filter applies to. Required.
+  string member = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Equality set: a row matches when the member equals any value. Required
+  // non-empty; an empty set would silently match nothing.
+  repeated string equals = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1}
+    }
+  ];
+}
+
+// One aggregate query against a mapping subject.
+message QueryMetricsRequest {
+  // The mapping subject to query. Required; unknown subjects are refused
+  // with the list of served subjects.
+  string mapping_subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Explicit engine selector. Unset on a single-engine mount means the
+  // mount's engine; unset on a multi-engine mount is refused naming the
+  // mounted engines. A backend the subject was not mounted with is refused.
+  MetricBackend backend = 2;
+  // Measure member names to compute. Required, at least one.
+  repeated string measures = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1}
+    }
+  ];
+  // Group-by dimensions; empty means one row over all matching rows.
+  repeated MemberRef dimensions = 4;
+  // Row filters, all of which must match (AND).
+  repeated MetricFilter filters = 5;
+  // Maximum result rows. Required; must be positive and bounded — over-cap
+  // requests are refused, not clamped.
+  int32 limit = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      int32: {gt: 0, lte: 1000}
+    }
+  ];
+}
+
+// One result row.
+message MetricRow {
+  // Selected dimension values, keyed by member name, rendered as strings
+  // (a DATE dimension renders its bucket, e.g. "2026-08" for MONTH).
+  map<string, string> dimensions = 1;
+  // Computed measures, keyed by member name. Double by decision of record:
+  // counts stay exact through 2^53 and the typed-cell question was settled
+  // for stored fields, not aggregates.
+  map<string, double> measures = 2;
+}
+
+// What one QueryMetrics call computed.
+message QueryMetricsResponse {
+  // The queried subject, echoed.
+  string mapping_subject = 1;
+  // The engine that ran the reduction (resolved when the request left it
+  // unset on a single-engine mount).
+  MetricBackend backend = 2;
+  // The result rows, at most the request's limit.
+  repeated MetricRow rows = 3;
+  // Total rows returned.
+  int32 row_count = 4;
+  // The executor's physical plan (collector description, generated SQL):
+  // human and agent evidence, never a source of truth for a later query.
+  string physical_plan = 5;
+}
+
+// Asks for one subject's queryable surface.
+message DescribeMappingRequest {
+  // The mapping subject to describe. Required.
+  string mapping_subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+}
+
+// One queryable member of a mapping.
+message MappingMember {
+  // The public member name (the declared name, or the field name).
+  string name = 1;
+  // Whether the member groups or aggregates.
+  MemberRole role = 2;
+  // The measure's aggregate; unset on dimensions.
+  Aggregate aggregate = 3;
+  // The backing proto field path; empty when synthetic.
+  string field_path = 4;
+  // Human description, from meta.v1 when present.
+  string description = 5;
+  // Sensitivity class, from meta.v1 when present.
+  string sensitivity = 6;
+  // Default bucketing grain; DATE dimensions only.
+  TimeGrain default_grain = 7;
+}
+
+// What one DescribeMapping call answered.
+message DescribeMappingResponse {
+  // The described subject, echoed.
+  string mapping_subject = 1;
+  // Fully-qualified message type the mapping was built from.
+  string message_type = 2;
+  // Every queryable member, in declaration order.
+  repeated MappingMember members = 3;
+  // The engines this mount can run.
+  repeated MetricBackend backends = 4;
+}
+
+// Aggregate queries over descriptor-declared metric mappings. A sibling of
+// the search door's SearchService, never a new RPC on it: retrieval and
+// aggregation stay independently mountable.
+service MetricService {
+  // One subject's queryable surface: members, roles, backends.
+  rpc DescribeMapping(DescribeMappingRequest) returns (DescribeMappingResponse);
+  // One aggregate query: measures, group-by, filters, bounded limit.
+  rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+}
