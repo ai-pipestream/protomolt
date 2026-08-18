@@ -34,53 +34,121 @@ class ReadOnlySearchNodeTest {
     @TempDir
     Path work;
 
-    @Test
-    void aReaderServesTheWritersSnapshotWithoutARepoOrAWriteSurface() throws Exception {
-        Document document = Document.newBuilder()
-                .setDocId("doc-7")
+    static Document document(String docId, String body) {
+        return Document.newBuilder()
+                .setDocId(docId)
                 .setSearchMetadata(SearchMetadata.newBuilder()
                         .setTitle("Reader Node Proof")
-                        .setBody("The reader serves the writer's harvest."))
+                        .setBody(body))
                 .build();
-        IndexSnapshotsTest.FakeSnapshotStore blobs = new IndexSnapshotsTest.FakeSnapshotStore();
+    }
 
-        SearchDoorModule writer = new SearchDoorModule(new SearchDoorModule.Config(
-                0, work.resolve("writer-index"),
-                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()),
-                new IndexSnapshots(blobs)));
-        try (Composer.Node node = Composer.emptyBuilder()
-                .module(new SearchDoorModuleTest.FakeRepoModule(document))
+    static void index(int port, String docId) {
+        ManagedChannel channel = NettyChannelBuilder
+                .forAddress("127.0.0.1", port).usePlaintext().build();
+        try {
+            SearchIndexServiceGrpc.newBlockingStub(channel)
+                    .indexDocument(IndexDocumentRequest.newBuilder()
+                            .setAddress(NodeAddress.newBuilder().setDocId(docId)
+                                    .setGraphAddressId("ds").setAccountId("acct")
+                                    .setGraphId("intake:acct"))
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .build());
+        } finally {
+            channel.shutdownNow();
+        }
+    }
+
+    static Composer.Node writerNode(SearchDoorModule writer, Map<String, Document> corpus) {
+        return Composer.emptyBuilder()
+                .module(new FakeCorpusRepoModule(corpus))
                 .module(writer)
                 .environment(Map.of())
                 .build()
-                .boot(List.of("repo", "search"))) {
-            ManagedChannel channel = NettyChannelBuilder
-                    .forAddress("127.0.0.1", writer.grpcPort()).usePlaintext().build();
-            try {
-                SearchIndexServiceGrpc.newBlockingStub(channel)
-                        .indexDocument(IndexDocumentRequest.newBuilder()
-                                .setAddress(NodeAddress.newBuilder().setDocId("doc-7")
-                                        .setGraphAddressId("ds").setAccountId("acct")
-                                        .setGraphId("intake:acct"))
-                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
-                                .build());
-            } finally {
-                channel.shutdownNow();
-            }
-        }
-        List<String> writerOperations = List.copyOf(blobs.operations);
+                .boot(List.of("repo", "search"));
+    }
 
-        // The reader: search alone, no repo module anywhere, restore-only.
+    /** A corpus-backed repo stub (the single-document fake serves one). */
+    static final class FakeCorpusRepoModule implements ai.pipestream.proto.composer.ServiceMount,
+            ai.pipestream.proto.composer.ServiceModule {
+
+        private final Map<String, Document> corpus;
+        private io.grpc.Server server;
+
+        FakeCorpusRepoModule(Map<String, Document> corpus) {
+            this.corpus = corpus;
+        }
+
+        @Override
+        public String role() {
+            return "repo";
+        }
+
+        @Override
+        public ai.pipestream.proto.composer.ServiceMount wire(
+                ai.pipestream.proto.composer.NodeContext context) throws Exception {
+            String name = io.grpc.inprocess.InProcessServerBuilder.generateName();
+            server = io.grpc.inprocess.InProcessServerBuilder.forName(name)
+                    .directExecutor()
+                    .addService(new ai.pipestream.proto.repo.v1.DocumentServiceGrpc
+                            .DocumentServiceImplBase() {
+                        @Override
+                        public void getDocumentByReference(
+                                ai.pipestream.proto.repo.v1.GetDocumentByReferenceRequest request,
+                                io.grpc.stub.StreamObserver<ai.pipestream.proto.repo.v1
+                                        .GetDocumentResponse> observer) {
+                            observer.onNext(ai.pipestream.proto.repo.v1.GetDocumentResponse
+                                    .newBuilder()
+                                    .setDocument(corpus.get(request.getAddress().getDocId()))
+                                    .build());
+                            observer.onCompleted();
+                        }
+                    })
+                    .build()
+                    .start();
+            context.channels().publishInProcess("repo", name);
+            return this;
+        }
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void close() {
+            server.shutdownNow();
+        }
+    }
+
+    @Test
+    void aReaderServesTheWritersSnapshotAndNeverTouchesTheBucket() throws Exception {
+        Map<String, Document> corpus = Map.of(
+                "doc-7", document("doc-7", "The reader serves the writer's harvest."),
+                "doc-8", document("doc-8", "The writer advances after the reader boots."));
+        IndexSnapshotsTest.FakeSnapshotStore blobs = new IndexSnapshotsTest.FakeSnapshotStore();
+
+        // Writer run one: doc-7 lands, close snapshots it.
+        SearchDoorModule writerOne = new SearchDoorModule(new SearchDoorModule.Config(
+                0, work.resolve("writer-index"),
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()),
+                new IndexSnapshots(blobs)));
+        try (Composer.Node node = writerNode(writerOne, corpus)) {
+            index(writerOne.grpcPort(), "doc-7");
+        }
+
+        // The reader boots on the v1 snapshot: search alone, no repo
+        // module anywhere, restore-only.
         SearchDoorModule reader = new SearchDoorModule(new SearchDoorModule.Config(
                 0, work.resolve("reader-index"),
                 Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()),
                 new IndexSnapshots(blobs, true),
                 true));
-        try (Composer.Node node = Composer.emptyBuilder()
+        Composer.Node readerNode = Composer.emptyBuilder()
                 .module(reader)
                 .environment(Map.of())
                 .build()
-                .boot(List.of("search"))) {
+                .boot(List.of("search"));
+        try {
             ManagedChannel channel = NettyChannelBuilder
                     .forAddress("127.0.0.1", reader.grpcPort()).usePlaintext().build();
             try {
@@ -105,13 +173,51 @@ class ReadOnlySearchNodeTest {
                         .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                                 assertThat(e.getStatus().getCode())
                                         .isEqualTo(Status.Code.UNIMPLEMENTED));
+
+                // Writer run two advances the bucket to v2 while the reader,
+                // still holding v1, stays up.
+                SearchDoorModule writerTwo = new SearchDoorModule(new SearchDoorModule.Config(
+                        0, work.resolve("writer-index"),
+                        Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()),
+                        new IndexSnapshots(blobs)));
+                try (Composer.Node node = writerNode(writerTwo, corpus)) {
+                    index(writerTwo.grpcPort(), "doc-8");
+                }
+            } finally {
+                channel.shutdownNow();
+            }
+        } finally {
+            readerNode.close();
+        }
+
+        // The stale reader's shutdown neither re-uploaded its old commit
+        // nor pruned the writer's newer blobs: v2 restores intact.
+        SearchDoorModule verify = new SearchDoorModule(new SearchDoorModule.Config(
+                0, work.resolve("verify-index"),
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()),
+                new IndexSnapshots(blobs, true),
+                true));
+        try (Composer.Node node = Composer.emptyBuilder()
+                .module(verify)
+                .environment(Map.of())
+                .build()
+                .boot(List.of("search"))) {
+            ManagedChannel channel = NettyChannelBuilder
+                    .forAddress("127.0.0.1", verify.grpcPort()).usePlaintext().build();
+            try {
+                SearchResponse advanced = SearchServiceGrpc.newBlockingStub(channel)
+                        .search(SearchRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .setQuery("writer advances")
+                                .setK(3)
+                                .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                                .build());
+                assertThat(advanced.getHitsList()).isNotEmpty();
+                assertThat(advanced.getHits(0).getDocId()).isEqualTo("doc-8");
             } finally {
                 channel.shutdownNow();
             }
         }
-
-        // The reader's whole life wrote nothing to the store.
-        assertThat(blobs.operations).isEqualTo(writerOperations);
     }
 
     @Test
