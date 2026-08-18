@@ -403,6 +403,8 @@ include 'protomolt-config'
 project(':protomolt-config').projectDir = file('host/config')
 include 'protomolt-config-registry'
 project(':protomolt-config-registry').projectDir = file('host/config-registry')
+include 'protomolt-config-kafka'
+project(':protomolt-config-kafka').projectDir = file('host/config-kafka')
 
 include 'protomolt-server-common'
 project(':protomolt-server-common').projectDir = file('host/servers/common')

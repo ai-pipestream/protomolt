@@ -1,0 +1,21 @@
+description = 'The Kafka plug for distributed config: a compacted topic read through the house serde against the registry, with the schema\'s declared rules enforced on read - never an unvalidated document'
+
+dependencies {
+    api project(':protomolt-config')
+    // The house serde: Confluent wire format against the protomolt
+    // registry, validate-on-read forced on for the config lane.
+    implementation project(':protomolt-serde')
+    // This plug owns its consumer, so it ships the client it runs.
+    implementation libs.kafka.clients
+    implementation libs.slf4j.api
+
+    // The proof runs Redpanda as the broker and the protomolt registry
+    // server as the schema registry: the whole house stack.
+    testImplementation project(':protomolt-registry')
+    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-schema-confluent')
+    testImplementation project(':protomolt-proto-sources')
+    testImplementation libs.testcontainers.junit.jupiter
+    testImplementation libs.testcontainers.redpanda
+    testRuntimeOnly libs.slf4j.simple
+}
