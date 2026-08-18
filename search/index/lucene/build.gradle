@@ -6,6 +6,8 @@ dependencies {
     api libs.lucene.core
     // LuceneIndexWriter opens indexes with a StandardAnalyzer.
     api libs.lucene.analysis.common
+    // Canonical range types for the range-resolution tests.
+    testImplementation project(':protomolt-protobuf-types')
 }
 
 // The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an

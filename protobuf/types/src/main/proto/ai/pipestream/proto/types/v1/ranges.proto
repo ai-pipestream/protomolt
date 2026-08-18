@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.types.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.types";
+option java_outer_classname = "RangesProto";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// Well-known bounded ranges.
+//
+// Each range is the canonical bounds message for the matching
+// index.hints.v1 *_RANGE field kind: the indexing SPI recognizes these
+// types by name, so a field of one of these types indexes as a range
+// with no hint options at all. An unset bound is an open end; at least
+// one bound must be set. Inclusivity is per end: an absent flag means
+// the bound is included (the gte/lte convention), an explicit false
+// excludes it — the flags exist to end the closed-vs-half-open span
+// ambiguity, so a range says which convention it uses instead of
+// leaving readers to guess. Setting a flag for an unset bound is a
+// contradiction and is refused by name.
+
+// A calendar-day range. Bounds are strict ISO dates (string.date), so
+// the whole range stays wire-plain: any client sends plain strings, and
+// lexicographic order is chronological order. Day-grain semantics: an
+// included begin covers from the day's first instant, an included end
+// covers through the day's last millisecond, and excluding an end drops
+// that entire day.
+message DateRange {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "date_range.bounded"
+      message: "at least one bound must be set"
+      expression: "has(this.begin) || has(this.end)"
+    }
+    cel: {
+      id: "date_range.ordered"
+      message: "begin must not be after end"
+      expression: "!has(this.begin) || !has(this.end) || this.begin <= this.end"
+    }
+    cel: {
+      id: "date_range.head_flag_without_bound"
+      message: "include_head is set but begin is not"
+      expression: "!has(this.include_head) || has(this.begin)"
+    }
+    cel: {
+      id: "date_range.tail_flag_without_bound"
+      message: "include_tail is set but end is not"
+      expression: "!has(this.include_tail) || has(this.end)"
+    }
+  };
+
+  // Lower bound day. Unset = unbounded.
+  optional string begin = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {date: true}
+    }
+  ];
+  // Upper bound day. Unset = unbounded.
+  optional string end = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {date: true}
+    }
+  ];
+  // Whether begin's day is part of the range. Absent = included.
+  optional bool include_head = 3;
+  // Whether end's day is part of the range. Absent = included.
+  optional bool include_tail = 4;
+}
+
+// An integer range over int64 values. The canonical bounds message for
+// LONG_RANGE, and for DATE_RANGE when the bounds are epoch values.
+message LongRange {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "long_range.bounded"
+      message: "at least one bound must be set"
+      expression: "has(this.begin) || has(this.end)"
+    }
+    cel: {
+      id: "long_range.ordered"
+      message: "begin must not be after end"
+      expression: "!has(this.begin) || !has(this.end) || this.begin <= this.end"
+    }
+    cel: {
+      id: "long_range.head_flag_without_bound"
+      message: "include_head is set but begin is not"
+      expression: "!has(this.include_head) || has(this.begin)"
+    }
+    cel: {
+      id: "long_range.tail_flag_without_bound"
+      message: "include_tail is set but end is not"
+      expression: "!has(this.include_tail) || has(this.end)"
+    }
+  };
+
+  // Lower bound. Unset = unbounded.
+  optional int64 begin = 1;
+  // Upper bound. Unset = unbounded.
+  optional int64 end = 2;
+  // Whether begin itself is in the range. Absent = included.
+  optional bool include_head = 3;
+  // Whether end itself is in the range. Absent = included.
+  optional bool include_tail = 4;
+}
+
+// A continuous range over double values. The canonical bounds message
+// for DOUBLE_RANGE. Bounds must be finite: NaN orders with nothing and
+// infinities are spelled by leaving the bound unset.
+message DoubleRange {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "double_range.bounded"
+      message: "at least one bound must be set"
+      expression: "has(this.begin) || has(this.end)"
+    }
+    cel: {
+      id: "double_range.ordered"
+      message: "begin must not be after end"
+      expression: "!has(this.begin) || !has(this.end) || this.begin <= this.end"
+    }
+    cel: {
+      id: "double_range.head_flag_without_bound"
+      message: "include_head is set but begin is not"
+      expression: "!has(this.include_head) || has(this.begin)"
+    }
+    cel: {
+      id: "double_range.tail_flag_without_bound"
+      message: "include_tail is set but end is not"
+      expression: "!has(this.include_tail) || has(this.end)"
+    }
+  };
+
+  // Lower bound. Unset = unbounded.
+  optional double begin = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      double: {finite: true}
+    }
+  ];
+  // Upper bound. Unset = unbounded.
+  optional double end = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      double: {finite: true}
+    }
+  ];
+  // Whether begin itself is in the range. Absent = included.
+  optional bool include_head = 3;
+  // Whether end itself is in the range. Absent = included.
+  optional bool include_tail = 4;
+}

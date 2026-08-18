@@ -73,7 +73,11 @@ import java.util.Objects;
  *       string per entry, JSON the whole-map string, SKIP nothing.</li>
  *   <li><b>Ranges</b>: singular bounds messages become single-dimension
  *       {@code IntRange}/{@code LongRange}/{@code FloatRange}/{@code DoubleRange} fields
- *       (DATE_RANGE is a {@code LongRange} of epoch values per the hint's resolution).</li>
+ *       (DATE_RANGE is a {@code LongRange} of epoch values per the hint's resolution).
+ *       Canonical {@code types.v1} ranges add open ends and per-end inclusivity: Lucene
+ *       ranges are inclusive, so an excluded bound moves one step inward and an unset
+ *       bound becomes the open-end sentinel; the day-grain {@code DateRange} covers whole
+ *       days.</li>
  *   <li><b>Dates</b>: Timestamp values are emitted numerically as epoch millis, or epoch
  *       seconds under {@code DATE_RESOLUTION_SECONDS}.</li>
  * </ul>
@@ -400,21 +404,70 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         RangeBounds bounds = RangeBounds.resolve(range.getDescriptorForType(), hint.type())
                 .orElseThrow(() -> new MappingException(
                         "Message " + range.getDescriptorForType().getFullName()
-                                + " declares no (gte,lte) or (min,max) pair matching " + hint.type(), path));
+                                + " is not a canonical types.v1 range and declares no (gte,lte)"
+                                + " or (min,max) pair matching " + hint.type(), path));
+        // Lucene range fields are inclusive on both ends, so an excluded bound moves one
+        // step inward (discrete types by 1, floating point by one ulp) and an unset bound
+        // becomes the type's open-end sentinel. Duck-typed bounds are always present and
+        // included, so they emit exactly as before.
+        boolean hasLower = bounds.hasLower(range);
+        boolean hasUpper = bounds.hasUpper(range);
+        boolean lowerIn = bounds.lowerIncluded(range);
+        boolean upperIn = bounds.upperIncluded(range);
         Object lower = range.getField(bounds.lower());
         Object upper = range.getField(bounds.upper());
         switch (hint.type()) {
             case INT_RANGE -> document.add(new IntRange(name,
-                    new int[]{((Number) lower).intValue()}, new int[]{((Number) upper).intValue()}));
+                    new int[]{!hasLower ? Integer.MIN_VALUE
+                            : ((Number) lower).intValue() + (lowerIn ? 0 : 1)},
+                    new int[]{!hasUpper ? Integer.MAX_VALUE
+                            : ((Number) upper).intValue() - (upperIn ? 0 : 1)}));
             case LONG_RANGE -> document.add(new LongRange(name,
-                    new long[]{((Number) lower).longValue()}, new long[]{((Number) upper).longValue()}));
+                    new long[]{!hasLower ? Long.MIN_VALUE
+                            : ((Number) lower).longValue() + (lowerIn ? 0 : 1)},
+                    new long[]{!hasUpper ? Long.MAX_VALUE
+                            : ((Number) upper).longValue() - (upperIn ? 0 : 1)}));
             case FLOAT_RANGE -> document.add(new FloatRange(name,
-                    new float[]{((Number) lower).floatValue()}, new float[]{((Number) upper).floatValue()}));
+                    new float[]{!hasLower ? Float.NEGATIVE_INFINITY
+                            : lowerIn ? ((Number) lower).floatValue()
+                                    : Math.nextUp(((Number) lower).floatValue())},
+                    new float[]{!hasUpper ? Float.POSITIVE_INFINITY
+                            : upperIn ? ((Number) upper).floatValue()
+                                    : Math.nextDown(((Number) upper).floatValue())}));
             case DOUBLE_RANGE -> document.add(new DoubleRange(name,
-                    new double[]{((Number) lower).doubleValue()}, new double[]{((Number) upper).doubleValue()}));
-            case DATE_RANGE -> document.add(new LongRange(name,
-                    new long[]{dateBound(lower, hint.dateResolution())},
-                    new long[]{dateBound(upper, hint.dateResolution())}));
+                    new double[]{!hasLower ? Double.NEGATIVE_INFINITY
+                            : lowerIn ? ((Number) lower).doubleValue()
+                                    : Math.nextUp(((Number) lower).doubleValue())},
+                    new double[]{!hasUpper ? Double.POSITIVE_INFINITY
+                            : upperIn ? ((Number) upper).doubleValue()
+                                    : Math.nextDown(((Number) upper).doubleValue())}));
+            case DATE_RANGE -> {
+                long lo;
+                long hi;
+                if (bounds.dayGrain()) {
+                    // Canonical DateRange: ISO day strings with day-grain semantics — an
+                    // excluded end drops the whole day. Computed in millis, then narrowed
+                    // to the hint's resolution (ceil on the lower end, floor on the upper,
+                    // so the narrowed range never covers an instant the range excludes).
+                    long loMillis = !hasLower ? Long.MIN_VALUE
+                            : RangeBounds.dayFirstMillis((String) lower)
+                                    + (lowerIn ? 0 : RangeBounds.DAY_MILLIS);
+                    long hiMillis = !hasUpper ? Long.MAX_VALUE
+                            : RangeBounds.dayFirstMillis((String) upper)
+                                    + (upperIn ? RangeBounds.DAY_MILLIS - 1 : -1);
+                    boolean seconds = hint.dateResolution() == DateResolution.SECONDS;
+                    lo = !hasLower ? Long.MIN_VALUE
+                            : seconds ? Math.ceilDiv(loMillis, 1000) : loMillis;
+                    hi = !hasUpper ? Long.MAX_VALUE
+                            : seconds ? Math.floorDiv(hiMillis, 1000) : hiMillis;
+                } else {
+                    lo = !hasLower ? Long.MIN_VALUE
+                            : dateBound(lower, hint.dateResolution()) + (lowerIn ? 0 : 1);
+                    hi = !hasUpper ? Long.MAX_VALUE
+                            : dateBound(upper, hint.dateResolution()) - (upperIn ? 0 : 1);
+                }
+                document.add(new LongRange(name, new long[]{lo}, new long[]{hi}));
+            }
             default -> throw new IllegalStateException("not a range kind: " + hint.type());
         }
     }

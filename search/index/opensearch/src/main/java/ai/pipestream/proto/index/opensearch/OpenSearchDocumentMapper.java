@@ -47,7 +47,10 @@ import java.util.Objects;
  *   <li><b>Maps</b>: {@code map_mode} unset defaults to FLATTEN (a JSON object with dynamic
  *       keys); ENTRIES emits {@code [{key, value}]}, JSON one string, SKIP nothing.</li>
  *   <li><b>Ranges</b>: bounds messages become {@code {gte, lte}} objects for the
- *       {@code *_range} mapping types, whichever bound pair the message declares.</li>
+ *       {@code *_range} mapping types, whichever bound pair the message declares.
+ *       Canonical {@code types.v1} ranges speak inclusivity natively ({@code gt}/{@code lt}
+ *       for an excluded bound), an unset bound has no key, and the day-grain
+ *       {@code DateRange} lands as epoch millis covering whole days.</li>
  * </ul>
  */
 public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
@@ -166,10 +169,39 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
         RangeBounds bounds = RangeBounds.resolve(range.getDescriptorForType(), hint.type())
                 .orElseThrow(() -> new MappingException(
                         "Message " + range.getDescriptorForType().getFullName()
-                                + " declares no (gte,lte) or (min,max) pair matching " + hint.type(), path));
+                                + " is not a canonical types.v1 range and declares no (gte,lte)"
+                                + " or (min,max) pair matching " + hint.type(), path));
+        // OpenSearch range values speak inclusivity natively: gte/lte for an included
+        // bound, gt/lt for an excluded one, and an unset bound simply has no key. The
+        // canonical DateRange's ISO day strings become epoch millis so day-grain
+        // semantics (an included end covers through the day's last millisecond) hold.
         Map<String, Object> object = new LinkedHashMap<>();
-        object.put("gte", coerce(range.getField(bounds.lower()), path));
-        object.put("lte", coerce(range.getField(bounds.upper()), path));
+        if (bounds.hasLower(range)) {
+            Object lower = range.getField(bounds.lower());
+            if (bounds.dayGrain()) {
+                // Excluding the begin day skips the entire day, not just its first instant.
+                long first = RangeBounds.dayFirstMillis((String) lower);
+                object.put("gte", bounds.lowerIncluded(range)
+                        ? first : first + RangeBounds.DAY_MILLIS);
+            } else {
+                object.put(bounds.lowerIncluded(range) ? "gte" : "gt", coerce(lower, path));
+            }
+        }
+        if (bounds.hasUpper(range)) {
+            Object upper = range.getField(bounds.upper());
+            if (bounds.dayGrain()) {
+                // An included end covers through the day's last millisecond; an excluded
+                // end stops strictly before the day begins.
+                long first = RangeBounds.dayFirstMillis((String) upper);
+                if (bounds.upperIncluded(range)) {
+                    object.put("lte", first + RangeBounds.DAY_MILLIS - 1);
+                } else {
+                    object.put("lt", first);
+                }
+            } else {
+                object.put(bounds.upperIncluded(range) ? "lte" : "lt", coerce(upper, path));
+            }
+        }
         return object;
     }
 

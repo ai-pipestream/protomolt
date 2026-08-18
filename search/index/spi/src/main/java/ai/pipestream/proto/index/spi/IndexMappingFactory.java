@@ -130,7 +130,8 @@ public final class IndexMappingFactory {
             if (RangeBounds.resolve(field.getMessageType(), hint.type()).isEmpty()) {
                 throw new IndexMappingException(
                         "Message " + field.getMessageType().getFullName()
-                                + " declares no (gte,lte) or (min,max) pair matching " + hint.type(),
+                                + " is not a canonical types.v1 range and declares no (gte,lte)"
+                                + " or (min,max) pair matching " + hint.type(),
                         path);
             }
         }
