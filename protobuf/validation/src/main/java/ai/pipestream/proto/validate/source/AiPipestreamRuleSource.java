@@ -180,6 +180,7 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         for (CelRule cel : rules.getCelList()) {
             builder.addCel(toCel(cel));
         }
+        builder.taxonomy(rules.getTaxonomy());
         return builder.build();
     }
 

@@ -31,6 +31,7 @@ public record FieldConstraints(
         Optional<DurationConstraints> duration,
         Optional<AnyConstraints> any,
         Optional<FieldMaskConstraints> fieldMask,
+        Optional<String> taxonomy,
         List<CelConstraint> cel) {
 
     public FieldConstraints {
@@ -47,6 +48,7 @@ public record FieldConstraints(
         Objects.requireNonNull(duration, "duration");
         Objects.requireNonNull(any, "any");
         Objects.requireNonNull(fieldMask, "fieldMask");
+        Objects.requireNonNull(taxonomy, "taxonomy");
         cel = List.copyOf(Objects.requireNonNull(cel, "cel"));
     }
 
@@ -70,6 +72,7 @@ public record FieldConstraints(
         private DurationConstraints duration;
         private AnyConstraints any;
         private FieldMaskConstraints fieldMask;
+        private String taxonomy;
         private final List<CelConstraint> cel = new ArrayList<>();
 
         public Builder required(boolean required) {
@@ -142,6 +145,11 @@ public record FieldConstraints(
             return this;
         }
 
+        public Builder taxonomy(String taxonomy) {
+            this.taxonomy = (taxonomy == null || taxonomy.isBlank()) ? null : taxonomy;
+            return this;
+        }
+
         public Builder addCel(CelConstraint constraint) {
             cel.add(Objects.requireNonNull(constraint, "constraint"));
             return this;
@@ -163,6 +171,7 @@ public record FieldConstraints(
                     Optional.ofNullable(duration),
                     Optional.ofNullable(any),
                     Optional.ofNullable(fieldMask),
+                    Optional.ofNullable(taxonomy),
                     List.copyOf(cel));
         }
     }

@@ -21,6 +21,7 @@ import ai.pipestream.proto.validate.model.RepeatedConstraints;
 import ai.pipestream.proto.validate.model.StringConstraints;
 import ai.pipestream.proto.validate.model.StringFormat;
 import ai.pipestream.proto.validate.model.TimestampConstraints;
+import ai.pipestream.proto.validate.spi.TaxonomyCatalog;
 import ai.pipestream.proto.validate.spi.ValidationRuleSource;
 import ai.pipestream.proto.validate.spi.ValidationRuleSources;
 import com.google.common.primitives.UnsignedLong;
@@ -77,6 +78,7 @@ public final class ProtoValidator {
 
     private static final String TIMESTAMP_TYPE = "google.protobuf.Timestamp";
     private static final String DURATION_TYPE = "google.protobuf.Duration";
+    private static final String TREE_PATH_TYPE = "ai.pipestream.proto.types.v1.TreePath";
 
     /** Maximum message nesting the recursive walk follows before failing the evaluation. */
     private static final int MAX_NESTING_DEPTH = 500;
@@ -123,6 +125,10 @@ public final class ProtoValidator {
 
     private final CelHandle fieldCel;
     private final List<ValidationRuleSource> sources;
+    // The mounted taxonomies behind the `taxonomy` field rule. Rules compile statically
+    // (the binding is schema truth); the catalog is consulted per validation, so a live
+    // mount swap changes verdicts without touching the compiled rule model.
+    private final TaxonomyCatalog taxonomies;
     // Message-level CEL is compiled with `this` typed as the message under validation, so a rule on
     // a nested message sees its own fields. Evaluators are built lazily and cached per descriptor.
     private final Map<Descriptor, CelHandle> messageCelByType =
@@ -142,17 +148,21 @@ public final class ProtoValidator {
      * type (see {@link #messageCelFor}).
      */
     public ProtoValidator(CelEvaluator fieldCel, List<ValidationRuleSource> sources) {
-        this(new CelHandle(null, Objects.requireNonNull(fieldCel, "fieldCel")), sources);
+        this(new CelHandle(null, Objects.requireNonNull(fieldCel, "fieldCel")), sources,
+                TaxonomyCatalog.empty());
     }
 
-    private ProtoValidator(CelHandle fieldCel, List<ValidationRuleSource> sources) {
+    private ProtoValidator(
+            CelHandle fieldCel, List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies) {
         this.fieldCel = fieldCel;
         this.sources = List.copyOf(Objects.requireNonNull(sources, "sources"));
+        this.taxonomies = Objects.requireNonNull(taxonomies, "taxonomies");
     }
 
     /**
      * Default CEL environments: {@code this} is DYN for field rules and typed as the message
-     * under validation for message rules.
+     * under validation for message rules. No taxonomies are mounted: a schema declaring a
+     * {@code taxonomy} rule refuses fail-closed until a validator is built over a catalog.
      */
     public static ProtoValidator create() {
         return create(ValidationRuleSources.defaults());
@@ -160,8 +170,20 @@ public final class ProtoValidator {
 
     /** As {@link #create()} but with an explicit rule-source chain. */
     public static ProtoValidator create(List<ValidationRuleSource> sources) {
+        return create(sources, TaxonomyCatalog.empty());
+    }
+
+    /** As {@link #create()} but consulting {@code taxonomies} for {@code taxonomy} rules. */
+    public static ProtoValidator create(TaxonomyCatalog taxonomies) {
+        return create(ValidationRuleSources.defaults(), taxonomies);
+    }
+
+    /** As {@link #create()} but with an explicit rule-source chain and taxonomy catalog. */
+    public static ProtoValidator create(
+            List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies) {
         Cel fieldEnv = celEnv().build();
-        return new ProtoValidator(new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)), sources);
+        return new ProtoValidator(
+                new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)), sources, taxonomies);
     }
 
     /**
@@ -258,6 +280,7 @@ public final class ProtoValidator {
             }
             for (FieldConstraints constraints : collected) {
                 compileFieldConstraints(constraints);
+                checkTaxonomy(field, constraints);
             }
             fields.put(field, List.copyOf(collected));
         }
@@ -360,6 +383,44 @@ public final class ProtoValidator {
         }
     }
 
+    /**
+     * A {@code taxonomy} rule binds only to a singular or repeated field of the canonical
+     * TreePath type, and only on the field itself. Declaring one anywhere else is a schema
+     * error, not a silently ignored rule: a producer that thinks its paths are checked while
+     * the validator skips them is the failure mode that reports success.
+     */
+    private static void checkTaxonomy(FieldDescriptor field, FieldConstraints constraints) {
+        if (nestedTaxonomy(constraints)) {
+            throw new RuleCompilationException(
+                    "taxonomy on field " + field.getFullName() + " must be declared on the"
+                            + " TreePath field itself, not on repeated items or map entries");
+        }
+        String name = constraints.taxonomy().orElse(null);
+        if (name == null) {
+            return;
+        }
+        if (field.isMapField() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE
+                || !TREE_PATH_TYPE.equals(field.getMessageType().getFullName())) {
+            throw new RuleCompilationException(
+                    "taxonomy \"" + name + "\" declared on field " + field.getFullName()
+                            + ": only fields of " + TREE_PATH_TYPE + " take a taxonomy rule");
+        }
+    }
+
+    /** Whether any nested (items/keys/values) constraints declare a taxonomy. */
+    private static boolean nestedTaxonomy(FieldConstraints constraints) {
+        return constraints.repeated().flatMap(RepeatedConstraints::items)
+                .map(ProtoValidator::declaresTaxonomy).orElse(false)
+                || constraints.map().map(m ->
+                        m.keys().map(ProtoValidator::declaresTaxonomy).orElse(false)
+                                || m.values().map(ProtoValidator::declaresTaxonomy).orElse(false))
+                        .orElse(false);
+    }
+
+    private static boolean declaresTaxonomy(FieldConstraints constraints) {
+        return constraints.taxonomy().isPresent() || nestedTaxonomy(constraints);
+    }
+
     /** The compiled form of {@code pattern}; an uncompilable pattern is a schema error. */
     private static Pattern compiledPattern(String pattern) {
         Pattern existing = PATTERNS.get(pattern);
@@ -442,6 +503,7 @@ public final class ProtoValidator {
         Object value = message.getField(field);
         for (FieldConstraints c : constraints) {
             applyFieldConstraints(field, c, value, path, violations);
+            applyTaxonomy(c, value, path, violations);
             runFieldCel(c, celScalar(field, value), path, violations);
         }
         if (value instanceof Message nested) {
@@ -516,9 +578,54 @@ public final class ProtoValidator {
                 applyFieldConstraints(field, items, element, elementPath, violations);
                 runFieldCel(items, celScalar(field, element), elementPath, violations);
             }
-            if (!skipElement && element instanceof Message nested) {
-                validateChildren(nested, elementPath, depth, violations);
+            if (!skipElement) {
+                for (FieldConstraints c : constraints) {
+                    // A taxonomy on a repeated TreePath field binds every element.
+                    applyTaxonomy(c, element, elementPath, violations);
+                }
+                if (element instanceof Message nested) {
+                    validateChildren(nested, elementPath, depth, violations);
+                }
             }
+        }
+    }
+
+    /**
+     * The taxonomy membership rule on a populated TreePath value. Fail-closed by design: a
+     * declared taxonomy the validator has no mount for refuses — a gate that cannot check
+     * the declaration must never pronounce the value clean. An empty path is left to the
+     * type's own structural rules, and the mounted version rides the violation as evidence.
+     */
+    private void applyTaxonomy(
+            FieldConstraints constraints, Object value, String path,
+            List<ValidationResult.Violation> violations) {
+        String name = constraints.taxonomy().orElse(null);
+        if (name == null || !(value instanceof Message treePath)) {
+            return;
+        }
+        FieldDescriptor segments = treePath.getDescriptorForType().findFieldByName("segments");
+        int count = treePath.getRepeatedFieldCount(segments);
+        if (count == 0) {
+            return;
+        }
+        StringBuilder rendered = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                rendered.append('/');
+            }
+            rendered.append((String) treePath.getRepeatedField(segments, i));
+        }
+        TaxonomyCatalog.Mounted mounted = taxonomies.taxonomy(name).orElse(null);
+        if (mounted == null) {
+            violations.add(violation(path, "taxonomy.unmounted",
+                    "taxonomy \"" + name + "\" is not mounted; declared membership"
+                            + " cannot be checked"));
+            return;
+        }
+        if (!mounted.nodes().contains(rendered.toString())) {
+            violations.add(violation(path, "taxonomy.member",
+                    "\"" + rendered + "\" is not a node of taxonomy \"" + name
+                            + "\" at version " + mounted.version()));
         }
     }
 
