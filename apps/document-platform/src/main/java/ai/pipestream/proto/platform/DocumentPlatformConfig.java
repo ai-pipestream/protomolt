@@ -237,6 +237,17 @@ public record DocumentPlatformConfig(
     /** The default compacted config topic. */
     public static final String DEFAULT_CONFIG_KAFKA_TOPIC = "protomolt-config";
 
+    /**
+     * Env var naming the taxonomies this node follows off the config lane,
+     * as a comma-separated list of names (subjects {@code taxonomy:<name>}).
+     * Set, the search door turns on its document gate: fetched documents
+     * validate against their declared rules over the live mounts before
+     * anything indexes, fail-closed while a declared taxonomy is unmounted.
+     * Requires the config lane ({@link #ENV_CONFIG_REFRESH_SECONDS}); absent
+     * keeps the door's historical behavior exactly.
+     */
+    public static final String ENV_TAXONOMIES = "DOCUMENT_PLATFORM_TAXONOMIES";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

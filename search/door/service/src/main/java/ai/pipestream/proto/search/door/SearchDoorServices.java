@@ -24,7 +24,8 @@ public final class SearchDoorServices implements AutoCloseable {
     private final SearchDoorGrpcServices.Search search;
     private Server server;
 
-    private SearchDoorServices(SearchDoorConfig config, DocumentFetcher fetcher) {
+    private SearchDoorServices(SearchDoorConfig config, DocumentFetcher fetcher,
+            ai.pipestream.proto.validate.ProtoValidator documentGate) {
         this.config = config;
         this.fetcher = fetcher;
         this.store = new LuceneSearchStore(config.indexDir(), config.subjects(),
@@ -33,7 +34,7 @@ public final class SearchDoorServices implements AutoCloseable {
         // not mounted, so its RPCs answer UNIMPLEMENTED.
         this.index = config.readOnly()
                 ? null
-                : new SearchDoorGrpcServices.Index(store, fetcher);
+                : new SearchDoorGrpcServices.Index(store, fetcher, documentGate);
         this.search = new SearchDoorGrpcServices.Search(store);
     }
 
@@ -48,13 +49,33 @@ public final class SearchDoorServices implements AutoCloseable {
      * @return the wired, not-yet-started stack
      */
     public static SearchDoorServices build(SearchDoorConfig config, DocumentFetcher fetcher) {
+        return build(config, fetcher, null);
+    }
+
+    /**
+     * As {@link #build(SearchDoorConfig, DocumentFetcher)}, with a document
+     * gate: every fetched document validates against {@code documentGate}'s
+     * declared rules before anything indexes — typically a validator built
+     * over the mounted taxonomy catalog, so membership is enforced as of
+     * index time — and a violating document is refused naming its
+     * violations. {@code null} keeps the door's historical behavior: no
+     * declared-rules validation at index time.
+     *
+     * @param config the door configuration
+     * @param fetcher the document fetcher; see the two-argument overload
+     * @param documentGate the validator fetched documents must pass, or
+     *        {@code null} for no gate
+     * @return the wired, not-yet-started stack
+     */
+    public static SearchDoorServices build(SearchDoorConfig config, DocumentFetcher fetcher,
+            ai.pipestream.proto.validate.ProtoValidator documentGate) {
         if (config == null) {
             throw new IllegalArgumentException("config must not be null");
         }
         if (fetcher == null && !config.readOnly()) {
             throw new IllegalArgumentException("fetcher must not be null");
         }
-        return new SearchDoorServices(config, fetcher);
+        return new SearchDoorServices(config, fetcher, documentGate);
     }
 
     /**

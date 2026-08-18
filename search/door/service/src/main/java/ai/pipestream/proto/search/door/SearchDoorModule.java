@@ -40,7 +40,8 @@ public final class SearchDoorModule implements ServiceModule {
      */
     public record Config(
             int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
-            IndexSnapshots snapshots, boolean readOnly, long refreshSeconds) {
+            IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
+            ai.pipestream.proto.validate.spi.TaxonomyCatalog taxonomies) {
 
         /** Validates the configuration. */
         public Config {
@@ -70,21 +71,30 @@ public final class SearchDoorModule implements ServiceModule {
             subjects = Map.copyOf(subjects);
         }
 
+        /**
+         * A configuration without a taxonomy catalog: no document gate, the
+         * door's historical behavior.
+         */
+        public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+                IndexSnapshots snapshots, boolean readOnly, long refreshSeconds) {
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds, null);
+        }
+
         /** A configuration without periodic refresh. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots, boolean readOnly) {
-            this(grpcPort, indexDir, subjects, snapshots, readOnly, 0L);
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, 0L, null);
         }
 
         /** A writable configuration. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots) {
-            this(grpcPort, indexDir, subjects, snapshots, false, 0L);
+            this(grpcPort, indexDir, subjects, snapshots, false, 0L, null);
         }
 
         /** A writable configuration without snapshots. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects) {
-            this(grpcPort, indexDir, subjects, null, false, 0L);
+            this(grpcPort, indexDir, subjects, null, false, 0L, null);
         }
     }
 
@@ -136,7 +146,13 @@ public final class SearchDoorModule implements ServiceModule {
             door = SearchDoorServices.build(
                     new SearchDoorConfig(config.grpcPort(), config.indexDir(),
                             config.subjects(), config.snapshots()),
-                    repo);
+                    repo,
+                    // A configured catalog turns the document gate on: fetched
+                    // documents validate over the live mounts before indexing.
+                    config.taxonomies() == null
+                            ? null
+                            : ai.pipestream.proto.validate.ProtoValidator
+                                    .create(config.taxonomies()));
         } catch (RuntimeException e) {
             // A failed mount (for instance a subject naming an absent
             // embedding provider) must not leak the repo channel.

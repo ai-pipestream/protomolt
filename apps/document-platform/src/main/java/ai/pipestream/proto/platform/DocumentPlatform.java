@@ -107,6 +107,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private final Catalog metricsCatalog;
     private final LocalLakeRollupSink defaultRollupLake;
     private final ai.pipestream.proto.config.DistributedConfig distributedConfig;
+    private final SwappableTaxonomyCatalog taxonomies;
     private final java.util.concurrent.ScheduledExecutorService configRefresher;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
@@ -185,6 +186,11 @@ public final class DocumentPlatform implements AutoCloseable {
                             + "=true or unset the interval");
         }
         this.snapshotClient = snapshotConfig == null ? null : snapshotClient(snapshotConfig);
+        // The taxonomy follow: names parsed up front, the swappable catalog
+        // handed to the door before boot, the mounts swapped in once the
+        // config lane exists. Fail-closed until then.
+        List<String> taxonomyNames = taxonomiesFromEnvironment(config.environment());
+        this.taxonomies = taxonomyNames.isEmpty() ? null : new SwappableTaxonomyCatalog();
         this.search = config.mounts(SearchDoorModule.ROLE)
                 ? new SearchDoorModule(new SearchDoorModule.Config(
                         config.searchGrpcPort(),
@@ -199,7 +205,8 @@ public final class DocumentPlatform implements AutoCloseable {
                                         snapshotConfig.prefix()),
                                         searchReadOnly),
                         searchReadOnly,
-                        searchRefreshSeconds))
+                        searchRefreshSeconds,
+                        taxonomies))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricDoorModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -270,14 +277,23 @@ public final class DocumentPlatform implements AutoCloseable {
             if (registry != null) {
                 publishDocumentModel();
             }
+            if (taxonomies != null && configRefreshSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        DocumentPlatformConfig.ENV_TAXONOMIES + " is set but the config"
+                                + " lane is off: taxonomy mounts arrive as config"
+                                + " documents, so set "
+                                + DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                                + " or unset the taxonomies");
+            }
             if (configRefreshSeconds > 0) {
-                if (parse == null) {
+                if (parse == null && taxonomies == null) {
                     throw new IllegalArgumentException(
                             DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
                                     + " is set but this node mounts no config consumer:"
-                                    + " the config lane currently serves the parse"
-                                    + " role's routing rules, so mount 'parse' or"
-                                    + " unset the interval");
+                                    + " the config lane serves the parse role's routing"
+                                    + " rules and the taxonomy mounts, so mount 'parse',"
+                                    + " set " + DocumentPlatformConfig.ENV_TAXONOMIES
+                                    + ", or unset the interval");
                 }
                 ai.pipestream.proto.config.kafka.KafkaConfigSource.Config kafka =
                         kafkaConfigFamily(config.environment());
@@ -307,17 +323,26 @@ public final class DocumentPlatform implements AutoCloseable {
                 }
                 this.distributedConfig = ai.pipestream.proto.config.DistributedConfig
                         .over(configSource);
-                ai.pipestream.proto.config.DistributedConfig
-                        .Subscription<ai.pipestream.proto.parse.v1.RoutingConfig> routing =
-                        distributedConfig.subscribe(PARSE_ROUTING_CONFIG_SUBJECT,
-                                ai.pipestream.proto.parse.v1.RoutingConfig
-                                        .getDefaultInstance());
-                routing.onChange((document, version) -> {
-                    parse.swapRules(RoutingRules.of(document.getRulesList()));
-                    LOG.info("parse routing rules applied from config '{}' version {}"
-                            + " ({} rule(s))", PARSE_ROUTING_CONFIG_SUBJECT, version,
-                            document.getRulesCount());
-                });
+                if (parse != null) {
+                    ai.pipestream.proto.config.DistributedConfig
+                            .Subscription<ai.pipestream.proto.parse.v1.RoutingConfig> routing =
+                            distributedConfig.subscribe(PARSE_ROUTING_CONFIG_SUBJECT,
+                                    ai.pipestream.proto.parse.v1.RoutingConfig
+                                            .getDefaultInstance());
+                    routing.onChange((document, version) -> {
+                        parse.swapRules(RoutingRules.of(document.getRulesList()));
+                        LOG.info("parse routing rules applied from config '{}' version {}"
+                                + " ({} rule(s))", PARSE_ROUTING_CONFIG_SUBJECT, version,
+                                document.getRulesCount());
+                    });
+                }
+                if (taxonomies != null) {
+                    // The document gate was already handed the swappable
+                    // catalog; from here the mounts follow the config lane.
+                    taxonomies.swap(ai.pipestream.proto.config.TaxonomyMounts
+                            .follow(distributedConfig, taxonomyNames));
+                    LOG.info("taxonomy mounts following {}", taxonomyNames);
+                }
                 // The boot pull: a present config document is the routing
                 // truth from the first plan, ahead of the environment's
                 // boot rules.
@@ -695,6 +720,32 @@ public final class DocumentPlatform implements AutoCloseable {
                             + "'; unset it for restart-only");
         }
         return seconds;
+    }
+
+    /**
+     * The strict read of {@link DocumentPlatformConfig#ENV_TAXONOMIES}: a
+     * comma-separated list of taxonomy names, trimmed, blanks skipped,
+     * duplicates collapsed in first-seen order. Absent means no taxonomy
+     * follow and no document gate, exactly as before.
+     */
+    static List<String> taxonomiesFromEnvironment(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_TAXONOMIES, "").trim();
+        if (value.isEmpty()) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (String part : value.split(",")) {
+            String name = part.trim();
+            if (!name.isEmpty()) {
+                names.add(name);
+            }
+        }
+        if (names.isEmpty()) {
+            throw new IllegalArgumentException(DocumentPlatformConfig.ENV_TAXONOMIES
+                    + " is set but names no taxonomy; unset it or name at least one");
+        }
+        return List.copyOf(names);
     }
 
     /**

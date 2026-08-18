@@ -36,10 +36,20 @@ final class SearchDoorGrpcServices {
 
         private final LuceneSearchStore store;
         private final DocumentFetcher fetcher;
+        // The optional document gate: fetched documents validate against
+        // their declared rules (typically over the mounted taxonomy catalog)
+        // before anything indexes. Null keeps the historical behavior.
+        private final ai.pipestream.proto.validate.ProtoValidator documentGate;
 
         Index(LuceneSearchStore store, DocumentFetcher fetcher) {
+            this(store, fetcher, null);
+        }
+
+        Index(LuceneSearchStore store, DocumentFetcher fetcher,
+                ai.pipestream.proto.validate.ProtoValidator documentGate) {
             this.store = store;
             this.fetcher = fetcher;
+            this.documentGate = documentGate;
         }
 
         @Override
@@ -53,6 +63,24 @@ final class SearchDoorGrpcServices {
                     throw new IllegalArgumentException("address is required");
                 }
                 Document document = fetcher.fetch(request.getAddress());
+                if (documentGate != null) {
+                    ai.pipestream.proto.validate.ValidationResult verdict =
+                            documentGate.validate(document);
+                    if (!verdict.valid()) {
+                        // The request was fine; the STORED document fails its
+                        // declared rules as mounted right now, so the refusal
+                        // is a precondition, named violation by violation.
+                        String reasons = verdict.violations().stream()
+                                .map(violation -> violation.path() + ": "
+                                        + violation.message()
+                                        + " (" + violation.ruleId() + ")")
+                                .collect(java.util.stream.Collectors.joining("; "));
+                        observer.onError(Status.FAILED_PRECONDITION.withDescription(
+                                "stored document violates its declared rules: " + reasons)
+                                .asRuntimeException());
+                        return;
+                    }
+                }
                 LuceneSearchStore.IndexResult result =
                         store.index(request.getMappingSubject(), document);
                 observer.onNext(IndexDocumentResponse.newBuilder()
