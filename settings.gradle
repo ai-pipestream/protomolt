@@ -399,6 +399,8 @@ project(':protomolt-parse-playground').projectDir = file('parse/playground')
 
 include 'protomolt-composer'
 project(':protomolt-composer').projectDir = file('host/composer')
+include 'protomolt-config'
+project(':protomolt-config').projectDir = file('host/config')
 
 include 'protomolt-server-common'
 project(':protomolt-server-common').projectDir = file('host/servers/common')
