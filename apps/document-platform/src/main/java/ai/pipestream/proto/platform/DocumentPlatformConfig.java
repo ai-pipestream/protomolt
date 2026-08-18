@@ -165,6 +165,17 @@ public record DocumentPlatformConfig(
      */
     public static final String ENV_SEARCH_READ_ONLY = "DOCUMENT_PLATFORM_SEARCH_READ_ONLY";
 
+    /**
+     * Env var for a reader's snapshot refresh interval in seconds: how
+     * often a read-only search node pulls newer snapshots into its live
+     * index. Absent means restart-only; a value demands
+     * {@link #ENV_SEARCH_READ_ONLY} and the snapshot family, because
+     * refresh is the reader's pull and the writer publishes on its commit
+     * cadence.
+     */
+    public static final String ENV_SEARCH_REFRESH_SECONDS =
+            "DOCUMENT_PLATFORM_SEARCH_REFRESH_SECONDS";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

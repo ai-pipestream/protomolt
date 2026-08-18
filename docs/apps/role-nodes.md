@@ -60,8 +60,17 @@ bucket is a self-contained analytics node: it restores the index from
 the bucket on boot, needs no repo role or target, mounts no indexing
 surface (`SearchIndexService` answers UNIMPLEMENTED), and never writes
 to the bucket, so the writer's snapshots stay the writer's.
-`PlatformSnapshotIT` proves the composition end to end; to pick up the
-writer's newer snapshots, restart the reader over an empty directory.
+`PlatformSnapshotIT` proves the composition end to end.
+
+`DOCUMENT_PLATFORM_SEARCH_REFRESH_SECONDS` makes the reader follow the
+writer live: on that interval it pulls newer snapshots into its serving
+index — missing segment files first, the new `segments_N` marker last,
+the refreshed commit verified before it swaps in — so a pull that fails
+half-way (a writer pruning mid-download, a network fault) leaves the
+serving commit untouched and the next tick retries. The pull never
+uploads or prunes a blob, locally initiated deletes included, so the
+writer's snapshots stay the writer's. Absent means restart-only: a
+reader picks up newer snapshots by restarting over an empty directory.
 
 ## The worked example
 

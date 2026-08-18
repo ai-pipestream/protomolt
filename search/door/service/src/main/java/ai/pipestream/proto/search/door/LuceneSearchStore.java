@@ -22,6 +22,7 @@ import com.google.protobuf.Timestamp;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -41,6 +42,7 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.KeepOnlyLastCommitDeletionPolicy;
@@ -61,6 +63,8 @@ import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.store.ByteBuffersDirectory;
+import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
@@ -114,18 +118,31 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         final ServedMapping served;
         final EmbeddingProvider embedder;
         final IndexWriter writer;
-        final SearcherManager searchers;
         final SnapshotDeletionPolicy snapshotPolicy;
+        // A reader's searcher manager swaps on refresh (placeholder to real
+        // index); readers of these fields capture the manager once per read.
+        volatile SearcherManager searchers;
+        volatile Directory searcherDir;
+        volatile boolean placeholder;
         int pendingWrites;
 
         Subject(ServedMapping served, EmbeddingProvider embedder,
                 IndexWriter writer, SearcherManager searchers,
                 SnapshotDeletionPolicy snapshotPolicy) {
+            this(served, embedder, writer, searchers, snapshotPolicy, null, false);
+        }
+
+        Subject(ServedMapping served, EmbeddingProvider embedder,
+                IndexWriter writer, SearcherManager searchers,
+                SnapshotDeletionPolicy snapshotPolicy,
+                Directory searcherDir, boolean placeholder) {
             this.served = served;
             this.embedder = embedder;
             this.writer = writer;
             this.searchers = searchers;
             this.snapshotPolicy = snapshotPolicy;
+            this.searcherDir = searcherDir;
+            this.placeholder = placeholder;
         }
 
         ServedMapping served() {
@@ -159,6 +176,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     private final Map<String, Subject> subjects = new LinkedHashMap<>();
     private final Path indexDir;
     private final IndexSnapshots snapshots;
+    private final boolean readOnly;
     private final ProtoLuceneMapper mapper =
             new ProtoLuceneMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
     private final Analyzer analyzer = new StandardAnalyzer();
@@ -189,14 +207,38 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
      */
     public LuceneSearchStore(
             Path indexDir, Map<String, ServedMapping> served, IndexSnapshots snapshots) {
+        this(indexDir, served, snapshots, false);
+    }
+
+    /**
+     * As {@link #LuceneSearchStore(Path, Map, IndexSnapshots)}, optionally
+     * read-only: a reader opens no {@link IndexWriter} (no write lock, no
+     * commits, no uploads), serves whatever its directory restores, and
+     * pulls newer snapshots through {@link #refreshFromSnapshots()}. Until
+     * a first snapshot exists a reader serves an empty in-memory index,
+     * swapped for the real one when a restore lands.
+     *
+     * @param indexDir the root directory; each subject in its own
+     *        subdirectory
+     * @param served the subjects to serve, keyed by subject name
+     * @param snapshots the snapshot component; null disables snapshots
+     * @param readOnly whether this store is a reader
+     */
+    public LuceneSearchStore(Path indexDir, Map<String, ServedMapping> served,
+            IndexSnapshots snapshots, boolean readOnly) {
         if (indexDir == null) {
             throw new IllegalArgumentException("indexDir must not be null");
         }
         if (served == null || served.isEmpty()) {
             throw new IllegalArgumentException("at least one served mapping subject is required");
         }
+        if (readOnly && snapshots != null && !snapshots.readOnly()) {
+            throw new IllegalArgumentException("a read-only store must not write snapshots:"
+                    + " construct its IndexSnapshots read-only");
+        }
         this.indexDir = indexDir;
         this.snapshots = snapshots;
+        this.readOnly = readOnly;
         committer = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "search-door-committer");
             thread.setDaemon(true);
@@ -209,6 +251,14 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
                         : EmbeddingProviders.forSpec(
                                 subject.getValue().chunkLane().policy().embedding());
                 Path subjectDir = indexDir.resolve(subject.getKey());
+                if (readOnly) {
+                    if (snapshots != null) {
+                        snapshots.restoreInto(subjectDir, subject.getKey(), subject.getValue());
+                    }
+                    subjects.put(subject.getKey(),
+                            openReader(subject.getValue(), embedder, subjectDir));
+                    continue;
+                }
                 SnapshotDeletionPolicy snapshotPolicy = null;
                 IndexWriterConfig config = new IndexWriterConfig(analyzer);
                 if (snapshots != null) {
@@ -232,9 +282,84 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
             close();
             throw e;
         }
-        committer.scheduleWithFixedDelay(this::commitPending,
-                COMMIT_INTERVAL.toMillis(), COMMIT_INTERVAL.toMillis(),
-                TimeUnit.MILLISECONDS);
+        if (!readOnly) {
+            committer.scheduleWithFixedDelay(this::commitPending,
+                    COMMIT_INTERVAL.toMillis(), COMMIT_INTERVAL.toMillis(),
+                    TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /**
+     * Opens a reader-mode subject: a searcher manager over the restored
+     * directory when it holds a commit, an empty in-memory placeholder
+     * otherwise (a snapshot may not exist yet; {@link #refreshFromSnapshots()}
+     * swaps the real index in when one lands).
+     */
+    private Subject openReader(ServedMapping served, EmbeddingProvider embedder,
+            Path subjectDir) throws IOException {
+        Files.createDirectories(subjectDir);
+        Directory directory = FSDirectory.open(subjectDir);
+        if (DirectoryReader.indexExists(directory)) {
+            return new Subject(served, embedder, null,
+                    new SearcherManager(directory, null), null, directory, false);
+        }
+        directory.close();
+        Directory placeholder = new ByteBuffersDirectory();
+        // An empty commit, so the manager has something to open: a reader
+        // with no snapshot yet answers empty instead of failing to mount.
+        new IndexWriter(placeholder, new IndexWriterConfig(analyzer)).close();
+        return new Subject(served, embedder, null,
+                new SearcherManager(placeholder, null), null, placeholder, true);
+    }
+
+    /**
+     * A reader's pull: for each subject, restore the first snapshot (when
+     * the subject still serves its empty placeholder) or pull a newer
+     * commit into the live directory and refresh the searchers. Never
+     * uploads or prunes anything, locally or in the store; a failed pull
+     * leaves the serving commit untouched.
+     *
+     * @return whether any subject advanced
+     */
+    public boolean refreshFromSnapshots() {
+        if (!readOnly || snapshots == null) {
+            throw new IllegalStateException(readOnly
+                    ? "this reader has no snapshot store to refresh from"
+                    : "refresh is the reader's pull; the writer publishes snapshots"
+                            + " on its commit cadence");
+        }
+        boolean advanced = false;
+        for (Map.Entry<String, Subject> entry : subjects.entrySet()) {
+            String subjectName = entry.getKey();
+            Subject subject = entry.getValue();
+            Path subjectDir = indexDir.resolve(subjectName);
+            try {
+                if (subject.placeholder) {
+                    snapshots.restoreInto(subjectDir, subjectName, subject.served());
+                    Directory directory = FSDirectory.open(subjectDir);
+                    if (!DirectoryReader.indexExists(directory)) {
+                        directory.close();
+                        continue;
+                    }
+                    SearcherManager fresh = new SearcherManager(directory, null);
+                    SearcherManager retired = subject.searchers;
+                    Directory retiredDir = subject.searcherDir;
+                    subject.searchers = fresh;
+                    subject.searcherDir = directory;
+                    subject.placeholder = false;
+                    retired.close();
+                    retiredDir.close();
+                    advanced = true;
+                } else if (snapshots.refreshInto(subjectDir, subjectName, subject.served())) {
+                    subject.searchers().maybeRefresh();
+                    advanced = true;
+                }
+            } catch (IOException | RuntimeException e) {
+                LOG.warn("cannot refresh '{}'; the previous state keeps serving",
+                        subjectName, e);
+            }
+        }
+        return advanced;
     }
 
     /** The served subject names, in configuration order. */
@@ -270,7 +395,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
      * @return what landed
      */
     public IndexResult index(String subjectName, Message document) {
-        Subject subject = subject(subjectName);
+        Subject subject = writable(subjectName);
         ServedMapping served = subject.served();
         String docId = served.docId().apply(document);
         if (docId == null || docId.isBlank()) {
@@ -395,8 +520,9 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     @Override
     public Set<String> indexedDocIds(String subjectName) {
         Subject subject = subject(subjectName);
+        SearcherManager searchers = subject.searchers();
         try {
-            IndexSearcher searcher = subject.searchers().acquire();
+            IndexSearcher searcher = searchers.acquire();
             try {
                 Set<String> ids = new LinkedHashSet<>();
                 for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
@@ -424,7 +550,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
                 }
                 return ids;
             } finally {
-                subject.searchers().release(searcher);
+                searchers.release(searcher);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(
@@ -445,17 +571,18 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
      */
     @Override
     public int delete(String subjectName, String docId) {
-        Subject subject = subject(subjectName);
+        Subject subject = writable(subjectName);
         if (docId == null || docId.isBlank()) {
             throw new IllegalArgumentException(
                     "doc_id is required; cannot delete from '" + subjectName + "'");
         }
+        SearcherManager searchers = subject.searchers();
         IndexSearcher searcher = null;
         try {
             // Chunk identity is <doc_id>#<digest12>#<ordinal>: the prefix
             // counts this document's chunk children whatever digest they
             // were derived under.
-            searcher = subject.searchers().acquire();
+            searcher = searchers.acquire();
             int chunks = searcher.count(
                     new PrefixQuery(new Term(CHUNK_ID_FIELD, docId + "#")));
             // The parent and its chunk children all carry the identity
@@ -468,7 +595,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
             throw new UncheckedIOException(
                     "cannot delete '" + docId + "' from '" + subjectName + "'", e);
         } finally {
-            release(subject, searcher);
+            release(searchers, searcher);
         }
     }
 
@@ -561,9 +688,10 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     }
 
     private List<SearchHit> hits(Subject subject, Query query, int k) {
+        SearcherManager searchers = subject.searchers();
         IndexSearcher searcher = null;
         try {
-            searcher = subject.searchers().acquire();
+            searcher = searchers.acquire();
             Map<String, ResolvedFieldHint> hints = storedHints(subject.served().mapping());
             List<SearchHit> hits = new ArrayList<>();
             for (ScoreDoc scored : searcher.search(query, k).scoreDocs) {
@@ -588,14 +716,24 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         } catch (IOException e) {
             throw new UncheckedIOException("search failed", e);
         } finally {
-            release(subject, searcher);
+            release(searchers, searcher);
         }
     }
 
-    private void release(Subject subject, IndexSearcher searcher) {
+    /** The subject as a write target; a reader-mode subject refuses. */
+    private Subject writable(String subjectName) {
+        Subject subject = subject(subjectName);
+        if (subject.writer() == null) {
+            throw new IllegalStateException("subject '" + subjectName + "' is read-only"
+                    + " on this node: the writer indexes, a reader only refreshes");
+        }
+        return subject;
+    }
+
+    private void release(SearcherManager searchers, IndexSearcher searcher) {
         if (searcher != null) {
             try {
-                subject.searchers().release(searcher);
+                searchers.release(searcher);
             } catch (IOException e) {
                 throw new UncheckedIOException("cannot release the searcher", e);
             }
@@ -724,9 +862,10 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
      */
     public <T> T withSearcher(String subjectName, SearcherRead<T> read) {
         Subject subject = subject(subjectName);
+        SearcherManager searchers = subject.searchers();
         IndexSearcher searcher;
         try {
-            searcher = subject.searchers().acquire();
+            searcher = searchers.acquire();
         } catch (IOException e) {
             throw new UncheckedIOException("cannot acquire a searcher", e);
         }
@@ -735,7 +874,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         } catch (IOException e) {
             throw new UncheckedIOException("searcher read failed", e);
         } finally {
-            release(subject, searcher);
+            release(searchers, searcher);
         }
     }
 
@@ -767,6 +906,9 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         UncheckedIOException failure = null;
         for (Map.Entry<String, Subject> entry : subjects.entrySet()) {
             Subject subject = entry.getValue();
+            if (subject.writer() == null) {
+                continue;
+            }
             try {
                 if (subject.writer().isOpen() && subject.writer().hasUncommittedChanges()) {
                     subject.writer().commit();
@@ -786,7 +928,12 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
                 LOG.warn("cannot close the searcher manager", e);
             }
             try {
-                subject.writer().close();
+                if (subject.searcherDir != null) {
+                    subject.searcherDir.close();
+                }
+                if (subject.writer() != null) {
+                    subject.writer().close();
+                }
             } catch (IOException e) {
                 // Every subject still gets its close; the first failure is
                 // reported after the loop with the rest suppressed.

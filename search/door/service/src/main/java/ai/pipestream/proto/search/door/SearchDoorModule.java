@@ -34,10 +34,13 @@ public final class SearchDoorModule implements ServiceModule {
      *        {@code null} for none
      * @param readOnly a reader node: no repo channel, no indexing surface,
      *        no workflow registration, and restore-only snapshots
+     * @param refreshSeconds how often a reader pulls newer snapshots into
+     *        its live index; {@code 0} means restart-only, and a positive
+     *        value demands a read-only node with snapshots
      */
     public record Config(
             int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
-            IndexSnapshots snapshots, boolean readOnly) {
+            IndexSnapshots snapshots, boolean readOnly, long refreshSeconds) {
 
         /** Validates the configuration. */
         public Config {
@@ -52,18 +55,36 @@ public final class SearchDoorModule implements ServiceModule {
                 throw new IllegalArgumentException("a read-only node must not write"
                         + " snapshots: construct its IndexSnapshots read-only");
             }
+            if (refreshSeconds < 0) {
+                throw new IllegalArgumentException("refreshSeconds must not be negative");
+            }
+            if (refreshSeconds > 0 && !readOnly) {
+                throw new IllegalArgumentException("refresh is the reader's pull: a"
+                        + " writable node publishes snapshots on its commit cadence"
+                        + " instead");
+            }
+            if (refreshSeconds > 0 && snapshots == null) {
+                throw new IllegalArgumentException(
+                        "refreshSeconds needs snapshots to refresh from");
+            }
             subjects = Map.copyOf(subjects);
+        }
+
+        /** A configuration without periodic refresh. */
+        public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+                IndexSnapshots snapshots, boolean readOnly) {
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, 0L);
         }
 
         /** A writable configuration. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots) {
-            this(grpcPort, indexDir, subjects, snapshots, false);
+            this(grpcPort, indexDir, subjects, snapshots, false, 0L);
         }
 
         /** A writable configuration without snapshots. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects) {
-            this(grpcPort, indexDir, subjects, null, false);
+            this(grpcPort, indexDir, subjects, null, false, 0L);
         }
     }
 
@@ -188,20 +209,41 @@ public final class SearchDoorModule implements ServiceModule {
     private ServiceMount wireReadOnly(NodeContext context) throws Exception {
         door = SearchDoorServices.build(
                 new SearchDoorConfig(config.grpcPort(), config.indexDir(),
-                        config.subjects(), config.snapshots(), true),
+                        config.subjects(), config.snapshots(), true,
+                        config.refreshSeconds()),
                 null);
         String name = ROLE + "-" + context.nodeId();
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
         context.contributions().contribute(LuceneSearchStore.class, door.store());
         return new ServiceMount() {
+            private java.util.concurrent.ScheduledExecutorService refresher;
+
             @Override
             public void start() throws Exception {
                 netty = door.startNetty(config.grpcPort());
+                if (config.refreshSeconds() > 0) {
+                    refresher = java.util.concurrent.Executors
+                            .newSingleThreadScheduledExecutor(runnable -> {
+                                Thread thread =
+                                        new Thread(runnable, "search-door-refresher");
+                                thread.setDaemon(true);
+                                return thread;
+                            });
+                    // The pull never uploads or prunes; a failed tick keeps
+                    // the serving commit and the next tick retries.
+                    refresher.scheduleWithFixedDelay(
+                            () -> door.store().refreshFromSnapshots(),
+                            config.refreshSeconds(), config.refreshSeconds(),
+                            java.util.concurrent.TimeUnit.SECONDS);
+                }
             }
 
             @Override
             public void close() {
+                if (refresher != null) {
+                    refresher.shutdownNow();
+                }
                 if (inProcess != null) {
                     inProcess.shutdownNow();
                 }

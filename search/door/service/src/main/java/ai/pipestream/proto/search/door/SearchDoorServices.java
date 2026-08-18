@@ -27,10 +27,8 @@ public final class SearchDoorServices implements AutoCloseable {
     private SearchDoorServices(SearchDoorConfig config, DocumentFetcher fetcher) {
         this.config = config;
         this.fetcher = fetcher;
-        this.store = config.snapshots() == null
-                ? new LuceneSearchStore(config.indexDir(), config.subjects())
-                : new LuceneSearchStore(
-                        config.indexDir(), config.subjects(), config.snapshots());
+        this.store = new LuceneSearchStore(config.indexDir(), config.subjects(),
+                config.snapshots(), config.readOnly());
         // A read-only door has no write surface: the indexing service is
         // not mounted, so its RPCs answer UNIMPLEMENTED.
         this.index = config.readOnly()

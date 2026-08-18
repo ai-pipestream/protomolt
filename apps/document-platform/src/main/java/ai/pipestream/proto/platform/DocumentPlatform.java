@@ -156,6 +156,17 @@ public final class DocumentPlatform implements AutoCloseable {
                 : null;
         boolean searchReadOnly = config.mounts(SearchDoorModule.ROLE)
                 && searchReadOnly(config.environment());
+        long searchRefreshSeconds = config.mounts(SearchDoorModule.ROLE)
+                ? searchRefreshSeconds(config.environment())
+                : 0L;
+        if (searchRefreshSeconds > 0 && !searchReadOnly) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS
+                            + " is set but this node is a writer: refresh is the"
+                            + " reader's pull, so set "
+                            + DocumentPlatformConfig.ENV_SEARCH_READ_ONLY
+                            + "=true or unset the interval");
+        }
         this.snapshotClient = snapshotConfig == null ? null : snapshotClient(snapshotConfig);
         this.search = config.mounts(SearchDoorModule.ROLE)
                 ? new SearchDoorModule(new SearchDoorModule.Config(
@@ -170,7 +181,8 @@ public final class DocumentPlatform implements AutoCloseable {
                                         snapshotConfig.bucket(),
                                         snapshotConfig.prefix()),
                                         searchReadOnly),
-                        searchReadOnly))
+                        searchReadOnly,
+                        searchRefreshSeconds))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricDoorModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -408,6 +420,35 @@ public final class DocumentPlatform implements AutoCloseable {
                         List.of());
             }
         };
+    }
+
+    /**
+     * The strict read of
+     * {@link DocumentPlatformConfig#ENV_SEARCH_REFRESH_SECONDS}: absent is
+     * restart-only ({@code 0}), anything set must be a positive whole
+     * number of seconds.
+     */
+    static long searchRefreshSeconds(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "").trim();
+        if (value.isEmpty()) {
+            return 0L;
+        }
+        long seconds;
+        try {
+            seconds = Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS
+                            + " must be a positive number of seconds, got '" + value + "'");
+        }
+        if (seconds <= 0) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS
+                            + " must be a positive number of seconds, got '" + value
+                            + "'; unset it for restart-only");
+        }
+        return seconds;
     }
 
     /** The strict read of {@link DocumentPlatformConfig#ENV_SEARCH_READ_ONLY}. */
