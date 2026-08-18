@@ -35,7 +35,8 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
             MetricRefusal.AMBIGUOUS_BACKEND,
             MetricRefusal.UNKNOWN_BACKEND,
             MetricRefusal.UNSUPPORTED_AGGREGATE,
-            MetricRefusal.UNSUPPORTED_FILTER);
+            MetricRefusal.UNSUPPORTED_FILTER,
+            MetricRefusal.MISSING_TABLE);
 
     private final Map<String, ServedMetricSubject> subjects;
 

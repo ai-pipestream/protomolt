@@ -23,6 +23,15 @@ dependencies {
     implementation project(':protomolt-metric-lucene')
     implementation project(':protomolt-metric-spi')
     implementation project(':protomolt-protobuf-metric')
+    // The metrics role's optional lake engine: the executor, the sink's
+    // LocalFileIO (this build is Hadoop-free), and the catalog classes the
+    // DOCUMENT_PLATFORM_METRICS_ICEBERG_* family selects between. sqlite
+    // rides along so the one-container jdbc:sqlite catalog works out of
+    // the box.
+    implementation project(':protomolt-metric-iceberg')
+    implementation project(':protomolt-iceberg')
+    implementation libs.iceberg.core
+    runtimeOnly libs.sqlite.jdbc
     implementation project(':protomolt-repo-proto')
     implementation project(':protomolt-acquire-s3')
     implementation project(':protomolt-acquire-jdbc')

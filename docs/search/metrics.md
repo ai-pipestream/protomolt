@@ -87,8 +87,11 @@ here, the one aggregate the Lucene backend refuses; rows missing a
 dimension value (NULL, or the empty string on term dimensions) are
 excluded from group-by, matching the doc-values backend; tables
 carrying delete files are refused loudly, because the sink appends and
-this reader trusts that. Mounting the backend on the platform waits on
-an Iceberg catalog configuration family, a follow-up.
+this reader trusts that. The document platform mounts this engine
+beside Lucene through the `DOCUMENT_PLATFORM_METRICS_ICEBERG_*` family
+(see [the platform's lake metrics section](../apps/document-platform.md#lake-metrics));
+on such a two-engine mount a query that leaves the backend unset is
+refused with `ambiguous-backend` naming both, per the design.
 
 ## The platform mount
 

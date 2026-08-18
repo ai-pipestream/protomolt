@@ -22,6 +22,7 @@ public final class MetricRefusal extends RuntimeException {
     public static final String INVALID_LIMIT = "invalid-limit";
     public static final String EMPTY_MEASURES = "empty-measures";
     public static final String ROLE_MISMATCH = "role-mismatch";
+    public static final String MISSING_TABLE = "missing-table";
 
     private final String code;
     private final List<String> legal;
