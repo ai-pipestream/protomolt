@@ -17,23 +17,40 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The metric door's two catalog verbs. Registered on an action catalog they
- * are MCP tools with no translation layer, which is the moment an agent
- * surface can answer an aggregate question: {@code describe-mapping} tells
- * it what is queryable, {@code query-metrics} runs the proto3-JSON
- * {@code QueryMetricsRequest} it writes. Refusals surface the SPI's stable
- * code with the legal set in details, so a tool-using model can correct
- * itself without parsing prose.
+ * The metric door's three catalog verbs. Registered on an action catalog
+ * they are MCP tools with no translation layer, which is the moment an
+ * agent surface can answer an aggregate question: {@code describe-mapping}
+ * tells it what is queryable, {@code query-metrics} runs the proto3-JSON
+ * {@code QueryMetricsRequest} it writes, and {@code rebuild-rollup}
+ * replaces a declared lake rollup with a fresh complete answer. Refusals
+ * surface the SPI's stable code with the legal set in details, so a
+ * tool-using model can correct itself without parsing prose.
  */
 public final class MetricActions {
 
     private MetricActions() {
     }
 
-    /** Both verbs over the same served subjects. */
+    /** The verbs over the same served subjects, without a rollup sink. */
     public static List<ProtoAction> over(Map<String, ServedMetricSubject> subjects) {
+        return over(subjects, null);
+    }
+
+    /**
+     * The verbs over the same served subjects.
+     *
+     * @param subjects the served subjects, keyed by name
+     * @param rollups where rebuilt rollups land; {@code null} makes the
+     *        rebuild verb refuse with {@code missing-sink}, exactly like
+     *        the RPC on a sinkless mount
+     * @return the catalog verbs
+     */
+    public static List<ProtoAction> over(
+            Map<String, ServedMetricSubject> subjects,
+            ai.pipestream.proto.metric.spi.RollupSink rollups) {
         Map<String, ServedMetricSubject> served = Map.copyOf(subjects);
-        return List.of(new DescribeMappingAction(served), new QueryMetricsAction(served));
+        return List.of(new DescribeMappingAction(served), new QueryMetricsAction(served),
+                new RebuildRollupAction(served, rollups));
     }
 
     private static ServedMetricSubject subject(
@@ -173,6 +190,82 @@ public final class MetricActions {
                 QueryMetricsResponse response = MetricQueries.query(
                         subject.mapping(), subject.executors(), request.build());
                 return toJson(response, mapper);
+            } catch (MetricRefusal refusal) {
+                throw refusal(refusal, mapper);
+            }
+        }
+    }
+
+    /** One declared-rollup rebuild, request and response in proto3 JSON. */
+    static final class RebuildRollupAction implements ProtoAction {
+
+        private final Map<String, ServedMetricSubject> subjects;
+        private final ai.pipestream.proto.metric.spi.RollupSink rollups;
+
+        RebuildRollupAction(Map<String, ServedMetricSubject> subjects,
+                ai.pipestream.proto.metric.spi.RollupSink rollups) {
+            this.subjects = subjects;
+            this.rollups = rollups;
+        }
+
+        @Override
+        public String name() {
+            return "rebuild-rollup";
+        }
+
+        @Override
+        public String description() {
+            return "Rebuild one declared rollup: the aggregate query runs on the named "
+                    + "engine and its complete result atomically replaces the named lake "
+                    + "table. Exact or refused, never truncated. The request is a "
+                    + "proto3-JSON RebuildRollupRequest under 'request'.";
+        }
+
+        @Override
+        public ObjectNode inputSchema() {
+            ObjectMapper mapper = new ObjectMapper();
+            ObjectNode schema = mapper.createObjectNode();
+            schema.put("type", "object");
+            schema.put("additionalProperties", false);
+            ObjectNode properties = schema.putObject("properties");
+            properties.putObject("request")
+                    .put("type", "object")
+                    .put("description", "A proto3-JSON ai.pipestream.proto.metric.v1."
+                            + "RebuildRollupRequest: mappingSubject, measures, dimensions, "
+                            + "filters, table, optional backend.");
+            schema.putArray("required").add("request");
+            return schema;
+        }
+
+        @Override
+        public ObjectNode execute(ObjectNode input, ActionContext context)
+                throws ActionException {
+            ObjectMapper mapper = context.objectMapper();
+            JsonNode requestNode = input.get("request");
+            if (requestNode == null || !requestNode.isObject()) {
+                throw new ActionException("invalid-input",
+                        "request must be a proto3-JSON RebuildRollupRequest object");
+            }
+            ai.pipestream.proto.metric.RebuildRollupRequest.Builder request =
+                    ai.pipestream.proto.metric.RebuildRollupRequest.newBuilder();
+            try {
+                JsonFormat.parser().merge(requestNode.toString(), request);
+            } catch (InvalidProtocolBufferException e) {
+                throw new ActionException("invalid-input",
+                        "request is not a valid RebuildRollupRequest: " + e.getMessage());
+            }
+            if (request.getTable().isBlank()) {
+                throw new ActionException("invalid-input",
+                        "table is required: name the rollup table to replace");
+            }
+            if (request.getMeasuresList().isEmpty()) {
+                throw new ActionException("invalid-input",
+                        "measures is required: at least one measure member");
+            }
+            ServedMetricSubject subject = subject(
+                    subjects, request.getMappingSubject(), mapper);
+            try {
+                return toJson(Rollups.rebuild(subject, rollups, request.build()), mapper);
             } catch (MetricRefusal refusal) {
                 throw refusal(refusal, mapper);
             }
