@@ -193,6 +193,7 @@ public final class MetricQueries {
 
         List<EqualsFilter> filters = new ArrayList<>();
         List<CompiledMetricQuery.DateRangeFilter> dateRanges = new ArrayList<>();
+        List<CompiledMetricQuery.PathPrefixFilter> pathPrefixes = new ArrayList<>();
         for (MetricFilter filter : request.getFiltersList()) {
             MetricMember member = member(mapping, filter.getMember());
             if (member.role() != MemberRole.MEMBER_ROLE_DIMENSION) {
@@ -200,14 +201,18 @@ public final class MetricQueries {
                         "'" + filter.getMember() + "' is a measure; filters apply to dimensions",
                         dimensionNames(mapping));
             }
+            if ((filter.hasRange() ? 1 : 0) + (filter.hasPrefix() ? 1 : 0)
+                    + (filter.getEqualsCount() > 0 ? 1 : 0) > 1) {
+                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                        "filter on '" + filter.getMember() + "' declares more than one"
+                                + " form; pick equality, range, or prefix", List.of());
+            }
             if (filter.hasRange()) {
-                if (filter.getEqualsCount() > 0) {
-                    throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                            "filter on '" + filter.getMember() + "' declares both an"
-                                    + " equality set and a range; pick one form",
-                            List.of());
-                }
                 dateRanges.add(dateRange(member, filter));
+                continue;
+            }
+            if (filter.hasPrefix()) {
+                pathPrefixes.add(pathPrefix(member, filter));
                 continue;
             }
             if (filter.getEqualsCount() == 0) {
@@ -219,6 +224,10 @@ public final class MetricQueries {
             DimensionKind kind = switch (member.kind()) {
                 case KEYWORD -> DimensionKind.TERM;
                 case BOOLEAN -> DimensionKind.BOOLEAN;
+                case TREE_PATH -> throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                        "equality on '" + filter.getMember() + "' would silently match any"
+                                + " descendant of the value; a TREE_PATH dimension filters"
+                                + " by prefix", List.of());
                 default -> throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
                         "filter on '" + filter.getMember() + "' needs a keyword or bool "
                                 + "dimension, got " + member.kind()
@@ -233,7 +242,7 @@ public final class MetricQueries {
 
         return new Plan(
                 new CompiledMetricQuery(mapping.subject(), backend, measures, dimensions,
-                        filters, dateRanges, request.getLimit()),
+                        filters, dateRanges, pathPrefixes, request.getLimit()),
                 requested.stream().map(MetricMember::name).toList(),
                 calculated);
     }
@@ -282,6 +291,38 @@ public final class MetricQueries {
                 member.name(), member.fieldName(), member.fieldPath(), gte, lte);
     }
 
+    /**
+     * One descendant-or-self filter, the path rendered root-first. The gRPC
+     * gate already enforces TreePath's own rules; the segment checks here
+     * cover hosts that bypass it, because a segment containing the render
+     * delimiter would silently change which subtree the filter names.
+     */
+    private static CompiledMetricQuery.PathPrefixFilter pathPrefix(
+            MetricMember member, MetricFilter filter) {
+        if (member.kind() != FieldKind.TREE_PATH) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "prefix on '" + filter.getMember() + "' needs a TREE_PATH dimension,"
+                            + " got " + member.kind(), List.of());
+        }
+        List<String> segments = filter.getPrefix().getSegmentsList();
+        if (segments.isEmpty()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "prefix on '" + filter.getMember() + "' has no segments; name the"
+                            + " subtree root as root-first segments", List.of());
+        }
+        for (String segment : segments) {
+            if (segment.isEmpty() || segment.contains("/")) {
+                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                        "prefix segment '" + segment + "' on '" + filter.getMember()
+                                + "' must be non-empty and free of the \"/\" delimiter",
+                        List.of());
+            }
+        }
+        return new CompiledMetricQuery.PathPrefixFilter(
+                member.name(), member.fieldName(), member.fieldPath(),
+                String.join("/", segments));
+    }
+
     /** A strict ISO calendar day, refused by name otherwise. */
     private static java.time.LocalDate parseDay(String member, String bound) {
         try {
@@ -304,9 +345,11 @@ public final class MetricQueries {
                         "grain on '" + member.name() + "' needs a DATE dimension, got "
                                 + member.kind(), List.of());
             }
-            DimensionKind kind = member.kind() == FieldKind.BOOLEAN
-                    ? DimensionKind.BOOLEAN
-                    : DimensionKind.TERM;
+            DimensionKind kind = switch (member.kind()) {
+                case BOOLEAN -> DimensionKind.BOOLEAN;
+                case TREE_PATH -> DimensionKind.TREE_PATH;
+                default -> DimensionKind.TERM;
+            };
             return new Dimension(member.name(), member.fieldName(), member.fieldPath(), kind,
                     TimeGrain.TIME_GRAIN_UNSPECIFIED);
         }

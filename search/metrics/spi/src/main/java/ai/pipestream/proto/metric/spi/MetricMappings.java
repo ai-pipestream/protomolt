@@ -51,6 +51,7 @@ import java.util.Set;
 public final class MetricMappings {
 
     private static final String TIMESTAMP_TYPE = "google.protobuf.Timestamp";
+    private static final String TREE_PATH_TYPE = "ai.pipestream.proto.types.v1.TreePath";
 
     private MetricMappings() {
     }
@@ -124,8 +125,8 @@ public final class MetricMappings {
      * the flattened engine field name ({@code parent_child}, the index
      * mapping's own naming) so a nested member's {@code fieldName} lands on
      * the field the engine actually wrote. Undeclared singular message
-     * fields are descended (Timestamp stays a DATE leaf, map fields never
-     * carry members); a declaration below a repeated field is a violation,
+     * fields are descended (Timestamp stays a DATE leaf, TreePath a
+     * TREE_PATH leaf, map fields never carry members); a declaration below a repeated field is a violation,
      * because a repeated path has no single value to aggregate.
      */
     private static void collect(
@@ -164,6 +165,7 @@ public final class MetricMappings {
             if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
                     && !field.isMapField()
                     && !TIMESTAMP_TYPE.equals(field.getMessageType().getFullName())
+                    && !TREE_PATH_TYPE.equals(field.getMessageType().getFullName())
                     && visiting.add(field.getMessageType().getFullName())) {
                 collect(field.getMessageType(),
                         prefix.descend(field.getName()),
@@ -338,7 +340,9 @@ public final class MetricMappings {
             case INT, LONG, FLOAT, DOUBLE -> FieldKind.NUMERIC;
             case MESSAGE -> TIMESTAMP_TYPE.equals(field.getMessageType().getFullName())
                     ? FieldKind.DATE
-                    : null;
+                    : TREE_PATH_TYPE.equals(field.getMessageType().getFullName())
+                            ? FieldKind.TREE_PATH
+                            : null;
             case BYTE_STRING -> null;
         };
     }

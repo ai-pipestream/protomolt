@@ -19,6 +19,8 @@ import java.util.List;
  * @param filters the query-wide row filters (AND), in request order
  * @param dateRanges the query-wide date-range filters (AND), in request
  *        order, bounds already resolved to inclusive UTC epoch millis
+ * @param pathPrefixes the query-wide descendant-or-self filters (AND) over
+ *        TREE_PATH dimensions, in request order, paths already rendered
  * @param limit maximum result rows; already bounds-checked
  */
 public record CompiledMetricQuery(
@@ -28,6 +30,7 @@ public record CompiledMetricQuery(
         List<Dimension> dimensions,
         List<EqualsFilter> filters,
         List<DateRangeFilter> dateRanges,
+        List<PathPrefixFilter> pathPrefixes,
         int limit) {
 
     public CompiledMetricQuery {
@@ -35,6 +38,7 @@ public record CompiledMetricQuery(
         dimensions = List.copyOf(dimensions);
         filters = List.copyOf(filters);
         dateRanges = List.copyOf(dateRanges);
+        pathPrefixes = List.copyOf(pathPrefixes);
     }
 
     /**
@@ -89,6 +93,23 @@ public record CompiledMetricQuery(
             Long gteEpochMillis, Long lteEpochMillis) {
     }
 
+    /**
+     * One descendant-or-self filter over a TREE_PATH dimension: a row
+     * matches when its path equals {@code path} or sits anywhere below it.
+     * The engines answer it exactly — Lucene as one term match against the
+     * indexed ancestor chain, the lake by deriving the rendered path from
+     * the struct's segments — never by scanning rendered strings for a
+     * substring.
+     *
+     * @param member the public member name, for evidence and errors
+     * @param fieldName the engine's physical field name
+     * @param fieldPath the proto field path (dot-joined field names)
+     * @param path the rendered root-first path ("a/b"); never blank
+     */
+    public record PathPrefixFilter(
+            String member, String fieldName, String fieldPath, String path) {
+    }
+
     /** How an engine buckets a dimension. */
     public enum DimensionKind {
         /** Term buckets over a keyword-like field. */
@@ -96,7 +117,9 @@ public record CompiledMetricQuery(
         /** Boolean buckets. */
         BOOLEAN,
         /** Calendar buckets over an epoch field, under the grain. */
-        DATE
+        DATE,
+        /** Whole-path buckets over a tree path; the leaf path labels the bucket. */
+        TREE_PATH
     }
 
     /**
