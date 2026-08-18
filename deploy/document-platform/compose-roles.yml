@@ -84,7 +84,7 @@ services:
       repo-node:
         condition: service_started
     environment:
-      PROTOMOLT_ROLES: parser-text,registry,parse,jobs,intake,playground,search,search-console
+      PROTOMOLT_ROLES: parser-text,registry,parse,jobs,intake,playground,search,metrics,search-console
       PROTOMOLT_REPO_TARGET: repo-node:9090
       DOCUMENT_PLATFORM_JOBS_JDBC_URL: jdbc:postgresql://postgres:5432/jobs
       DOCUMENT_PLATFORM_JOBS_USERNAME: protomolt
@@ -96,6 +96,7 @@ services:
       - "9092:9092"   # intake gRPC
       - "9093:9093"   # parse gRPC
       - "9094:9094"   # search gRPC
+      - "9095:9095"   # metrics gRPC
       - "8081:8081"   # registry HTTP (+ verbs on /protomolt/actions)
       - "8095:8095"   # parser playground
       - "8096:8096"   # search console

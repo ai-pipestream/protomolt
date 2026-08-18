@@ -3,8 +3,8 @@
 The document platform is the one-container deployment of the document
 pipeline: `apps/document-platform` wires repo-service, the authenticated
 intake door, the parsing coordinator, the durable jobs worker, the schema
-registry, the search door with its console page, and the streaming parser
-playground into one JVM
+registry, the search door with its console page and metric door, and the
+streaming parser playground into one JVM
 over the in-process transport. It is the productized form of what
 `GoldenPathSystemTest` proves. The same binary boots as specialized nodes
 via `PROTOMOLT_ROLES` — see [Role nodes](role-nodes.md).
@@ -25,6 +25,7 @@ the jobs store) and RustFS for object storage. Ports:
 | 9092 | intake gRPC (`IntakeService`, API-key authenticated) |
 | 9093 | parsing coordinator gRPC (`ParseCoordinatorService`) |
 | 9094 | search door gRPC (`SearchService`, `SearchIndexService`) |
+| 9095 | metric door gRPC (`MetricService`) |
 | 8081 | schema registry HTTP, with the jobs verbs on `/protomolt/actions` |
 | 8095 | parser playground |
 | 8096 | search console (the search page + operations panel) |
@@ -55,6 +56,11 @@ the jobs store) and RustFS for object storage. Ports:
   The lexical lane always works; the vector lane activates when a Model2Vec
   model directory is configured (`PROTOMOLT_MODEL2VEC_PATH`), with the
   policy's dims read from the loaded model.
+- The metric door answers over the same live index: `repo-document` serves
+  a `documents` COUNT measure through `MetricService` on the metrics port,
+  and the `describe-mapping` and `query-metrics` verbs ride the registry's
+  actions route. Dimensions over the nested `search_metadata` fields arrive
+  with nested member support in the metric SPI.
 - The embedded reference text parser serves text and markdown. A fleet of
   external parsers replaces it by pointing
   `DOCUMENT_PLATFORM_PARSE_PROFILES` (+ `..._PROFILE_ENDPOINT`) at a
@@ -79,6 +85,7 @@ compose file is the worked example.
 `DocumentPlatformSmokeIT` drives every external surface over real TCP:
 registry subjects, authenticated ingest, submit-workflow to completion, the
 parsed result read back, parse-and-index to a lexical search hit on the
-search port, replay without duplication, the playground page, and the
+search port, replay without duplication, the playground page, the
 search console (page, subjects, a search hit through the JSON bridge, and
-the operations proxy).
+the operations proxy), and the metric door counting the corpus over its
+own port and through the catalog verbs.

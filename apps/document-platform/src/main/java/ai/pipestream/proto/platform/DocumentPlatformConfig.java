@@ -37,6 +37,7 @@ import java.util.Set;
  * @param searchGrpcPort search door gRPC port; {@code 0} picks free
  * @param searchIndexDir directory of the search door's Lucene index
  * @param searchConsolePort search console HTTP port; {@code 0} picks free
+ * @param metricsGrpcPort metric door gRPC port; {@code 0} picks free
  * @param roles the roles this node mounts ({@code PROTOMOLT_ROLES}); the
  *        default is the full one-container preset, and configuration is
  *        only required for what is actually selected (a repo-only node
@@ -61,18 +62,20 @@ public record DocumentPlatformConfig(
         int searchGrpcPort,
         Path searchIndexDir,
         int searchConsolePort,
+        int metricsGrpcPort,
         List<String> roles,
         Map<String, String> environment) {
 
     /** The full one-container preset, in canonical mount order. */
     public static final List<String> DEFAULT_ROLES = List.of(
             "repo", "parser-text", "registry", "parse", "jobs", "intake",
-            "playground", "search", "search-console");
+            "playground", "search", "metrics", "search-console");
 
     /** Every role the platform binary can mount. */
     public static final Set<String> KNOWN_ROLES = Set.of(
             "repo", "parser-text", "registry", "parse", "jobs", "intake",
-            "playground", "search", "search-console", "acquire-s3", "acquire-jdbc");
+            "playground", "search", "metrics", "search-console",
+            "acquire-s3", "acquire-jdbc");
 
     /** Env var selecting the roles this node mounts (comma-separated). */
     public static final String ENV_ROLES = "PROTOMOLT_ROLES";
@@ -150,6 +153,12 @@ public record DocumentPlatformConfig(
     /** The default search console HTTP port. */
     public static final int DEFAULT_SEARCH_CONSOLE_PORT = 8096;
 
+    /** Env var for the metric door gRPC port. */
+    public static final String ENV_METRICS_GRPC_PORT = "DOCUMENT_PLATFORM_METRICS_GRPC_PORT";
+
+    /** The default metric door gRPC port. */
+    public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
+
     public DocumentPlatformConfig {
         roles = roles == null || roles.isEmpty() ? DEFAULT_ROLES : List.copyOf(roles);
         environment = environment == null ? Map.of() : Map.copyOf(environment);
@@ -185,6 +194,11 @@ public record DocumentPlatformConfig(
         if (searchIndexDir == null && roles.contains("search")) {
             throw new IllegalArgumentException(
                     "searchIndexDir is required: this node serves search");
+        }
+        if (roles.contains("metrics") && !roles.contains("search")) {
+            throw new IllegalArgumentException(
+                    "the metrics role reads the search index in process: add 'search'"
+                            + " to this node's roles");
         }
     }
 
@@ -229,6 +243,7 @@ public record DocumentPlatformConfig(
                 intEnv(ENV_SEARCH_GRPC_PORT, DEFAULT_SEARCH_GRPC_PORT),
                 Path.of(env(ENV_SEARCH_INDEX_DIR, DEFAULT_SEARCH_INDEX_DIR)),
                 intEnv(ENV_SEARCH_CONSOLE_PORT, DEFAULT_SEARCH_CONSOLE_PORT),
+                intEnv(ENV_METRICS_GRPC_PORT, DEFAULT_METRICS_GRPC_PORT),
                 roles,
                 System.getenv());
     }

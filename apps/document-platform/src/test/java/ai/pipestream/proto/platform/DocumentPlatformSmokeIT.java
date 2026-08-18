@@ -10,6 +10,9 @@ import ai.pipestream.proto.intake.v1.IngestDocumentResponse;
 import ai.pipestream.proto.intake.v1.IntakeServiceGrpc;
 import ai.pipestream.proto.intake.v1.RawPayload;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
+import ai.pipestream.proto.metric.MetricServiceGrpc;
+import ai.pipestream.proto.metric.QueryMetricsRequest;
+import ai.pipestream.proto.metric.QueryMetricsResponse;
 import ai.pipestream.proto.parse.v1.ParseDocumentRequest;
 import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
@@ -127,6 +130,7 @@ class DocumentPlatformSmokeIT {
                         1,
                         0,
                         work.resolve("search-index"),
+                        0,
                         0,
                         null,
                         Map.of()),
@@ -384,6 +388,45 @@ class DocumentPlatformSmokeIT {
 
     @Test
     @Order(8)
+    void theMetricDoorCountsTheCorpusOverTcpAndThroughTheCatalogVerbs() throws Exception {
+        // The gRPC surface: the same live index the search door serves.
+        ManagedChannel metricsChannel = NettyChannelBuilder
+                .forAddress("127.0.0.1", platform.metricsPort())
+                .usePlaintext()
+                .build();
+        try {
+            QueryMetricsResponse answered = MetricServiceGrpc.newBlockingStub(metricsChannel)
+                    .queryMetrics(QueryMetricsRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .addMeasures("documents")
+                            .setLimit(10)
+                            .build());
+            assertThat(answered.getRowsList()).hasSize(1);
+            assertThat(answered.getRows(0).getMeasuresMap())
+                    .containsEntry("documents", 1.0);
+        } finally {
+            metricsChannel.shutdownNow();
+        }
+
+        // The catalog verbs the metrics role contributed, over the registry's
+        // actions route (the same surface MCP serves).
+        ObjectNode describe = MAPPER.createObjectNode();
+        describe.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        JsonNode described = postAction("describe-mapping", describe);
+        assertThat(described.path("members").toString()).contains("documents");
+
+        ObjectNode query = MAPPER.createObjectNode();
+        ObjectNode request = query.putObject("request");
+        request.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        request.putArray("measures").add("documents");
+        request.put("limit", 10);
+        JsonNode counted = postAction("query-metrics", query);
+        assertThat(counted.path("rows").get(0).path("measures").path("documents").asDouble())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    @Order(9)
     void deleteAndUnindexRemovesTheDocumentFromSearch() throws Exception {
         ObjectNode submit = MAPPER.createObjectNode();
         submit.put("workflowName", "delete-and-unindex");
@@ -431,7 +474,7 @@ class DocumentPlatformSmokeIT {
     }
 
     @Test
-    @Order(9)
+    @Order(10)
     void replayPruneReconcilesTheIndexAgainstTheRepository() throws Exception {
         // Two fresh documents enter and index; one is then deleted straight
         // through repo's gRPC, BYPASSING delete-and-unindex — the drift
