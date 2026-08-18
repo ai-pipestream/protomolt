@@ -10,6 +10,7 @@ import ai.pipestream.proto.index.spi.MappingValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
+import ai.pipestream.proto.index.spi.TreePaths;
 import ai.pipestream.proto.index.spi.VectorElementType;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapper;
@@ -78,6 +79,10 @@ import java.util.Objects;
  *       ranges are inclusive, so an excluded bound moves one step inward and an unset
  *       bound becomes the open-end sentinel; the day-grain {@code DateRange} covers whole
  *       days.</li>
+ *   <li><b>Tree paths</b>: each path value emits its ancestor chain ("a", "a/b", "a/b/c")
+ *       as {@code StringField} terms; docValues always use the {@code SortedSetDocValuesField}
+ *       form (the chain is multi-valued by construction). Stored keeps the complete path
+ *       only — ancestors are derivable.</li>
  *   <li><b>Dates</b>: Timestamp values are emitted numerically as epoch millis, or epoch
  *       seconds under {@code DATE_RESOLUTION_SECONDS}.</li>
  * </ul>
@@ -192,6 +197,10 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
         }
         if (kind.isRange()) {
             addRange(document, name, path, hint, value);
+            return;
+        }
+        if (kind == IndexFieldKind.TREE_PATH) {
+            addTreePath(document, name, path, hint, value);
             return;
         }
         if (isMapEntryList(value)) {
@@ -360,8 +369,10 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
                         : String.valueOf(value);
                 addJsonText(document, name, text, stored, indexed);
             }
-            case VECTOR, SKIP, ANY, INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> {
-                // VECTOR and ranges are handled above; SKIP/ANY are filtered or expanded first.
+            case VECTOR, SKIP, ANY, INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE,
+                    TREE_PATH -> {
+                // VECTOR, ranges and tree paths are handled above; SKIP/ANY are filtered or
+                // expanded first.
             }
         }
     }
@@ -389,6 +400,48 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
             document.add(new SortedNumericDocValuesField(name, value));
         } else if (hint.sortable()) {
             document.add(new NumericDocValuesField(name, value));
+        }
+    }
+
+    /**
+     * Ancestor-chain keyword terms from a tree-path message: segments {@code [a, b, c]}
+     * emit the terms {@code "a"}, {@code "a/b"}, {@code "a/b/c"}. The chain is
+     * multi-valued by construction, so docValues always take the {@code SORTED_SET} form
+     * whichever of sortable/facetable asked for them; stored keeps the complete path only.
+     */
+    private static void addTreePath(
+            Document document, String name, String path, ResolvedFieldHint hint, Object value)
+            throws MappingException {
+        if (value instanceof List<?> values) {
+            for (Object element : values) {
+                addTreePath(document, name, path, hint, element);
+            }
+            return;
+        }
+        if (!(value instanceof MessageOrBuilder treePath)) {
+            throw new MappingException(
+                    "Field '" + name + "' is hinted TREE_PATH but the value is "
+                            + typeName(value) + ", not a segments message", path);
+        }
+        var segments = TreePaths.resolve(treePath.getDescriptorForType())
+                .orElseThrow(() -> new MappingException(
+                        "Message " + treePath.getDescriptorForType().getFullName()
+                                + " declares no repeated string 'segments' field", path));
+        List<String> ancestors = TreePaths.ancestorPaths(treePath, segments);
+        for (int i = 0; i < ancestors.size(); i++) {
+            String ancestor = ancestors.get(i);
+            boolean leaf = i == ancestors.size() - 1;
+            boolean storeLeaf = leaf && hint.stored();
+            if (hint.indexed()) {
+                document.add(new StringField(name, ancestor,
+                        storeLeaf ? org.apache.lucene.document.Field.Store.YES
+                                : org.apache.lucene.document.Field.Store.NO));
+            } else if (storeLeaf) {
+                document.add(new StoredField(name, ancestor));
+            }
+            if (hint.facetable() || hint.sortable()) {
+                document.add(new SortedSetDocValuesField(name, new BytesRef(ancestor)));
+            }
         }
     }
 

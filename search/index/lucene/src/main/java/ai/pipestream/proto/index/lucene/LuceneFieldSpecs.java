@@ -130,6 +130,9 @@ public record LuceneFieldSpecs(String messageFullName, List<FieldSpec> fields) {
             return switch (kind) {
                 case INT32, INT64, FLOAT, DOUBLE, DATE ->
                         facetable ? DocValuesType.SORTED_NUMERIC : DocValuesType.NUMERIC;
+                // The ancestor chain is multi-valued by construction, so the multi-valued
+                // form serves sortable-only hints as well.
+                case TREE_PATH -> DocValuesType.SORTED_SET;
                 default -> facetable ? DocValuesType.SORTED_SET : DocValuesType.SORTED;
             };
         }

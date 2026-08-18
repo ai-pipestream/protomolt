@@ -143,6 +143,9 @@ public final class OpenSearchMappingGenerator {
             case FLOAT_RANGE -> "float_range";
             case DOUBLE_RANGE -> "double_range";
             case DATE_RANGE -> "date_range";
+            // Ancestor-chain terms from the document mapper; keyword serves both the
+            // hierarchical terms aggregation and exact path-prefix filters.
+            case TREE_PATH -> "keyword";
             // UNSPECIFIED reaches here only in hand-built mappings; treat it like OBJECT.
             case OBJECT, UNSPECIFIED -> "object";
             case VECTOR, SKIP, ANY -> throw new IllegalArgumentException("no direct mapping type for " + kind);

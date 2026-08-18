@@ -53,6 +53,11 @@ enum IndexFieldType {
   INDEX_FIELD_TYPE_DOUBLE_RANGE = 17;
   // Range of date/time values over a bound-pair message.
   INDEX_FIELD_TYPE_DATE_RANGE = 18;
+  // Taxonomy path over a message with a repeated string field named "segments"
+  // (canonically ai.pipestream.proto.types.v1.TreePath). Engines emit the
+  // ancestor chain ("a", "a/b", "a/b/c") as keyword terms for hierarchical
+  // drill-down facets and path-prefix filters.
+  INDEX_FIELD_TYPE_TREE_PATH = 19;
 }
 
 // KNN similarity function (Lucene VectorSimilarityFunction, OpenSearch space_type,

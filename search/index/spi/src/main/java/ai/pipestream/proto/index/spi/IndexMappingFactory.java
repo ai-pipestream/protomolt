@@ -135,6 +135,15 @@ public final class IndexMappingFactory {
                         path);
             }
         }
+        if (hint.type() == IndexFieldKind.TREE_PATH) {
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE
+                    || TreePaths.resolve(field.getMessageType()).isEmpty()) {
+                throw new IndexMappingException(
+                        "TREE_PATH requires a message field with a repeated string 'segments'"
+                                + " field (canonically " + TreePaths.CANONICAL + ")",
+                        path);
+            }
+        }
         try {
             hint.missingSubstitute();
         } catch (NumberFormatException e) {
@@ -149,7 +158,8 @@ public final class IndexMappingFactory {
         }
         return switch (hint.type()) {
             case DATE, SKIP, VECTOR, BINARY, OBJECT, NESTED, ANY,
-                    INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE -> false;
+                    INT_RANGE, LONG_RANGE, FLOAT_RANGE, DOUBLE_RANGE, DATE_RANGE,
+                    TREE_PATH -> false;
             default -> true;
         };
     }

@@ -13,6 +13,7 @@ import ai.pipestream.proto.index.spi.MappingValues;
 import ai.pipestream.proto.index.spi.RangeBounds;
 import ai.pipestream.proto.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.index.spi.SearchEngineIndexer;
+import ai.pipestream.proto.index.spi.TreePaths;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -51,6 +52,9 @@ import java.util.Objects;
  *       Canonical {@code types.v1} ranges speak inclusivity natively ({@code gt}/{@code lt}
  *       for an excluded bound), an unset bound has no key, and the day-grain
  *       {@code DateRange} lands as epoch millis covering whole days.</li>
+ *   <li><b>Tree paths</b>: each path value emits its ancestor chain ("a", "a/b", "a/b/c")
+ *       as a flat array of keyword terms, so terms aggregations count at any depth and a
+ *       path-prefix filter is an exact term match.</li>
  * </ul>
  */
 public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
@@ -149,6 +153,10 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
                 document.put(field.fieldName(), rangeObject(value, hint, field.path()));
                 continue;
             }
+            if (hint.type() == IndexFieldKind.TREE_PATH) {
+                document.put(field.fieldName(), treePathTerms(value, field.path()));
+                continue;
+            }
             if (isMapEntryList(value)) {
                 applyMap(document, field.fieldName(), (List<?>) value, hint, field.path());
                 continue;
@@ -203,6 +211,24 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
             }
         }
         return object;
+    }
+
+    /** Flat ancestor-chain keyword terms from one or more tree-path messages. */
+    private static List<String> treePathTerms(Object value, String path) throws MappingException {
+        List<String> terms = new ArrayList<>();
+        for (Object element : value instanceof List<?> values ? values : List.of(value)) {
+            if (!(element instanceof Message treePath)) {
+                throw new MappingException(
+                        "Field is hinted TREE_PATH but the value is "
+                                + element.getClass().getName() + ", not a segments message", path);
+            }
+            var segments = TreePaths.resolve(treePath.getDescriptorForType())
+                    .orElseThrow(() -> new MappingException(
+                            "Message " + treePath.getDescriptorForType().getFullName()
+                                    + " declares no repeated string 'segments' field", path));
+            terms.addAll(TreePaths.ancestorPaths(treePath, segments));
+        }
+        return terms;
     }
 
     private static void applyMap(

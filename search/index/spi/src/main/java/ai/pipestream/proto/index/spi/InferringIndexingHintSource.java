@@ -48,6 +48,12 @@ public final class InferringIndexingHintSource implements IndexingHintSource {
                 return ResolvedFieldHint.of(canonical.get());
             }
         }
+        if (TreePaths.isCanonical(type)) {
+            // Singular or repeated: a document may carry several taxonomy paths. The
+            // hierarchical drill-down facet is the type's platform behavior, so the
+            // inferred hint is facetable out of the box.
+            return ResolvedFieldHint.builder(IndexFieldKind.TREE_PATH).facetable(true).build();
+        }
         if (Any.getDescriptor().getFullName().equals(type.getFullName())) {
             // Write-time unpack; not an opaque OBJECT and not a BINARY blob.
             return ResolvedFieldHint.of(IndexFieldKind.ANY);
