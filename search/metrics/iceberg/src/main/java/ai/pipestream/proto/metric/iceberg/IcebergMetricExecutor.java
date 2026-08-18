@@ -72,12 +72,16 @@ public final class IcebergMetricExecutor implements MetricExecutor {
     public Result execute(CompiledMetricQuery query) {
         Table table = tables.table(query.subject());
         List<String> files = dataFiles(query.subject(), table);
-        DuckDbSql sql = DuckDbSql.render(query, files);
-        if (files.isEmpty()) {
-            // Nothing appended yet: no files to read, no rows to answer.
-            return new Result(List.of(), sql.text() + " -- empty table, not executed");
+        // Object-store locations materialize through the table's own
+        // FileIO for the query's duration; local files pass through.
+        try (LocalizedScan scan = LocalizedScan.of(files, table.io())) {
+            DuckDbSql sql = DuckDbSql.render(query, scan.localPaths());
+            if (files.isEmpty()) {
+                // Nothing appended yet: no files to read, no rows to answer.
+                return new Result(List.of(), sql.text() + " -- empty table, not executed");
+            }
+            return new Result(run(query, sql), sql.text() + scan.note());
         }
-        return new Result(run(query, sql), sql.text());
     }
 
     /** The current snapshot's data files; refuses tables carrying deletes. */

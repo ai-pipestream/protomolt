@@ -15,6 +15,14 @@ dependencies {
     // The proof writes the fixture table through the real sink and reads
     // the numbers back through the executor.
     testImplementation project(':protomolt-proto-sources')
+    // The object-store proof: the sink writes to LocalStack S3 through
+    // S3FileIO and the executor materializes the scan back.
+    testImplementation project(':protomolt-iceberg-s3')
+    testImplementation platform(libs.awssdk.bom)
+    testImplementation libs.awssdk.s3
+    testImplementation libs.awssdk.url.connection.client
+    testImplementation libs.testcontainers.junit.jupiter
+    testImplementation libs.testcontainers.localstack
     // The fixture catalog: JdbcCatalog over sqlite honors io-impl, so the
     // sink's Parquet lands on real disk for DuckDB to read.
     testRuntimeOnly libs.sqlite.jdbc

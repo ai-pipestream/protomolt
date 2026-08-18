@@ -82,7 +82,12 @@ backend: one `SELECT ... GROUP BY` rendered from the compiled query and
 run by DuckDB over the Parquet files of the table the
 [Iceberg sink](../sink/iceberg.md) wrote from the same descriptor.
 DuckDB is an in-process reader, never a warehouse we operate;
-Trino and Spark stay external consumers of the same table. Columns are
+Trino and Spark stay external consumers of the same table. An
+object-store lake works the same way: scanned files materialize
+locally through the table's own `FileIO` for the query's duration, so
+the reader reaches exactly what the catalog reaches — no second
+credential path, no DuckDB extension — and the physical plan says how
+many files moved. Columns are
 addressed by each member's `fieldPath` (the table keeps the message's
 nesting as structs, where the search index flattens), date buckets
 label themselves in UTC with exactly the Lucene backend's formats, and

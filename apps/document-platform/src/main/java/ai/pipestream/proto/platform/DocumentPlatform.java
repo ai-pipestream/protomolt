@@ -520,7 +520,29 @@ public final class DocumentPlatform implements AutoCloseable {
     private static Catalog metricsCatalog(MetricsIcebergConfig config) {
         Map<String, String> properties = new java.util.HashMap<>();
         properties.put(CatalogProperties.URI, config.catalogUri());
-        properties.put(CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName());
+        if (config.s3()) {
+            // The lake's file plane on an S3-compatible store, through
+            // Iceberg's own S3FileIO: one credential path shared by the
+            // catalog, the sink, and the metric reader.
+            properties.putAll(ai.pipestream.proto.lake.iceberg.s3.S3Catalogs
+                    .awsRegion(config.s3Region()));
+            if (!config.s3Endpoint().isEmpty()) {
+                properties.put(org.apache.iceberg.aws.s3.S3FileIOProperties.ENDPOINT,
+                        config.s3Endpoint());
+                properties.put(
+                        org.apache.iceberg.aws.s3.S3FileIOProperties.PATH_STYLE_ACCESS,
+                        "true");
+            }
+            if (!config.s3AccessKey().isEmpty()) {
+                properties.put(org.apache.iceberg.aws.s3.S3FileIOProperties.ACCESS_KEY_ID,
+                        config.s3AccessKey());
+                properties.put(
+                        org.apache.iceberg.aws.s3.S3FileIOProperties.SECRET_ACCESS_KEY,
+                        config.s3SecretKey());
+            }
+        } else {
+            properties.put(CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName());
+        }
         if (!config.warehouse().isEmpty()) {
             properties.put(CatalogProperties.WAREHOUSE_LOCATION, config.warehouse());
         }

@@ -58,6 +58,40 @@ class MetricsIcebergConfigTest {
     }
 
     @Test
+    void theS3GroupDemandsTheRegionAndPairedCredentials() {
+        MetricsIcebergConfig config = MetricsIcebergConfig.fromEnvironment(Map.of(
+                MetricsIcebergConfig.ENV_CATALOG_URI, "jdbc:sqlite:/lake/catalog.db",
+                MetricsIcebergConfig.ENV_WAREHOUSE, "s3://metric-lake/lake",
+                MetricsIcebergConfig.ENV_S3_REGION, "us-east-1",
+                MetricsIcebergConfig.ENV_S3_ENDPOINT, "http://localstack:4566",
+                MetricsIcebergConfig.ENV_S3_ACCESS_KEY, "ak",
+                MetricsIcebergConfig.ENV_S3_SECRET_KEY, "sk"));
+        assertThat(config.s3()).isTrue();
+        assertThat(config.s3Region()).isEqualTo("us-east-1");
+
+        assertThat(MetricsIcebergConfig.fromEnvironment(Map.of(
+                MetricsIcebergConfig.ENV_CATALOG_URI, "jdbc:sqlite:/lake/catalog.db",
+                MetricsIcebergConfig.ENV_WAREHOUSE, "/lake")).s3()).isFalse();
+
+        assertThatThrownBy(() -> MetricsIcebergConfig.fromEnvironment(Map.of(
+                MetricsIcebergConfig.ENV_CATALOG_URI, "jdbc:sqlite:/lake/catalog.db",
+                MetricsIcebergConfig.ENV_WAREHOUSE, "s3://metric-lake/lake",
+                MetricsIcebergConfig.ENV_S3_ENDPOINT, "http://localstack:4566")))
+                .hasMessageContaining(MetricsIcebergConfig.ENV_S3_REGION);
+
+        assertThatThrownBy(() -> MetricsIcebergConfig.fromEnvironment(Map.of(
+                MetricsIcebergConfig.ENV_CATALOG_URI, "jdbc:sqlite:/lake/catalog.db",
+                MetricsIcebergConfig.ENV_WAREHOUSE, "s3://metric-lake/lake",
+                MetricsIcebergConfig.ENV_S3_REGION, "us-east-1",
+                MetricsIcebergConfig.ENV_S3_ACCESS_KEY, "ak")))
+                .hasMessageContaining(MetricsIcebergConfig.ENV_S3_SECRET_KEY);
+
+        assertThatThrownBy(() -> MetricsIcebergConfig.fromEnvironment(Map.of(
+                MetricsIcebergConfig.ENV_S3_REGION, "us-east-1")))
+                .hasMessageContaining(MetricsIcebergConfig.ENV_CATALOG_URI);
+    }
+
+    @Test
     void anUnknownSchemeRefusesNamingTheSupportedTwo() {
         assertThatThrownBy(() -> MetricsIcebergConfig.fromEnvironment(Map.of(
                 MetricsIcebergConfig.ENV_CATALOG_URI, "thrift://hive:9083")))
