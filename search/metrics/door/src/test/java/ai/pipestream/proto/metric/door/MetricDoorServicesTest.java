@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class MetricDoorServicesTest {
 
-    static final class FakeExecutor implements MetricExecutor {
+    static class FakeExecutor implements MetricExecutor {
         CompiledMetricQuery executed;
 
         @Override
@@ -148,6 +148,42 @@ class MetricDoorServicesTest {
                             .isEqualTo(Status.Code.FAILED_PRECONDITION);
                     assertThat(e.getStatus().getDescription()).contains("[unknown-backend]");
                 });
+    }
+
+    @Test
+    void aDistinctBoundRefusalMapsToFailedPrecondition() throws Exception {
+        // The engine refuses mid-collection when a count_distinct passes
+        // its bound; the door maps that to the mount-precondition status,
+        // because the caller fixes it by picking the engine that spills.
+        MetricExecutor bounded = new FakeExecutor() {
+            @Override
+            public Result execute(CompiledMetricQuery query) {
+                throw new ai.pipestream.proto.metric.spi.MetricRefusal(
+                        ai.pipestream.proto.metric.spi.MetricRefusal.DISTINCT_BOUND,
+                        "count_distinct over 'revenue' passed this engine's bound",
+                        List.of());
+            }
+        };
+        try (MetricDoorServices boundedDoor = MetricDoorServices.build(Map.of(
+                "orders", new ServedMetricSubject(
+                        subjects.get("orders").mapping(),
+                        Map.of(MetricBackend.METRIC_BACKEND_LUCENE, bounded))))) {
+            String name = InProcessServerBuilder.generateName();
+            boundedDoor.startInProcess(name);
+            ManagedChannel boundedChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                assertThatThrownBy(() -> MetricServiceGrpc.newBlockingStub(boundedChannel)
+                        .queryMetrics(query().build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                            assertThat(e.getStatus().getDescription())
+                                    .contains("[distinct-bound]");
+                        });
+            } finally {
+                boundedChannel.shutdownNow();
+            }
+        }
     }
 
     @Test
