@@ -39,7 +39,10 @@ Two ship; others can exist without touching the consumer:
    git-backed registry beside schemas and workflows: versioned by
    commit, compat-gated at the type level, federated between meshes by
    the machinery that already exists, air-gap friendly. This is the
-   GitOps idiom with typed protobuf instead of YAML.
+   GitOps idiom with typed protobuf instead of YAML. The write side is
+   the `publish-config` verb on the registry's action catalog: the same
+   gate as the HTTP config door (strict parse as the declared type, its
+   declared rules enforced), the commit id back as the version.
 2. **Kafka (the signal plug).** A compacted topic: key = subject,
    value = the typed config message through the **house serde**
    (`protomolt-kafka-serde`) against the protomolt registry — schema-id
@@ -49,7 +52,12 @@ Two ship; others can exist without touching the consumer:
    validation stack the data lanes ship. Compaction keeps the latest
    document per subject; replay-to-latest is bootstrap. This gives the
    replicated-log properties (the KRaft instinct) without this
-   codebase writing consensus.
+   codebase writing consensus. The platform mounts it by environment:
+   the `DOCUMENT_PLATFORM_CONFIG_KAFKA_*` family (bootstrap servers,
+   topic defaulting to `protomolt-config`, and the serde's schema
+   registry URL, required because the lane is verify-then-swap or
+   nothing); naming it alongside `DOCUMENT_PLATFORM_CONFIG_URL` is a
+   contradiction, refused rather than resolved by preference.
 
 ## Rejected, with reasons
 

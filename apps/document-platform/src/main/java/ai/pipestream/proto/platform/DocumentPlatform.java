@@ -279,21 +279,34 @@ public final class DocumentPlatform implements AutoCloseable {
                                     + " role's routing rules, so mount 'parse' or"
                                     + " unset the interval");
                 }
-                String configUrl = config.environment()
-                        .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_URL, "").trim();
-                if (configUrl.isEmpty()) {
-                    if (registry == null) {
-                        throw new IllegalArgumentException(
-                                DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
-                                        + " is set but this node has no registry to pull"
-                                        + " from: mount 'registry' or set "
-                                        + DocumentPlatformConfig.ENV_CONFIG_URL);
+                ai.pipestream.proto.config.kafka.KafkaConfigSource.Config kafka =
+                        kafkaConfigFamily(config.environment());
+                ai.pipestream.proto.config.ConfigSource configSource;
+                if (kafka != null) {
+                    configSource = new ai.pipestream.proto.config.kafka.KafkaConfigSource(
+                            kafka);
+                } else {
+                    String configUrl = config.environment()
+                            .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_URL, "").trim();
+                    if (configUrl.isEmpty()) {
+                        if (registry == null) {
+                            throw new IllegalArgumentException(
+                                    DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                                            + " is set but this node has no registry to"
+                                            + " pull from: mount 'registry', set "
+                                            + DocumentPlatformConfig.ENV_CONFIG_URL
+                                            + ", or set the "
+                                            + DocumentPlatformConfig
+                                                    .ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS
+                                            + " family");
+                        }
+                        configUrl = "http://127.0.0.1:" + registry.httpPort() + "/protomolt";
                     }
-                    configUrl = "http://127.0.0.1:" + registry.httpPort() + "/protomolt";
+                    configSource = new ai.pipestream.proto.config.registry
+                            .RegistryConfigSource(configUrl, null);
                 }
                 this.distributedConfig = ai.pipestream.proto.config.DistributedConfig
-                        .over(new ai.pipestream.proto.config.registry.RegistryConfigSource(
-                                configUrl, null));
+                        .over(configSource);
                 ai.pipestream.proto.config.DistributedConfig
                         .Subscription<ai.pipestream.proto.parse.v1.RoutingConfig> routing =
                         distributedConfig.subscribe(PARSE_ROUTING_CONFIG_SUBJECT,
@@ -682,6 +695,48 @@ public final class DocumentPlatform implements AutoCloseable {
                             + "'; unset it for restart-only");
         }
         return seconds;
+    }
+
+    /**
+     * The strict read of the config lane's Kafka family. Absent bootstrap
+     * servers means the registry source, exactly as before. Set, the family
+     * must be complete (the serde's schema registry URL is required, because
+     * the lane is verify-then-swap or nothing) and must not contradict the
+     * registry source's URL: two sources named is a contradiction, refused
+     * by name, never resolved by preference.
+     */
+    static ai.pipestream.proto.config.kafka.KafkaConfigSource.Config kafkaConfigFamily(
+            Map<String, String> environment) {
+        String bootstrap = environment.getOrDefault(
+                DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS, "").trim();
+        if (bootstrap.isEmpty()) {
+            return null;
+        }
+        String configUrl = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_URL, "").trim();
+        if (!configUrl.isEmpty()) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS + " and "
+                            + DocumentPlatformConfig.ENV_CONFIG_URL + " are both set:"
+                            + " the config lane reads one source, so unset one");
+        }
+        String schemaRegistry = environment.getOrDefault(
+                DocumentPlatformConfig.ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL, "").trim();
+        if (schemaRegistry.isEmpty()) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL
+                            + " is required with "
+                            + DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS
+                            + ": the config serde verifies against the registry, and"
+                            + " the lane is verify-then-swap or nothing");
+        }
+        String topic = environment.getOrDefault(
+                DocumentPlatformConfig.ENV_CONFIG_KAFKA_TOPIC, "").trim();
+        return new ai.pipestream.proto.config.kafka.KafkaConfigSource.Config(
+                bootstrap,
+                topic.isEmpty()
+                        ? DocumentPlatformConfig.DEFAULT_CONFIG_KAFKA_TOPIC : topic,
+                schemaRegistry);
     }
 
     /**
