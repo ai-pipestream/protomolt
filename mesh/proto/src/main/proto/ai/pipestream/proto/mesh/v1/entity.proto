@@ -152,7 +152,7 @@ message EntityHeader {
   // IANA media type of the payload encoding (normally
   // "application/x-protobuf"); empty means the default protobuf binary encoding.
   string content_type = 6 [
-    (ai.pipestream.proto.validate.v1.field) = {string: {max_len: 255, mime_type: true}},
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {max_len: 255, mime_type: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Exact serialized length of the payload: the Any value bytes for an inline
