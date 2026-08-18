@@ -60,6 +60,20 @@ mount's engine (configuration, not a guess); unset on a multi-engine
 mount is refused naming the mounted set. The response's `physical_plan`
 is evidence for humans and agents, never input to a later query.
 
+A filter takes exactly one of two forms. An equality set matches a
+keyword or bool dimension against its rendered values (the same strings
+result rows carry, schema-bounded in count and length). A **date
+range** matches a DATE dimension against an inclusive UTC calendar
+window: the bounds are ISO-8601 dates, schema-bounded to exactly that
+shape (an unset side is unbounded), and the compiler resolves them once
+to inclusive epoch-millis bounds both engines compare identically — the
+Lucene backend over the date's doc values, the Iceberg backend in the
+rendered SQL. Both-empty, inverted, non-date bounds, a range on a
+non-DATE dimension, and both forms at once each refuse by name; an
+equality set on a DATE dimension points at the range form. Joins are
+deliberately absent from the query surface — see
+[metric joins](../design/metric-joins.md) for the design of record.
+
 The door mounts the validating interceptor from day one: the request
 protos' validate.v1 rules enforce the shape rules (required subject,
 bounded limit, non-empty measures), and handlers add only what a schema

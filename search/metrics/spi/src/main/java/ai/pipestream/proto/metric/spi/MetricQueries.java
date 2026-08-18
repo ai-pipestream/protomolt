@@ -191,12 +191,23 @@ public final class MetricQueries {
         }
 
         List<EqualsFilter> filters = new ArrayList<>();
+        List<CompiledMetricQuery.DateRangeFilter> dateRanges = new ArrayList<>();
         for (MetricFilter filter : request.getFiltersList()) {
             MetricMember member = member(mapping, filter.getMember());
             if (member.role() != MemberRole.MEMBER_ROLE_DIMENSION) {
                 throw new MetricRefusal(MetricRefusal.ROLE_MISMATCH,
                         "'" + filter.getMember() + "' is a measure; filters apply to dimensions",
                         dimensionNames(mapping));
+            }
+            if (filter.hasRange()) {
+                if (filter.getEqualsCount() > 0) {
+                    throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                            "filter on '" + filter.getMember() + "' declares both an"
+                                    + " equality set and a range; pick one form",
+                            List.of());
+                }
+                dateRanges.add(dateRange(member, filter));
+                continue;
             }
             if (filter.getEqualsCount() == 0) {
                 throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
@@ -209,7 +220,10 @@ public final class MetricQueries {
                 case BOOLEAN -> DimensionKind.BOOLEAN;
                 default -> throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
                         "filter on '" + filter.getMember() + "' needs a keyword or bool "
-                                + "dimension, got " + member.kind(), List.of());
+                                + "dimension, got " + member.kind()
+                                + (member.kind() == FieldKind.DATE
+                                        ? "; a DATE dimension filters by range" : ""),
+                        List.of());
             };
             filters.add(new EqualsFilter(
                     member.name(), member.fieldName(), member.fieldPath(), kind,
@@ -218,9 +232,53 @@ public final class MetricQueries {
 
         return new Plan(
                 new CompiledMetricQuery(mapping.subject(), backend, measures, dimensions,
-                        filters, request.getLimit()),
+                        filters, dateRanges, request.getLimit()),
                 requested.stream().map(MetricMember::name).toList(),
                 calculated);
+    }
+
+    /** One date-range filter, bounds resolved to inclusive UTC epoch millis. */
+    private static CompiledMetricQuery.DateRangeFilter dateRange(
+            MetricMember member, MetricFilter filter) {
+        if (member.kind() != FieldKind.DATE) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "range on '" + filter.getMember() + "' needs a DATE dimension, got "
+                            + member.kind() + "; keyword and bool dimensions filter by"
+                            + " equality", List.of());
+        }
+        Long gte = dateBound(filter.getMember(), filter.getRange().getGte(), true);
+        Long lte = dateBound(filter.getMember(), filter.getRange().getLte(), false);
+        if (gte == null && lte == null) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "range on '" + filter.getMember() + "' has no bounds; give gte,"
+                            + " lte, or both as ISO-8601 dates", List.of());
+        }
+        if (gte != null && lte != null && gte > lte) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "range on '" + filter.getMember() + "' is inverted: gte is after"
+                            + " lte, so it would match nothing", List.of());
+        }
+        return new CompiledMetricQuery.DateRangeFilter(
+                member.name(), member.fieldName(), member.fieldPath(), gte, lte);
+    }
+
+    /** An ISO date bound as inclusive UTC epoch millis; null when empty. */
+    private static Long dateBound(String member, String bound, boolean lower) {
+        if (bound.isEmpty()) {
+            return null;
+        }
+        java.time.LocalDate date;
+        try {
+            date = java.time.LocalDate.parse(bound);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "range bound '" + bound + "' on '" + member + "' is not an"
+                            + " ISO-8601 date (like 2026-07-01)", List.of());
+        }
+        return lower
+                ? date.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+                : date.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC)
+                        .toInstant().toEpochMilli() - 1;
     }
 
     private static Dimension dimensionOf(
