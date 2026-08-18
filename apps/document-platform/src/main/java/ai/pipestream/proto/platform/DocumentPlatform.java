@@ -27,8 +27,16 @@ import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.metric.lucene.MetricDoorModule;
 import ai.pipestream.proto.schema.confluent.ConfluentSchemaPublisher;
 import ai.pipestream.proto.search.console.SearchConsoleModule;
+import ai.pipestream.proto.search.door.IndexSnapshots;
 import ai.pipestream.proto.search.door.RepoDocumentMapping;
 import ai.pipestream.proto.search.door.SearchDoorModule;
+import ai.pipestream.proto.search.snapshot.s3.S3SnapshotStore;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import ai.pipestream.proto.sources.ProtoSourceSet;
 import ai.pipestream.proto.sources.publish.PublishOptions;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -71,6 +79,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private final SearchDoorModule search;
     private final MetricDoorModule metrics;
     private final SearchConsoleModule searchConsole;
+    private final S3Client snapshotClient;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -131,12 +140,22 @@ public final class DocumentPlatform implements AutoCloseable {
                 ? new PlaygroundModule(
                         config.playgroundPort(), PlaygroundModule.DEFAULT_PARSER_ROLE)
                 : null;
+        SearchSnapshotConfig snapshotConfig = config.mounts(SearchDoorModule.ROLE)
+                ? SearchSnapshotConfig.fromEnvironment(config.environment())
+                : null;
+        this.snapshotClient = snapshotConfig == null ? null : snapshotClient(snapshotConfig);
         this.search = config.mounts(SearchDoorModule.ROLE)
                 ? new SearchDoorModule(new SearchDoorModule.Config(
                         config.searchGrpcPort(),
                         config.searchIndexDir(),
                         Map.of(RepoDocumentMapping.SUBJECT,
-                                RepoDocumentMapping.served(defaultChunkingPolicy()))))
+                                RepoDocumentMapping.served(defaultChunkingPolicy())),
+                        snapshotConfig == null
+                                ? null
+                                : new IndexSnapshots(new S3SnapshotStore(
+                                        snapshotClient,
+                                        snapshotConfig.bucket(),
+                                        snapshotConfig.prefix()))))
                 : null;
         this.metrics = config.mounts(MetricDoorModule.ROLE)
                 ? new MetricDoorModule(new MetricDoorModule.Config(
@@ -196,6 +215,10 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         if (search != null) {
             surfaces.add("search gRPC " + search.grpcPort());
+        }
+        if (snapshotConfig != null) {
+            surfaces.add("search snapshots s3://" + snapshotConfig.bucket()
+                    + "/" + snapshotConfig.prefix());
         }
         if (metrics != null) {
             surfaces.add("metrics gRPC " + metrics.grpcPort());
@@ -300,7 +323,28 @@ public final class DocumentPlatform implements AutoCloseable {
 
     @Override
     public void close() {
+        // The node closes first: the search module's close runs the final
+        // commit-and-snapshot, which needs the client still open.
         node.close();
+        if (snapshotClient != null) {
+            snapshotClient.close();
+        }
+    }
+
+    /** The S3 client the snapshot store rides, per the family's settings. */
+    private static S3Client snapshotClient(SearchSnapshotConfig config) {
+        S3ClientBuilder builder = S3Client.builder()
+                .region(Region.of(config.region()))
+                .httpClientBuilder(UrlConnectionHttpClient.builder());
+        if (!config.endpoint().isEmpty()) {
+            builder = builder.endpointOverride(URI.create(config.endpoint()))
+                    .forcePathStyle(true);
+        }
+        if (!config.accessKey().isEmpty()) {
+            builder = builder.credentialsProvider(StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(config.accessKey(), config.secretKey())));
+        }
+        return builder.build();
     }
 
     /**

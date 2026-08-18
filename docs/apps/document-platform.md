@@ -76,6 +76,25 @@ Key stores follow the intake door's convention: OIDC introspection
 (`DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL` + client id/secret) or
 the env-seeded table (`DOCUMENT_PLATFORM_INTAKE_KEYS`).
 
+## Index snapshots
+
+The search index can snapshot to S3 at commit points and restore on boot
+(see [the door's snapshot section](../search/door.md#index-snapshots)).
+The `DOCUMENT_PLATFORM_SEARCH_SNAPSHOT_S3_*` family turns it on:
+
+| Variable | Meaning |
+| --- | --- |
+| `..._S3_BUCKET` | the snapshot bucket; absent means snapshots are off, and any other family member set without it refuses by name |
+| `..._S3_REGION` | the bucket's region; required with the bucket |
+| `..._S3_PREFIX` | key prefix inside the bucket (default `search-snapshots`) |
+| `..._S3_ENDPOINT` | endpoint override (LocalStack, RustFS); implies path-style addressing |
+| `..._S3_ACCESS_KEY`, `..._S3_SECRET_KEY` | static credentials as a pair, or neither for the AWS default provider chain |
+
+The bucket is infrastructure the operator provides; the platform never
+creates it. A node booting over an empty index directory with the family
+set restores each subject from the bucket before serving, which is what
+`PlatformSnapshotIT` proves end to end.
+
 ## Configuration
 
 The repository half of the platform reads the `DOCUMENT_PLATFORM_*` family

@@ -101,6 +101,11 @@ time, never data, because `replay-documents` re-derives any subject.
 This is also what makes a read-only analytics node cheap: the indexing
 node commits and uploads, readers restore and serve.
 
+The document platform wires this through the
+`DOCUMENT_PLATFORM_SEARCH_SNAPSHOT_S3_*` family (see
+[Document platform](../apps/document-platform.md)); a bare
+`SearchDoorModule.Config` takes an `IndexSnapshots` directly.
+
 ## The parse-and-index workflow
 
 `SearchWorkflows.parseAndIndexWorkflow` builds the two-step durable

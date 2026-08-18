@@ -30,8 +30,12 @@ public final class SearchDoorModule implements ServiceModule {
      * @param grpcPort the external port (0 for ephemeral)
      * @param indexDir the root index directory
      * @param subjects the mapping subjects to serve, keyed by subject name
+     * @param snapshots commit-point snapshots of every subject's index, or
+     *        {@code null} for none
      */
-    public record Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects) {
+    public record Config(
+            int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+            IndexSnapshots snapshots) {
 
         /** Validates the configuration. */
         public Config {
@@ -43,6 +47,11 @@ public final class SearchDoorModule implements ServiceModule {
                         "at least one served mapping subject is required");
             }
             subjects = Map.copyOf(subjects);
+        }
+
+        /** A configuration without snapshots. */
+        public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects) {
+            this(grpcPort, indexDir, subjects, null);
         }
     }
 
@@ -85,7 +94,8 @@ public final class SearchDoorModule implements ServiceModule {
                 context.channels().targetOf("repo"), REPO_RPC_TIMEOUT);
         try {
             door = SearchDoorServices.build(
-                    new SearchDoorConfig(config.grpcPort(), config.indexDir(), config.subjects()),
+                    new SearchDoorConfig(config.grpcPort(), config.indexDir(),
+                            config.subjects(), config.snapshots()),
                     repo);
         } catch (RuntimeException e) {
             // A failed mount (for instance a subject naming an absent
