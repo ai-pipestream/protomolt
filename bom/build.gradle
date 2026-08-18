@@ -79,6 +79,7 @@ def supportedModules = [
         'protomolt-metric-lucene',
         'protomolt-metric-door',
         'protomolt-search-door',
+        'protomolt-search-snapshot-s3',
         'protomolt-search-console',
         'protomolt-index-ndjson',
         'protomolt-index-lucene',

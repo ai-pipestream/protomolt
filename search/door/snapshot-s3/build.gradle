@@ -1,0 +1,21 @@
+description = 'S3 snapshot store for the search door: commit-point index snapshots in a bucket'
+
+dependencies {
+    api project(':protomolt-search-door')
+    implementation platform(libs.awssdk.bom)
+    implementation libs.awssdk.s3
+    implementation libs.awssdk.url.connection.client
+
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
+
+// The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an
+// older JVM: the test launcher stays on the toolchain JDK and -PtestJdk is ignored
+// here (same pin as :protomolt-index-lucene).
+tasks.withType(Test).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}

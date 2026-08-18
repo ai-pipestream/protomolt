@@ -179,6 +179,9 @@ project(':protomolt-metric-door').projectDir = file('search/metrics/door')
 include 'protomolt-search-door'
 project(':protomolt-search-door').projectDir = file('search/door/service')
 
+include 'protomolt-search-snapshot-s3'
+project(':protomolt-search-snapshot-s3').projectDir = file('search/door/snapshot-s3')
+
 include 'protomolt-search-console'
 project(':protomolt-search-console').projectDir = file('search/console')
 
