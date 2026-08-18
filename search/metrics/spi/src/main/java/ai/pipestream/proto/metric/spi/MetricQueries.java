@@ -99,6 +99,54 @@ public final class MetricQueries {
                 .build();
     }
 
+    /**
+     * A dimensions-only lookup over a mapping: the distinct rendered
+     * combinations of the named dimension members, one result row each,
+     * under a synthetic COUNT so the mapping needs no declared measure.
+     * This is the rebuild-time enrichment's read path; membership, role,
+     * and backend refusals speak the ordinary vocabulary.
+     *
+     * @param mapping the subject's built mapping
+     * @param executors the mounted executors, keyed by backend
+     * @param requestedBackend the engine selector; UNSPECIFIED resolves
+     *        like QueryMetrics
+     * @param dimensionMembers the dimension member names to pull
+     * @param limit maximum distinct combinations to return
+     * @return the distinct combinations as ordinary metric rows
+     * @throws MetricRefusal naming what was refused and the legal set
+     */
+    public static QueryMetricsResponse lookup(
+            MetricMapping mapping,
+            Map<MetricBackend, MetricExecutor> executors,
+            MetricBackend requestedBackend,
+            List<String> dimensionMembers,
+            int limit) {
+        MetricBackend backend = resolveBackend(requestedBackend, executors.keySet());
+        MetricExecutor executor = executors.get(backend);
+        List<Dimension> dimensions = new ArrayList<>();
+        for (String name : dimensionMembers) {
+            MetricMember member = member(mapping, name);
+            if (member.role() != MemberRole.MEMBER_ROLE_DIMENSION) {
+                throw new MetricRefusal(MetricRefusal.ROLE_MISMATCH,
+                        "'" + name + "' is a measure; a lookup pulls dimensions",
+                        dimensionNames(mapping));
+            }
+            dimensions.add(dimensionOf(member, TimeGrain.TIME_GRAIN_UNSPECIFIED,
+                    backend, executor.capabilities()));
+        }
+        CompiledMetricQuery query = new CompiledMetricQuery(mapping.subject(), backend,
+                List.of(new Measure("_rows", "", "", Aggregate.AGGREGATE_COUNT, List.of())),
+                dimensions, List.of(), List.of(), List.of(), limit);
+        MetricExecutor.Result result = executor.execute(query);
+        return QueryMetricsResponse.newBuilder()
+                .setMappingSubject(mapping.subject())
+                .setBackend(backend)
+                .addAllRows(result.rows())
+                .setRowCount(result.rows().size())
+                .setPhysicalPlan(result.physicalPlan())
+                .build();
+    }
+
     /** The engine the request runs on, or a refusal naming the mounted set. */
     static MetricBackend resolveBackend(MetricBackend requested, Set<MetricBackend> mounted) {
         List<String> legal = mounted.stream().map(Enum::name).sorted().toList();

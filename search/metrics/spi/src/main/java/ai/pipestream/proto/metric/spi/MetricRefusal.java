@@ -26,6 +26,8 @@ public final class MetricRefusal extends RuntimeException {
     public static final String DISTINCT_BOUND = "distinct-bound";
     public static final String MISSING_SINK = "missing-sink";
     public static final String ROLLUP_BUDGET = "rollup-budget";
+    public static final String JOIN_FANOUT = "join-fanout";
+    public static final String INVALID_ENRICHMENT = "invalid-enrichment";
 
     private final String code;
     private final List<String> legal;

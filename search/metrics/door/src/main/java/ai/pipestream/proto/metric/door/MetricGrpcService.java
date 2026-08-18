@@ -78,7 +78,7 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
     public void rebuildRollup(
             RebuildRollupRequest request, StreamObserver<RebuildRollupResponse> observer) {
         run(observer, () -> Rollups.rebuild(
-                subject(request.getMappingSubject()), rollups, request));
+                subject(request.getMappingSubject()), rollups, request, this::subject));
     }
 
     private ServedMetricSubject subject(String name) {
