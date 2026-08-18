@@ -80,6 +80,27 @@ so a keyword arrives as a string, an `INT64` as an integer, a `DATE` as a
 timestamp, and a caller never re-parses rendered strings. Every stored
 field the engine returns appears, numerics and dates included.
 
+## Index snapshots
+
+The store can snapshot each subject's index to a blob store
+(`SnapshotStore`; `protomolt-search-snapshot-s3` is the S3
+implementation). Snapshots happen at commit points, never as a live
+directory over object storage: the commit is held open, files the bucket
+does not already have upload (segment immutability makes this
+incremental), and the commit's `segments_N` writes last as the atomic
+marker that the snapshot exists, after which unreferenced blobs prune.
+The cadence is the store's durability-commit cadence plus close.
+
+Identity keys a snapshot to what produced it,
+`{subject}/{mapping-digest}/{policy-digest}`: change the mapping or the
+chunking policy and the old snapshot is not this mount's to restore.
+Restore runs on boot into an empty directory only, and a restore that
+fails verification wipes and mounts empty. The repository stays the
+source of truth and a snapshot is a cache: losing the bucket loses
+time, never data, because `replay-documents` re-derives any subject.
+This is also what makes a read-only analytics node cheap: the indexing
+node commits and uploads, readers restore and serve.
+
 ## The parse-and-index workflow
 
 `SearchWorkflows.parseAndIndexWorkflow` builds the two-step durable

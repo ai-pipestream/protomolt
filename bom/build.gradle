@@ -74,6 +74,7 @@ def supportedModules = [
         'protomolt-chunker',
         'protomolt-search-proto',
         'protomolt-search-door',
+        'protomolt-search-snapshot-s3',
         'protomolt-search-console',
         'protomolt-index-ndjson',
         'protomolt-index-lucene',
