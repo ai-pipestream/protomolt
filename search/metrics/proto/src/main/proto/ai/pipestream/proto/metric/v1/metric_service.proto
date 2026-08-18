@@ -61,13 +61,13 @@ message MetricRange {
   // Inclusive lower bound: the day's first instant, UTC. Unset = unbounded.
   optional string gte = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
-      string: {min_len: 10, max_len: 10, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+      string: {date: true}
     }
   ];
   // Inclusive upper bound: the day's last millisecond, UTC. Unset = unbounded.
   optional string lte = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
-      string: {min_len: 10, max_len: 10, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+      string: {date: true}
     }
   ];
 }

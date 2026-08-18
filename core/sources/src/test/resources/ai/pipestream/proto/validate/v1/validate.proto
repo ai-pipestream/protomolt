@@ -66,6 +66,26 @@ message StringRules {
   optional bool ipv4 = 17;
   // Value must be a valid IPv6 address.
   optional bool ipv6 = 18;
+  // Value must be an ISO-8601 calendar date (2026-07-01), strictly resolved.
+  optional bool date = 19;
+  // Value must be an RFC 3339 date-time with an offset.
+  optional bool date_time = 20;
+  // Value must be an IANA media type per the RFC 6838 grammar (type/subtype).
+  optional bool mime_type = 21;
+  // Value must be a well-formed BCP 47 language tag.
+  optional bool language_tag = 22;
+  // Value must be an ISO 4217 currency code.
+  optional bool currency_code = 23;
+  // Value must be a telephone number (E.164-shaped, display-tolerant).
+  optional bool phone_number = 24;
+  // Value must be a lowercase hex SHA-256 digest (64 chars).
+  optional bool sha256_hex = 25;
+  // Value must be a lowercase hex SHA-1 digest (40 chars).
+  optional bool sha1_hex = 26;
+  // Value must be lowercase hexadecimal (compose with len for sized ids).
+  optional bool hex = 27;
+  // Value must be base64 (standard alphabet, correct padding).
+  optional bool base64 = 28;
 }
 
 // Standard constraints for int32 fields.
@@ -305,6 +325,12 @@ message FieldRules {
   TimestampRules timestamp = 15;
   // Constraints for google.protobuf.Duration fields.
   DurationRules duration = 16;
+  // When true, every rule on this field is skipped when the value is the
+  // type's zero value (empty string, 0, false): "absent or valid", the
+  // declared form of the ^$|... regex idiom. Fields with explicit
+  // presence (optional, message, oneof) already skip when unset; this is
+  // for implicit-presence scalars where empty is a legal non-answer.
+  bool ignore_if_zero = 17;
 }
 
 // Constraints attached to a message as a whole.

@@ -275,7 +275,7 @@ message DublinCore {
     (ai.pipestream.proto.validate.v1.field) = {
       string: {
         max_len: 35
-        pattern: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+        language_tag: true
       }
     },
     (ai.pipestream.proto.meta.v1.field) = {

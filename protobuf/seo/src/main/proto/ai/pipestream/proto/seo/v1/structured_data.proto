@@ -101,7 +101,7 @@ message ContactPoint {
   string telephone = 1 [
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD},
     (ai.pipestream.proto.validate.v1.field) = {
-      string: {max_len: 50}
+      string: {max_len: 50, phone_number: true}
     }
   ];
   // The kind of contact this is, e.g. "customer service"
@@ -343,7 +343,7 @@ message Offer {
     },
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Z]{3}$"}
+      string: {currency_code: true}
     }
   ];
   // Availability of the offered item (schema.org availability).
@@ -999,7 +999,7 @@ message MonetaryAmount {
       facetable: true
     },
     (ai.pipestream.proto.validate.v1.field) = {
-      string: {pattern: "^[A-Z]{3}$"}
+      string: {currency_code: true}
     }
   ];
   // The amount (schema.org value).

@@ -110,4 +110,54 @@ public final class Formats {
     private static boolean isKnownIpVersion(long version) {
         return version == 0 || version == 4 || version == 6;
     }
+
+    /** ISO-8601 calendar date ({@code 2026-07-01}), strictly resolved. */
+    public static boolean isDate(String value) {
+        return Temporals.isDate(value);
+    }
+
+    /** RFC 3339 date-time with an offset ({@code 2026-07-01T12:00:00Z}). */
+    public static boolean isDateTime(String value) {
+        return Temporals.isDateTime(value);
+    }
+
+    /** IANA media type per the RFC 6838 grammar ({@code type/subtype}). */
+    public static boolean isMediaType(String value) {
+        return MediaTypes.isMediaType(value);
+    }
+
+    /** Well-formed BCP 47 language tag, via the JDK's strict parser. */
+    public static boolean isLanguageTag(String value) {
+        return Vocabularies.isLanguageTag(value);
+    }
+
+    /** ISO 4217 currency code known to the JDK's own table. */
+    public static boolean isCurrencyCode(String value) {
+        return Vocabularies.isCurrencyCode(value);
+    }
+
+    /** Display-tolerant E.164 telephone number. */
+    public static boolean isPhoneNumber(String value) {
+        return PhoneNumbers.isPhoneNumber(value);
+    }
+
+    /** Lowercase hexadecimal of any positive length. */
+    public static boolean isHex(String value) {
+        return Encodings.isHex(value);
+    }
+
+    /** Lowercase hex SHA-256 digest (64 chars). */
+    public static boolean isSha256Hex(String value) {
+        return Encodings.isSha256Hex(value);
+    }
+
+    /** Lowercase hex SHA-1 digest (40 chars). */
+    public static boolean isSha1Hex(String value) {
+        return Encodings.isSha1Hex(value);
+    }
+
+    /** RFC 4648 base64 (standard alphabet, correct padding). */
+    public static boolean isBase64(String value) {
+        return Encodings.isBase64(value);
+    }
 }

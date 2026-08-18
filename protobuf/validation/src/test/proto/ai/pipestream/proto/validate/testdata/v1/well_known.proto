@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.validate.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.validate.testdata";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// Fixtures for the well-known string formats and the ignore_if_zero
+// escape: one field per probe.
+message WellKnownDoc {
+  string date = 1 [(ai.pipestream.proto.validate.v1.field).string.date = true];
+  string date_time = 2 [(ai.pipestream.proto.validate.v1.field).string.date_time = true];
+  string mime_type = 3 [(ai.pipestream.proto.validate.v1.field).string.mime_type = true];
+  string language = 4 [(ai.pipestream.proto.validate.v1.field).string.language_tag = true];
+  string currency = 5 [(ai.pipestream.proto.validate.v1.field).string.currency_code = true];
+  string telephone = 6 [(ai.pipestream.proto.validate.v1.field).string.phone_number = true];
+  string digest = 7 [(ai.pipestream.proto.validate.v1.field).string.sha256_hex = true];
+  string legacy_digest = 8 [(ai.pipestream.proto.validate.v1.field).string.sha1_hex = true];
+  string encoded = 9 [(ai.pipestream.proto.validate.v1.field).string.base64 = true];
+  // The declared form of the ^$|... regex idiom: absent or a valid UUID.
+  string optional_uuid = 10 [
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}}
+  ];
+  // hex composes with len for sized ids (a W3C trace id).
+  string trace_id = 11 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {hex: true, len: 32}
+    }
+  ];
+}
