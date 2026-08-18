@@ -359,6 +359,30 @@ class LuceneMetricExecutorTest {
     }
 
     @Test
+    void aDateRangeFilterKeepsOnlyTheWindow() {
+        // Hand-checked July orders: o-1 (100) + o-2 (50).
+        QueryMetricsResponse july = MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder()
+                                        .setGte("2026-07-01").setLte("2026-07-31")))
+                        .build());
+        assertThat(july.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(150.0);
+
+        // An open lower side: everything from August on.
+        QueryMetricsResponse fromAugust = MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder().setGte("2026-08-01")))
+                        .build());
+        assertThat(fromAugust.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(230.0);
+    }
+
+    @Test
     void aSyntheticFilteredCountAnswersWithoutABackingField() {
         // Hand-checked paying orders: o-1, o-3, o-4.
         QueryMetricsResponse total = MetricQueries.query(mapping, executors,

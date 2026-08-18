@@ -133,6 +133,28 @@ class MetricDoorServicesTest {
     }
 
     @Test
+    void rangeBoundsAreSchemaBoundedDateLiteralsNotFreeStrings() {
+        // The subject is unknown, so a handler answer would be
+        // [unknown-subject]: the violation naming the bound proves the
+        // interceptor refused the shape before any handler ran.
+        assertThatThrownBy(() -> stub.queryMetrics(
+                QueryMetricsRequest.newBuilder()
+                        .setMappingSubject("nope")
+                        .addMeasures("revenue")
+                        .setLimit(10)
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder().setGte("July 1st, 2026")))
+                        .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription()).contains("gte");
+                });
+    }
+
+    @Test
     void refusalStatusesSplitCallerErrorsFromMountPreconditions() {
         assertThatThrownBy(() -> stub.queryMetrics(
                 query().clearMeasures().addMeasures("nope").build()))

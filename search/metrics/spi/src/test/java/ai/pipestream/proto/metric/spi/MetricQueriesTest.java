@@ -87,6 +87,103 @@ class MetricQueriesTest {
         throw new AssertionError("expected a MetricRefusal");
     }
 
+    // ------------------------------------------------------------- date ranges
+
+    @Test
+    void aDateRangeCompilesToInclusiveUtcEpochBounds() throws Exception {
+        FakeExecutor executor = FakeExecutor.lucene(List.of());
+        MetricQueries.query(mapping(), Map.of(executor.backend(), executor),
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder()
+                                        .setGte("2026-07-01")
+                                        .setLte("2026-07-31")))
+                        .build());
+        CompiledMetricQuery.DateRangeFilter range = executor.executed.dateRanges().get(0);
+        assertThat(range.member()).isEqualTo("created_at");
+        assertThat(range.fieldName()).isEqualTo("created_at");
+        assertThat(range.gteEpochMillis()).isEqualTo(
+                java.time.Instant.parse("2026-07-01T00:00:00Z").toEpochMilli());
+        assertThat(range.lteEpochMillis()).isEqualTo(
+                java.time.Instant.parse("2026-08-01T00:00:00Z").toEpochMilli() - 1);
+
+        // One open side is legal.
+        MetricQueries.query(mapping(), Map.of(executor.backend(), executor),
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder().setGte("2026-07-01")))
+                        .build());
+        assertThat(executor.executed.dateRanges().get(0).lteEpochMillis()).isNull();
+    }
+
+    @Test
+    void rangesRefuseEverythingButAWellFormedDateWindow() throws Exception {
+        FakeExecutor executor = FakeExecutor.lucene(List.of());
+        Map<ai.pipestream.proto.metric.MetricBackend, MetricExecutor> executors =
+                Map.of(executor.backend(), executor);
+        MetricMapping mapping = mapping();
+
+        assertThat(refusalOf(() -> MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("segment")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder().setGte("2026-07-01")))
+                        .build())).getMessage())
+                .contains("needs a DATE dimension");
+
+        assertThat(refusalOf(() -> MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .addEquals("2026-07")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder().setGte("2026-07-01")))
+                        .build())).getMessage())
+                .contains("pick one form");
+
+        assertThat(refusalOf(() -> MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder()))
+                        .build())).getMessage())
+                .contains("no bounds");
+
+        assertThat(refusalOf(() -> MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder()
+                                        .setGte("2026-08-01").setLte("2026-07-01")))
+                        .build())).getMessage())
+                .contains("inverted");
+
+        assertThat(refusalOf(() -> MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.pipestream.proto.metric.MetricRange
+                                        .newBuilder().setGte("July 1st")))
+                        .build())).getMessage())
+                .contains("not an ISO-8601 date");
+
+        // A DATE dimension with an equality set points at the range form.
+        assertThat(refusalOf(() -> MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .addEquals("2026-07"))
+                        .build())).getMessage())
+                .contains("a DATE dimension filters by range");
+    }
+
     // ------------------------------------------------------------- happy path
 
     @Test
