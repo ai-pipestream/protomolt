@@ -24,6 +24,8 @@ public final class MetricRefusal extends RuntimeException {
     public static final String ROLE_MISMATCH = "role-mismatch";
     public static final String MISSING_TABLE = "missing-table";
     public static final String DISTINCT_BOUND = "distinct-bound";
+    public static final String MISSING_SINK = "missing-sink";
+    public static final String ROLLUP_BUDGET = "rollup-budget";
 
     private final String code;
     private final List<String> legal;

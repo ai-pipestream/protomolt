@@ -165,7 +165,112 @@ class PlatformLakeMetricsTest {
                         .containsEntry("document_type", "PDF");
                 assertThat(byType.getRows(1).getMeasuresMap())
                         .containsEntry("documents", 2.0);
+
+                // The declared rollup lands in the same lake: the whole
+                // group-by answer replaces protomolt.documents_by_type.
+                ai.pipestream.proto.metric.RebuildRollupResponse written =
+                        stub.rebuildRollup(ai.pipestream.proto.metric
+                                .RebuildRollupRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .setBackend(MetricBackend.METRIC_BACKEND_ICEBERG)
+                                .addMeasures("documents")
+                                .addDimensions(MemberRef.newBuilder()
+                                        .setName("document_type"))
+                                .setTable("documents_by_type")
+                                .build());
+                assertThat(written.getTable()).isEqualTo("protomolt.documents_by_type");
+                assertThat(written.getRowsWritten()).isEqualTo(2);
+                assertThat(written.getSnapshotId()).isNotZero();
+                assertThat(written.getPhysicalPlan()).contains("SELECT");
             });
+        }
+
+        // The rollup reads back straight off its Parquet: two rows, the
+        // whole answer.
+        assertThat(rollupRows(lake, "documents_by_type"))
+                .containsExactly(Map.entry("HTML", 1.0), Map.entry("PDF", 2.0));
+    }
+
+    /** Reads a rollup's (document_type, documents) rows through DuckDB. */
+    private static Map<String, Double> rollupRows(Path lake, String table) throws Exception {
+        try (JdbcCatalog catalog = new JdbcCatalog()) {
+            catalog.initialize(MetricsIcebergConfig.CATALOG_NAME, Map.of(
+                    CatalogProperties.URI, "jdbc:sqlite:" + lake.resolve("catalog.db"),
+                    CatalogProperties.WAREHOUSE_LOCATION, lake.toString(),
+                    CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
+            Table committed = catalog.loadTable(TableIdentifier.of(
+                    MetricsIcebergConfig.DEFAULT_NAMESPACE, table));
+            java.util.List<String> files = new java.util.ArrayList<>();
+            try (org.apache.iceberg.io.CloseableIterable<org.apache.iceberg.FileScanTask>
+                    tasks = committed.newScan().planFiles()) {
+                tasks.forEach(task -> files.add(task.file().location()));
+            }
+            Map<String, Double> rows = new java.util.LinkedHashMap<>();
+            if (files.isEmpty()) {
+                return rows;
+            }
+            String list = String.join(", ",
+                    files.stream().map(file -> "'" + file + "'").toList());
+            try (java.sql.Connection connection =
+                    java.sql.DriverManager.getConnection("jdbc:duckdb:");
+                    java.sql.Statement statement = connection.createStatement();
+                    java.sql.ResultSet results = statement.executeQuery(
+                            "SELECT document_type, documents FROM read_parquet(["
+                                    + list + "]) ORDER BY document_type")) {
+                while (results.next()) {
+                    rows.put(results.getString(1), results.getDouble(2));
+                }
+            }
+            return rows;
+        }
+    }
+
+    @Test
+    void withoutTheFamilyRollupsLandInTheLazyDefaultLocalLake() throws Exception {
+        Path defaultLake = work.resolve("default-lake");
+
+        Map<String, String> environment = new HashMap<>();
+        environment.put(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "true");
+        environment.put(DocumentPlatformConfig.ENV_METRICS_LAKE_DIR,
+                defaultLake.toString());
+        DocumentPlatformConfig config = new DocumentPlatformConfig(
+                null, null, null, 0, 0, 0, 0,
+                null, null, null,
+                60L, 1, 0, work.resolve("default-index"), 0, 0,
+                List.of("search", "metrics"), environment);
+
+        try (DocumentPlatform platform = DocumentPlatform.start(config, null)) {
+            // The lake is lazy: booting alone must not create it.
+            assertThat(java.nio.file.Files.exists(defaultLake)).isFalse();
+
+            withMetricsStub(platform, stub -> {
+                ai.pipestream.proto.metric.RebuildRollupResponse written =
+                        stub.rebuildRollup(ai.pipestream.proto.metric
+                                .RebuildRollupRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .addMeasures("documents")
+                                .setTable("documents_total")
+                                .build());
+                assertThat(written.getTable())
+                        .isEqualTo("protomolt.documents_total");
+                assertThat(written.getBackend())
+                        .isEqualTo(MetricBackend.METRIC_BACKEND_LUCENE);
+            });
+
+            assertThat(java.nio.file.Files.exists(defaultLake.resolve("catalog.db")))
+                    .as("the first rebuild created the local lake")
+                    .isTrue();
+        }
+        // The table is a real Iceberg table any engine can open.
+        try (JdbcCatalog catalog = new JdbcCatalog()) {
+            catalog.initialize(MetricsIcebergConfig.CATALOG_NAME, Map.of(
+                    CatalogProperties.URI,
+                    "jdbc:sqlite:" + defaultLake.resolve("catalog.db"),
+                    CatalogProperties.WAREHOUSE_LOCATION, defaultLake.toString(),
+                    CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
+            assertThat(catalog.tableExists(TableIdentifier.of(
+                    MetricsIcebergConfig.DEFAULT_NAMESPACE, "documents_total")))
+                    .isTrue();
         }
     }
 

@@ -8,6 +8,7 @@ import ai.pipestream.proto.index.spi.IndexMapping;
 import ai.pipestream.proto.metric.MetricBackend;
 import ai.pipestream.proto.metric.door.MetricActions;
 import ai.pipestream.proto.metric.door.MetricDoorServices;
+import ai.pipestream.proto.metric.door.MetricWorkflows;
 import ai.pipestream.proto.metric.door.ServedMetricSubject;
 import ai.pipestream.proto.metric.spi.MetricExecutor;
 import ai.pipestream.proto.metric.spi.MetricMapping;
@@ -98,8 +99,11 @@ public final class MetricDoorModule implements ServiceModule {
      * @param grpcPort the external port (0 for ephemeral)
      * @param subjects the metric subjects to serve, keyed by the search
      *        mapping subject they aggregate over
+     * @param rollupSink where rebuilt rollups land, or {@code null} for
+     *        none (RebuildRollup refuses with {@code missing-sink})
      */
-    public record Config(int grpcPort, Map<String, Subject> subjects) {
+    public record Config(int grpcPort, Map<String, Subject> subjects,
+            ai.pipestream.proto.metric.spi.RollupSink rollupSink) {
 
         /** Validates the configuration. */
         public Config {
@@ -108,6 +112,11 @@ public final class MetricDoorModule implements ServiceModule {
                         "at least one served metric subject is required");
             }
             subjects = Map.copyOf(subjects);
+        }
+
+        /** A configuration without a rollup sink. */
+        public Config(int grpcPort, Map<String, Subject> subjects) {
+            this(grpcPort, subjects, null);
         }
     }
 
@@ -136,8 +145,10 @@ public final class MetricDoorModule implements ServiceModule {
     @Override
     public Set<String> requires() {
         // The search role must wire first so its store contribution exists
-        // by this wire; the composer's ordering is the only ordering.
-        return Set.of("search");
+        // by this wire, and a co-mounted registry must wire first so the
+        // rebuild-rollup workflow can register; the composer's ordering is
+        // the only ordering, and absent roles are simply not required.
+        return Set.of("search", "registry");
     }
 
     @Override
@@ -184,13 +195,26 @@ public final class MetricDoorModule implements ServiceModule {
             engines.put(MetricBackend.METRIC_BACKEND_LUCENE, executor);
             served.put(subject, new ServedMetricSubject(spec.metricMapping(), engines));
         });
-        door = MetricDoorServices.build(served);
+        door = MetricDoorServices.build(served, config.rollupSink());
         String name = ROLE + "-" + context.nodeId();
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
 
         for (ProtoAction action : MetricActions.over(served)) {
             context.contributions().contribute(ProtoAction.class, action);
+        }
+
+        // With a co-mounted registry, register the rebuild-rollup workflow
+        // so operators can submit it by name; without one the RPC still
+        // answers, there is just no declared envelope to submit.
+        List<ai.pipestream.proto.registry.GitSchemaRegistryStore> registries =
+                context.contributions().all(
+                        ai.pipestream.proto.registry.GitSchemaRegistryStore.class);
+        if (!registries.isEmpty()) {
+            registries.getFirst().putWorkflow(
+                    MetricWorkflows.REBUILD_ROLLUP_WORKFLOW,
+                    MetricWorkflows.rebuildRollupWorkflow(
+                            context.channels().targetOf(ROLE), 60_000).toString());
         }
         return new ServiceMount() {
             @Override

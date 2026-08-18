@@ -389,4 +389,60 @@ class MetricDoorModuleTest {
                 Map.of(MetricBackend.METRIC_BACKEND_ICEBERG, liar)))
                 .hasMessageContaining("must agree");
     }
+
+    /** A registry role: the real store over a temp repository, inert mount. */
+    static final class FakeRegistryModule implements ServiceModule, ServiceMount {
+
+        final ai.pipestream.proto.registry.GitSchemaRegistryStore store;
+
+        FakeRegistryModule(Path dir) {
+            this.store = ai.pipestream.proto.registry.GitSchemaRegistryStore.builder()
+                    .repositoryDir(dir)
+                    .build();
+        }
+
+        @Override
+        public String role() {
+            return "registry";
+        }
+
+        @Override
+        public ServiceMount wire(NodeContext context) {
+            context.contributions().contribute(
+                    ai.pipestream.proto.registry.GitSchemaRegistryStore.class, store);
+            return this;
+        }
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    @Test
+    void aCoMountedRegistryReceivesTheRebuildRollupWorkflow() throws Exception {
+        SearchDoorModule search = new SearchDoorModule(new SearchDoorModule.Config(
+                0, work.resolve("index"),
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served())));
+        FakeRegistryModule registry = new FakeRegistryModule(work.resolve("registry"));
+        try (Composer.Node node = Composer.emptyBuilder()
+                .module(new FakeRepoModule(Map.of()))
+                .module(registry)
+                .module(search)
+                .module(metricsModule(0))
+                .environment(Map.of())
+                .build()
+                .boot(List.of("repo", "registry", "search", "metrics"))) {
+            String envelope = registry.store
+                    .workflow(ai.pipestream.proto.metric.door.MetricWorkflows
+                            .REBUILD_ROLLUP_WORKFLOW)
+                    .orElseThrow();
+            assertThat(envelope)
+                    .contains("ai.pipestream.proto.metric.v1.MetricService/RebuildRollup")
+                    .contains("table = input.table");
+        }
+    }
 }

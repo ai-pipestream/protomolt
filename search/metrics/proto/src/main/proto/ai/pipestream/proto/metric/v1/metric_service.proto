@@ -171,6 +171,56 @@ message DescribeMappingResponse {
   repeated MetricBackend backends = 4;
 }
 
+// Rebuilds one declared rollup: the aggregate query runs on the named
+// engine and its complete result replaces the named lake table, so later
+// reads scan the rollup instead of grouping the subject on the fly. The
+// rebuild is exact or refused: a result that fills the engine's group
+// budget cannot be attested complete and never lands.
+message RebuildRollupRequest {
+  // The mapping subject to aggregate. Required.
+  string mapping_subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Explicit engine selector, resolved exactly like QueryMetrics.
+  MetricBackend backend = 2;
+  // Measure member names to compute. Required, at least one.
+  repeated string measures = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1}
+    }
+  ];
+  // Group-by dimensions; empty means one row over all matching rows.
+  repeated MemberRef dimensions = 4;
+  // Row filters, all of which must match (AND).
+  repeated MetricFilter filters = 5;
+  // The rollup table name inside the mount's lake namespace. Required.
+  string table = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+}
+
+// What one RebuildRollup call wrote.
+message RebuildRollupResponse {
+  // The queried subject, echoed.
+  string mapping_subject = 1;
+  // The engine that ran the reduction.
+  MetricBackend backend = 2;
+  // The replaced table, as the lake knows it (namespace-qualified).
+  string table = 3;
+  // Rows the rollup now holds.
+  int64 rows_written = 4;
+  // The lake snapshot the replace committed.
+  int64 snapshot_id = 5;
+  // The reduction's physical plan: evidence of what the rollup holds.
+  string physical_plan = 6;
+}
+
 // Aggregate queries over descriptor-declared metric mappings. A sibling of
 // the search door's SearchService, never a new RPC on it: retrieval and
 // aggregation stay independently mountable.
@@ -179,4 +229,8 @@ service MetricService {
   rpc DescribeMapping(DescribeMappingRequest) returns (DescribeMappingResponse);
   // One aggregate query: measures, group-by, filters, bounded limit.
   rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+  // One declared-rollup rebuild: the aggregate result replaces a lake
+  // table. Refused on a mount without a rollup sink, and refused rather
+  // than truncated when the result fills the group budget.
+  rpc RebuildRollup(RebuildRollupRequest) returns (RebuildRollupResponse);
 }

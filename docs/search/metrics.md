@@ -98,6 +98,34 @@ beside Lucene through the `DOCUMENT_PLATFORM_METRICS_ICEBERG_*` family
 on such a two-engine mount a query that leaves the backend unset is
 refused with `ambiguous-backend` naming both, per the design.
 
+## Rollups
+
+`RebuildRollup` is the platform's answer to pre-aggregations, and it is
+a workflow, not a second database: the aggregate query runs on the
+named engine and its complete result atomically replaces one lake table
+(`<namespace>.<table>`), so later reads scan the rollup instead of
+grouping the subject on the fly. The rebuild is exact or refused, never
+truncated: a result that fills the group budget (the query surface's
+own limit cap) refuses with `rollup-budget`, because a rollup that
+might be missing groups is worse than no rollup.
+
+The write side is a plugin seam: `RollupSink` in the SPI, with
+`IcebergRollupSink` as the shipped implementation — the rollup's schema
+is a flat protobuf message synthesized from the member names (dimension
+columns are the rendered strings, measure columns are doubles), written
+as Parquet through the same emitter every lake table here takes, so the
+rollup is scannable by DuckDB, Trino, or Spark and indexable into a
+search subject later. A mount without any sink refuses with
+`missing-sink`.
+
+The declared, durable form is the `rebuild-rollup` workflow: one
+checkpointed step under the jobs executor calling
+`MetricService/RebuildRollup`, registered with a co-mounted registry so
+operators submit it by name, with the run's output carrying the
+physical plan and the lake snapshot the replace committed — the
+evidence of what the rollup holds. Nothing runs until submitted:
+optional, as designed.
+
 ## The platform mount
 
 `MetricDoorModule` (in `protomolt-metric-lucene`) is the composer role:

@@ -4,6 +4,9 @@ dependencies {
     api project(':protomolt-metric-spi')
     api libs.iceberg.api
     implementation libs.iceberg.core
+    // The rollup sink writes through the lake module's emitter, the same
+    // append path every Iceberg table here takes.
+    implementation project(':protomolt-iceberg')
     // The in-process reader over the table's files, not a warehouse we
     // operate; isolated to this module the way the sink isolates Iceberg.
     implementation libs.duckdb.jdbc
@@ -11,7 +14,6 @@ dependencies {
 
     // The proof writes the fixture table through the real sink and reads
     // the numbers back through the executor.
-    testImplementation project(':protomolt-iceberg')
     testImplementation project(':protomolt-proto-sources')
     // The fixture catalog: JdbcCatalog over sqlite honors io-impl, so the
     // sink's Parquet lands on real disk for DuckDB to read.
