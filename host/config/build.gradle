@@ -1,0 +1,14 @@
+description = 'Distributed configuration: typed protobuf config documents behind a pluggable ConfigSource, applied verify-then-swap with the schema\'s own declared rules enforced before anything applies'
+
+dependencies {
+    api libs.protobuf.java
+    // Every document validates against its type's declared validate.v1
+    // rules before it applies: the same enforcement the wire doors mount.
+    implementation project(':protomolt-protobuf-validation')
+    implementation libs.slf4j.api
+
+    // The proof's document type is a house wire message with declared
+    // rules, so the refusal path exercises the real validate.v1 dialect.
+    testImplementation project(':protomolt-metric-proto')
+    testRuntimeOnly libs.slf4j.simple
+}
