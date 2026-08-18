@@ -390,6 +390,8 @@ public final class ProtoJsonSchemaGenerator {
                 case HOSTNAME -> "hostname";
                 case URI -> "uri";
                 case URI_REF -> "uri-reference";
+                case DATE -> "date";
+                case DATE_TIME -> "date-time";
                 case IPV4 -> "ipv4";
                 case IPV6 -> "ipv6";
                 case IP -> schemaOf("anyOf", List.of(
@@ -397,7 +399,8 @@ public final class ProtoJsonSchemaGenerator {
                 // No standard JSON Schema format keyword: surface the format name descriptively.
                 case TUUID, ULID, ADDRESS, IP_PREFIX, IPV4_PREFIX, IPV6_PREFIX, HOST_AND_PORT,
                         IP_WITH_PREFIXLEN, IPV4_WITH_PREFIXLEN, IPV6_WITH_PREFIXLEN,
-                        PROTOBUF_FQN, PROTOBUF_DOT_FQN ->
+                        PROTOBUF_FQN, PROTOBUF_DOT_FQN, MIME_TYPE, LANGUAGE_TAG, CURRENCY_CODE,
+                        PHONE_NUMBER, SHA256_HEX, SHA1_HEX, HEX, BASE64 ->
                         schemaOf("x-pipestream-format", format.ruleId());
             };
         }

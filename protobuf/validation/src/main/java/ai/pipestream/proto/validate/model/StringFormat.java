@@ -38,7 +38,24 @@ public enum StringFormat {
     PROTOBUF_DOT_FQN("string.protobuf_dot_fqn", "value must be a valid protobuf fully-qualified name",
             Formats::isProtobufDotFqn),
     HOST_AND_PORT("string.host_and_port", "value must be a valid host and port pair",
-            v -> Formats.isHostAndPort(v, true));
+            v -> Formats.isHostAndPort(v, true)),
+    DATE("string.date", "value must be an ISO-8601 calendar date", Formats::isDate),
+    DATE_TIME("string.date_time", "value must be an RFC 3339 date-time",
+            Formats::isDateTime),
+    MIME_TYPE("string.mime_type", "value must be an IANA media type (type/subtype)",
+            Formats::isMediaType),
+    LANGUAGE_TAG("string.language_tag", "value must be a BCP 47 language tag",
+            Formats::isLanguageTag),
+    CURRENCY_CODE("string.currency_code", "value must be an ISO 4217 currency code",
+            Formats::isCurrencyCode),
+    PHONE_NUMBER("string.phone_number", "value must be a telephone number",
+            Formats::isPhoneNumber),
+    SHA256_HEX("string.sha256_hex", "value must be a lowercase hex SHA-256 digest",
+            Formats::isSha256Hex),
+    SHA1_HEX("string.sha1_hex", "value must be a lowercase hex SHA-1 digest",
+            Formats::isSha1Hex),
+    HEX("string.hex", "value must be lowercase hexadecimal", Formats::isHex),
+    BASE64("string.base64", "value must be base64", Formats::isBase64);
 
     private final String ruleId;
     private final String defaultMessage;

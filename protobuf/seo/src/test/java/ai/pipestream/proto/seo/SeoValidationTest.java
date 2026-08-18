@@ -119,7 +119,7 @@ class SeoValidationTest {
     }
 
     @Test
-    void lowercaseCurrencyViolatesThePattern() {
+    void lowercaseCurrencyViolatesTheIso4217Table() {
         Product bad = validProduct().toBuilder()
                 .setOffers(0, validProduct().getOffers(0).toBuilder().setPriceCurrency("usd"))
                 .build();
@@ -128,7 +128,7 @@ class SeoValidationTest {
         assertThat(result.violations())
                 .anySatisfy(v -> {
                     assertThat(v.path()).contains("price_currency");
-                    assertThat(v.ruleId()).contains("pattern");
+                    assertThat(v.ruleId()).isEqualTo("string.currency_code");
                 });
     }
 

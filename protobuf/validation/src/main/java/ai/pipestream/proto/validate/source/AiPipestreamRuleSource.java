@@ -134,6 +134,9 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
     /** Recursively translates {@link FieldRules} (also used for items/keys/values). */
     private static FieldConstraints toFieldConstraints(FieldRules rules) {
         FieldConstraints.Builder builder = FieldConstraints.builder().required(rules.getRequired());
+        if (rules.getIgnoreIfZero()) {
+            builder.ignore(ai.pipestream.proto.validate.model.IgnoreMode.IF_ZERO_VALUE);
+        }
         if (rules.hasString()) {
             builder.string(toStringConstraints(rules.getString()));
         }
@@ -235,6 +238,36 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         }
         if (rules.getIpv6()) {
             b.format(StringFormat.IPV6);
+        }
+        if (rules.getDate()) {
+            b.format(StringFormat.DATE);
+        }
+        if (rules.getDateTime()) {
+            b.format(StringFormat.DATE_TIME);
+        }
+        if (rules.getMimeType()) {
+            b.format(StringFormat.MIME_TYPE);
+        }
+        if (rules.getLanguageTag()) {
+            b.format(StringFormat.LANGUAGE_TAG);
+        }
+        if (rules.getCurrencyCode()) {
+            b.format(StringFormat.CURRENCY_CODE);
+        }
+        if (rules.getPhoneNumber()) {
+            b.format(StringFormat.PHONE_NUMBER);
+        }
+        if (rules.getSha256Hex()) {
+            b.format(StringFormat.SHA256_HEX);
+        }
+        if (rules.getSha1Hex()) {
+            b.format(StringFormat.SHA1_HEX);
+        }
+        if (rules.getHex()) {
+            b.format(StringFormat.HEX);
+        }
+        if (rules.getBase64()) {
+            b.format(StringFormat.BASE64);
         }
         return b.build();
     }

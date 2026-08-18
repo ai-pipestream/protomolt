@@ -123,7 +123,7 @@ message EntityHeader {
   // The parent entity's uuid when a processor dehydrated this entity out of
   // another; empty on a root entity.
   string parent_entity_id = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
   ];
@@ -152,7 +152,7 @@ message EntityHeader {
   // IANA media type of the payload encoding (normally
   // "application/x-protobuf"); empty means the default protobuf binary encoding.
   string content_type = 6 [
-    (ai.pipestream.proto.validate.v1.field).string.max_len = 255,
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {max_len: 255, mime_type: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Exact serialized length of the payload: the Any value bytes for an inline
@@ -162,7 +162,7 @@ message EntityHeader {
   string payload_digest = 8 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-f]{64}$"}
+      string: {sha256_hex: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -196,19 +196,19 @@ message EntityHeader {
   // Lowercase SHA-256 hex of the canonical derived security posture. The
   // posture details themselves are not entity data.
   string security_posture_digest = 15 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-f]{64}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {sha256_hex: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // W3C trace id (32 lowercase hex) correlating this entity with the trace the
   // submission rode in on; empty when tracing is not in use.
   string trace_id = 16 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-f]{32}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {hex: true, len: 32}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Correlates this entity with its execution evidence records; empty until a
   // processor emits evidence.
   string evidence_correlation_id = 17 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
 }
@@ -240,7 +240,7 @@ message SchemaReference {
   string descriptor_fingerprint = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-f]{64}$"}
+      string: {sha256_hex: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -284,7 +284,7 @@ message ClaimCheck {
   string descriptor_fingerprint = 3 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-f]{64}$"}
+      string: {sha256_hex: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -320,7 +320,7 @@ message ProfileReference {
   // Lowercase SHA-256 hex of the canonical profile content, when the caller
   // pins an exact immutable revision.
   string fingerprint = 3 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-f]{64}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {sha256_hex: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
 }
