@@ -46,10 +46,13 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
 
     private final Map<String, ServedMetricSubject> subjects;
     private final RollupSink rollups;
+    private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
 
-    MetricGrpcService(Map<String, ServedMetricSubject> subjects, RollupSink rollups) {
+    MetricGrpcService(Map<String, ServedMetricSubject> subjects, RollupSink rollups,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
         this.subjects = Map.copyOf(subjects);
         this.rollups = rollups;
+        this.resolver = resolver;
     }
 
     @Override
@@ -79,14 +82,7 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
     }
 
     private ServedMetricSubject subject(String name) {
-        ServedMetricSubject subject = subjects.get(name);
-        if (subject == null) {
-            throw new MetricRefusal(MetricRefusal.UNKNOWN_SUBJECT,
-                    "unknown mapping subject '" + name + "'; served subjects: "
-                            + String.join(", ", subjects.keySet()),
-                    List.copyOf(subjects.keySet()));
-        }
-        return subject;
+        return Subjects.find(subjects, resolver, name);
     }
 
     private <T> void run(StreamObserver<T> observer, java.util.function.Supplier<T> work) {

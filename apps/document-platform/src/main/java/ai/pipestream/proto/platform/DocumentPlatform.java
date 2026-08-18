@@ -27,6 +27,7 @@ import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.metric.MetricBackend;
 import ai.pipestream.proto.metric.iceberg.IcebergMetricExecutor;
 import ai.pipestream.proto.metric.iceberg.IcebergRollupSink;
+import ai.pipestream.proto.metric.iceberg.IcebergRollupSubjects;
 import ai.pipestream.proto.metric.lucene.MetricDoorModule;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
 import ai.pipestream.proto.metric.spi.RollupSink;
@@ -202,6 +203,10 @@ public final class DocumentPlatform implements AutoCloseable {
         RollupSink rollupSink = lakeConfig != null
                 ? new IcebergRollupSink(metricsCatalog, lakeConfig.namespace())
                 : defaultRollupLake;
+        ai.pipestream.proto.metric.spi.MetricSubjectResolver rollupSubjects =
+                lakeConfig != null
+                        ? new IcebergRollupSubjects(metricsCatalog, lakeConfig.namespace())
+                        : defaultRollupLake == null ? null : defaultRollupLake.resolver();
         this.metrics = config.mounts(MetricDoorModule.ROLE)
                 ? new MetricDoorModule(new MetricDoorModule.Config(
                         config.metricsGrpcPort(),
@@ -214,7 +219,8 @@ public final class DocumentPlatform implements AutoCloseable {
                                                 new IcebergMetricExecutor(lakeTables(
                                                         metricsCatalog,
                                                         lakeConfig.namespace()))))),
-                        rollupSink))
+                        rollupSink,
+                        rollupSubjects))
                 : null;
         this.searchConsole = config.mounts(SearchConsoleModule.ROLE)
                 ? new SearchConsoleModule(new SearchConsoleModule.Config(
@@ -422,15 +428,47 @@ public final class DocumentPlatform implements AutoCloseable {
         private final Path dir;
         private JdbcCatalog catalog;
         private ai.pipestream.proto.metric.spi.RollupSink delegate;
+        private IcebergRollupSubjects subjects;
 
         LocalLakeRollupSink(Path dir) {
             this.dir = dir;
         }
 
         @Override
-        public synchronized Written replace(String table, List<String> dimensions,
-                List<String> measures, List<ai.pipestream.proto.metric.MetricRow> rows) {
-            if (delegate == null) {
+        public synchronized Written replace(String sourceSubject, String table,
+                List<String> dimensions, List<MeasureColumn> measures,
+                List<ai.pipestream.proto.metric.MetricRow> rows) {
+            initialize(true);
+            return delegate.replace(sourceSubject, table, dimensions, measures, rows);
+        }
+
+        /**
+         * Rollup tables in this lake as queryable subjects. Resolution
+         * initializes lazily too, from an existing catalog file only: a
+         * lake that was never written has no rollups to resolve, and a
+         * read must not create one.
+         */
+        ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver() {
+            return subject -> {
+                IcebergRollupSubjects resolved;
+                synchronized (this) {
+                    if (subjects == null) {
+                        if (!java.nio.file.Files.exists(dir.resolve("catalog.db"))) {
+                            return null;
+                        }
+                        initialize(false);
+                    }
+                    resolved = subjects;
+                }
+                return resolved.resolve(subject);
+            };
+        }
+
+        private synchronized void initialize(boolean create) {
+            if (delegate != null) {
+                return;
+            }
+            if (create) {
                 try {
                     java.nio.file.Files.createDirectories(dir);
                 } catch (IOException e) {
@@ -440,25 +478,26 @@ public final class DocumentPlatform implements AutoCloseable {
                             + " to a writable directory, or the "
                             + MetricsIcebergConfig.ENV_CATALOG_URI + " family", e);
                 }
-                JdbcCatalog jdbc = new JdbcCatalog();
-                jdbc.initialize(MetricsIcebergConfig.CATALOG_NAME, Map.of(
-                        CatalogProperties.URI,
-                        "jdbc:sqlite:" + dir.resolve("catalog.db"),
-                        CatalogProperties.WAREHOUSE_LOCATION, dir.toString(),
-                        CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
-                org.apache.iceberg.catalog.Namespace namespace =
-                        org.apache.iceberg.catalog.Namespace.of(
-                                MetricsIcebergConfig.DEFAULT_NAMESPACE);
-                // This lake is the platform's own storage, like the search
-                // index directory, so the namespace is ours to create.
-                if (!jdbc.namespaceExists(namespace)) {
-                    jdbc.createNamespace(namespace);
-                }
-                catalog = jdbc;
-                delegate = new IcebergRollupSink(
-                        jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
             }
-            return delegate.replace(table, dimensions, measures, rows);
+            JdbcCatalog jdbc = new JdbcCatalog();
+            jdbc.initialize(MetricsIcebergConfig.CATALOG_NAME, Map.of(
+                    CatalogProperties.URI,
+                    "jdbc:sqlite:" + dir.resolve("catalog.db"),
+                    CatalogProperties.WAREHOUSE_LOCATION, dir.toString(),
+                    CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
+            org.apache.iceberg.catalog.Namespace namespace =
+                    org.apache.iceberg.catalog.Namespace.of(
+                            MetricsIcebergConfig.DEFAULT_NAMESPACE);
+            // This lake is the platform's own storage, like the search
+            // index directory, so the namespace is ours to create.
+            if (!jdbc.namespaceExists(namespace)) {
+                jdbc.createNamespace(namespace);
+            }
+            catalog = jdbc;
+            delegate = new IcebergRollupSink(
+                    jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
+            subjects = new IcebergRollupSubjects(
+                    jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
         }
 
         synchronized void close() {

@@ -129,6 +129,20 @@ optional, as designed. The same rebuild is also a catalog verb
 an agent surface can refresh a rollup directly without the jobs role —
 one shared code path behind both doors, refusing identically.
 
+A rebuilt rollup is itself a queryable subject: the sink stamps the
+declaration (source subject, dimension columns, measure columns with
+their source aggregates) onto the table as Iceberg properties, and
+`rollup:<table>` resolves against the lake at request time — any
+rebuilt rollup is instantly queryable and describable with no
+side-channel configuration. Re-aggregation is honest or absent: COUNT
+and SUM columns re-serve as SUM (summing counts is counting), MIN as
+MIN and MAX as MAX, while AVG and COUNT_DISTINCT columns are not
+members at all — an average of averages is a wrong answer, so those
+columns stay scan-only outside the door. Date dimensions arrive as
+their rendered bucket labels and serve as keyword dimensions: a rollup
+cannot re-bucket time below the grain it was built at. A lake table
+the sink did not write refuses instead of guessing a shape.
+
 ## The platform mount
 
 `MetricDoorModule` (in `protomolt-metric-lucene`) is the composer role:

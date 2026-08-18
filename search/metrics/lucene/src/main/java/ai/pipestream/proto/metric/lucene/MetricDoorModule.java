@@ -101,9 +101,12 @@ public final class MetricDoorModule implements ServiceModule {
      *        mapping subject they aggregate over
      * @param rollupSink where rebuilt rollups land, or {@code null} for
      *        none (RebuildRollup refuses with {@code missing-sink})
+     * @param subjectResolver resolves subjects beyond the static set
+     *        (rollup tables), or {@code null} for none
      */
     public record Config(int grpcPort, Map<String, Subject> subjects,
-            ai.pipestream.proto.metric.spi.RollupSink rollupSink) {
+            ai.pipestream.proto.metric.spi.RollupSink rollupSink,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver subjectResolver) {
 
         /** Validates the configuration. */
         public Config {
@@ -114,9 +117,15 @@ public final class MetricDoorModule implements ServiceModule {
             subjects = Map.copyOf(subjects);
         }
 
+        /** A configuration without a subject resolver. */
+        public Config(int grpcPort, Map<String, Subject> subjects,
+                ai.pipestream.proto.metric.spi.RollupSink rollupSink) {
+            this(grpcPort, subjects, rollupSink, null);
+        }
+
         /** A configuration without a rollup sink. */
         public Config(int grpcPort, Map<String, Subject> subjects) {
-            this(grpcPort, subjects, null);
+            this(grpcPort, subjects, null, null);
         }
     }
 
@@ -195,12 +204,14 @@ public final class MetricDoorModule implements ServiceModule {
             engines.put(MetricBackend.METRIC_BACKEND_LUCENE, executor);
             served.put(subject, new ServedMetricSubject(spec.metricMapping(), engines));
         });
-        door = MetricDoorServices.build(served, config.rollupSink());
+        door = MetricDoorServices.build(
+                served, config.rollupSink(), config.subjectResolver());
         String name = ROLE + "-" + context.nodeId();
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
 
-        for (ProtoAction action : MetricActions.over(served, config.rollupSink())) {
+        for (ProtoAction action : MetricActions.over(
+                served, config.rollupSink(), config.subjectResolver())) {
             context.contributions().contribute(ProtoAction.class, action);
         }
 

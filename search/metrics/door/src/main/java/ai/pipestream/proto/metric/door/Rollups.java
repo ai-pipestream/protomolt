@@ -54,9 +54,13 @@ final class Rollups {
                             + " dimensions or filter the subject", List.of());
         }
         RollupSink.Written written = rollups.replace(
+                request.getMappingSubject(),
                 request.getTable(),
                 request.getDimensionsList().stream().map(MemberRef::getName).toList(),
-                request.getMeasuresList(),
+                request.getMeasuresList().stream()
+                        .map(name -> new RollupSink.MeasureColumn(name,
+                                subject.mapping().members().get(name).aggregate()))
+                        .toList(),
                 answer.getRowsList());
         return RebuildRollupResponse.newBuilder()
                 .setMappingSubject(answer.getMappingSubject())
