@@ -43,10 +43,19 @@ public final class MetricDoorModule implements ServiceModule {
      * subject key must name a mapping subject the search role serves —
      * the executor's reads borrow that subject's searcher.
      *
+     * <p>Extra engines (the Iceberg backend over a lake table, built by
+     * the host that owns the catalog) mount beside the module's own
+     * Lucene executor. Per the design, a subject serving more than one
+     * engine refuses a query that leaves the backend unset, naming the
+     * mounted set.</p>
+     *
      * @param metricMapping the compiled metric member declarations
      * @param indexMapping the search index's field shapes for the subject
+     * @param extraExecutors host-built engines by backend; never the
+     *        Lucene backend, which this module builds itself
      */
-    public record Subject(MetricMapping metricMapping, IndexMapping indexMapping) {
+    public record Subject(MetricMapping metricMapping, IndexMapping indexMapping,
+            Map<MetricBackend, MetricExecutor> extraExecutors) {
 
         /** Validates the subject. */
         public Subject {
@@ -56,6 +65,30 @@ public final class MetricDoorModule implements ServiceModule {
             if (indexMapping == null) {
                 throw new IllegalArgumentException("indexMapping must not be null");
             }
+            extraExecutors = extraExecutors == null ? Map.of() : Map.copyOf(extraExecutors);
+            for (Map.Entry<MetricBackend, MetricExecutor> entry : extraExecutors.entrySet()) {
+                if (entry.getKey() == MetricBackend.METRIC_BACKEND_LUCENE
+                        || entry.getKey() == MetricBackend.METRIC_BACKEND_UNSPECIFIED) {
+                    throw new IllegalArgumentException("extra executors mount under their"
+                            + " own named backend; the metrics role builds the Lucene"
+                            + " executor itself over the search role's store");
+                }
+                if (entry.getValue() == null) {
+                    throw new IllegalArgumentException(
+                            "extra executor for " + entry.getKey() + " must not be null");
+                }
+                if (entry.getValue().backend() != entry.getKey()) {
+                    throw new IllegalArgumentException("extra executor mounted under "
+                            + entry.getKey() + " reports backend "
+                            + entry.getValue().backend() + "; the key and the executor"
+                            + " must agree");
+                }
+            }
+        }
+
+        /** A subject served by the Lucene engine alone. */
+        public Subject(MetricMapping metricMapping, IndexMapping indexMapping) {
+            this(metricMapping, indexMapping, Map.of());
         }
     }
 
@@ -145,10 +178,12 @@ public final class MetricDoorModule implements ServiceModule {
                     }
                 });
         Map<String, ServedMetricSubject> served = new LinkedHashMap<>();
-        config.subjects().forEach((subject, spec) -> served.put(subject,
-                new ServedMetricSubject(
-                        spec.metricMapping(),
-                        Map.of(MetricBackend.METRIC_BACKEND_LUCENE, executor))));
+        config.subjects().forEach((subject, spec) -> {
+            Map<MetricBackend, MetricExecutor> engines =
+                    new LinkedHashMap<>(spec.extraExecutors());
+            engines.put(MetricBackend.METRIC_BACKEND_LUCENE, executor);
+            served.put(subject, new ServedMetricSubject(spec.metricMapping(), engines));
+        });
         door = MetricDoorServices.build(served);
         String name = ROLE + "-" + context.nodeId();
         inProcess = door.startInProcess(name);

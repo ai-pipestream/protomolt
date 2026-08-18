@@ -24,7 +24,17 @@ import ai.pipestream.proto.embeddings.EmbeddingProviders;
 import ai.pipestream.proto.embeddings.model2vec.Model2VecEmbeddingProvider;
 import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
+import ai.pipestream.proto.metric.MetricBackend;
+import ai.pipestream.proto.metric.iceberg.IcebergMetricExecutor;
 import ai.pipestream.proto.metric.lucene.MetricDoorModule;
+import ai.pipestream.proto.metric.spi.MetricRefusal;
+import ai.pipestream.proto.lake.iceberg.LocalFileIO;
+import org.apache.iceberg.CatalogProperties;
+import org.apache.iceberg.catalog.Catalog;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.jdbc.JdbcCatalog;
+import org.apache.iceberg.rest.RESTCatalog;
 import ai.pipestream.proto.schema.confluent.ConfluentSchemaPublisher;
 import ai.pipestream.proto.search.console.SearchConsoleModule;
 import ai.pipestream.proto.search.door.IndexSnapshots;
@@ -80,6 +90,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private final MetricDoorModule metrics;
     private final SearchConsoleModule searchConsole;
     private final S3Client snapshotClient;
+    private final Catalog metricsCatalog;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -161,12 +172,22 @@ public final class DocumentPlatform implements AutoCloseable {
                                         searchReadOnly),
                         searchReadOnly))
                 : null;
+        MetricsIcebergConfig lakeConfig = config.mounts(MetricDoorModule.ROLE)
+                ? MetricsIcebergConfig.fromEnvironment(config.environment())
+                : null;
+        this.metricsCatalog = lakeConfig == null ? null : metricsCatalog(lakeConfig);
         this.metrics = config.mounts(MetricDoorModule.ROLE)
                 ? new MetricDoorModule(new MetricDoorModule.Config(
                         config.metricsGrpcPort(),
                         Map.of(RepoDocumentMapping.SUBJECT, new MetricDoorModule.Subject(
                                 RepoDocumentMetrics.mapping(),
-                                RepoDocumentMapping.mapping()))))
+                                RepoDocumentMapping.mapping(),
+                                lakeConfig == null
+                                        ? Map.of()
+                                        : Map.of(MetricBackend.METRIC_BACKEND_ICEBERG,
+                                                new IcebergMetricExecutor(lakeTables(
+                                                        metricsCatalog,
+                                                        lakeConfig.namespace())))))))
                 : null;
         this.searchConsole = config.mounts(SearchConsoleModule.ROLE)
                 ? new SearchConsoleModule(new SearchConsoleModule.Config(
@@ -226,6 +247,10 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         if (metrics != null) {
             surfaces.add("metrics gRPC " + metrics.grpcPort());
+        }
+        if (lakeConfig != null) {
+            surfaces.add("metrics lake " + lakeConfig.catalogUri()
+                    + " namespace " + lakeConfig.namespace());
         }
         if (registry != null) {
             surfaces.add("registry http " + registry.httpPort());
@@ -328,11 +353,61 @@ public final class DocumentPlatform implements AutoCloseable {
     @Override
     public void close() {
         // The node closes first: the search module's close runs the final
-        // commit-and-snapshot, which needs the client still open.
+        // commit-and-snapshot, which needs the client still open, and the
+        // metric door stops serving before its catalog goes away.
         node.close();
         if (snapshotClient != null) {
             snapshotClient.close();
         }
+        if (metricsCatalog instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                LOG.warn("closing the metrics lake catalog failed", e);
+            }
+        }
+    }
+
+    /**
+     * The Iceberg catalog the metrics role's lake engine reads, per the
+     * family's settings: the URI scheme picks JDBC or REST, and both run
+     * the sink's {@code LocalFileIO} because this build is Hadoop-free
+     * and DuckDB reads the table's local Parquet paths directly.
+     */
+    private static Catalog metricsCatalog(MetricsIcebergConfig config) {
+        Map<String, String> properties = new java.util.HashMap<>();
+        properties.put(CatalogProperties.URI, config.catalogUri());
+        properties.put(CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName());
+        if (!config.warehouse().isEmpty()) {
+            properties.put(CatalogProperties.WAREHOUSE_LOCATION, config.warehouse());
+        }
+        Catalog catalog = config.jdbc() ? new JdbcCatalog() : new RESTCatalog();
+        // The name scopes a JDBC catalog's table records in the backing
+        // database: writers sharing the database must use the same name.
+        catalog.initialize(MetricsIcebergConfig.CATALOG_NAME, properties);
+        return catalog;
+    }
+
+    /**
+     * Each metric subject reads the lake table named exactly like it,
+     * loaded per query so the sink can write the table after this node
+     * boots and each read sees the current snapshot. A subject whose
+     * table does not exist yet refuses by name: the sink writes tables,
+     * this reader never creates one.
+     */
+    private static IcebergMetricExecutor.SubjectTables lakeTables(
+            Catalog catalog, String namespace) {
+        return subject -> {
+            TableIdentifier identifier = TableIdentifier.of(namespace, subject);
+            try {
+                return catalog.loadTable(identifier);
+            } catch (NoSuchTableException e) {
+                throw new MetricRefusal(MetricRefusal.MISSING_TABLE,
+                        "the lake has no table '" + identifier + "' for subject '"
+                                + subject + "': the Iceberg sink writes it",
+                        List.of());
+            }
+        };
     }
 
     /** The strict read of {@link DocumentPlatformConfig#ENV_SEARCH_READ_ONLY}. */

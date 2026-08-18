@@ -101,6 +101,37 @@ snapshots (a reader never uploads a commit or prunes the writer's
 blobs). Combined with the `metrics` role this is the remote metrics
 node — see [Role nodes](role-nodes.md).
 
+## Lake metrics
+
+The metrics role can mount the [Iceberg engine](../search/metrics.md#the-iceberg-engine)
+beside its Lucene executor. The `DOCUMENT_PLATFORM_METRICS_ICEBERG_*`
+family turns it on:
+
+| Variable | Meaning |
+| --- | --- |
+| `..._ICEBERG_CATALOG_URI` | the catalog; absent means the lake engine is off, and any other family member set without it refuses by name. A `jdbc:` URI is a JDBC catalog (`jdbc:sqlite:` works out of the box, the one-container lake); `http(s)` is a REST catalog service. Any other scheme refuses. |
+| `..._ICEBERG_WAREHOUSE` | the warehouse location; required with a `jdbc:` URI, optional pass-through for REST |
+| `..._ICEBERG_NAMESPACE` | the namespace metric tables live under (default `protomolt`) |
+
+Each metric subject reads the lake table named exactly like it —
+`repo-document` reads `<namespace>.repo-document` — loaded per query, so
+the [Iceberg sink](../sink/iceberg.md) can write the table after the node
+boots. A subject whose table does not exist refuses with `missing-table`
+instead of answering zero: the sink writes tables, this reader never
+creates one. Two details keep writer and reader on the same lake: this
+build is Hadoop-free, so both shapes read a local-filesystem warehouse
+through the sink's `LocalFileIO` (an object-store lake is a follow-up,
+because DuckDB would need object-store reach too), and a JDBC catalog
+scopes its table records by catalog *name*, so a writer sharing the
+catalog database must initialize with this node's name, `protomolt`.
+
+With the family set the subject serves two engines, and per the design a
+query that leaves `backend` unset is refused with `ambiguous-backend`
+naming both — a caller picks `METRIC_BACKEND_LUCENE` (the live index) or
+`METRIC_BACKEND_ICEBERG` (the lake table) explicitly. Without the family
+nothing changes: the single-engine mount keeps answering unset-backend
+queries with Lucene, which is configuration, not a guess.
+
 ## Configuration
 
 The repository half of the platform reads the `DOCUMENT_PLATFORM_*` family

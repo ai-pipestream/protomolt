@@ -13,11 +13,15 @@ import ai.pipestream.proto.metric.DescribeMappingRequest;
 import ai.pipestream.proto.metric.FieldMetric;
 import ai.pipestream.proto.metric.MemberRef;
 import ai.pipestream.proto.metric.MemberRole;
+import ai.pipestream.proto.metric.MetricBackend;
+import ai.pipestream.proto.metric.MetricRow;
 import ai.pipestream.proto.metric.MetricServiceGrpc;
 import ai.pipestream.proto.metric.TimeGrain;
 import ai.pipestream.proto.metric.QueryMetricsRequest;
 import ai.pipestream.proto.metric.QueryMetricsResponse;
 import ai.pipestream.proto.metric.spi.CatalogMetricHintSource;
+import ai.pipestream.proto.metric.spi.CompiledMetricQuery;
+import ai.pipestream.proto.metric.spi.MetricExecutor;
 import ai.pipestream.proto.metric.spi.MetricMapping;
 import ai.pipestream.proto.metric.spi.MetricMappings;
 import ai.pipestream.proto.repo.v1.Document;
@@ -33,6 +37,7 @@ import ai.pipestream.proto.search.v1.SearchIndexServiceGrpc;
 import com.google.protobuf.Timestamp;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
+import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.StreamObserver;
@@ -258,5 +263,130 @@ class MetricDoorModuleTest {
                 .boot(List.of("repo", "search", "metrics")))
                 .hasMessageContaining("metric subject 'elsewhere'")
                 .hasMessageContaining(RepoDocumentMapping.SUBJECT);
+    }
+
+    /** A host-built lake engine: a fixed answer under the Iceberg backend. */
+    static class FakeLakeExecutor implements MetricExecutor {
+
+        @Override
+        public MetricBackend backend() {
+            return MetricBackend.METRIC_BACKEND_ICEBERG;
+        }
+
+        @Override
+        public Capabilities capabilities() {
+            return new Capabilities(
+                    java.util.Set.of(Aggregate.AGGREGATE_COUNT), true, true);
+        }
+
+        @Override
+        public Result execute(CompiledMetricQuery query) {
+            return new Result(List.of(MetricRow.newBuilder()
+                    .putMeasures("documents", 42.0).build()), "fake lake plan");
+        }
+    }
+
+    @Test
+    void anExtraEngineMountsBesideTheLuceneExecutorAndUnsetBackendRefuses() throws Exception {
+        Map<String, Document> corpus = Map.of(
+                "doc-1", document("doc-1", "Only", "PDF", "2026-07-10T10:00:00Z"));
+        SearchDoorModule search = new SearchDoorModule(new SearchDoorModule.Config(
+                0, work.resolve("index"),
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served())));
+        MetricDoorModule metrics = new MetricDoorModule(new MetricDoorModule.Config(
+                0,
+                Map.of(RepoDocumentMapping.SUBJECT, new MetricDoorModule.Subject(
+                        documentsMapping(), RepoDocumentMapping.mapping(),
+                        Map.of(MetricBackend.METRIC_BACKEND_ICEBERG,
+                                new FakeLakeExecutor())))));
+        try (Composer.Node node = Composer.emptyBuilder()
+                .module(new FakeRepoModule(corpus))
+                .module(search)
+                .module(metrics)
+                .environment(Map.of())
+                .build()
+                .boot(List.of("repo", "search", "metrics"))) {
+            ManagedChannel searchChannel = NettyChannelBuilder
+                    .forAddress("127.0.0.1", search.grpcPort()).usePlaintext().build();
+            ManagedChannel metricsChannel = NettyChannelBuilder
+                    .forAddress("127.0.0.1", metrics.grpcPort()).usePlaintext().build();
+            try {
+                SearchIndexServiceGrpc.newBlockingStub(searchChannel)
+                        .indexDocument(IndexDocumentRequest.newBuilder()
+                                .setAddress(NodeAddress.newBuilder().setDocId("doc-1")
+                                        .setGraphAddressId("ds").setAccountId("acct")
+                                        .setGraphId("intake:acct"))
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .build());
+                MetricServiceGrpc.MetricServiceBlockingStub stub =
+                        MetricServiceGrpc.newBlockingStub(metricsChannel);
+
+                DescribeMappingResponse described = stub.describeMapping(
+                        DescribeMappingRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .build());
+                assertThat(described.getBackendsList()).containsExactlyInAnyOrder(
+                        MetricBackend.METRIC_BACKEND_LUCENE,
+                        MetricBackend.METRIC_BACKEND_ICEBERG);
+
+                // Per the design: on a multi-engine mount an unset backend is
+                // refused naming the mounted engines, never silently picked.
+                assertThatThrownBy(() -> stub.queryMetrics(
+                        QueryMetricsRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .addMeasures("documents")
+                                .setLimit(10)
+                                .build()))
+                        .isInstanceOf(StatusRuntimeException.class)
+                        .hasMessageContaining("FAILED_PRECONDITION")
+                        .hasMessageContaining("ambiguous-backend");
+
+                QueryMetricsResponse fromIndex = stub.queryMetrics(
+                        QueryMetricsRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .setBackend(MetricBackend.METRIC_BACKEND_LUCENE)
+                                .addMeasures("documents")
+                                .setLimit(10)
+                                .build());
+                assertThat(fromIndex.getRows(0).getMeasuresMap())
+                        .containsEntry("documents", 1.0);
+
+                QueryMetricsResponse fromLake = stub.queryMetrics(
+                        QueryMetricsRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .setBackend(MetricBackend.METRIC_BACKEND_ICEBERG)
+                                .addMeasures("documents")
+                                .setLimit(10)
+                                .build());
+                assertThat(fromLake.getRows(0).getMeasuresMap())
+                        .containsEntry("documents", 42.0);
+                assertThat(fromLake.getPhysicalPlan()).isEqualTo("fake lake plan");
+            } finally {
+                searchChannel.shutdownNow();
+                metricsChannel.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void aSubjectRefusesExtraExecutorsThatLieAboutTheirBackend() {
+        assertThatThrownBy(() -> new MetricDoorModule.Subject(
+                documentsMapping(), RepoDocumentMapping.mapping(),
+                Map.of(MetricBackend.METRIC_BACKEND_LUCENE, new FakeLakeExecutor())))
+                .hasMessageContaining("builds the Lucene executor itself");
+        assertThatThrownBy(() -> new MetricDoorModule.Subject(
+                documentsMapping(), RepoDocumentMapping.mapping(),
+                Map.of(MetricBackend.METRIC_BACKEND_UNSPECIFIED, new FakeLakeExecutor())))
+                .hasMessageContaining("own named backend");
+        MetricExecutor liar = new FakeLakeExecutor() {
+            @Override
+            public MetricBackend backend() {
+                return MetricBackend.METRIC_BACKEND_LUCENE;
+            }
+        };
+        assertThatThrownBy(() -> new MetricDoorModule.Subject(
+                documentsMapping(), RepoDocumentMapping.mapping(),
+                Map.of(MetricBackend.METRIC_BACKEND_ICEBERG, liar)))
+                .hasMessageContaining("must agree");
     }
 }
