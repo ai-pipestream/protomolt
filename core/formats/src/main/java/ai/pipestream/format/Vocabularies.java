@@ -25,6 +25,14 @@ final class Vocabularies {
         }
     }
 
+    private static final java.util.Set<String> ISO_COUNTRIES =
+            java.util.Set.of(Locale.getISOCountries());
+
+    /** ISO 3166-1 alpha-2 region code known to the JDK ({@code US}, {@code BR}). */
+    static boolean isRegionCode(String value) {
+        return value.length() == 2 && ISO_COUNTRIES.contains(value);
+    }
+
     /** ISO 4217 alphabetic currency code known to the JDK ({@code USD}). */
     static boolean isCurrencyCode(String value) {
         if (value.length() != 3) {

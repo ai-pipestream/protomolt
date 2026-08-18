@@ -11,6 +11,31 @@ public final class Identifiers {
     private Identifiers() {
     }
 
+    /**
+     * Lowercase slug: {@code a-z0-9} with interior single {@code .}, {@code _} or {@code -}
+     * separators; the value starts and ends alphanumeric and two separators never touch.
+     * Length is deliberately unconstrained here — compose with the len rules for bounds.
+     */
+    public static boolean isSlug(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        boolean previousSeparator = false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            boolean alphanumeric = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+            boolean separator = c == '.' || c == '_' || c == '-';
+            if (!alphanumeric && !separator) {
+                return false;
+            }
+            if (separator && (i == 0 || i == value.length() - 1 || previousSeparator)) {
+                return false;
+            }
+            previousSeparator = separator;
+        }
+        return true;
+    }
+
     /** Canonical dashed UUID, e.g. {@code 123e4567-e89b-12d3-a456-426614174000} (8-4-4-4-12 hex). */
     public static boolean isUuid(String value) {
         if (value.length() != 36) {
