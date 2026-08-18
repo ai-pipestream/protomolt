@@ -43,6 +43,8 @@ import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.KeepOnlyLastCommitDeletionPolicy;
+import org.apache.lucene.index.SnapshotDeletionPolicy;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.PostingsEnum;
@@ -113,14 +115,17 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         final EmbeddingProvider embedder;
         final IndexWriter writer;
         final SearcherManager searchers;
+        final SnapshotDeletionPolicy snapshotPolicy;
         int pendingWrites;
 
         Subject(ServedMapping served, EmbeddingProvider embedder,
-                IndexWriter writer, SearcherManager searchers) {
+                IndexWriter writer, SearcherManager searchers,
+                SnapshotDeletionPolicy snapshotPolicy) {
             this.served = served;
             this.embedder = embedder;
             this.writer = writer;
             this.searchers = searchers;
+            this.snapshotPolicy = snapshotPolicy;
         }
 
         ServedMapping served() {
@@ -152,6 +157,8 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     }
 
     private final Map<String, Subject> subjects = new LinkedHashMap<>();
+    private final Path indexDir;
+    private final IndexSnapshots snapshots;
     private final ProtoLuceneMapper mapper =
             new ProtoLuceneMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
     private final Analyzer analyzer = new StandardAnalyzer();
@@ -166,12 +173,30 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
      * @param served the subjects to serve, keyed by subject name
      */
     public LuceneSearchStore(Path indexDir, Map<String, ServedMapping> served) {
+        this(indexDir, served, null);
+    }
+
+    /**
+     * As {@link #LuceneSearchStore(Path, Map)}, with index snapshots to a
+     * blob store: each subject restores its latest snapshot on boot (when
+     * its local directory is empty and the snapshot's identity matches) and
+     * snapshots on the durability-commit cadence and on close.
+     *
+     * @param indexDir the root directory; each subject indexes in its own
+     *        subdirectory
+     * @param served the subjects to serve, keyed by subject name
+     * @param snapshots the snapshot component; null disables snapshots
+     */
+    public LuceneSearchStore(
+            Path indexDir, Map<String, ServedMapping> served, IndexSnapshots snapshots) {
         if (indexDir == null) {
             throw new IllegalArgumentException("indexDir must not be null");
         }
         if (served == null || served.isEmpty()) {
             throw new IllegalArgumentException("at least one served mapping subject is required");
         }
+        this.indexDir = indexDir;
+        this.snapshots = snapshots;
         committer = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "search-door-committer");
             thread.setDaemon(true);
@@ -183,12 +208,19 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
                         ? null
                         : EmbeddingProviders.forSpec(
                                 subject.getValue().chunkLane().policy().embedding());
-                IndexWriter writer = new IndexWriter(
-                        FSDirectory.open(indexDir.resolve(subject.getKey())),
-                        new IndexWriterConfig(analyzer));
+                Path subjectDir = indexDir.resolve(subject.getKey());
+                SnapshotDeletionPolicy snapshotPolicy = null;
+                IndexWriterConfig config = new IndexWriterConfig(analyzer);
+                if (snapshots != null) {
+                    snapshots.restoreInto(subjectDir, subject.getKey(), subject.getValue());
+                    snapshotPolicy = new SnapshotDeletionPolicy(
+                            new KeepOnlyLastCommitDeletionPolicy());
+                    config.setIndexDeletionPolicy(snapshotPolicy);
+                }
+                IndexWriter writer = new IndexWriter(FSDirectory.open(subjectDir), config);
                 subjects.put(subject.getKey(), new Subject(
                         subject.getValue(), embedder, writer,
-                        new SearcherManager(writer, null)));
+                        new SearcherManager(writer, null), snapshotPolicy));
             }
         } catch (IOException e) {
             close();
@@ -334,6 +366,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
                     synchronized (subject) {
                         subject.pendingWrites = 0;
                     }
+                    snapshotIfConfigured(entry.getKey(), subject);
                 }
             } catch (IOException | RuntimeException e) {
                 // The next tick retries; writes keep accumulating in the
@@ -341,6 +374,15 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
                 LOG.warn("periodic commit of '{}' failed", entry.getKey(), e);
             }
         }
+    }
+
+    /** Uploads the latest commit when snapshots are configured; never throws. */
+    private void snapshotIfConfigured(String subjectName, Subject subject) {
+        if (snapshots == null || subject.snapshotPolicy == null) {
+            return;
+        }
+        snapshots.snapshot(subjectName, subject.served(), subject.snapshotPolicy,
+                indexDir.resolve(subjectName));
     }
 
     /**
@@ -688,6 +730,18 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
             Thread.currentThread().interrupt();
         }
         UncheckedIOException failure = null;
+        for (Map.Entry<String, Subject> entry : subjects.entrySet()) {
+            Subject subject = entry.getValue();
+            try {
+                if (subject.writer().isOpen() && subject.writer().hasUncommittedChanges()) {
+                    subject.writer().commit();
+                }
+            } catch (IOException | RuntimeException e) {
+                // The writer close below still commits what it can.
+                LOG.warn("final commit of '{}' failed", entry.getKey(), e);
+            }
+            snapshotIfConfigured(entry.getKey(), subject);
+        }
         for (Subject subject : subjects.values()) {
             try {
                 subject.searchers().close();
