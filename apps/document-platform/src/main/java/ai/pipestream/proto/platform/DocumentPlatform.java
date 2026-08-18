@@ -26,8 +26,10 @@ import ai.pipestream.proto.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.index.spi.VectorSimilarity;
 import ai.pipestream.proto.metric.MetricBackend;
 import ai.pipestream.proto.metric.iceberg.IcebergMetricExecutor;
+import ai.pipestream.proto.metric.iceberg.IcebergRollupSink;
 import ai.pipestream.proto.metric.lucene.MetricDoorModule;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
+import ai.pipestream.proto.metric.spi.RollupSink;
 import ai.pipestream.proto.lake.iceberg.LocalFileIO;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Catalog;
@@ -91,6 +93,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private final SearchConsoleModule searchConsole;
     private final S3Client snapshotClient;
     private final Catalog metricsCatalog;
+    private final LocalLakeRollupSink defaultRollupLake;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -188,6 +191,17 @@ public final class DocumentPlatform implements AutoCloseable {
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
                 : null;
         this.metricsCatalog = lakeConfig == null ? null : metricsCatalog(lakeConfig);
+        // Rollups always have somewhere to land: the configured lake when
+        // the family is set, a lazily created local lake otherwise. The
+        // default mounts the SINK only, never the Iceberg query backend,
+        // so a plain single-engine mount keeps answering unset-backend
+        // queries with Lucene.
+        this.defaultRollupLake = config.mounts(MetricDoorModule.ROLE) && lakeConfig == null
+                ? new LocalLakeRollupSink(Path.of(metricsLakeDir(config.environment())))
+                : null;
+        RollupSink rollupSink = lakeConfig != null
+                ? new IcebergRollupSink(metricsCatalog, lakeConfig.namespace())
+                : defaultRollupLake;
         this.metrics = config.mounts(MetricDoorModule.ROLE)
                 ? new MetricDoorModule(new MetricDoorModule.Config(
                         config.metricsGrpcPort(),
@@ -199,7 +213,8 @@ public final class DocumentPlatform implements AutoCloseable {
                                         : Map.of(MetricBackend.METRIC_BACKEND_ICEBERG,
                                                 new IcebergMetricExecutor(lakeTables(
                                                         metricsCatalog,
-                                                        lakeConfig.namespace())))))))
+                                                        lakeConfig.namespace()))))),
+                        rollupSink))
                 : null;
         this.searchConsole = config.mounts(SearchConsoleModule.ROLE)
                 ? new SearchConsoleModule(new SearchConsoleModule.Config(
@@ -263,6 +278,9 @@ public final class DocumentPlatform implements AutoCloseable {
         if (lakeConfig != null) {
             surfaces.add("metrics lake " + lakeConfig.catalogUri()
                     + " namespace " + lakeConfig.namespace());
+        } else if (defaultRollupLake != null) {
+            surfaces.add("metrics rollups land in the local lake "
+                    + metricsLakeDir(config.environment()) + " (created on first rebuild)");
         }
         if (registry != null) {
             surfaces.add("registry http " + registry.httpPort());
@@ -376,6 +394,80 @@ public final class DocumentPlatform implements AutoCloseable {
                 closeable.close();
             } catch (Exception e) {
                 LOG.warn("closing the metrics lake catalog failed", e);
+            }
+        }
+        if (defaultRollupLake != null) {
+            defaultRollupLake.close();
+        }
+    }
+
+    /** The default local metrics lake directory, per the environment. */
+    static String metricsLakeDir(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_METRICS_LAKE_DIR, "").trim();
+        return value.isEmpty() ? DocumentPlatformConfig.DEFAULT_METRICS_LAKE_DIR : value;
+    }
+
+    /**
+     * The rollup sink's default home when no catalog family is set: a
+     * local lake (sqlite catalog, Parquet data, the sink's LocalFileIO)
+     * created lazily on the first rebuild, so a node that never rebuilds
+     * a rollup never touches the directory. The rollup stays a lake
+     * table: protobuf-schema'd Parquet any engine can scan, exportable or
+     * indexable later without asking this node.
+     */
+    private static final class LocalLakeRollupSink
+            implements ai.pipestream.proto.metric.spi.RollupSink {
+
+        private final Path dir;
+        private JdbcCatalog catalog;
+        private ai.pipestream.proto.metric.spi.RollupSink delegate;
+
+        LocalLakeRollupSink(Path dir) {
+            this.dir = dir;
+        }
+
+        @Override
+        public synchronized Written replace(String table, List<String> dimensions,
+                List<String> measures, List<ai.pipestream.proto.metric.MetricRow> rows) {
+            if (delegate == null) {
+                try {
+                    java.nio.file.Files.createDirectories(dir);
+                } catch (IOException e) {
+                    throw new IllegalStateException("cannot create the default metrics"
+                            + " lake at " + dir + ": set "
+                            + DocumentPlatformConfig.ENV_METRICS_LAKE_DIR
+                            + " to a writable directory, or the "
+                            + MetricsIcebergConfig.ENV_CATALOG_URI + " family", e);
+                }
+                JdbcCatalog jdbc = new JdbcCatalog();
+                jdbc.initialize(MetricsIcebergConfig.CATALOG_NAME, Map.of(
+                        CatalogProperties.URI,
+                        "jdbc:sqlite:" + dir.resolve("catalog.db"),
+                        CatalogProperties.WAREHOUSE_LOCATION, dir.toString(),
+                        CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
+                org.apache.iceberg.catalog.Namespace namespace =
+                        org.apache.iceberg.catalog.Namespace.of(
+                                MetricsIcebergConfig.DEFAULT_NAMESPACE);
+                // This lake is the platform's own storage, like the search
+                // index directory, so the namespace is ours to create.
+                if (!jdbc.namespaceExists(namespace)) {
+                    jdbc.createNamespace(namespace);
+                }
+                catalog = jdbc;
+                delegate = new IcebergRollupSink(
+                        jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
+            }
+            return delegate.replace(table, dimensions, measures, rows);
+        }
+
+        synchronized void close() {
+            if (catalog != null) {
+                try {
+                    catalog.close();
+                } catch (Exception e) {
+                    LOG.warn("closing the default metrics lake failed", e);
+                }
             }
         }
     }

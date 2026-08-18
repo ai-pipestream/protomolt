@@ -186,6 +186,111 @@ class MetricDoorServicesTest {
         }
     }
 
+    /** A rollup sink that records the one replace it receives. */
+    static final class FakeRollupSink implements ai.pipestream.proto.metric.spi.RollupSink {
+        String table;
+        List<String> dimensions;
+        List<String> measures;
+        List<MetricRow> rows;
+
+        @Override
+        public Written replace(String table, List<String> dimensions,
+                List<String> measures, List<MetricRow> rows) {
+            this.table = table;
+            this.dimensions = dimensions;
+            this.measures = measures;
+            this.rows = rows;
+            return new Written("protomolt." + table, rows.size(), 42L);
+        }
+    }
+
+    private static ai.pipestream.proto.metric.RebuildRollupRequest.Builder rebuild() {
+        return ai.pipestream.proto.metric.RebuildRollupRequest.newBuilder()
+                .setMappingSubject("orders")
+                .addMeasures("revenue")
+                .addDimensions(ai.pipestream.proto.metric.MemberRef.newBuilder()
+                        .setName("segment"))
+                .setTable("revenue_by_segment");
+    }
+
+    @Test
+    void rebuildRollupRunsTheQueryAndHandsTheAnswerToTheSink() throws Exception {
+        FakeRollupSink rollups = new FakeRollupSink();
+        try (MetricDoorServices rollupDoor = MetricDoorServices.build(subjects, rollups)) {
+            String name = InProcessServerBuilder.generateName();
+            rollupDoor.startInProcess(name);
+            ManagedChannel rollupChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                ai.pipestream.proto.metric.RebuildRollupResponse written =
+                        MetricServiceGrpc.newBlockingStub(rollupChannel)
+                                .rebuildRollup(rebuild().build());
+                assertThat(written.getTable()).isEqualTo("protomolt.revenue_by_segment");
+                assertThat(written.getRowsWritten()).isEqualTo(1);
+                assertThat(written.getSnapshotId()).isEqualTo(42L);
+                assertThat(written.getPhysicalPlan()).isEqualTo("fake-plan");
+                assertThat(written.getBackend())
+                        .isEqualTo(MetricBackend.METRIC_BACKEND_LUCENE);
+                assertThat(rollups.table).isEqualTo("revenue_by_segment");
+                assertThat(rollups.dimensions).containsExactly("segment");
+                assertThat(rollups.measures).containsExactly("revenue");
+                assertThat(rollups.rows).hasSize(1);
+            } finally {
+                rollupChannel.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void rebuildRollupWithoutASinkRefusesWithMissingSink() {
+        assertThatThrownBy(() -> stub.rebuildRollup(rebuild().build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("[missing-sink]");
+                });
+    }
+
+    @Test
+    void aRollupThatFillsTheGroupBudgetRefusesInsteadOfTruncating() throws Exception {
+        // An engine answering exactly the budget cannot attest the rollup
+        // complete, so nothing lands: exact or refused, never truncated.
+        MetricExecutor wide = new FakeExecutor() {
+            @Override
+            public Result execute(CompiledMetricQuery query) {
+                List<MetricRow> rows = new java.util.ArrayList<>();
+                for (int i = 0; i < 1000; i++) {
+                    rows.add(MetricRow.newBuilder()
+                            .putDimensions("segment", "s" + i)
+                            .putMeasures("revenue", (double) i).build());
+                }
+                return new Result(rows, "wide-plan");
+            }
+        };
+        FakeRollupSink rollups = new FakeRollupSink();
+        try (MetricDoorServices wideDoor = MetricDoorServices.build(Map.of(
+                "orders", new ServedMetricSubject(
+                        subjects.get("orders").mapping(),
+                        Map.of(MetricBackend.METRIC_BACKEND_LUCENE, wide))), rollups)) {
+            String name = InProcessServerBuilder.generateName();
+            wideDoor.startInProcess(name);
+            ManagedChannel wideChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                assertThatThrownBy(() -> MetricServiceGrpc.newBlockingStub(wideChannel)
+                        .rebuildRollup(rebuild().build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                            assertThat(e.getStatus().getDescription())
+                                    .contains("[rollup-budget]");
+                        });
+                assertThat(rollups.table).as("nothing landed").isNull();
+            } finally {
+                wideChannel.shutdownNow();
+            }
+        }
+    }
+
     @Test
     void describeAndQueryRoundTrip() {
         DescribeMappingResponse described = stub.describeMapping(

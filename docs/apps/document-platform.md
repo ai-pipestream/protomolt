@@ -136,6 +136,17 @@ naming both — a caller picks `METRIC_BACKEND_LUCENE` (the live index) or
 nothing changes: the single-engine mount keeps answering unset-backend
 queries with Lucene, which is configuration, not a guess.
 
+Rollups always have somewhere to land (see
+[Rollups](../search/metrics.md#rollups)): with the family set,
+`RebuildRollup` replaces tables in that lake; without it, rollups land
+in a default local lake — a sqlite catalog plus Parquet under
+`DOCUMENT_PLATFORM_METRICS_LAKE_DIR` (default `/data/metrics-lake`),
+created lazily on the first rebuild, so a node that never rebuilds
+never touches the directory. The default mounts the rollup sink only,
+never the Iceberg query backend, so the single-engine query surface is
+unchanged. The `rebuild-rollup` workflow registers with the co-mounted
+registry and submits through the jobs role like any other workflow.
+
 ## Configuration
 
 The repository half of the platform reads the `DOCUMENT_PLATFORM_*` family
