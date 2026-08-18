@@ -114,13 +114,6 @@ lint:
 breaking:
   use:
     - FILE
-  # TEMPORARY (drop in the next PR): deliberate pre-GA wire break — the
-  # metric surface's MetricRange converges onto the canonical
-  # ai.pipestream.proto.types.v1.DateRange (message deleted, the
-  # MetricFilter.range field changes type). Nothing is in production.
-  except:
-    - MESSAGE_NO_DELETE
-    - FIELD_SAME_TYPE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore
