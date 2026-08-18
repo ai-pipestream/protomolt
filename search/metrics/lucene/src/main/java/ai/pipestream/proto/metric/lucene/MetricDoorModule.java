@@ -28,9 +28,9 @@ import java.util.TreeSet;
  * registry). Starting binds the external Netty port.
  *
  * <p>The store is shared in process, never over a wire: a node mounting
- * this role without the search role refuses to wire. A remote metrics
- * node is a different composition (an index restored from a snapshot) and
- * does not exist yet.
+ * this role without the search role refuses to wire. The remote metrics
+ * node is this role beside a READ-ONLY search role whose index restores
+ * from the writer's snapshot, so it needs no repo and writes nothing.
  */
 public final class MetricDoorModule implements ServiceModule {
 

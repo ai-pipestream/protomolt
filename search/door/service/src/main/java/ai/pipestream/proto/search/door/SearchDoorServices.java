@@ -31,7 +31,11 @@ public final class SearchDoorServices implements AutoCloseable {
                 ? new LuceneSearchStore(config.indexDir(), config.subjects())
                 : new LuceneSearchStore(
                         config.indexDir(), config.subjects(), config.snapshots());
-        this.index = new SearchDoorGrpcServices.Index(store, fetcher);
+        // A read-only door has no write surface: the indexing service is
+        // not mounted, so its RPCs answer UNIMPLEMENTED.
+        this.index = config.readOnly()
+                ? null
+                : new SearchDoorGrpcServices.Index(store, fetcher);
         this.search = new SearchDoorGrpcServices.Search(store);
     }
 
@@ -39,15 +43,17 @@ public final class SearchDoorServices implements AutoCloseable {
      * Builds the stack.
      *
      * @param config the door configuration
-     * @param fetcher the document fetcher; closed with this factory when it
-     *        is {@link AutoCloseable}
+     * @param fetcher the document fetcher, required unless the
+     *        configuration is read-only (a reader indexes nothing and
+     *        fetches nothing); closed with this factory when it is
+     *        {@link AutoCloseable}
      * @return the wired, not-yet-started stack
      */
     public static SearchDoorServices build(SearchDoorConfig config, DocumentFetcher fetcher) {
         if (config == null) {
             throw new IllegalArgumentException("config must not be null");
         }
-        if (fetcher == null) {
+        if (fetcher == null && !config.readOnly()) {
             throw new IllegalArgumentException("fetcher must not be null");
         }
         return new SearchDoorServices(config, fetcher);
@@ -61,11 +67,13 @@ public final class SearchDoorServices implements AutoCloseable {
      * @throws IOException when the server fails to bind
      */
     public Server startInProcess(String name) throws IOException {
-        server = InProcessServerBuilder.forName(name)
+        InProcessServerBuilder builder = InProcessServerBuilder.forName(name)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
-                .intercept(ValidatingServerInterceptor.create())
-                .addService(index)
-                .addService(search)
+                .intercept(ValidatingServerInterceptor.create());
+        if (index != null) {
+            builder.addService(index);
+        }
+        server = builder.addService(search)
                 .build()
                 .start();
         return server;
@@ -80,11 +88,13 @@ public final class SearchDoorServices implements AutoCloseable {
      */
     public Server startNetty(int port) throws IOException {
         HealthStatusManager health = new HealthStatusManager();
-        server = NettyServerBuilder.forPort(port)
+        NettyServerBuilder builder = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
-                .intercept(ValidatingServerInterceptor.create())
-                .addService(index)
-                .addService(search)
+                .intercept(ValidatingServerInterceptor.create());
+        if (index != null) {
+            builder.addService(index);
+        }
+        server = builder.addService(search)
                 .addService(health.getHealthService())
                 .addService(ProtoReflectionServiceV1.newInstance())
                 .build()

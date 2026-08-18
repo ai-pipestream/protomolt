@@ -156,6 +156,15 @@ public record DocumentPlatformConfig(
     /** Env var for the metric door gRPC port. */
     public static final String ENV_METRICS_GRPC_PORT = "DOCUMENT_PLATFORM_METRICS_GRPC_PORT";
 
+    /**
+     * Env var making the search role a reader ({@code true}/{@code false},
+     * absent means writable): no repo channel, no indexing surface, and
+     * restore-only snapshots. The remote metrics node is
+     * {@code PROTOMOLT_ROLES=search,metrics} with this set and the
+     * snapshot family pointing at the writer's bucket.
+     */
+    public static final String ENV_SEARCH_READ_ONLY = "DOCUMENT_PLATFORM_SEARCH_READ_ONLY";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

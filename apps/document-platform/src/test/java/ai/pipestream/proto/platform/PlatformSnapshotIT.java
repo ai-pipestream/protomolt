@@ -1,7 +1,11 @@
 package ai.pipestream.proto.platform;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ai.pipestream.proto.metric.MetricServiceGrpc;
+import ai.pipestream.proto.metric.QueryMetricsRequest;
+import ai.pipestream.proto.metric.QueryMetricsResponse;
 import ai.pipestream.proto.repo.container.ledger.LedgerConfig;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
 import ai.pipestream.proto.repo.v1.CreateDriveRequest;
@@ -21,6 +25,8 @@ import ai.pipestream.proto.search.v1.SearchRequest;
 import ai.pipestream.proto.search.v1.SearchResponse;
 import ai.pipestream.proto.search.v1.SearchServiceGrpc;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -38,9 +44,10 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * The snapshot story at the platform level: a node with the
  * {@code DOCUMENT_PLATFORM_SEARCH_SNAPSHOT_S3_*} family set indexes a
- * document and shuts down; a second platform boot over a FRESH, EMPTY
- * index directory restores the corpus from the bucket and answers the
- * same query without reindexing anything.
+ * document and shuts down; a second platform boot, mounting only the
+ * read-only search role and the metrics role over a FRESH, EMPTY index
+ * directory (no repo anywhere), restores the corpus from the bucket,
+ * answers the same query and its aggregate, and mounts no write surface.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class PlatformSnapshotIT {
@@ -108,12 +115,13 @@ class PlatformSnapshotIT {
         return environment;
     }
 
-    static DocumentPlatformConfig config(List<String> roles, Path indexDir) {
+    static DocumentPlatformConfig config(List<String> roles, Path indexDir,
+            Map<String, String> environment) {
         return new DocumentPlatformConfig(
                 repoConfig(), null, null, 0, 0, 0, 0,
                 null, null, null,
                 60L, 1, 0, indexDir, 0, 0,
-                roles, snapshotEnvironment());
+                roles, environment);
     }
 
     static void withChannel(int port, Consumer<ManagedChannel> body) {
@@ -136,7 +144,8 @@ class PlatformSnapshotIT {
                 .setGraphId("intake:" + ACCOUNT)
                 .build();
         try (DocumentPlatform writer = DocumentPlatform.start(
-                config(List.of("repo", "search"), work.resolve("writer-index")), null)) {
+                config(List.of("repo", "search"), work.resolve("writer-index"),
+                        snapshotEnvironment()), null)) {
             withChannel(writer.repoPort(), repo -> {
                 DriveServiceGrpc.newBlockingStub(repo).createDrive(
                         CreateDriveRequest.newBuilder()
@@ -169,9 +178,14 @@ class PlatformSnapshotIT {
                                     .build()));
         }
 
-        // A fresh boot, an untouched directory: the corpus must come from S3.
+        // The remote metrics node: read-only search plus metrics over a
+        // fresh, untouched directory, no repo role at all. The corpus must
+        // come from S3.
+        Map<String, String> readerEnvironment = snapshotEnvironment();
+        readerEnvironment.put(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "true");
         try (DocumentPlatform reader = DocumentPlatform.start(
-                config(List.of("repo", "search"), work.resolve("reader-index")), null)) {
+                config(List.of("search", "metrics"), work.resolve("reader-index"),
+                        readerEnvironment), null)) {
             withChannel(reader.searchPort(), search -> {
                 SearchResponse hits = SearchServiceGrpc.newBlockingStub(search)
                         .search(SearchRequest.newBuilder()
@@ -182,6 +196,26 @@ class PlatformSnapshotIT {
                                 .build());
                 assertThat(hits.getHitsList()).isNotEmpty();
                 assertThat(hits.getHits(0).getDocId()).isEqualTo(docId);
+
+                // No write surface on a reader.
+                assertThatThrownBy(() -> SearchIndexServiceGrpc.newBlockingStub(search)
+                        .indexDocument(IndexDocumentRequest.newBuilder()
+                                .setAddress(address)
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                                assertThat(e.getStatus().getCode())
+                                        .isEqualTo(Status.Code.UNIMPLEMENTED));
+            });
+            withChannel(reader.metricsPort(), metrics -> {
+                QueryMetricsResponse counted = MetricServiceGrpc.newBlockingStub(metrics)
+                        .queryMetrics(QueryMetricsRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .addMeasures("documents")
+                                .setLimit(10)
+                                .build());
+                assertThat(counted.getRows(0).getMeasuresMap())
+                        .containsEntry("documents", 1.0);
             });
         }
     }

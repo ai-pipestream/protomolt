@@ -99,7 +99,12 @@ fails verification wipes and mounts empty. The repository stays the
 source of truth and a snapshot is a cache: losing the bucket loses
 time, never data, because `replay-documents` re-derives any subject.
 This is also what makes a read-only analytics node cheap: the indexing
-node commits and uploads, readers restore and serve.
+node commits and uploads, readers restore and serve. A read-only door
+(`SearchDoorConfig.readOnly`) mounts only the query surface, needs no
+document fetcher, and demands restore-only snapshots, so a reader can
+never overwrite or prune the writer's blobs — see
+[Role nodes](../apps/role-nodes.md#the-remote-metrics-node) for the
+composed form.
 
 The document platform wires this through the
 `DOCUMENT_PLATFORM_SEARCH_SNAPSHOT_S3_*` family (see
