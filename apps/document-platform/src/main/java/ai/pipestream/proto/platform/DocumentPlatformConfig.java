@@ -206,6 +206,37 @@ public record DocumentPlatformConfig(
      */
     public static final String ENV_CONFIG_URL = "DOCUMENT_PLATFORM_CONFIG_URL";
 
+    /**
+     * Env var naming the Kafka bootstrap servers of the config lane's
+     * signal plug: set, the node reads its config subjects off the
+     * compacted config topic through the house serde instead of the
+     * registry source. Mutually exclusive with {@link #ENV_CONFIG_URL};
+     * naming both is a contradiction, refused by name.
+     */
+    public static final String ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS =
+            "DOCUMENT_PLATFORM_CONFIG_KAFKA_BOOTSTRAP_SERVERS";
+
+    /**
+     * Env var naming the compacted config topic; only read with
+     * {@link #ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS} set. Absent means
+     * {@link #DEFAULT_CONFIG_KAFKA_TOPIC}.
+     */
+    public static final String ENV_CONFIG_KAFKA_TOPIC =
+            "DOCUMENT_PLATFORM_CONFIG_KAFKA_TOPIC";
+
+    /**
+     * Env var naming the Confluent-compatible schema registry URL the
+     * config serde validates against (validate-on-read is forced on).
+     * Required with {@link #ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS}: a config
+     * consumer that cannot resolve schemas cannot verify, and the lane is
+     * verify-then-swap or nothing.
+     */
+    public static final String ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL =
+            "DOCUMENT_PLATFORM_CONFIG_KAFKA_SCHEMA_REGISTRY_URL";
+
+    /** The default compacted config topic. */
+    public static final String DEFAULT_CONFIG_KAFKA_TOPIC = "protomolt-config";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

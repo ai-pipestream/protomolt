@@ -80,7 +80,8 @@ public final class RegistryModule implements ServiceModule {
                 }
                 RegistryFederation federation = RegistryFederation.over(store);
                 catalog = catalog.register(new RegistryRemotesAction(federation))
-                        .register(new RegistrySyncAction(federation));
+                        .register(new RegistrySyncAction(federation))
+                        .register(new PublishConfigAction(store));
                 server = new SchemaRegistryServer(serverConfig, store, catalog);
                 httpPort = server.start();
             }

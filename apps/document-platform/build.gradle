@@ -24,6 +24,7 @@ dependencies {
     // consumer.
     implementation project(':protomolt-config')
     implementation project(':protomolt-config-registry')
+    implementation project(':protomolt-config-kafka')
     implementation project(':protomolt-search-console')
     implementation project(':protomolt-metric-lucene')
     implementation project(':protomolt-metric-spi')
