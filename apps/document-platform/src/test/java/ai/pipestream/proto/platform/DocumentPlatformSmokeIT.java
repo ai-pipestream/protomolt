@@ -413,7 +413,12 @@ class DocumentPlatformSmokeIT {
         ObjectNode describe = MAPPER.createObjectNode();
         describe.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         JsonNode described = postAction("describe-mapping", describe);
-        assertThat(described.path("members").toString()).contains("documents");
+        assertThat(described.path("members").toString())
+                .contains("documents")
+                .contains("document_type")
+                .contains("language")
+                .contains("category")
+                .contains("processed_date");
 
         ObjectNode query = MAPPER.createObjectNode();
         ObjectNode request = query.putObject("request");

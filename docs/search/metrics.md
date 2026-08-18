@@ -80,8 +80,18 @@ node; a `metrics` role without `search` refuses to wire instead of
 serving an empty corpus, and a metric subject must name a served search
 mapping subject. The document platform mounts it by default on port 9095
 (`DOCUMENT_PLATFORM_METRICS_GRPC_PORT`), serving `repo-document` with a
-`documents` COUNT measure, and contributes the two verbs to the
-registry's actions route. The metric declarations reach only top-level
-message fields today: dimensions over the nested `search_metadata`
-fields (document type, language, category, processed date) arrive with
-nested member support in the SPI.
+`documents` COUNT measure, dimensions over the folded search metadata's
+document type, language, and category, and a processed-date time
+dimension defaulting to daily grain; the two verbs ride the registry's
+actions route. Each dimension field carries a facetable hint in the
+search mapping, because the executor reads the doc values that hint
+writes: the two declarations move together.
+
+Declarations on nested fields work: the mapping build descends singular
+message fields (Timestamp stays a DATE leaf), and a nested member's
+field name is the flattened engine name (`parent_child`, the index
+mapping's own naming; an index-side name override puts a field out of
+metric reach). A nested `filter_cel` speaks about its declaring
+message's siblings and its translated filters take the member's own
+prefix. Repeated paths cannot carry members and refuse loudly, and
+recursive types stop the descent.
