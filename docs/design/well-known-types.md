@@ -178,6 +178,19 @@ is left to the type's own structural rules. Given a mounted version
 the verdict is deterministic, which is what keeps this on the
 validation side of the screening line below.
 
+The first platform consumer is the search door's **document gate**,
+opt-in by environment (`DOCUMENT_PLATFORM_TAXONOMIES`, a
+comma-separated list of names; it requires the config lane): the door
+historically indexed fetched documents without validating their
+declared rules, and with taxonomies named it validates each fetched
+document over the live mounts before anything indexes — membership
+enforced as of index time, refusals naming the violations, and
+fail-closed while a declared taxonomy has not yet mounted. Unset, the
+door behaves exactly as before. Packed `google.protobuf.Any` payloads
+stay with the seams that own a descriptor registry (the indexing
+facade and the engines' payload gate); this door's registry-free gate
+deliberately covers the document's own typed fields.
+
 Licensing rule, in force because this project intends to be
 Apache-governed: bundle in-tree only JDK-derived data or ASF
 category-A sources (Unicode/CLDR, IANA and tzdata, Dublin Core CC-BY

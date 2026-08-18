@@ -4,6 +4,9 @@ dependencies {
     api project(':protomolt-composer')
     api project(':protomolt-search-proto')
     api project(':protomolt-index-spi')
+    // The document gate's validator and the TaxonomyCatalog seam are API:
+    // hosts hand the module a catalog and the builder a validator.
+    api project(':protomolt-protobuf-validation')
     implementation project(':protomolt-index-lucene')
     implementation project(':protomolt-mapper-core')
     implementation project(':protomolt-descriptors')
