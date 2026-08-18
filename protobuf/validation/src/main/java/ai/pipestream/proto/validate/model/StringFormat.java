@@ -55,7 +55,11 @@ public enum StringFormat {
     SHA1_HEX("string.sha1_hex", "value must be a lowercase hex SHA-1 digest",
             Formats::isSha1Hex),
     HEX("string.hex", "value must be lowercase hexadecimal", Formats::isHex),
-    BASE64("string.base64", "value must be base64", Formats::isBase64);
+    BASE64("string.base64", "value must be base64", Formats::isBase64),
+    SLUG("string.slug", "value must be a lowercase slug (a-z0-9 with interior ., _ or -)",
+            Formats::isSlug),
+    REGION_CODE("string.region_code", "value must be an ISO 3166-1 alpha-2 region code",
+            Formats::isRegionCode);
 
     private final String ruleId;
     private final String defaultMessage;

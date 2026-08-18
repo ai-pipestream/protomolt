@@ -160,4 +160,18 @@ public final class Formats {
     public static boolean isBase64(String value) {
         return Encodings.isBase64(value);
     }
+
+    /**
+     * Lowercase slug: {@code a-z0-9} with interior single {@code .}, {@code _} or
+     * {@code -} separators, starting and ending alphanumeric. Compose with len
+     * rules for length bounds.
+     */
+    public static boolean isSlug(String value) {
+        return Identifiers.isSlug(value);
+    }
+
+    /** ISO 3166-1 alpha-2 region code from the JDK's own table ({@code US}). */
+    public static boolean isRegionCode(String value) {
+        return Vocabularies.isRegionCode(value);
+    }
 }

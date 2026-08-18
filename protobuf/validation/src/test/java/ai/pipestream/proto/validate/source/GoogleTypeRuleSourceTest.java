@@ -30,6 +30,8 @@ class GoogleTypeRuleSourceTest {
     private static final Descriptor INTERVAL = intervalDescriptor();
     private static final Descriptor DATE = dateDescriptor();
     private static final Descriptor LAT_LNG = latLngDescriptor();
+    private static final Descriptor PHONE = phoneNumberDescriptor();
+    private static final Descriptor ADDRESS = postalAddressDescriptor();
 
     private static List<String> ruleIds(Message message) {
         return VALIDATOR.validate(message).violations().stream()
@@ -101,6 +103,87 @@ class GoogleTypeRuleSourceTest {
     void coordinatesKeepTheirBounds() {
         assertThat(ruleIds(latLng(90.5, 0))).containsExactly("double.gte_lte");
         assertThat(ruleIds(latLng(0, -180.5))).containsExactly("double.gte_lte");
+    }
+
+    @Test
+    void wellFormedPostalAndPhoneValuesPass() {
+        assertThat(ruleIds(phone("+41446681800", ""))).isEmpty();
+        assertThat(ruleIds(shortCodePhone("US", "611"))).isEmpty();
+        assertThat(ruleIds(address("CH", "de-CH", 0))).isEmpty();
+        // language_code is optional; region_code is not.
+        assertThat(ruleIds(address("US", "", 0))).isEmpty();
+    }
+
+    @Test
+    void aPhoneNumberNeedsExactlyOneKind() {
+        assertThat(ruleIds(DynamicMessage.getDefaultInstance(PHONE)))
+                .containsExactly("phone.kind_required");
+    }
+
+    @Test
+    void theE164FormGoesThroughTheTierOneParser() {
+        assertThat(ruleIds(phone("call me maybe", "")))
+                .containsExactly("string.phone_number");
+    }
+
+    @Test
+    void aShortCodeIsCompleteOrRefused() {
+        assertThat(ruleIds(shortCodePhone("US", "")))
+                .containsExactly("short_code.complete");
+        assertThat(ruleIds(shortCodePhone("ZZ", "611")))
+                .containsExactly("string.region_code");
+    }
+
+    @Test
+    void theExtensionKeepsItsDocumentedBound() {
+        assertThat(ruleIds(phone("+41446681800", "1".repeat(41))))
+                .containsExactly("string.max_len");
+    }
+
+    @Test
+    void aPostalAddressNeedsARegion() {
+        assertThat(ruleIds(address("", "", 0)))
+                .containsExactly("address.region_required");
+    }
+
+    @Test
+    void postalVocabulariesComeFromTheJdk() {
+        assertThat(ruleIds(address("XZ", "", 0)))
+                .containsExactly("string.region_code");
+        assertThat(ruleIds(address("US", "not a tag", 0)))
+                .containsExactly("string.language_tag");
+    }
+
+    @Test
+    void theAddressRevisionIsPinnedToZero() {
+        assertThat(ruleIds(address("US", "", 7)))
+                .containsExactly("int32.gte_lte");
+    }
+
+    private static Message phone(String e164, String extension) {
+        return DynamicMessage.newBuilder(PHONE)
+                .setField(PHONE.findFieldByName("e164_number"), e164)
+                .setField(PHONE.findFieldByName("extension"), extension)
+                .build();
+    }
+
+    private static Message shortCodePhone(String region, String number) {
+        Descriptor shortCode = PHONE.findNestedTypeByName("ShortCode");
+        return DynamicMessage.newBuilder(PHONE)
+                .setField(PHONE.findFieldByName("short_code"),
+                        DynamicMessage.newBuilder(shortCode)
+                                .setField(shortCode.findFieldByName("region_code"), region)
+                                .setField(shortCode.findFieldByName("number"), number)
+                                .build())
+                .build();
+    }
+
+    private static Message address(String region, String language, int revision) {
+        return DynamicMessage.newBuilder(ADDRESS)
+                .setField(ADDRESS.findFieldByName("region_code"), region)
+                .setField(ADDRESS.findFieldByName("language_code"), language)
+                .setField(ADDRESS.findFieldByName("revision"), revision)
+                .build();
     }
 
     private static Message money(String currency, long units, int nanos) {
@@ -179,6 +262,37 @@ class GoogleTypeRuleSourceTest {
                 .setName("LatLng")
                 .addField(scalar("latitude", 1, FieldDescriptorProto.Type.TYPE_DOUBLE))
                 .addField(scalar("longitude", 2, FieldDescriptorProto.Type.TYPE_DOUBLE)));
+    }
+
+    private static Descriptor phoneNumberDescriptor() {
+        return build("google/type/phone_number.proto", DescriptorProto.newBuilder()
+                .setName("PhoneNumber")
+                .addNestedType(DescriptorProto.newBuilder()
+                        .setName("ShortCode")
+                        .addField(scalar("region_code", 1,
+                                FieldDescriptorProto.Type.TYPE_STRING))
+                        .addField(scalar("number", 2,
+                                FieldDescriptorProto.Type.TYPE_STRING)))
+                .addOneofDecl(com.google.protobuf.DescriptorProtos.OneofDescriptorProto
+                        .newBuilder().setName("kind"))
+                .addField(scalar("e164_number", 1, FieldDescriptorProto.Type.TYPE_STRING)
+                        .setOneofIndex(0))
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("short_code").setNumber(2)
+                        .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".google.type.PhoneNumber.ShortCode")
+                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)
+                        .setOneofIndex(0))
+                .addField(scalar("extension", 3, FieldDescriptorProto.Type.TYPE_STRING)));
+    }
+
+    private static Descriptor postalAddressDescriptor() {
+        return build("google/type/postal_address.proto", DescriptorProto.newBuilder()
+                .setName("PostalAddress")
+                .addField(scalar("revision", 1, FieldDescriptorProto.Type.TYPE_INT32))
+                .addField(scalar("region_code", 2, FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(scalar("language_code", 3,
+                        FieldDescriptorProto.Type.TYPE_STRING)));
     }
 
     private static Descriptor build(String fileName, DescriptorProto.Builder message) {

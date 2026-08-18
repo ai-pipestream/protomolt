@@ -57,6 +57,33 @@ class WellKnownFormatsTest {
     }
 
     @Test
+    void slugsAreLowercaseWithInteriorSingleSeparators() {
+        assertThat(Formats.isSlug("orders")).isTrue();
+        assertThat(Formats.isSlug("parse-routing")).isTrue();
+        assertThat(Formats.isSlug("a.b_c-d")).isTrue();
+        assertThat(Formats.isSlug("2fa")).isTrue();
+        assertThat(Formats.isSlug("")).isFalse();
+        assertThat(Formats.isSlug("Orders")).isFalse();
+        assertThat(Formats.isSlug("-orders")).isFalse();
+        assertThat(Formats.isSlug("orders-")).isFalse();
+        assertThat(Formats.isSlug("a--b")).isFalse();
+        assertThat(Formats.isSlug("a._b")).isFalse();
+        assertThat(Formats.isSlug("a b")).isFalse();
+        assertThat(Formats.isSlug("café")).isFalse();
+    }
+
+    @Test
+    void regionCodesComeFromTheJdksIso3166Table() {
+        assertThat(Formats.isRegionCode("US")).isTrue();
+        assertThat(Formats.isRegionCode("BR")).isTrue();
+        assertThat(Formats.isRegionCode("CH")).isTrue();
+        assertThat(Formats.isRegionCode("us")).isFalse();
+        assertThat(Formats.isRegionCode("XZ")).isFalse();
+        assertThat(Formats.isRegionCode("USA")).isFalse();
+        assertThat(Formats.isRegionCode("")).isFalse();
+    }
+
+    @Test
     void currencyCodesComeFromTheJdksIso4217Table() {
         assertThat(Formats.isCurrencyCode("USD")).isTrue();
         assertThat(Formats.isCurrencyCode("EUR")).isTrue();

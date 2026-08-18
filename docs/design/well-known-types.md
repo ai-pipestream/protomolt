@@ -48,10 +48,16 @@ Two audit findings shaped the mechanics:
   `currency_code` (Unicode CLDR underneath), so nothing needs
   attribution and nothing needs maintaining.
 
-Held deliberately: a `slug` format (the `[A-Za-z0-9._-]` family, ~30
-sites) until its exact charset and length variants are agreed; formats
-for alternations (`host:port` or URI) until multi-format semantics are
-designed; `semver` (nothing in the repo promises semver).
+Landed later (2026-08-18, charset agreed with the project owner): a
+`slug` format — lowercase `a-z0-9` with interior single `.`, `_` or
+`-` separators, starting and ending alphanumeric, two separators never
+touching; length composes with the len rules, exactly as `hex` does —
+and a `region_code` format (ISO 3166-1 alpha-2 through the JDK's own
+table, the zero-bundling route again). The ~30 audited slug-family
+sites convert in their own sweep, one site at a time against the
+agreed contract. Still held: formats for alternations (`host:port` or
+URI) until multi-format semantics are designed; `semver` (nothing in
+the repo promises semver).
 
 ## Tier 2: structural types with platform behavior
 
@@ -118,9 +124,16 @@ with at least one platform behavior attached — no shape zoo:
   LatLng: coordinate bounds. The audit found the reinventions to
   converge: schema.org `Offer.price` (a decimal string, because
   doubles lose money) beside `MonetaryAmount.value` (a double, losing
-  money) is the case study. PostalAddress and PhoneNumber wait on
-  format work (postal vocabularies; E.164 already has the
-  phone_number Tier-1 format).
+  money) is the case study. PostalAddress and PhoneNumber landed
+  data-free (2026-08-18): PhoneNumber requires exactly one kind, its
+  e164 form goes through the Tier-1 E.164 parser, a short code is
+  complete or refused, and the extension keeps its documented
+  40-character bound; PostalAddress requires its `region_code`
+  (checked against the JDK's ISO 3166 table — zero bundling), takes
+  BCP 47 language codes, and pins `revision` to 0. Per-country
+  postal-code grammar is deliberately data the platform does not
+  bundle: it waits on an operator-loaded pack, the same stance the
+  taxonomy section takes.
 
 ## Taxonomies and ontologies
 

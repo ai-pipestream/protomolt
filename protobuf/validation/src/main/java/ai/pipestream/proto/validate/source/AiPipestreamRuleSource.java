@@ -270,6 +270,12 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         if (rules.getBase64()) {
             b.format(StringFormat.BASE64);
         }
+        if (rules.getSlug()) {
+            b.format(StringFormat.SLUG);
+        }
+        if (rules.getRegionCode()) {
+            b.format(StringFormat.REGION_CODE);
+        }
         return b.build();
     }
 
