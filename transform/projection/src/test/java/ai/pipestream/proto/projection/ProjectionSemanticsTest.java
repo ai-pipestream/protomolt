@@ -2,6 +2,7 @@ package ai.pipestream.proto.projection;
 
 import ai.pipestream.proto.projection.test.BadParseDoc;
 import ai.pipestream.proto.projection.test.CoercionDoc;
+import ai.pipestream.proto.projection.test.DefaultedDoc;
 import ai.pipestream.proto.projection.test.MapDoc;
 import ai.pipestream.proto.projection.test.PresenceDoc;
 import ai.pipestream.proto.projection.test.ScalarZoo;
@@ -108,6 +109,48 @@ class ProjectionSemanticsTest {
         DynamicMessage set = projection(d).project(zoo().setMaybeCount(17).build());
         assertThat(has(set, d, "maybe_count")).isTrue();
         assertThat(field(set, d, "maybe_count")).isEqualTo(17);
+    }
+
+    @Test
+    void materializesCelAndLiteralDefaultsWhenPrimaryValuesAreAbsent() {
+        DynamicMessage out = projection(DefaultedDoc.getDescriptor()).project(zoo().build());
+        Descriptor d = DefaultedDoc.getDescriptor();
+
+        assertThat(field(out, d, "label")).isEqualTo("NOT-A-NUMBER");
+        assertThat(field(out, d, "count")).isEqualTo(17);
+        assertThat(field(out, d, "category")).isEqualTo("calculated-default");
+        assertThat(field(out, d, "short_circuit")).isEqualTo(9L);
+    }
+
+    @Test
+    void primaryProvenanceWinsWithoutEvaluatingTheDefault() {
+        DynamicMessage out = projection(DefaultedDoc.getDescriptor()).project(
+                zoo().setChoiceText("explicit").setMaybeCount(23).build());
+        Descriptor d = DefaultedDoc.getDescriptor();
+
+        assertThat(field(out, d, "label")).isEqualTo("explicit");
+        assertThat(field(out, d, "count")).isEqualTo(23);
+        assertThat(field(out, d, "short_circuit")).isEqualTo(9L);
+    }
+
+    @Test
+    void evaluatesTheDefaultOnlyAfterPrimaryAbsence() {
+        assertThatThrownBy(() -> projection(DefaultedDoc.getDescriptor()).project(
+                zoo().setBig(0L).build()))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("DefaultedDoc.short_circuit");
+    }
+
+    @Test
+    void defaultProvenanceParticipatesInDerivedMasks() {
+        MessageProjection projection = projection(DefaultedDoc.getDescriptor());
+
+        assertThat(projection.targetMask().getPathsList())
+                .containsExactly("label", "count", "category", "short_circuit");
+        MessageProjection.SourceMask reads = projection.sourceMask(ScalarZoo.getDescriptor());
+        assertThat(reads.fieldMask().getPathsList())
+                .containsExactly("choice_text", "maybe_count", "big");
+        assertThat(reads.complete()).isFalse();
     }
 
     @Test

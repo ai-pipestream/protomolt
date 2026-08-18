@@ -39,7 +39,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * field carries {@code (ai.pipestream.proto.projection.v1.from)} with one of
  * three provenance kinds: candidate source paths (first present value wins), a
  * CEL expression (evaluated with the source bound as {@code source}), or a
- * literal constant. Fields without the option are left unset.</p>
+ * literal constant. A field may also carry {@code (default_from)}; that rule is
+ * evaluated only when {@code from} produces no value. Fields without either
+ * option are left unset.</p>
  *
  * <p>Semantics across multiple source types:</p>
  * <ul>
@@ -93,7 +95,8 @@ public final class MessageProjection {
     /** The field options of {@code field} with projection extensions resolved. */
     private static FieldOptions fieldOptions(FieldDescriptor field) {
         FieldOptions options = field.getOptions();
-        if (options.hasExtension(ProjectionProto.from)) {
+        if (options.hasExtension(ProjectionProto.from)
+                || options.hasExtension(ProjectionProto.defaultFrom)) {
             return options;
         }
         try {
@@ -105,7 +108,7 @@ public final class MessageProjection {
 
     private final Descriptor targetType;
     private final List<String> declaredSources;
-    private final List<Rule> rules;
+    private final List<FieldRule> rules;
     private final ProtoFieldMapper fieldMapper;
     private final TypeConverter typeConverter = new TypeConverter();
     private final ConcurrentHashMap<String, CelEvaluator> evaluators = new ConcurrentHashMap<>();
@@ -113,7 +116,7 @@ public final class MessageProjection {
     private MessageProjection(
             Descriptor targetType,
             List<String> declaredSources,
-            List<Rule> rules,
+            List<FieldRule> rules,
             ProtoFieldMapper fieldMapper) {
         this.targetType = targetType;
         this.declaredSources = List.copyOf(declaredSources);
@@ -170,13 +173,22 @@ public final class MessageProjection {
                     "Projection target " + target.getFullName() + " declares no source types");
         }
 
-        List<Rule> rules = new ArrayList<>();
+        List<FieldRule> rules = new ArrayList<>();
         for (FieldDescriptor field : target.getFields()) {
             var fieldOptions = fieldOptions(field);
-            if (!fieldOptions.hasExtension(ProjectionProto.from)) {
+            boolean hasFrom = fieldOptions.hasExtension(ProjectionProto.from);
+            boolean hasDefault = fieldOptions.hasExtension(ProjectionProto.defaultFrom);
+            if (!hasFrom && !hasDefault) {
                 continue;
             }
-            rules.add(toRule(field, fieldOptions.getExtension(ProjectionProto.from)));
+            Rule from = hasFrom
+                    ? toRule(field, "from", fieldOptions.getExtension(ProjectionProto.from))
+                    : null;
+            Rule defaultFrom = hasDefault
+                    ? toRule(field, "default_from",
+                            fieldOptions.getExtension(ProjectionProto.defaultFrom))
+                    : null;
+            rules.add(new FieldRule(field, from, defaultFrom));
         }
 
         MessageProjection projection = new MessageProjection(target, declared, rules, fieldMapper);
@@ -184,13 +196,15 @@ public final class MessageProjection {
         return Optional.of(projection);
     }
 
-    private static Rule toRule(FieldDescriptor field, FieldProjection provenance) {
+    private static Rule toRule(
+            FieldDescriptor field, String optionName, FieldProjection provenance) {
         return switch (provenance.getProvenanceCase()) {
             case PATHS -> {
                 List<String> paths = provenance.getPaths().getPathList();
                 if (paths.isEmpty()) {
                     throw new ProjectionException(
-                            "Projection field " + field.getFullName() + " declares an empty paths list");
+                            "Projection field " + field.getFullName() + " declares an empty "
+                                    + optionName + " paths list");
                 }
                 yield new PathRule(field, paths);
             }
@@ -198,13 +212,15 @@ public final class MessageProjection {
                 String expression = provenance.getCel();
                 if (expression.isBlank()) {
                     throw new ProjectionException(
-                            "Projection field " + field.getFullName() + " declares a blank CEL expression");
+                            "Projection field " + field.getFullName() + " declares a blank "
+                                    + optionName + " CEL expression");
                 }
                 yield new CelRule(field, expression);
             }
             case LITERAL -> new LiteralRule(field, provenance.getLiteral());
             case PROVENANCE_NOT_SET -> throw new ProjectionException(
-                    "Projection field " + field.getFullName() + " declares no provenance");
+                    "Projection field " + field.getFullName() + " declares no provenance for "
+                            + optionName);
         };
     }
 
@@ -221,24 +237,29 @@ public final class MessageProjection {
         if (resolvable.isEmpty()) {
             return;
         }
-        for (Rule rule : rules) {
-            if (!(rule instanceof CelRule celRule)) {
-                continue;
+        for (FieldRule fieldRule : rules) {
+            validateCelRule(fieldRule.from(), resolvable);
+            validateCelRule(fieldRule.defaultFrom(), resolvable);
+        }
+    }
+
+    private void validateCelRule(Rule rule, List<Descriptor> resolvable) {
+        if (!(rule instanceof CelRule celRule)) {
+            return;
+        }
+        boolean compilesSomewhere = false;
+        for (Descriptor sourceType : resolvable) {
+            try {
+                evaluatorFor(sourceType).precompile(celRule.expression());
+                compilesSomewhere = true;
+            } catch (CelCompilationException e) {
+                // Absent for this source type; join semantics, not an error.
             }
-            boolean compilesSomewhere = false;
-            for (Descriptor sourceType : resolvable) {
-                try {
-                    evaluatorFor(sourceType).precompile(celRule.expression());
-                    compilesSomewhere = true;
-                } catch (CelCompilationException e) {
-                    // Absent for this source type; join semantics, not an error.
-                }
-            }
-            if (!compilesSomewhere) {
-                throw new ProjectionException("CEL for projection field "
-                        + celRule.field().getFullName() + " compiles against no declared source of "
-                        + targetType.getFullName() + ": " + celRule.expression());
-            }
+        }
+        if (!compilesSomewhere) {
+            throw new ProjectionException("CEL for projection field "
+                    + celRule.field().getFullName() + " compiles against no declared source of "
+                    + targetType.getFullName() + ": " + celRule.expression());
         }
     }
 
@@ -265,7 +286,7 @@ public final class MessageProjection {
      */
     public FieldMask targetMask() {
         FieldMask.Builder mask = FieldMask.newBuilder();
-        for (Rule rule : rules) {
+        for (FieldRule rule : rules) {
             mask.addPaths(rule.field().getName());
         }
         return mask.build();
@@ -290,18 +311,25 @@ public final class MessageProjection {
         }
         Set<String> paths = new LinkedHashSet<>();
         boolean complete = true;
-        for (Rule rule : rules) {
-            if (rule instanceof PathRule pathRule) {
-                for (String path : pathRule.paths()) {
-                    if (resolves(sourceType, path)) {
-                        paths.add(path);
-                    }
-                }
-            } else if (rule instanceof CelRule celRule && compilesFor(sourceType, celRule.expression())) {
-                complete = false;
-            }
+        for (FieldRule rule : rules) {
+            complete &= addSourceReads(rule.from(), sourceType, paths);
+            complete &= addSourceReads(rule.defaultFrom(), sourceType, paths);
         }
         return new SourceMask(FieldMask.newBuilder().addAllPaths(paths).build(), complete);
+    }
+
+    private boolean addSourceReads(Rule rule, Descriptor sourceType, Set<String> paths) {
+        if (rule instanceof PathRule pathRule) {
+            for (String path : pathRule.paths()) {
+                if (resolves(sourceType, path)) {
+                    paths.add(path);
+                }
+            }
+        } else if (rule instanceof CelRule celRule
+                && compilesFor(sourceType, celRule.expression())) {
+            return false;
+        }
+        return true;
     }
 
     private boolean compilesFor(Descriptor sourceType, String expression) {
@@ -353,8 +381,11 @@ public final class MessageProjection {
                     + " (declared: " + String.join(", ", declaredSources) + ")");
         }
         DynamicMessage.Builder out = DynamicMessage.newBuilder(targetType);
-        for (Rule rule : rules) {
-            Object value = resolve(rule, source, sourceType);
+        for (FieldRule rule : rules) {
+            Object value = resolve(rule.from(), source, sourceType);
+            if (value == null) {
+                value = resolve(rule.defaultFrom(), source, sourceType);
+            }
             if (value != null) {
                 assign(out, rule.field(), value);
             }
@@ -363,6 +394,9 @@ public final class MessageProjection {
     }
 
     private Object resolve(Rule rule, Message source, Descriptor sourceType) {
+        if (rule == null) {
+            return null;
+        }
         if (rule instanceof PathRule pathRule) {
             for (String path : pathRule.paths()) {
                 Object value = tryGet(source, path);
@@ -446,6 +480,9 @@ public final class MessageProjection {
 
     private sealed interface Rule {
         FieldDescriptor field();
+    }
+
+    private record FieldRule(FieldDescriptor field, Rule from, Rule defaultFrom) {
     }
 
     private record PathRule(FieldDescriptor field, List<String> paths) implements Rule {

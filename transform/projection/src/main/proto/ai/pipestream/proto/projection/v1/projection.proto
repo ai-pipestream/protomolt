@@ -50,4 +50,11 @@ extend google.protobuf.MessageOptions {
 extend google.protobuf.FieldOptions {
   // Declares where this field's value comes from during projection.
   FieldProjection from = 59100512;
+
+  // Declares a fallback provenance for this field. It is evaluated only when
+  // `from` is absent for the current source message; it never overwrites a
+  // value produced by `from`. The same paths, CEL, and literal forms are
+  // supported, which lets a schema materialize a calculated CEL default while
+  // keeping the default beside the field it governs.
+  FieldProjection default_from = 59100513;
 }
