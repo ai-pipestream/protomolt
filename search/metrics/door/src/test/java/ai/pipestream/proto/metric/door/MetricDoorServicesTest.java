@@ -1,0 +1,216 @@
+package ai.pipestream.proto.metric.door;
+
+import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.metric.Aggregate;
+import ai.pipestream.proto.metric.DescribeMappingRequest;
+import ai.pipestream.proto.metric.DescribeMappingResponse;
+import ai.pipestream.proto.metric.MemberRole;
+import ai.pipestream.proto.metric.MetricBackend;
+import ai.pipestream.proto.metric.MetricRow;
+import ai.pipestream.proto.metric.MetricServiceGrpc;
+import ai.pipestream.proto.metric.QueryMetricsRequest;
+import ai.pipestream.proto.metric.QueryMetricsResponse;
+import ai.pipestream.proto.metric.TimeGrain;
+import ai.pipestream.proto.metric.spi.CompiledMetricQuery;
+import ai.pipestream.proto.metric.spi.MetricExecutor;
+import ai.pipestream.proto.metric.spi.MetricMapping;
+import ai.pipestream.proto.metric.spi.MetricMapping.FieldKind;
+import ai.pipestream.proto.metric.spi.MetricMapping.MetricMember;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.grpc.ManagedChannel;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.inprocess.InProcessChannelBuilder;
+import io.grpc.inprocess.InProcessServerBuilder;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * The metric door's contract: the validating interceptor answers shape
+ * violations before the handler, membership refusals carry the stable code
+ * in brackets with an honest status, and the two catalog verbs round-trip
+ * proto3 JSON with refusal codes and legal sets in details.
+ */
+class MetricDoorServicesTest {
+
+    static final class FakeExecutor implements MetricExecutor {
+        CompiledMetricQuery executed;
+
+        @Override
+        public MetricBackend backend() {
+            return MetricBackend.METRIC_BACKEND_LUCENE;
+        }
+
+        @Override
+        public Capabilities capabilities() {
+            return new Capabilities(
+                    Set.of(Aggregate.AGGREGATE_COUNT, Aggregate.AGGREGATE_SUM), true, true);
+        }
+
+        @Override
+        public Result execute(CompiledMetricQuery query) {
+            executed = query;
+            return new Result(List.of(MetricRow.newBuilder()
+                    .putDimensions("segment", "smb")
+                    .putMeasures("revenue", 180.0).build()), "fake-plan");
+        }
+    }
+
+    static MetricDoorServices door;
+    static ManagedChannel channel;
+    static MetricServiceGrpc.MetricServiceBlockingStub stub;
+    static Map<String, ServedMetricSubject> subjects;
+
+    @BeforeAll
+    static void boot() throws Exception {
+        Map<String, MetricMember> members = new LinkedHashMap<>();
+        members.put("segment", new MetricMember("segment",
+                MemberRole.MEMBER_ROLE_DIMENSION, Aggregate.AGGREGATE_UNSPECIFIED,
+                "segment", FieldKind.KEYWORD, List.of(), "", List.of(),
+                TimeGrain.TIME_GRAIN_UNSPECIFIED, "Sales segment", "internal"));
+        members.put("revenue", new MetricMember("revenue",
+                MemberRole.MEMBER_ROLE_MEASURE, Aggregate.AGGREGATE_SUM,
+                "amount_cents", FieldKind.NUMERIC, List.of(), "", List.of(),
+                TimeGrain.TIME_GRAIN_UNSPECIFIED, "", ""));
+        MetricMapping mapping = new MetricMapping("orders", "test.Order", members);
+        subjects = Map.of("orders", new ServedMetricSubject(mapping,
+                Map.of(MetricBackend.METRIC_BACKEND_LUCENE, new FakeExecutor())));
+
+        door = MetricDoorServices.build(subjects);
+        String name = InProcessServerBuilder.generateName();
+        door.startInProcess(name);
+        channel = InProcessChannelBuilder.forName(name).build();
+        stub = MetricServiceGrpc.newBlockingStub(channel);
+    }
+
+    @AfterAll
+    static void shutdown() {
+        channel.shutdownNow();
+        door.close();
+    }
+
+    static QueryMetricsRequest.Builder query() {
+        return QueryMetricsRequest.newBuilder()
+                .setMappingSubject("orders").addMeasures("revenue").setLimit(10);
+    }
+
+    @Test
+    void theValidatingInterceptorAnswersShapeViolationsBeforeTheHandler() {
+        // limit 0 violates the request proto's own declared bound; the
+        // refusal wording is the interceptor's, not this door's.
+        assertThatThrownBy(() -> stub.queryMetrics(query().setLimit(0).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("violates the schema's declared rules")
+                            .contains("limit");
+                });
+    }
+
+    @Test
+    void unknownSubjectsAreRefusedWithTheCodeAndTheServedList() {
+        assertThatThrownBy(() -> stub.queryMetrics(
+                query().setMappingSubject("nope").build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("[unknown-subject]")
+                            .contains("orders");
+                });
+    }
+
+    @Test
+    void refusalStatusesSplitCallerErrorsFromMountPreconditions() {
+        assertThatThrownBy(() -> stub.queryMetrics(
+                query().clearMeasures().addMeasures("nope").build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription()).contains("[unknown-member]");
+                });
+        assertThatThrownBy(() -> stub.queryMetrics(
+                query().setBackend(MetricBackend.METRIC_BACKEND_ICEBERG).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(e.getStatus().getDescription()).contains("[unknown-backend]");
+                });
+    }
+
+    @Test
+    void describeAndQueryRoundTrip() {
+        DescribeMappingResponse described = stub.describeMapping(
+                DescribeMappingRequest.newBuilder().setMappingSubject("orders").build());
+        assertThat(described.getMessageType()).isEqualTo("test.Order");
+        assertThat(described.getMembersList()).hasSize(2);
+        assertThat(described.getMembers(0).getDescription()).isEqualTo("Sales segment");
+        assertThat(described.getMembers(0).getSensitivity()).isEqualTo("internal");
+        assertThat(described.getBackendsList())
+                .containsExactly(MetricBackend.METRIC_BACKEND_LUCENE);
+
+        QueryMetricsResponse answered = stub.queryMetrics(query().build());
+        assertThat(answered.getRowCount()).isEqualTo(1);
+        assertThat(answered.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(180.0);
+        assertThat(answered.getPhysicalPlan()).isEqualTo("fake-plan");
+    }
+
+    // ------------------------------------------------------------- the verbs
+
+    @Test
+    void theVerbsRoundTripProto3JsonWithRefusalCodesInDetails() throws Exception {
+        List<ProtoAction> actions = MetricActions.over(subjects);
+        assertThat(actions).extracting(ProtoAction::name)
+                .containsExactly("describe-mapping", "query-metrics");
+        ActionContext context = ActionContext.create();
+        ObjectMapper mapper = new ObjectMapper();
+
+        ObjectNode describeInput = mapper.createObjectNode().put("mappingSubject", "orders");
+        ObjectNode described = actions.get(0).execute(describeInput, context);
+        assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
+
+        ObjectNode queryInput = mapper.createObjectNode();
+        queryInput.putObject("request")
+                .put("mappingSubject", "orders")
+                .put("limit", 10)
+                .putArray("measures").add("revenue");
+        ObjectNode answered = actions.get(1).execute(queryInput, context);
+        assertThat(answered.get("rows").get(0).get("measures").get("revenue").asDouble())
+                .isEqualTo(180.0);
+
+        ObjectNode unknown = mapper.createObjectNode().put("mappingSubject", "nope");
+        assertThatThrownBy(() -> actions.get(0).execute(unknown, context))
+                .isInstanceOfSatisfying(ActionException.class, e -> {
+                    assertThat(e.code()).isEqualTo("unknown-subject");
+                    assertThat(e.details().orElseThrow().get("legal").get(0).asText())
+                            .isEqualTo("orders");
+                });
+
+        ObjectNode badMember = mapper.createObjectNode();
+        badMember.putObject("request")
+                .put("mappingSubject", "orders")
+                .put("limit", 10)
+                .putArray("measures").add("nope");
+        assertThatThrownBy(() -> actions.get(1).execute(badMember, context))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("unknown-member"));
+
+        ObjectNode garbage = mapper.createObjectNode();
+        garbage.putObject("request").put("limit", "not-a-number");
+        assertThatThrownBy(() -> actions.get(1).execute(garbage, context))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("invalid-input"));
+    }
+}
