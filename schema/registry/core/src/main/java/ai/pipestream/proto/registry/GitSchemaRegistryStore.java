@@ -64,6 +64,7 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
 
     private static final String SUBJECTS_DIR = "subjects";
     private static final String WORKFLOWS_DIR = "workflows";
+    private static final String CONFIGS_DIR = "configs";
     private static final String WORKFLOW_VERSIONS_DIR = "workflow-versions";
     private static final String DESCRIPTORS_DIR = "descriptors/sha256";
     private static final String REGISTRY_FILE = "registry.json";
@@ -427,6 +428,86 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
             throw new IllegalArgumentException("descriptor fingerprint escapes registry storage");
         }
         return resolved;
+    }
+
+    /**
+     * Stores one config document envelope per put under
+     * {@code configs/<name>.json}. The registry server gates writes (type
+     * resolution against the registered schemas, strict parse, and the
+     * type's own declared rules); the store only persists and versions via
+     * Git history.
+     *
+     * @param name the config subject
+     * @param envelopeJson the envelope document
+     * @return the commit id: the document's version
+     */
+    public String putConfig(String name, String envelopeJson) throws RegistryStoreException {
+        requireDocumentName(name, "Config");
+        Objects.requireNonNull(envelopeJson, "envelopeJson");
+        return locked(() -> {
+            String path = CONFIGS_DIR + "/" + encode(name) + ".json";
+            Files.createDirectories(repoDir.resolve(CONFIGS_DIR));
+            Files.writeString(repoDir.resolve(path), envelopeJson);
+            commit(List.of(path), "Put config " + name);
+            return git.getRepository().resolve("HEAD").getName();
+        });
+    }
+
+    /** The named config document's envelope JSON, when present. */
+    public Optional<String> config(String name) throws RegistryStoreException {
+        requireDocumentName(name, "Config");
+        Path path = repoDir.resolve(CONFIGS_DIR).resolve(encode(name) + ".json");
+        try {
+            return Files.isRegularFile(path)
+                    ? Optional.of(Files.readString(path))
+                    : Optional.empty();
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to read config " + name, e);
+        }
+    }
+
+    /**
+     * The named config document's version: the last commit that touched
+     * it, or empty when the document does not exist.
+     */
+    public Optional<String> configVersion(String name) throws RegistryStoreException {
+        requireDocumentName(name, "Config");
+        String path = CONFIGS_DIR + "/" + encode(name) + ".json";
+        if (!Files.isRegularFile(repoDir.resolve(path))) {
+            return Optional.empty();
+        }
+        try {
+            for (var commit : git.log().addPath(path).setMaxCount(1).call()) {
+                return Optional.of(commit.getName());
+            }
+            return Optional.empty();
+        } catch (Exception e) {
+            throw new RegistryStoreException("Failed to read config version " + name, e);
+        }
+    }
+
+    /** Every stored config subject, sorted. */
+    public List<String> configs() throws RegistryStoreException {
+        Path dir = repoDir.resolve(CONFIGS_DIR);
+        if (!Files.isDirectory(dir)) {
+            return List.of();
+        }
+        try (var files = Files.list(dir)) {
+            return files.map(path -> path.getFileName().toString())
+                    .filter(fileName -> fileName.endsWith(".json"))
+                    .map(fileName -> decode(fileName.substring(0, fileName.length() - 5)))
+                    .sorted()
+                    .toList();
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to list configs", e);
+        }
+    }
+
+    private static void requireDocumentName(String name, String kind) {
+        if (name == null || name.isBlank() || !name.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException(
+                    kind + " names use [A-Za-z0-9._-]; got '" + name + "'");
+        }
     }
 
     private static void requireWorkflowName(String name) {

@@ -1,6 +1,8 @@
 package ai.pipestream.proto.registry.server;
 
 import ai.pipestream.proto.actions.ActionCatalog;
+import ai.pipestream.proto.registry.ConfigSupport;
+import ai.pipestream.proto.registry.InvalidConfigException;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.registry.CompatibilityModes;
@@ -250,6 +252,16 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 && segments.get(1).equals("subjects") && segments.get(3).equals("parquet-schema")) {
             requireMethod(exchange, method, "GET", () -> parquetSchema(exchange, segments.get(2)));
         } else if (segments.size() == 2 && segments.get(0).equals(nativePrefix)
+                && segments.get(1).equals("configs")) {
+            requireMethod(exchange, method, "GET", () -> listConfigs(exchange));
+        } else if (segments.size() == 3 && segments.get(0).equals(nativePrefix)
+                && segments.get(1).equals("configs")) {
+            switch (method) {
+                case "GET" -> getConfig(exchange, segments.get(2));
+                case "PUT" -> putConfig(exchange, segments.get(2));
+                default -> methodNotAllowed(exchange, "GET, PUT");
+            }
+        } else if (segments.size() == 2 && segments.get(0).equals(nativePrefix)
                 && segments.get(1).equals("workflows")) {
             requireMethod(exchange, method, "GET", () -> listWorkflows(exchange));
         } else if (segments.size() == 3 && segments.get(0).equals(nativePrefix)
@@ -470,6 +482,80 @@ public final class SchemaRegistryServer implements AutoCloseable {
             writeJson(exchange, 200, json.valueToTree(gitStore.workflows()));
         } catch (Exception e) {
             internalError(exchange, "listing workflows", e);
+        }
+    }
+
+    // ---------------------------------------------------------------- config documents
+
+    private void listConfigs(HttpExchange exchange) throws IOException {
+        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+            writeError(exchange, 404, 40401, "This store does not hold configs");
+            return;
+        }
+        ArrayNode array = json.createArrayNode();
+        gitStore.configs().forEach(array::add);
+        writeJson(exchange, 200, array);
+    }
+
+    /**
+     * One config document, gated on the way out too: the envelope is
+     * re-parsed and re-checked against the registered type's declared
+     * rules, so even a hand-edited repository never serves an invalid
+     * document — it serves a refusal an operator can read.
+     */
+    private void getConfig(HttpExchange exchange, String name) throws IOException {
+        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+            writeError(exchange, 404, 40401, "This store does not hold configs");
+            return;
+        }
+        try {
+            var envelope = gitStore.config(name);
+            if (envelope.isEmpty()) {
+                writeError(exchange, 404, 40401, "Config not found: " + name);
+                return;
+            }
+            ConfigSupport.Gated gated;
+            try {
+                gated = ConfigSupport.gate(store, envelope.get());
+            } catch (InvalidConfigException e) {
+                writeError(exchange, 422, 42202,
+                        "Stored config '" + name + "' no longer gates: " + e.getMessage());
+                return;
+            }
+            ObjectNode body = json.createObjectNode();
+            body.put("name", name);
+            body.put("messageType", gated.messageType());
+            body.put("version", gitStore.configVersion(name).orElse(""));
+            body.put("payloadBase64", java.util.Base64.getEncoder()
+                    .encodeToString(gated.message().toByteArray()));
+            body.set("config", json.readTree(envelope.get()).path(ConfigSupport.CONFIG));
+            writeJson(exchange, 200, body);
+        } catch (IllegalArgumentException e) {
+            writeError(exchange, 422, 42201, e.getMessage());
+        }
+    }
+
+    private void putConfig(HttpExchange exchange, String name) throws IOException {
+        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+            writeError(exchange, 404, 40401, "This store does not hold configs");
+            return;
+        }
+        JsonNode body = readJsonBody(exchange);
+        if (!(body instanceof ObjectNode envelope)) {
+            writeError(exchange, 422, 42201, "The body must be a config envelope object");
+            return;
+        }
+        try {
+            ConfigSupport.gate(store, envelope.toString());
+            String version = gitStore.putConfig(name, envelope.toString());
+            ObjectNode response = json.createObjectNode();
+            response.put("name", name);
+            response.put("version", version);
+            writeJson(exchange, 200, response);
+        } catch (InvalidConfigException e) {
+            writeError(exchange, 422, 42202, e.getMessage());
+        } catch (IllegalArgumentException e) {
+            writeError(exchange, 422, 42201, e.getMessage());
         }
     }
 

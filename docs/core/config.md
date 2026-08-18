@@ -23,3 +23,20 @@ reads the git-backed registry; the Kafka plug reads a compacted topic
 through the house serde with validation on; a test hands out a map.
 Every node is a reader — there are no coordinator nodes, and the writer
 is whoever publishes to the source.
+
+## The registry plug
+
+`protomolt-config-registry` reads config documents from the git-backed
+registry over its native HTTP surface (`GET/PUT
+{prefix}/configs/{name}`, `GET {prefix}/configs`). A document is an
+envelope — `{"messageType": "...", "config": {...}}` — whose config is
+proto3 JSON of a type the registry already serves: reviewable in git
+the way GitOps expects, typed the way protomolt expects. The registry
+is the writer's door: a put resolves the type against the registered
+schemas (an unregistered type refuses naming it), parses strictly, and
+runs the type's own declared rules, so an invalid document never
+reaches Git — and the read side re-gates, so even a hand-edited
+repository or a bad federation merge serves a refusal an operator can
+read, never an invalid document. The version is the commit that last
+touched the document, per document, and the served payload is the typed
+message's bytes ready for the consumer.

@@ -101,6 +101,7 @@ def supportedModules = [
         'protomolt-spring',
         'protomolt-composer',
         'protomolt-config',
+        'protomolt-config-registry',
         'protomolt-server-common',
         'protomolt-server-jdk',
         'protomolt-server-vertx',
