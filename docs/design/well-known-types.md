@@ -118,11 +118,39 @@ order of preference:
    zero bundling, zero attribution, zero list maintenance.
 2. **Structural validation without data** (media types per RFC 6838,
    URIs per RFC 3986): the grammar is the standard.
-3. **Operator-loaded taxonomy documents** for everything else: a
-   `Taxonomy` is a config document — registry-stored, compat-gated,
-   federated, versioned by commit — and the `TreePath` validator
-   checks membership against the *mounted* taxonomy. The mechanism
-   ships; the data is the operator's (or a separately-licensed pack).
+3. **Operator-loaded taxonomy documents** (landed) for everything
+   else: a `Taxonomy` is a config document on the config lane, and
+   the validator checks a bound `TreePath` field's membership against
+   the *mounted* taxonomy. The mechanism ships; the data is the
+   operator's (or a separately-licensed pack).
+
+The taxonomy mechanics, as landed. A `Taxonomy` (types/v1) is just
+`repeated TreePath entries`: an entry names a node by its full path
+from the root, and every ancestor along the way is a node too, so
+listing the leaves is enough. The document carries no name and no
+version — its config subject (`taxonomy:<name>`) is the identity and
+the config source's version (a git commit, a topic offset) is the
+version, the config lane's own version-as-evidence stance; a copy of
+either inside the document could only agree or lie. The `Taxonomy`
+*type* is registered and compat-gated like any schema; the documents
+are per-mesh operator data behind the registry's config door (which
+re-gates on read — config documents deliberately do not federate).
+
+A field binds to a taxonomy in the schema: `taxonomy: "products"` on
+the field rules of a `TreePath` field — singular or repeated;
+anywhere else fails rule compilation. The binding is schema truth
+(same schema, same requirement, forever) while the taxonomy's content
+is mount configuration: `TaxonomyMounts` follows `taxonomy:<name>`
+subjects through `DistributedConfig` — verify-then-swap, so a
+document failing `Taxonomy`'s own declared rules never mounts — and a
+gate constructs its validator over that catalog. Enforcement is
+fail-closed with the version as evidence: a declared taxonomy that is
+not mounted refuses (`taxonomy.unmounted`, never a silent pass), and
+a path that is not a node of the mounted taxonomy refuses naming the
+taxonomy and the mounted version (`taxonomy.member`). An empty path
+is left to the type's own structural rules. Given a mounted version
+the verdict is deterministic, which is what keeps this on the
+validation side of the screening line below.
 
 Licensing rule, in force because this project intends to be
 Apache-governed: bundle in-tree only JDK-derived data or ASF

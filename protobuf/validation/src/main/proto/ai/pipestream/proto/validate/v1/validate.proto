@@ -331,6 +331,13 @@ message FieldRules {
   // presence (optional, message, oneof) already skip when unset; this is
   // for implicit-presence scalars where empty is a legal non-answer.
   bool ignore_if_zero = 17;
+  // Name of the taxonomy the value must be a node of, checked against the
+  // taxonomy mounted under that name on the validator (an operator-loaded
+  // taxonomy config document). Legal only on a singular or repeated field
+  // of ai.pipestream.proto.types.v1.TreePath; anywhere else fails rule
+  // compilation. Enforcement is fail-closed: a declared taxonomy with no
+  // mount refuses rather than passes.
+  string taxonomy = 18;
 }
 
 // Constraints attached to a message as a whole.

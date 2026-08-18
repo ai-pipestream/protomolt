@@ -50,7 +50,11 @@ class ValidatorConstructionTest {
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new ProtoValidator(fieldEvaluator(), null))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> ProtoValidator.create(null))
+        assertThatThrownBy(() -> ProtoValidator.create(
+                (java.util.List<ai.pipestream.proto.validate.spi.ValidationRuleSource>) null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> ProtoValidator.create(
+                (ai.pipestream.proto.validate.spi.TaxonomyCatalog) null))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> ProtoValidator.forMessageType(null))
                 .isInstanceOf(NullPointerException.class);
