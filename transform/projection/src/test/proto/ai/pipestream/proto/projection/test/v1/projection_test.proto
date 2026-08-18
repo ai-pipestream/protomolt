@@ -132,6 +132,44 @@ message ScalarZoo {
   ZooNested nested = 15;
 }
 
+// Fallback provenance: from wins when present; default_from is evaluated only
+// when the primary provenance is absent.
+message DefaultedDoc {
+  option (ai.pipestream.proto.projection.v1.sources) = {
+    source: "ai.pipestream.proto.projection.test.v1.ScalarZoo"
+  };
+
+  optional string label = 1 [
+    (ai.pipestream.proto.projection.v1.from) = {
+      paths: {path: "choice_text"}
+    },
+    (ai.pipestream.proto.projection.v1.default_from) = {
+      cel: "source.name.upperAscii()"
+    }
+  ];
+  optional int32 count = 2 [
+    (ai.pipestream.proto.projection.v1.from) = {
+      paths: {path: "maybe_count"}
+    },
+    (ai.pipestream.proto.projection.v1.default_from) = {
+      cel: "source.small + 10"
+    }
+  ];
+  optional string category = 3 [
+    (ai.pipestream.proto.projection.v1.default_from) = {
+      literal: {string_value: "calculated-default"}
+    }
+  ];
+  optional int64 short_circuit = 4 [
+    (ai.pipestream.proto.projection.v1.from) = {
+      paths: {path: "big"}
+    },
+    (ai.pipestream.proto.projection.v1.default_from) = {
+      cel: "source.big / 0"
+    }
+  ];
+}
+
 // Happy-path coercions: every mapping here must succeed together.
 message CoercionDoc {
   option (ai.pipestream.proto.projection.v1.sources) = {
