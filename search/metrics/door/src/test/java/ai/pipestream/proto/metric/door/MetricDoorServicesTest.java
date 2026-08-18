@@ -314,7 +314,7 @@ class MetricDoorServicesTest {
     void theVerbsRoundTripProto3JsonWithRefusalCodesInDetails() throws Exception {
         List<ProtoAction> actions = MetricActions.over(subjects);
         assertThat(actions).extracting(ProtoAction::name)
-                .containsExactly("describe-mapping", "query-metrics");
+                .containsExactly("describe-mapping", "query-metrics", "rebuild-rollup");
         ActionContext context = ActionContext.create();
         ObjectMapper mapper = new ObjectMapper();
 
@@ -351,6 +351,44 @@ class MetricDoorServicesTest {
         ObjectNode garbage = mapper.createObjectNode();
         garbage.putObject("request").put("limit", "not-a-number");
         assertThatThrownBy(() -> actions.get(1).execute(garbage, context))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("invalid-input"));
+    }
+
+    @Test
+    void theRebuildRollupVerbRunsTheSharedRebuildAndSurfacesRefusalCodes()
+            throws Exception {
+        FakeRollupSink rollups = new FakeRollupSink();
+        List<ProtoAction> actions = MetricActions.over(subjects, rollups);
+        ProtoAction rebuild = actions.get(2);
+        ActionContext context = ActionContext.create();
+        ObjectMapper mapper = new ObjectMapper();
+
+        ObjectNode input = mapper.createObjectNode();
+        ObjectNode request = input.putObject("request");
+        request.put("mappingSubject", "orders");
+        request.put("table", "revenue_by_segment");
+        request.putArray("measures").add("revenue");
+        request.putArray("dimensions").addObject().put("name", "segment");
+        ObjectNode written = rebuild.execute(input, context);
+        assertThat(written.get("table").asText()).isEqualTo("protomolt.revenue_by_segment");
+        assertThat(written.get("rowsWritten").asText()).isEqualTo("1");
+        assertThat(written.get("physicalPlan").asText()).isEqualTo("fake-plan");
+        assertThat(rollups.table).isEqualTo("revenue_by_segment");
+        assertThat(rollups.dimensions).containsExactly("segment");
+
+        // Without a sink the verb refuses exactly like the RPC.
+        ProtoAction sinkless = MetricActions.over(subjects).get(2);
+        assertThatThrownBy(() -> sinkless.execute(input, context))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("missing-sink"));
+
+        // The verb re-checks what the interceptor enforces on the wire.
+        ObjectNode noTable = mapper.createObjectNode();
+        noTable.putObject("request")
+                .put("mappingSubject", "orders")
+                .putArray("measures").add("revenue");
+        assertThatThrownBy(() -> rebuild.execute(noTable, context))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("invalid-input"));
     }

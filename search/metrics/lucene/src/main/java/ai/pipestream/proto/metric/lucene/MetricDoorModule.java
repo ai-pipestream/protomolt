@@ -200,7 +200,7 @@ public final class MetricDoorModule implements ServiceModule {
         inProcess = door.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
 
-        for (ProtoAction action : MetricActions.over(served)) {
+        for (ProtoAction action : MetricActions.over(served, config.rollupSink())) {
             context.contributions().contribute(ProtoAction.class, action);
         }
 

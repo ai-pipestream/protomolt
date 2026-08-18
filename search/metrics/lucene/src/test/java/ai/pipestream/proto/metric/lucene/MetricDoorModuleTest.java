@@ -423,6 +423,52 @@ class MetricDoorModuleTest {
     }
 
     @Test
+    void theModuleThreadsItsRollupSinkIntoTheContributedVerb() throws Exception {
+        // The rebuild verb the module contributes must carry the mount's
+        // sink: a module that dropped it would refuse missing-sink in
+        // production while the RPC works.
+        final java.util.List<String> replaced = new java.util.ArrayList<>();
+        ai.pipestream.proto.metric.spi.RollupSink sink =
+                (table, dimensions, measures, rows) -> {
+                    replaced.add(table);
+                    return new ai.pipestream.proto.metric.spi.RollupSink.Written(
+                            "protomolt." + table, rows.size(), 7L);
+                };
+        SearchDoorModule search = new SearchDoorModule(new SearchDoorModule.Config(
+                0, work.resolve("index"),
+                Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served())));
+        MetricDoorModule metrics = new MetricDoorModule(new MetricDoorModule.Config(
+                0,
+                Map.of(RepoDocumentMapping.SUBJECT, new MetricDoorModule.Subject(
+                        documentsMapping(), RepoDocumentMapping.mapping())),
+                sink));
+        try (Composer.Node node = Composer.emptyBuilder()
+                .module(new FakeRepoModule(Map.of()))
+                .module(search)
+                .module(metrics)
+                .environment(Map.of())
+                .build()
+                .boot(List.of("repo", "search", "metrics"))) {
+            ai.pipestream.proto.actions.ProtoAction rebuild =
+                    node.context().contributions()
+                            .all(ai.pipestream.proto.actions.ProtoAction.class).stream()
+                            .filter(action -> action.name().equals("rebuild-rollup"))
+                            .findFirst().orElseThrow();
+            com.fasterxml.jackson.databind.node.ObjectNode input =
+                    new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+            com.fasterxml.jackson.databind.node.ObjectNode request =
+                    input.putObject("request");
+            request.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+            request.put("table", "documents_total");
+            request.putArray("measures").add("documents");
+            com.fasterxml.jackson.databind.node.ObjectNode written = rebuild.execute(
+                    input, ai.pipestream.proto.actions.ActionContext.create());
+            assertThat(written.get("table").asText()).isEqualTo("protomolt.documents_total");
+            assertThat(replaced).containsExactly("documents_total");
+        }
+    }
+
+    @Test
     void aCoMountedRegistryReceivesTheRebuildRollupWorkflow() throws Exception {
         SearchDoorModule search = new SearchDoorModule(new SearchDoorModule.Config(
                 0, work.resolve("index"),

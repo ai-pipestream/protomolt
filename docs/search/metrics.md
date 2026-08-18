@@ -124,7 +124,10 @@ checkpointed step under the jobs executor calling
 operators submit it by name, with the run's output carrying the
 physical plan and the lake snapshot the replace committed — the
 evidence of what the rollup holds. Nothing runs until submitted:
-optional, as designed.
+optional, as designed. The same rebuild is also a catalog verb
+(`rebuild-rollup`, beside `describe-mapping` and `query-metrics`), so
+an agent surface can refresh a rollup directly without the jobs role —
+one shared code path behind both doors, refusing identically.
 
 ## The platform mount
 
@@ -137,7 +140,7 @@ mapping subject. The document platform mounts it by default on port 9095
 (`DOCUMENT_PLATFORM_METRICS_GRPC_PORT`), serving `repo-document` with a
 `documents` COUNT measure, dimensions over the folded search metadata's
 document type, language, and category, and a processed-date time
-dimension defaulting to daily grain; the two verbs ride the registry's
+dimension defaulting to daily grain; the three verbs ride the registry's
 actions route. Each dimension field carries a facetable hint in the
 search mapping, because the executor reads the doc values that hint
 writes: the two declarations move together.
