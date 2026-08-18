@@ -57,10 +57,11 @@ the jobs store) and RustFS for object storage. Ports:
   model directory is configured (`PROTOMOLT_MODEL2VEC_PATH`), with the
   policy's dims read from the loaded model.
 - The metric door answers over the same live index: `repo-document` serves
-  a `documents` COUNT measure through `MetricService` on the metrics port,
-  and the `describe-mapping` and `query-metrics` verbs ride the registry's
-  actions route. Dimensions over the nested `search_metadata` fields arrive
-  with nested member support in the metric SPI.
+  a `documents` COUNT measure, group-by dimensions on document type,
+  language, and category, and a processed-date time dimension (daily grain
+  by default) through `MetricService` on the metrics port, with the
+  `describe-mapping` and `query-metrics` verbs riding the registry's
+  actions route.
 - The embedded reference text parser serves text and markdown. A fleet of
   external parsers replaces it by pointing
   `DOCUMENT_PLATFORM_PARSE_PROFILES` (+ `..._PROFILE_ENDPOINT`) at a

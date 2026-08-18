@@ -65,6 +65,15 @@ public final class RepoDocumentMapping {
                 ResolvedFieldHint.builder(IndexFieldKind.TEXT).stored(true).build());
         catalog.put("ai.pipestream.proto.repo.v1.SearchMetadata", "body",
                 ResolvedFieldHint.builder(IndexFieldKind.TEXT).stored(true).build());
+        // Facetable doc values back the metric dimensions over this subject
+        // (group-by and date grains read them; without them the metric
+        // executor refuses loudly naming the hint).
+        for (String facet : new String[] {"document_type", "language", "category"}) {
+            catalog.put("ai.pipestream.proto.repo.v1.SearchMetadata", facet,
+                    ResolvedFieldHint.builder(IndexFieldKind.KEYWORD).facetable(true).build());
+        }
+        catalog.put("ai.pipestream.proto.repo.v1.SearchMetadata", "processed_date",
+                ResolvedFieldHint.builder(IndexFieldKind.DATE).facetable(true).build());
         // Storage and provenance planes stay out of the index.
         for (String skipped : new String[] {
                 "parser_results", "blob_bag", "structured_data", "ownership",

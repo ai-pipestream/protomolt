@@ -34,6 +34,14 @@ import java.util.Set;
  * query can trust, so executors and the query compiler never re-validate
  * declarations.
  *
+ * <p>The walk descends into singular message fields, so declarations on
+ * nested fields become members whose {@code fieldName} is the flattened
+ * engine name ({@code parent_child}, matching the index mapping's own
+ * naming from proto field names; an index-side name override puts a field
+ * out of metric reach). Repeated paths cannot carry members, recursive
+ * types stop the descent, and member names stay the bare field name unless
+ * the declaration renames them, with collisions across depths refused.</p>
+ *
  * <p>filter_cel is translated at build time into the engine-neutral
  * equality form (equality over string or bool fields, joined by
  * {@code &&}); a valid-but-untranslatable filter fails the build loudly
@@ -84,24 +92,13 @@ public final class MetricMappings {
         Map<String, MetricMember> members = new LinkedHashMap<>();
         Map<String, FieldDescriptor> memberFields = new LinkedHashMap<>();
         Map<String, FieldMetric> declarations = new LinkedHashMap<>();
-        for (FieldDescriptor field : descriptor.getFields()) {
-            Optional<FieldMetric> declared = source.field(field);
-            if (declared.isEmpty()) {
-                continue;
-            }
-            buildMember(field, declared.get(), violations).ifPresent(member -> {
-                if (members.containsKey(member.name())) {
-                    violations.add("member name '" + member.name() + "' on '"
-                            + field.getFullName() + "' collides with another member");
-                    return;
-                }
-                members.put(member.name(), member);
-                memberFields.put(member.name(), field);
-                declarations.put(member.name(), declared.get());
-            });
-        }
+        Map<String, String> memberPrefixes = new LinkedHashMap<>();
+        Set<String> visiting = new LinkedHashSet<>();
+        visiting.add(descriptor.getFullName());
+        collect(descriptor, "", null, visiting, source,
+                members, memberFields, declarations, memberPrefixes, violations);
 
-        checkCels(descriptor, members, memberFields, declarations, violations);
+        checkCels(members, memberFields, declarations, memberPrefixes, violations);
 
         if (!violations.isEmpty()) {
             throw new MetricSchemaException(descriptor.getFullName(), violations);
@@ -109,11 +106,71 @@ public final class MetricMappings {
         return new MetricMapping(resolvedSubject, descriptor.getFullName(), members);
     }
 
+    // ------------------------------------------------------------- the walk
+
+    /**
+     * Walks the message tree for declarations. {@code prefix} accumulates
+     * the flattened engine field name ({@code parent_child}, the index
+     * mapping's own naming) so a nested member's {@code fieldName} lands on
+     * the field the engine actually wrote. Undeclared singular message
+     * fields are descended (Timestamp stays a DATE leaf, map fields never
+     * carry members); a declaration below a repeated field is a violation,
+     * because a repeated path has no single value to aggregate.
+     */
+    private static void collect(
+            Descriptor type,
+            String prefix,
+            String repeatedAncestor,
+            Set<String> visiting,
+            MetricHintSource source,
+            Map<String, MetricMember> members,
+            Map<String, FieldDescriptor> memberFields,
+            Map<String, FieldMetric> declarations,
+            Map<String, String> memberPrefixes,
+            List<String> violations) {
+        for (FieldDescriptor field : type.getFields()) {
+            Optional<FieldMetric> declared = source.field(field);
+            if (declared.isPresent()) {
+                if (repeatedAncestor != null) {
+                    violations.add("'" + field.getFullName() + "' is reachable only"
+                            + " through repeated field '" + repeatedAncestor
+                            + "'; repeated paths cannot carry metric members");
+                    continue;
+                }
+                buildMember(field, prefix, declared.get(), violations).ifPresent(member -> {
+                    if (members.containsKey(member.name())) {
+                        violations.add("member name '" + member.name() + "' on '"
+                                + field.getFullName() + "' collides with another member");
+                        return;
+                    }
+                    members.put(member.name(), member);
+                    memberFields.put(member.name(), field);
+                    declarations.put(member.name(), declared.get());
+                    memberPrefixes.put(member.name(), prefix);
+                });
+                continue;
+            }
+            if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                    && !field.isMapField()
+                    && !TIMESTAMP_TYPE.equals(field.getMessageType().getFullName())
+                    && visiting.add(field.getMessageType().getFullName())) {
+                collect(field.getMessageType(),
+                        prefix + field.getName() + "_",
+                        repeatedAncestor != null ? repeatedAncestor
+                                : field.isRepeated() ? field.getFullName() : null,
+                        visiting, source,
+                        members, memberFields, declarations, memberPrefixes, violations);
+                visiting.remove(field.getMessageType().getFullName());
+            }
+        }
+    }
+
     // ------------------------------------------------------------- one member
 
     /** One declared field's member, or empty when its violations preclude it. */
     private static Optional<MetricMember> buildMember(
-            FieldDescriptor field, FieldMetric declared, List<String> violations) {
+            FieldDescriptor field, String prefix, FieldMetric declared,
+            List<String> violations) {
         String path = field.getFullName();
         int before = violations.size();
 
@@ -192,7 +249,7 @@ public final class MetricMappings {
                 name,
                 declared.getRole(),
                 declared.getAggregate(),
-                field.getName(),
+                prefix + field.getName(),
                 declared.getCel().isEmpty() ? kind : FieldKind.SYNTHETIC,
                 List.of(),
                 declared.getCel(),
@@ -219,18 +276,16 @@ public final class MetricMappings {
 
     /**
      * Second pass over the collected members: filter_cel compiles typed over
-     * the message and translates to the equality form; calculated cel
-     * compiles over the sibling physical measure names and records what it
-     * reads. Members that fail are replaced by violations.
+     * the declaring message and translates to the equality form; calculated
+     * cel compiles over the sibling physical measure names and records what
+     * it reads. Members that fail are replaced by violations.
      */
     private static void checkCels(
-            Descriptor descriptor,
             Map<String, MetricMember> members,
             Map<String, FieldDescriptor> memberFields,
             Map<String, FieldMetric> declarations,
+            Map<String, String> memberPrefixes,
             List<String> violations) {
-        CelEnvironmentFactory messageEnv = CelEnvironmentFactory.builder()
-                .addMessageVar("this", descriptor);
         CelEnvironmentFactory siblingEnv = CelEnvironmentFactory.builder();
         for (MetricMember member : members.values()) {
             if (member.role() == MemberRole.MEMBER_ROLE_MEASURE && !member.calculated()) {
@@ -249,8 +304,8 @@ public final class MetricMappings {
             if (filterCel.isEmpty()) {
                 continue;
             }
-            checkFilter(entry.getKey(), member, field, filterCel, descriptor,
-                    messageEnv, members, violations);
+            checkFilter(entry.getKey(), member, field, filterCel,
+                    memberPrefixes.get(entry.getKey()), members, violations);
         }
     }
 
@@ -288,13 +343,18 @@ public final class MetricMappings {
             MetricMember member,
             FieldDescriptor field,
             String filterCel,
-            Descriptor descriptor,
-            CelEnvironmentFactory messageEnv,
+            String prefix,
             Map<String, MetricMember> members,
             List<String> violations) {
+        // filter_cel is written against the DECLARING message: `this` is the
+        // field's containing type, so a nested declaration filters over its
+        // own siblings and the translated field names take the same prefix
+        // as the member itself.
+        Descriptor declaring = field.getContainingType();
         CelAbstractSyntaxTree ast;
         try {
-            ast = messageEnv.build().compile(filterCel).getAst();
+            ast = CelEnvironmentFactory.builder().addMessageVar("this", declaring)
+                    .build().compile(filterCel).getAst();
         } catch (CelValidationException e) {
             violations.add("filter_cel on '" + field.getFullName()
                     + "' does not compile: " + e.getMessage());
@@ -306,7 +366,7 @@ public final class MetricMappings {
             return;
         }
         List<EqualsFilter> filters = new ArrayList<>();
-        if (!translate(ast.getExpr(), name, descriptor, filters)) {
+        if (!translate(ast.getExpr(), name, declaring, prefix, filters)) {
             violations.add("filter_cel on '" + field.getFullName()
                     + "' is beyond the translatable subset: "
                     + "equality over string or bool fields, joined by &&");
@@ -327,25 +387,29 @@ public final class MetricMappings {
      * subset.
      */
     private static boolean translate(
-            CelExpr expr, String member, Descriptor descriptor, List<EqualsFilter> filters) {
+            CelExpr expr, String member, Descriptor descriptor, String prefix,
+            List<EqualsFilter> filters) {
         return switch (expr.getKind()) {
             case CALL -> switch (expr.call().function()) {
                 case "_&&_" -> expr.call().args().size() == 2
-                        && translate(expr.call().args().get(0), member, descriptor, filters)
-                        && translate(expr.call().args().get(1), member, descriptor, filters);
-                case "_==_" -> translateEquals(expr, member, descriptor, filters);
+                        && translate(expr.call().args().get(0), member, descriptor, prefix,
+                                filters)
+                        && translate(expr.call().args().get(1), member, descriptor, prefix,
+                                filters);
+                case "_==_" -> translateEquals(expr, member, descriptor, prefix, filters);
                 case "!_" -> expr.call().args().size() == 1
                         && translateBare(expr.call().args().get(0), member, descriptor,
-                                "false", filters);
+                                prefix, "false", filters);
                 default -> false;
             };
-            case SELECT -> translateBare(expr, member, descriptor, "true", filters);
+            case SELECT -> translateBare(expr, member, descriptor, prefix, "true", filters);
             default -> false;
         };
     }
 
     private static boolean translateEquals(
-            CelExpr call, String member, Descriptor descriptor, List<EqualsFilter> filters) {
+            CelExpr call, String member, Descriptor descriptor, String prefix,
+            List<EqualsFilter> filters) {
         if (call.call().args().size() != 2) {
             return false;
         }
@@ -364,12 +428,13 @@ public final class MetricMappings {
         FieldKind kind = kindOf(field);
         CelConstant value = constant.constant();
         if (kind == FieldKind.KEYWORD && value.getKind() == CelConstant.Kind.STRING_VALUE) {
-            filters.add(new EqualsFilter(member, field.getName(), DimensionKind.TERM,
+            filters.add(new EqualsFilter(member, prefix + field.getName(), DimensionKind.TERM,
                     List.of(value.stringValue())));
             return true;
         }
         if (kind == FieldKind.BOOLEAN && value.getKind() == CelConstant.Kind.BOOLEAN_VALUE) {
-            filters.add(new EqualsFilter(member, field.getName(), DimensionKind.BOOLEAN,
+            filters.add(new EqualsFilter(member, prefix + field.getName(),
+                    DimensionKind.BOOLEAN,
                     List.of(Boolean.toString(value.booleanValue()))));
             return true;
         }
@@ -378,7 +443,7 @@ public final class MetricMappings {
 
     /** A bare {@code this.f} (or its negation) over a bool field. */
     private static boolean translateBare(
-            CelExpr expr, String member, Descriptor descriptor, String value,
+            CelExpr expr, String member, Descriptor descriptor, String prefix, String value,
             List<EqualsFilter> filters) {
         if (expr.getKind() != CelExpr.ExprKind.Kind.SELECT) {
             return false;
@@ -387,7 +452,7 @@ public final class MetricMappings {
         if (field == null || kindOf(field) != FieldKind.BOOLEAN) {
             return false;
         }
-        filters.add(new EqualsFilter(member, field.getName(), DimensionKind.BOOLEAN,
+        filters.add(new EqualsFilter(member, prefix + field.getName(), DimensionKind.BOOLEAN,
                 List.of(value)));
         return true;
     }
