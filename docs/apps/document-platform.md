@@ -98,8 +98,12 @@ set restores each subject from the bucket before serving, which is what
 `DOCUMENT_PLATFORM_SEARCH_READ_ONLY=true` makes the search role a
 reader: no repo channel, no `SearchIndexService`, and restore-only
 snapshots (a reader never uploads a commit or prunes the writer's
-blobs). Combined with the `metrics` role this is the remote metrics
-node — see [Role nodes](role-nodes.md).
+blobs). `DOCUMENT_PLATFORM_SEARCH_REFRESH_SECONDS` makes the reader
+follow the writer live, pulling newer snapshots into its serving index
+on that interval; absent means restart-only, and setting it on a
+writable node refuses — refresh is the reader's pull. Combined with the
+`metrics` role this is the remote metrics node — see
+[Role nodes](role-nodes.md).
 
 ## Lake metrics
 

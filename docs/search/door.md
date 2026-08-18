@@ -101,8 +101,14 @@ time, never data, because `replay-documents` re-derives any subject.
 This is also what makes a read-only analytics node cheap: the indexing
 node commits and uploads, readers restore and serve. A read-only door
 (`SearchDoorConfig.readOnly`) mounts only the query surface, needs no
-document fetcher, and demands restore-only snapshots, so a reader can
-never overwrite or prune the writer's blobs — see
+document fetcher, opens no `IndexWriter` at all (no write lock, no
+commits), and demands restore-only snapshots, so a reader can never
+overwrite or prune the writer's blobs. A reader with a refresh interval
+(`SearchDoorConfig.refreshSeconds`) follows the writer live: each tick
+pulls a newer commit's missing files, lands the `segments_N` marker
+last, verifies, and swaps the searchers — a failed pull keeps the
+serving commit. A reader born before the first snapshot serves an empty
+index and swaps the real one in when a restore lands. See
 [Role nodes](../apps/role-nodes.md#the-remote-metrics-node) for the
 composed form.
 

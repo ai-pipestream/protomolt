@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.Set;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexCommit;
+import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.SnapshotDeletionPolicy;
 import org.apache.lucene.store.FSDirectory;
 import org.slf4j.Logger;
@@ -190,6 +192,86 @@ public final class IndexSnapshots {
                 LOG.warn("cannot release the snapshot commit of '{}'", subjectName, e);
             }
         }
+    }
+
+    /**
+     * Pulls a newer commit into a live reader's directory, if the store has
+     * one: segment immutability makes the pull additive — missing segment
+     * files download first, the new {@code segments_N} marker lands last
+     * through an atomic move, and the refreshed commit is verified before
+     * this returns. On any failure the newly downloaded marker is removed
+     * first, so the previous commit keeps serving untouched. A reader-side
+     * pull only: nothing here uploads or deletes a store blob, so the
+     * writer's snapshots are never at risk from a reader, stale or not.
+     *
+     * @param subjectDir the subject's live index directory
+     * @param subjectName the subject, for the identity key and logs
+     * @param served the served mapping the identity derives from
+     * @return whether a newer commit landed and verified
+     */
+    boolean refreshInto(Path subjectDir, String subjectName, ServedMapping served) {
+        List<Path> downloaded = new ArrayList<>();
+        try {
+            String prefix = identityPrefix(subjectName, served) + "/";
+            List<String> keys = store.list(prefix);
+            String marker = null;
+            long remoteGeneration = -1;
+            for (String key : keys) {
+                String name = fileName(key);
+                if (name.startsWith(MARKER_PREFIX)) {
+                    long generation = SegmentInfos.generationFromSegmentsFileName(name);
+                    if (generation > remoteGeneration) {
+                        remoteGeneration = generation;
+                        marker = key;
+                    }
+                }
+            }
+            if (marker == null || remoteGeneration <= localGeneration(subjectDir)) {
+                return false;
+            }
+            for (String key : keys) {
+                String name = fileName(key);
+                Path target = subjectDir.resolve(name);
+                if (!name.startsWith(MARKER_PREFIX) && !Files.exists(target)) {
+                    store.download(key, target);
+                    downloaded.add(target);
+                }
+            }
+            Path markerFile = subjectDir.resolve(fileName(marker));
+            Path staged = subjectDir.resolve(fileName(marker) + ".downloading");
+            store.download(marker, staged);
+            Files.move(staged, markerFile, StandardCopyOption.ATOMIC_MOVE);
+            // The marker rolls back first on failure, so an unopenable
+            // refresh never hides the commit that was serving.
+            downloaded.add(0, markerFile);
+            verify(subjectDir);
+            LOG.info("refreshed '{}' to snapshot generation {}",
+                    subjectName, remoteGeneration);
+            return true;
+        } catch (IOException | RuntimeException e) {
+            LOG.warn("cannot refresh '{}'; the previous commit keeps serving",
+                    subjectName, e);
+            for (Path file : downloaded) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException cleanup) {
+                    LOG.warn("cannot remove a failed refresh download {}", file, cleanup);
+                }
+            }
+            return false;
+        }
+    }
+
+    /** The directory's latest commit generation; {@code -1} for none. */
+    private static long localGeneration(Path subjectDir) throws IOException {
+        if (!Files.isDirectory(subjectDir)) {
+            return -1;
+        }
+        List<String> names = new ArrayList<>();
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(subjectDir)) {
+            entries.forEach(entry -> names.add(entry.getFileName().toString()));
+        }
+        return SegmentInfos.getLastCommitGeneration(names.toArray(String[]::new));
     }
 
     private static boolean hasSegments(Path subjectDir) throws IOException {

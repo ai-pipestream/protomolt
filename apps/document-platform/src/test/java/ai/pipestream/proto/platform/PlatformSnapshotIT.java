@@ -183,6 +183,7 @@ class PlatformSnapshotIT {
         // come from S3.
         Map<String, String> readerEnvironment = snapshotEnvironment();
         readerEnvironment.put(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "true");
+        readerEnvironment.put(DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "1");
         try (DocumentPlatform reader = DocumentPlatform.start(
                 config(List.of("search", "metrics"), work.resolve("reader-index"),
                         readerEnvironment), null)) {
@@ -216,6 +217,85 @@ class PlatformSnapshotIT {
                                 .build());
                 assertThat(counted.getRows(0).getMeasuresMap())
                         .containsEntry("documents", 1.0);
+            });
+
+            // The writer advances while the reader stays up: a second
+            // writer run lands doc 2 and snapshots it on close. The
+            // reader's refresh interval pulls the newer commit live — no
+            // reboot, no empty directory — and the co-mounted metrics role
+            // reads the refreshed index through the same swapped searcher.
+            String secondDocId = "doc-snapshot-2";
+            try (DocumentPlatform writerTwo = DocumentPlatform.start(
+                    config(List.of("repo", "search"), work.resolve("writer-index"),
+                            snapshotEnvironment()), null)) {
+                withChannel(writerTwo.repoPort(), repo ->
+                        DocumentServiceGrpc.newBlockingStub(repo).saveDocument(
+                                SaveDocumentRequest.newBuilder()
+                                        .setDocument(Document.newBuilder()
+                                                .setDocId(secondDocId)
+                                                .setOwnership(OwnershipContext.newBuilder()
+                                                        .setAccountId(ACCOUNT)
+                                                        .setDatasourceId("ds-snapshot"))
+                                                .setSearchMetadata(SearchMetadata.newBuilder()
+                                                        .setTitle("Snapshot Corpus Two")
+                                                        .setBody("The reader follows the"
+                                                                + " writer without a"
+                                                                + " reboot.")))
+                                        .setDrive("intake")
+                                        .setConnectorId("snapshot-test")
+                                        .setUseDatasourceId(true)
+                                        .setGraphId("intake:" + ACCOUNT)
+                                        .build()));
+                withChannel(writerTwo.searchPort(), search ->
+                        SearchIndexServiceGrpc.newBlockingStub(search).indexDocument(
+                                IndexDocumentRequest.newBuilder()
+                                        .setAddress(NodeAddress.newBuilder()
+                                                .setDocId(secondDocId)
+                                                .setGraphAddressId("ds-snapshot")
+                                                .setAccountId(ACCOUNT)
+                                                .setGraphId("intake:" + ACCOUNT))
+                                        .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                        .build()));
+            }
+
+            withChannel(reader.searchPort(), search -> {
+                SearchServiceGrpc.SearchServiceBlockingStub stub =
+                        SearchServiceGrpc.newBlockingStub(search);
+                long deadline = System.nanoTime()
+                        + java.time.Duration.ofSeconds(60).toNanos();
+                SearchResponse followed = null;
+                while (System.nanoTime() < deadline) {
+                    followed = stub.search(SearchRequest.newBuilder()
+                            .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                            .setQuery("follows the writer")
+                            .setK(3)
+                            .setLane(SearchLane.SEARCH_LANE_LEXICAL)
+                            .build());
+                    if (followed.getHitsList().stream()
+                            .anyMatch(hit -> hit.getDocId().equals(secondDocId))) {
+                        break;
+                    }
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                assertThat(followed.getHitsList())
+                        .as("the refresh interval pulled the writer's newer snapshot live")
+                        .anySatisfy(hit ->
+                                assertThat(hit.getDocId()).isEqualTo(secondDocId));
+            });
+            withChannel(reader.metricsPort(), metrics -> {
+                QueryMetricsResponse counted = MetricServiceGrpc.newBlockingStub(metrics)
+                        .queryMetrics(QueryMetricsRequest.newBuilder()
+                                .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                .addMeasures("documents")
+                                .setLimit(10)
+                                .build());
+                assertThat(counted.getRows(0).getMeasuresMap())
+                        .containsEntry("documents", 2.0);
             });
         }
     }
