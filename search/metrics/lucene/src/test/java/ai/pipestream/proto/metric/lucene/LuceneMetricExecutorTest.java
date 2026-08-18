@@ -20,6 +20,7 @@ import ai.pipestream.proto.metric.spi.MetricExecutor;
 import ai.pipestream.proto.metric.spi.MetricMapping;
 import ai.pipestream.proto.metric.spi.MetricMappings;
 import ai.pipestream.proto.metric.spi.MetricQueries;
+import ai.pipestream.proto.metric.spi.MetricRefusal;
 import ai.pipestream.proto.search.door.LuceneSearchStore;
 import ai.pipestream.proto.search.door.ServedMapping;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
@@ -57,6 +58,7 @@ class LuceneMetricExecutorTest {
     static Descriptor order;
     static LuceneSearchStore store;
     static MetricMapping mapping;
+    static IndexMapping storeMapping;
     static Map<MetricBackend, MetricExecutor> executors;
 
     @BeforeAll
@@ -76,16 +78,25 @@ class LuceneMetricExecutorTest {
                 ResolvedFieldHint.builder(IndexFieldKind.DATE).facetable(true).build());
         hints.put("test.Order", "ratio",
                 ResolvedFieldHint.builder(IndexFieldKind.DOUBLE).facetable(true).build());
+        hints.put("test.Order", "customer",
+                ResolvedFieldHint.builder(IndexFieldKind.KEYWORD).facetable(true).build());
+        hints.put("test.Order", "zone",
+                ResolvedFieldHint.builder(IndexFieldKind.INT64).facetable(true).build());
         // title stays a plain text field: indexed, no doc values.
         IndexMapping indexMapping = IndexMappingFactory.defaults(hints).create(order);
+        storeMapping = indexMapping;
         ServedMapping served = new ServedMapping(indexMapping, "id",
                 message -> (String) message.getField(order.findFieldByName("id")), null);
         store = new LuceneSearchStore(work, Map.of("orders", served));
 
-        index("o-1", "smb", true, 100, 0.5, "2026-07-10T10:00:00Z", "alpha invoice");
-        index("o-2", "smb", false, 50, 0.25, "2026-07-15T10:00:00Z", "beta invoice");
-        index("o-3", "mid", true, 200, 0.75, "2026-08-01T10:00:00Z", "gamma invoice");
-        index("o-4", "smb", true, 30, 0.5, "2026-08-05T10:00:00Z", "delta invoice");
+        index("o-1", "smb", true, 100, 0.5, "2026-07-10T10:00:00Z", "alpha invoice",
+                "cust-a", 10);
+        index("o-2", "smb", false, 50, 0.25, "2026-07-15T10:00:00Z", "beta invoice",
+                "cust-b", 20);
+        index("o-3", "mid", true, 200, 0.75, "2026-08-01T10:00:00Z", "gamma invoice",
+                "cust-a", 10);
+        index("o-4", "smb", true, 30, 0.5, "2026-08-05T10:00:00Z", "delta invoice",
+                "cust-c", 10);
 
         CatalogMetricHintSource metrics = new CatalogMetricHintSource()
                 .put("test.Order", "segment", FieldMetric.newBuilder()
@@ -107,7 +118,15 @@ class LuceneMetricExecutorTest {
                 .put("test.Order", "ratio", FieldMetric.newBuilder()
                         .setRole(MemberRole.MEMBER_ROLE_MEASURE)
                         .setAggregate(Aggregate.AGGREGATE_AVG)
-                        .setName("avg_ratio").build());
+                        .setName("avg_ratio").build())
+                .put("test.Order", "customer", FieldMetric.newBuilder()
+                        .setRole(MemberRole.MEMBER_ROLE_MEASURE)
+                        .setAggregate(Aggregate.AGGREGATE_COUNT_DISTINCT)
+                        .setName("customers").build())
+                .put("test.Order", "zone", FieldMetric.newBuilder()
+                        .setRole(MemberRole.MEMBER_ROLE_MEASURE)
+                        .setAggregate(Aggregate.AGGREGATE_COUNT_DISTINCT)
+                        .setName("zones").build());
         mapping = MetricMappings.build("orders", order, metrics);
 
         LuceneMetricExecutor executor = new LuceneMetricExecutor(
@@ -144,6 +163,8 @@ class LuceneMetricExecutorTest {
                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL));
         message.addField(scalar("title", 6, FieldDescriptorProto.Type.TYPE_STRING));
         message.addField(scalar("ratio", 7, FieldDescriptorProto.Type.TYPE_DOUBLE));
+        message.addField(scalar("customer", 8, FieldDescriptorProto.Type.TYPE_STRING));
+        message.addField(scalar("zone", 9, FieldDescriptorProto.Type.TYPE_INT64));
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("test/order.proto").setPackage("test").setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
@@ -162,7 +183,7 @@ class LuceneMetricExecutorTest {
     }
 
     static void index(String id, String segment, boolean paying, long amount,
-            double ratio, String createdAt, String title) {
+            double ratio, String createdAt, String title, String customer, long zone) {
         Instant instant = Instant.parse(createdAt);
         store.index("orders", DynamicMessage.newBuilder(order)
                 .setField(order.findFieldByName("id"), id)
@@ -173,6 +194,8 @@ class LuceneMetricExecutorTest {
                 .setField(order.findFieldByName("created_at"), Timestamp.newBuilder()
                         .setSeconds(instant.getEpochSecond()).build())
                 .setField(order.findFieldByName("title"), title)
+                .setField(order.findFieldByName("customer"), customer)
+                .setField(order.findFieldByName("zone"), zone)
                 .build());
     }
 
@@ -271,6 +294,59 @@ class LuceneMetricExecutorTest {
                         .build());
         assertThat(bySegment(bySegment).get("mid").getMeasuresOrThrow("avg_ratio"))
                 .isEqualTo(0.75);
+    }
+
+    @Test
+    void countDistinctOverKeywordTermsCountsExactly() {
+        // Hand-checked customers: cust-a (o-1, o-3), cust-b, cust-c = 3.
+        QueryMetricsResponse response = MetricQueries.query(mapping, executors,
+                request("customers").build());
+        assertThat(response.getRows(0).getMeasuresOrThrow("customers")).isEqualTo(3.0);
+        assertThat(response.getPhysicalPlan()).contains("count_distinct exact, bound=");
+
+        // Grouped: smb sees cust-a, cust-b, cust-c; mid sees cust-a alone.
+        QueryMetricsResponse bySegment = MetricQueries.query(mapping, executors,
+                request("customers")
+                        .addDimensions(MemberRef.newBuilder().setName("segment"))
+                        .build());
+        Map<String, MetricRow> rows = bySegment(bySegment);
+        assertThat(rows.get("smb").getMeasuresOrThrow("customers")).isEqualTo(3.0);
+        assertThat(rows.get("mid").getMeasuresOrThrow("customers")).isEqualTo(1.0);
+    }
+
+    @Test
+    void countDistinctOverNumericValuesCountsExactly() {
+        // Hand-checked zones: 10 (o-1, o-3, o-4) and 20 = 2.
+        QueryMetricsResponse response = MetricQueries.query(mapping, executors,
+                request("zones").build());
+        assertThat(response.getRows(0).getMeasuresOrThrow("zones")).isEqualTo(2.0);
+    }
+
+    @Test
+    void passingTheDistinctBoundRefusesByNameInsteadOfEstimating() {
+        LuceneMetricExecutor bounded = new LuceneMetricExecutor(
+                new LuceneMetricExecutor.SubjectReader() {
+                    @Override
+                    public IndexMapping mapping(String subject) {
+                        return storeMapping;
+                    }
+
+                    @Override
+                    public MetricExecutor.Result read(
+                            String subject, LuceneMetricExecutor.Aggregation aggregation) {
+                        return store.withSearcher(subject, aggregation::run);
+                    }
+                }, 2);
+        assertThatThrownBy(() -> MetricQueries.query(mapping,
+                Map.of(MetricBackend.METRIC_BACKEND_LUCENE, bounded),
+                request("customers").build()))
+                .isInstanceOfSatisfying(MetricRefusal.class, refusal -> {
+                    assertThat(refusal.code()).isEqualTo(MetricRefusal.DISTINCT_BOUND);
+                    assertThat(refusal.getMessage())
+                            .contains("customers")
+                            .contains("bound of 2")
+                            .contains("Iceberg");
+                });
     }
 
     @Test

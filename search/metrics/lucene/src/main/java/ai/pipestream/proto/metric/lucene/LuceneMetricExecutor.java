@@ -11,6 +11,7 @@ import ai.pipestream.proto.metric.spi.CompiledMetricQuery.Dimension;
 import ai.pipestream.proto.metric.spi.CompiledMetricQuery.EqualsFilter;
 import ai.pipestream.proto.metric.spi.CompiledMetricQuery.Measure;
 import ai.pipestream.proto.metric.spi.MetricExecutor;
+import ai.pipestream.proto.metric.spi.MetricRefusal;
 import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -76,16 +77,36 @@ public final class LuceneMetricExecutor implements MetricExecutor {
 
     private static final Capabilities CAPABILITIES = new Capabilities(
             Set.of(Aggregate.AGGREGATE_COUNT, Aggregate.AGGREGATE_SUM, Aggregate.AGGREGATE_AVG,
-                    Aggregate.AGGREGATE_MIN, Aggregate.AGGREGATE_MAX),
+                    Aggregate.AGGREGATE_MIN, Aggregate.AGGREGATE_MAX,
+                    Aggregate.AGGREGATE_COUNT_DISTINCT),
             true, true);
 
+    /** Distinct values one COUNT_DISTINCT measure may track, by default. */
+    public static final int DEFAULT_DISTINCT_BOUND = 100_000;
+
     private final SubjectReader reader;
+    private final int distinctBound;
 
     public LuceneMetricExecutor(SubjectReader reader) {
+        this(reader, DEFAULT_DISTINCT_BOUND);
+    }
+
+    /**
+     * @param reader the subjects this executor can reach
+     * @param distinctBound the most distinct values one COUNT_DISTINCT
+     *        measure may track across all groups; past it the query is
+     *        refused (never estimated, never silently truncated) naming
+     *        the Iceberg backend as the engine that spills
+     */
+    public LuceneMetricExecutor(SubjectReader reader, int distinctBound) {
         if (reader == null) {
             throw new IllegalArgumentException("reader must not be null");
         }
+        if (distinctBound <= 0) {
+            throw new IllegalArgumentException("distinctBound must be positive");
+        }
         this.reader = reader;
+        this.distinctBound = distinctBound;
     }
 
     @Override
@@ -94,8 +115,10 @@ public final class LuceneMetricExecutor implements MetricExecutor {
     }
 
     /**
-     * COUNT_DISTINCT is deliberately absent: no bounded collector exists
-     * yet, and an unbounded one could hold every term in memory.
+     * COUNT_DISTINCT counts exactly up to {@link #DEFAULT_DISTINCT_BOUND}
+     * tracked values per measure (the sets live in memory for the query's
+     * duration); a query that passes the bound is refused by name, never
+     * estimated, and the Iceberg backend runs the same query unbounded.
      */
     @Override
     public Capabilities capabilities() {
@@ -116,13 +139,20 @@ public final class LuceneMetricExecutor implements MetricExecutor {
         Map<String, ResolvedFieldHint> hints = hintsByFieldName(mapping);
         Query filter = filterQuery(query.filters());
         Map<List<String>, GroupState> groups = new HashMap<>();
+        DistinctBudget[] budgets = new DistinctBudget[query.measures().size()];
+        for (int m = 0; m < query.measures().size(); m++) {
+            if (query.measures().get(m).aggregate() == Aggregate.AGGREGATE_COUNT_DISTINCT) {
+                budgets[m] = new DistinctBudget(
+                        query.measures().get(m).member(), distinctBound);
+            }
+        }
 
         searcher.search(filter, new SimpleCollector() {
             private LeafState leaf;
 
             @Override
             protected void doSetNextReader(LeafReaderContext context) throws IOException {
-                leaf = new LeafState(context.reader(), query, hints);
+                leaf = new LeafState(context.reader(), query, hints, budgets);
             }
 
             @Override
@@ -161,11 +191,11 @@ public final class LuceneMetricExecutor implements MetricExecutor {
             }
             rows.add(row.build());
         }
-        return new Result(rows, plan(query, filter, groups.size(), truncated));
+        return new Result(rows, plan(query, filter, groups.size(), truncated, distinctBound));
     }
 
-    private static String plan(
-            CompiledMetricQuery query, Query filter, int groups, boolean truncated) {
+    private static String plan(CompiledMetricQuery query, Query filter, int groups,
+            boolean truncated, int distinctBound) {
         StringJoiner measures = new StringJoiner(", ");
         for (Measure measure : query.measures()) {
             String base = measure.aggregate().name().substring("AGGREGATE_".length())
@@ -185,9 +215,12 @@ public final class LuceneMetricExecutor implements MetricExecutor {
                         ? " by " + d.grain().name().substring("TIME_GRAIN_".length())
                                 .toLowerCase()
                         : "")));
+        boolean distinct = query.measures().stream().anyMatch(
+                m -> m.aggregate() == Aggregate.AGGREGATE_COUNT_DISTINCT);
         return "lucene collector: filter=" + filter + "; group-by=[" + dims + "]; measures=["
                 + measures + "]; groups=" + groups + (truncated ? " (truncated to "
                 + query.limit() + ")" : "")
+                + (distinct ? "; count_distinct exact, bound=" + distinctBound : "")
                 + "; docs missing a dimension value are excluded";
     }
 
@@ -226,14 +259,16 @@ public final class LuceneMetricExecutor implements MetricExecutor {
         private final List<MeasureCursor> measures = new ArrayList<>();
 
         LeafState(LeafReader leafReader, CompiledMetricQuery query,
-                Map<String, ResolvedFieldHint> hints) throws IOException {
+                Map<String, ResolvedFieldHint> hints, DistinctBudget[] budgets)
+                throws IOException {
             this.query = query;
             this.hints = hints;
             for (Dimension dimension : query.dimensions()) {
                 dimensions.add(new DimensionCursor(leafReader, dimension, hints));
             }
-            for (Measure measure : query.measures()) {
-                measures.add(new MeasureCursor(leafReader, measure, hints));
+            for (int m = 0; m < query.measures().size(); m++) {
+                measures.add(new MeasureCursor(
+                        leafReader, query.measures().get(m), hints, budgets[m]));
             }
         }
 
@@ -345,21 +380,46 @@ public final class LuceneMetricExecutor implements MetricExecutor {
 
         private final Measure measure;
         private final SortedNumericDocValues values;
+        private final SortedSetDocValues distinctTerms;
+        private final DistinctBudget budget;
         private final boolean floatEncoded;
         private final boolean doubleEncoded;
         private final List<RowFilterCursor> rowFilters = new ArrayList<>();
 
         MeasureCursor(LeafReader leafReader, Measure measure,
-                Map<String, ResolvedFieldHint> hints) throws IOException {
+                Map<String, ResolvedFieldHint> hints, DistinctBudget budget)
+                throws IOException {
             this.measure = measure;
+            this.budget = budget;
             if (measure.aggregate() == Aggregate.AGGREGATE_COUNT) {
                 this.values = null;
+                this.distinctTerms = null;
+                this.floatEncoded = false;
+                this.doubleEncoded = false;
+            } else if (measure.aggregate() == Aggregate.AGGREGATE_COUNT_DISTINCT) {
+                // Distinct runs over keyword terms or raw numeric values.
+                // Raw is enough for numerics: the sortable encodings are
+                // bijective, so cardinality is identical undecoded.
+                requireDocValues(leafReader, measure.fieldName(),
+                        DocValuesType.SORTED_SET, DocValuesType.SORTED,
+                        DocValuesType.SORTED_NUMERIC, DocValuesType.NUMERIC);
+                var info = leafReader.getFieldInfos().fieldInfo(measure.fieldName());
+                boolean keyword = info != null
+                        && (info.getDocValuesType() == DocValuesType.SORTED_SET
+                                || info.getDocValuesType() == DocValuesType.SORTED);
+                this.distinctTerms = keyword
+                        ? DocValues.getSortedSet(leafReader, measure.fieldName())
+                        : null;
+                this.values = keyword || info == null
+                        ? null
+                        : DocValues.getSortedNumeric(leafReader, measure.fieldName());
                 this.floatEncoded = false;
                 this.doubleEncoded = false;
             } else {
                 requireDocValues(leafReader, measure.fieldName(),
                         DocValuesType.SORTED_NUMERIC, DocValuesType.NUMERIC);
                 this.values = DocValues.getSortedNumeric(leafReader, measure.fieldName());
+                this.distinctTerms = null;
                 ResolvedFieldHint hint = hints.get(measure.fieldName());
                 String kind = hint == null ? "" : hint.type().name();
                 // The mapper writes FLOAT and DOUBLE facetable doc values in
@@ -377,6 +437,19 @@ public final class LuceneMetricExecutor implements MetricExecutor {
                 if (!filter.matches(doc)) {
                     return;
                 }
+            }
+            if (measure.aggregate() == Aggregate.AGGREGATE_COUNT_DISTINCT) {
+                if (distinctTerms != null && distinctTerms.advanceExact(doc)) {
+                    for (int i = 0; i < distinctTerms.docValueCount(); i++) {
+                        state.addDistinct(distinctTerms
+                                .lookupOrd(distinctTerms.nextOrd()).utf8ToString(), budget);
+                    }
+                } else if (values != null && values.advanceExact(doc)) {
+                    for (int i = 0; i < values.docValueCount(); i++) {
+                        state.addDistinct(values.nextValue(), budget);
+                    }
+                }
+                return;
             }
             if (values == null) {
                 state.count++;
@@ -396,6 +469,36 @@ public final class LuceneMetricExecutor implements MetricExecutor {
             state.min = state.present ? Math.min(state.min, value) : value;
             state.max = state.present ? Math.max(state.max, value) : value;
             state.present = true;
+        }
+    }
+
+    /**
+     * The exact-count budget one COUNT_DISTINCT measure spends across all
+     * groups. Passing it refuses the query by name — never an estimate,
+     * never a silently truncated count — because the sets live in memory
+     * for the query's duration and the Iceberg backend runs the same
+     * query unbounded.
+     */
+    private static final class DistinctBudget {
+
+        private final String member;
+        private final int bound;
+        private int remaining;
+
+        DistinctBudget(String member, int bound) {
+            this.member = member;
+            this.bound = bound;
+            this.remaining = bound;
+        }
+
+        void spend() {
+            if (--remaining < 0) {
+                throw new MetricRefusal(MetricRefusal.DISTINCT_BOUND,
+                        "count_distinct over '" + member + "' passed this engine's bound"
+                                + " of " + bound + " tracked values; the Iceberg backend"
+                                + " runs count_distinct unbounded",
+                        List.of());
+            }
         }
     }
 
@@ -453,6 +556,8 @@ public final class LuceneMetricExecutor implements MetricExecutor {
                         ? state.sum / state.count : null;
                 case AGGREGATE_MIN -> state.present ? state.min : null;
                 case AGGREGATE_MAX -> state.present ? state.max : null;
+                case AGGREGATE_COUNT_DISTINCT ->
+                        (double) (state.distinct == null ? 0 : state.distinct.size());
                 default -> null;
             };
         }
@@ -464,5 +569,15 @@ public final class LuceneMetricExecutor implements MetricExecutor {
         double min;
         double max;
         boolean present;
+        Set<Object> distinct;
+
+        void addDistinct(Object value, DistinctBudget budget) {
+            if (distinct == null) {
+                distinct = new HashSet<>();
+            }
+            if (distinct.add(value)) {
+                budget.spend();
+            }
+        }
     }
 }

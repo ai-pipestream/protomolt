@@ -66,10 +66,14 @@ storage. Group-by members need `facetable` (or `sortable`) on their
 indexing hint; a field present without the needed doc values fails
 loudly naming the hint to declare. FLOAT and DOUBLE doc values decode
 the mapper's sortable encoding; date dimensions bucket UTC under the
-resolved grain honoring the hint's resolution. `COUNT_DISTINCT` is
-deliberately absent until a bounded collector exists. The executor reads
-through the door store's `withSearcher` borrow seam, so acquire and
-release never leave the store.
+resolved grain honoring the hint's resolution. `COUNT_DISTINCT` counts
+exactly, over keyword terms or raw numeric values, up to a per-measure
+bound (100000 tracked values by default; the sets live in memory for
+the query's duration): a query that passes the bound is refused with
+`distinct-bound` naming the Iceberg backend as the engine that spills,
+never an estimate, never a silently truncated count. The executor
+reads through the door store's `withSearcher` borrow seam, so acquire
+and release never leave the store.
 
 ## The Iceberg engine
 
@@ -82,8 +86,9 @@ Trino and Spark stay external consumers of the same table. Columns are
 addressed by each member's `fieldPath` (the table keeps the message's
 nesting as structs, where the search index flattens), date buckets
 label themselves in UTC with exactly the Lucene backend's formats, and
-the rendered SQL is the `physical_plan`. `COUNT_DISTINCT` is supported
-here, the one aggregate the Lucene backend refuses; rows missing a
+the rendered SQL is the `physical_plan`. `COUNT_DISTINCT` runs
+unbounded here (the reduction spills), where the Lucene backend counts
+exactly only up to its in-memory bound; rows missing a
 dimension value (NULL, or the empty string on term dimensions) are
 excluded from group-by, matching the doc-values backend; tables
 carrying delete files are refused loudly, because the sink appends and
