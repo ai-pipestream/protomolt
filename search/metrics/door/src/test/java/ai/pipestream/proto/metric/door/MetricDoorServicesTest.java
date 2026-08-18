@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class MetricDoorServicesTest {
 
-    static final class FakeExecutor implements MetricExecutor {
+    static class FakeExecutor implements MetricExecutor {
         CompiledMetricQuery executed;
 
         @Override
@@ -151,6 +151,194 @@ class MetricDoorServicesTest {
     }
 
     @Test
+    void aDistinctBoundRefusalMapsToFailedPrecondition() throws Exception {
+        // The engine refuses mid-collection when a count_distinct passes
+        // its bound; the door maps that to the mount-precondition status,
+        // because the caller fixes it by picking the engine that spills.
+        MetricExecutor bounded = new FakeExecutor() {
+            @Override
+            public Result execute(CompiledMetricQuery query) {
+                throw new ai.pipestream.proto.metric.spi.MetricRefusal(
+                        ai.pipestream.proto.metric.spi.MetricRefusal.DISTINCT_BOUND,
+                        "count_distinct over 'revenue' passed this engine's bound",
+                        List.of());
+            }
+        };
+        try (MetricDoorServices boundedDoor = MetricDoorServices.build(Map.of(
+                "orders", new ServedMetricSubject(
+                        subjects.get("orders").mapping(),
+                        Map.of(MetricBackend.METRIC_BACKEND_LUCENE, bounded))))) {
+            String name = InProcessServerBuilder.generateName();
+            boundedDoor.startInProcess(name);
+            ManagedChannel boundedChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                assertThatThrownBy(() -> MetricServiceGrpc.newBlockingStub(boundedChannel)
+                        .queryMetrics(query().build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                            assertThat(e.getStatus().getDescription())
+                                    .contains("[distinct-bound]");
+                        });
+            } finally {
+                boundedChannel.shutdownNow();
+            }
+        }
+    }
+
+    /** A rollup sink that records the one replace it receives. */
+    static final class FakeRollupSink implements ai.pipestream.proto.metric.spi.RollupSink {
+        String sourceSubject;
+        String table;
+        List<String> dimensions;
+        List<MeasureColumn> measures;
+        List<MetricRow> rows;
+
+        @Override
+        public Written replace(String sourceSubject, String table, List<String> dimensions,
+                List<MeasureColumn> measures, List<MetricRow> rows) {
+            this.sourceSubject = sourceSubject;
+            this.table = table;
+            this.dimensions = dimensions;
+            this.measures = measures;
+            this.rows = rows;
+            return new Written("protomolt." + table, rows.size(), 42L);
+        }
+    }
+
+    private static ai.pipestream.proto.metric.RebuildRollupRequest.Builder rebuild() {
+        return ai.pipestream.proto.metric.RebuildRollupRequest.newBuilder()
+                .setMappingSubject("orders")
+                .addMeasures("revenue")
+                .addDimensions(ai.pipestream.proto.metric.MemberRef.newBuilder()
+                        .setName("segment"))
+                .setTable("revenue_by_segment");
+    }
+
+    @Test
+    void aResolverServesSubjectsBeyondTheStaticSetOnEveryDoor() throws Exception {
+        // The resolver answers after the static set misses, identically
+        // for the RPC and the verbs; a name it does not know still falls
+        // through to the unknown-subject refusal.
+        ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver = name ->
+                name.equals("rollup:orders_rollup")
+                        ? new ai.pipestream.proto.metric.spi.MetricSubjectResolver.Resolved(
+                                subjects.get("orders").mapping(), new FakeExecutor())
+                        : null;
+        try (MetricDoorServices resolving = MetricDoorServices.build(
+                subjects, null, resolver)) {
+            String name = InProcessServerBuilder.generateName();
+            resolving.startInProcess(name);
+            ManagedChannel resolvingChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                QueryMetricsResponse answered = MetricServiceGrpc
+                        .newBlockingStub(resolvingChannel)
+                        .queryMetrics(query()
+                                .setMappingSubject("rollup:orders_rollup").build());
+                assertThat(answered.getRows(0).getMeasuresOrThrow("revenue"))
+                        .isEqualTo(180.0);
+                assertThatThrownBy(() -> MetricServiceGrpc
+                        .newBlockingStub(resolvingChannel)
+                        .queryMetrics(query().setMappingSubject("rollup:nope").build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                                assertThat(e.getStatus().getDescription())
+                                        .contains("[unknown-subject]"));
+            } finally {
+                resolvingChannel.shutdownNow();
+            }
+        }
+
+        List<ProtoAction> actions = MetricActions.over(subjects, null, resolver);
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode describeInput = mapper.createObjectNode()
+                .put("mappingSubject", "rollup:orders_rollup");
+        ObjectNode described = actions.get(0)
+                .execute(describeInput, ActionContext.create());
+        assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
+    }
+
+    @Test
+    void rebuildRollupRunsTheQueryAndHandsTheAnswerToTheSink() throws Exception {
+        FakeRollupSink rollups = new FakeRollupSink();
+        try (MetricDoorServices rollupDoor = MetricDoorServices.build(subjects, rollups)) {
+            String name = InProcessServerBuilder.generateName();
+            rollupDoor.startInProcess(name);
+            ManagedChannel rollupChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                ai.pipestream.proto.metric.RebuildRollupResponse written =
+                        MetricServiceGrpc.newBlockingStub(rollupChannel)
+                                .rebuildRollup(rebuild().build());
+                assertThat(written.getTable()).isEqualTo("protomolt.revenue_by_segment");
+                assertThat(written.getRowsWritten()).isEqualTo(1);
+                assertThat(written.getSnapshotId()).isEqualTo(42L);
+                assertThat(written.getPhysicalPlan()).isEqualTo("fake-plan");
+                assertThat(written.getBackend())
+                        .isEqualTo(MetricBackend.METRIC_BACKEND_LUCENE);
+                assertThat(rollups.sourceSubject).isEqualTo("orders");
+                assertThat(rollups.table).isEqualTo("revenue_by_segment");
+                assertThat(rollups.dimensions).containsExactly("segment");
+                assertThat(rollups.measures).containsExactly(
+                        new ai.pipestream.proto.metric.spi.RollupSink.MeasureColumn(
+                                "revenue", Aggregate.AGGREGATE_SUM));
+                assertThat(rollups.rows).hasSize(1);
+            } finally {
+                rollupChannel.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void rebuildRollupWithoutASinkRefusesWithMissingSink() {
+        assertThatThrownBy(() -> stub.rebuildRollup(rebuild().build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("[missing-sink]");
+                });
+    }
+
+    @Test
+    void aRollupThatFillsTheGroupBudgetRefusesInsteadOfTruncating() throws Exception {
+        // An engine answering exactly the budget cannot attest the rollup
+        // complete, so nothing lands: exact or refused, never truncated.
+        MetricExecutor wide = new FakeExecutor() {
+            @Override
+            public Result execute(CompiledMetricQuery query) {
+                List<MetricRow> rows = new java.util.ArrayList<>();
+                for (int i = 0; i < 1000; i++) {
+                    rows.add(MetricRow.newBuilder()
+                            .putDimensions("segment", "s" + i)
+                            .putMeasures("revenue", (double) i).build());
+                }
+                return new Result(rows, "wide-plan");
+            }
+        };
+        FakeRollupSink rollups = new FakeRollupSink();
+        try (MetricDoorServices wideDoor = MetricDoorServices.build(Map.of(
+                "orders", new ServedMetricSubject(
+                        subjects.get("orders").mapping(),
+                        Map.of(MetricBackend.METRIC_BACKEND_LUCENE, wide))), rollups)) {
+            String name = InProcessServerBuilder.generateName();
+            wideDoor.startInProcess(name);
+            ManagedChannel wideChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                assertThatThrownBy(() -> MetricServiceGrpc.newBlockingStub(wideChannel)
+                        .rebuildRollup(rebuild().build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                            assertThat(e.getStatus().getDescription())
+                                    .contains("[rollup-budget]");
+                        });
+                assertThat(rollups.table).as("nothing landed").isNull();
+            } finally {
+                wideChannel.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void describeAndQueryRoundTrip() {
         DescribeMappingResponse described = stub.describeMapping(
                 DescribeMappingRequest.newBuilder().setMappingSubject("orders").build());
@@ -173,7 +361,7 @@ class MetricDoorServicesTest {
     void theVerbsRoundTripProto3JsonWithRefusalCodesInDetails() throws Exception {
         List<ProtoAction> actions = MetricActions.over(subjects);
         assertThat(actions).extracting(ProtoAction::name)
-                .containsExactly("describe-mapping", "query-metrics");
+                .containsExactly("describe-mapping", "query-metrics", "rebuild-rollup");
         ActionContext context = ActionContext.create();
         ObjectMapper mapper = new ObjectMapper();
 
@@ -210,6 +398,44 @@ class MetricDoorServicesTest {
         ObjectNode garbage = mapper.createObjectNode();
         garbage.putObject("request").put("limit", "not-a-number");
         assertThatThrownBy(() -> actions.get(1).execute(garbage, context))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("invalid-input"));
+    }
+
+    @Test
+    void theRebuildRollupVerbRunsTheSharedRebuildAndSurfacesRefusalCodes()
+            throws Exception {
+        FakeRollupSink rollups = new FakeRollupSink();
+        List<ProtoAction> actions = MetricActions.over(subjects, rollups);
+        ProtoAction rebuild = actions.get(2);
+        ActionContext context = ActionContext.create();
+        ObjectMapper mapper = new ObjectMapper();
+
+        ObjectNode input = mapper.createObjectNode();
+        ObjectNode request = input.putObject("request");
+        request.put("mappingSubject", "orders");
+        request.put("table", "revenue_by_segment");
+        request.putArray("measures").add("revenue");
+        request.putArray("dimensions").addObject().put("name", "segment");
+        ObjectNode written = rebuild.execute(input, context);
+        assertThat(written.get("table").asText()).isEqualTo("protomolt.revenue_by_segment");
+        assertThat(written.get("rowsWritten").asText()).isEqualTo("1");
+        assertThat(written.get("physicalPlan").asText()).isEqualTo("fake-plan");
+        assertThat(rollups.table).isEqualTo("revenue_by_segment");
+        assertThat(rollups.dimensions).containsExactly("segment");
+
+        // Without a sink the verb refuses exactly like the RPC.
+        ProtoAction sinkless = MetricActions.over(subjects).get(2);
+        assertThatThrownBy(() -> sinkless.execute(input, context))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("missing-sink"));
+
+        // The verb re-checks what the interceptor enforces on the wire.
+        ObjectNode noTable = mapper.createObjectNode();
+        noTable.putObject("request")
+                .put("mappingSubject", "orders")
+                .putArray("measures").add("revenue");
+        assertThatThrownBy(() -> rebuild.execute(noTable, context))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("invalid-input"));
     }

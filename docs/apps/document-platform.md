@@ -98,8 +98,12 @@ set restores each subject from the bucket before serving, which is what
 `DOCUMENT_PLATFORM_SEARCH_READ_ONLY=true` makes the search role a
 reader: no repo channel, no `SearchIndexService`, and restore-only
 snapshots (a reader never uploads a commit or prunes the writer's
-blobs). Combined with the `metrics` role this is the remote metrics
-node — see [Role nodes](role-nodes.md).
+blobs). `DOCUMENT_PLATFORM_SEARCH_REFRESH_SECONDS` makes the reader
+follow the writer live, pulling newer snapshots into its serving index
+on that interval; absent means restart-only, and setting it on a
+writable node refuses — refresh is the reader's pull. Combined with the
+`metrics` role this is the remote metrics node — see
+[Role nodes](role-nodes.md).
 
 ## Lake metrics
 
@@ -131,6 +135,17 @@ naming both — a caller picks `METRIC_BACKEND_LUCENE` (the live index) or
 `METRIC_BACKEND_ICEBERG` (the lake table) explicitly. Without the family
 nothing changes: the single-engine mount keeps answering unset-backend
 queries with Lucene, which is configuration, not a guess.
+
+Rollups always have somewhere to land (see
+[Rollups](../search/metrics.md#rollups)): with the family set,
+`RebuildRollup` replaces tables in that lake; without it, rollups land
+in a default local lake — a sqlite catalog plus Parquet under
+`DOCUMENT_PLATFORM_METRICS_LAKE_DIR` (default `/data/metrics-lake`),
+created lazily on the first rebuild, so a node that never rebuilds
+never touches the directory. The default mounts the rollup sink only,
+never the Iceberg query backend, so the single-engine query surface is
+unchanged. The `rebuild-rollup` workflow registers with the co-mounted
+registry and submits through the jobs role like any other workflow.
 
 ## Configuration
 

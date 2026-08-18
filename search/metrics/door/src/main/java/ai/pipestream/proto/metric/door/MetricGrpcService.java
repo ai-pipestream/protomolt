@@ -5,8 +5,11 @@ import ai.pipestream.proto.metric.DescribeMappingResponse;
 import ai.pipestream.proto.metric.MetricServiceGrpc;
 import ai.pipestream.proto.metric.QueryMetricsRequest;
 import ai.pipestream.proto.metric.QueryMetricsResponse;
+import ai.pipestream.proto.metric.RebuildRollupRequest;
+import ai.pipestream.proto.metric.RebuildRollupResponse;
 import ai.pipestream.proto.metric.spi.MetricQueries;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
+import ai.pipestream.proto.metric.spi.RollupSink;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
@@ -36,12 +39,20 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
             MetricRefusal.UNKNOWN_BACKEND,
             MetricRefusal.UNSUPPORTED_AGGREGATE,
             MetricRefusal.UNSUPPORTED_FILTER,
-            MetricRefusal.MISSING_TABLE);
+            MetricRefusal.MISSING_TABLE,
+            MetricRefusal.DISTINCT_BOUND,
+            MetricRefusal.MISSING_SINK,
+            MetricRefusal.ROLLUP_BUDGET);
 
     private final Map<String, ServedMetricSubject> subjects;
+    private final RollupSink rollups;
+    private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
 
-    MetricGrpcService(Map<String, ServedMetricSubject> subjects) {
+    MetricGrpcService(Map<String, ServedMetricSubject> subjects, RollupSink rollups,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
         this.subjects = Map.copyOf(subjects);
+        this.rollups = rollups;
+        this.resolver = resolver;
     }
 
     @Override
@@ -63,15 +74,15 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
         });
     }
 
+    @Override
+    public void rebuildRollup(
+            RebuildRollupRequest request, StreamObserver<RebuildRollupResponse> observer) {
+        run(observer, () -> Rollups.rebuild(
+                subject(request.getMappingSubject()), rollups, request));
+    }
+
     private ServedMetricSubject subject(String name) {
-        ServedMetricSubject subject = subjects.get(name);
-        if (subject == null) {
-            throw new MetricRefusal(MetricRefusal.UNKNOWN_SUBJECT,
-                    "unknown mapping subject '" + name + "'; served subjects: "
-                            + String.join(", ", subjects.keySet()),
-                    List.copyOf(subjects.keySet()));
-        }
-        return subject;
+        return Subjects.find(subjects, resolver, name);
     }
 
     private <T> void run(StreamObserver<T> observer, java.util.function.Supplier<T> work) {

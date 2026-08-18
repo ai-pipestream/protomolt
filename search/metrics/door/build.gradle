@@ -1,4 +1,4 @@
-description = 'The metric door: the MetricService over served subjects, the validating interceptor mounted from day one, and the describe-mapping and query-metrics catalog verbs'
+description = 'The metric door: the MetricService over served subjects, the validating interceptor mounted from day one, and the describe-mapping, query-metrics, and rebuild-rollup catalog verbs'
 
 dependencies {
     api project(':protomolt-metric-spi')

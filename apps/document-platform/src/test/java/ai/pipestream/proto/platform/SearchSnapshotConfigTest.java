@@ -63,6 +63,21 @@ class SearchSnapshotConfigTest {
     }
 
     @Test
+    void theRefreshIntervalParsesStrictly() {
+        assertThat(DocumentPlatform.searchRefreshSeconds(Map.of())).isZero();
+        assertThat(DocumentPlatform.searchRefreshSeconds(Map.of(
+                DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "30"))).isEqualTo(30L);
+        assertThatThrownBy(() -> DocumentPlatform.searchRefreshSeconds(Map.of(
+                DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "soon")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS);
+        assertThatThrownBy(() -> DocumentPlatform.searchRefreshSeconds(Map.of(
+                DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "0")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unset it for restart-only");
+    }
+
+    @Test
     void aLoneStaticCredentialRefusesByName() {
         assertThatThrownBy(() -> SearchSnapshotConfig.fromEnvironment(Map.of(
                 SearchSnapshotConfig.ENV_BUCKET, "search-snaps",

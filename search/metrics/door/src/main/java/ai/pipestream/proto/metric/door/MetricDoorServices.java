@@ -24,23 +24,56 @@ public final class MetricDoorServices implements AutoCloseable {
     private final MetricGrpcService service;
     private Server server;
 
-    private MetricDoorServices(Map<String, ServedMetricSubject> subjects) {
+    private MetricDoorServices(
+            Map<String, ServedMetricSubject> subjects,
+            ai.pipestream.proto.metric.spi.RollupSink rollups,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
         this.subjects = Map.copyOf(subjects);
-        this.service = new MetricGrpcService(this.subjects);
+        this.service = new MetricGrpcService(this.subjects, rollups, resolver);
+    }
+
+    /**
+     * Builds the stack without a rollup sink: RebuildRollup refuses with
+     * {@code missing-sink}.
+     *
+     * @param subjects the served subjects, keyed by subject name; non-empty
+     * @return the wired, not-yet-started stack
+     */
+    public static MetricDoorServices build(Map<String, ServedMetricSubject> subjects) {
+        return build(subjects, null);
     }
 
     /**
      * Builds the stack.
      *
      * @param subjects the served subjects, keyed by subject name; non-empty
+     * @param rollups where rebuilt rollups land, or {@code null} for none
      * @return the wired, not-yet-started stack
      */
-    public static MetricDoorServices build(Map<String, ServedMetricSubject> subjects) {
+    public static MetricDoorServices build(
+            Map<String, ServedMetricSubject> subjects,
+            ai.pipestream.proto.metric.spi.RollupSink rollups) {
+        return build(subjects, rollups, null);
+    }
+
+    /**
+     * Builds the stack.
+     *
+     * @param subjects the served subjects, keyed by subject name; non-empty
+     * @param rollups where rebuilt rollups land, or {@code null} for none
+     * @param resolver resolves subjects beyond the static set (rollup
+     *        tables), or {@code null} for none
+     * @return the wired, not-yet-started stack
+     */
+    public static MetricDoorServices build(
+            Map<String, ServedMetricSubject> subjects,
+            ai.pipestream.proto.metric.spi.RollupSink rollups,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
         if (subjects == null || subjects.isEmpty()) {
             throw new IllegalArgumentException(
                     "at least one served metric subject is required");
         }
-        return new MetricDoorServices(subjects);
+        return new MetricDoorServices(subjects, rollups, resolver);
     }
 
     /** The served subjects, keyed by name. */

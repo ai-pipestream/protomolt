@@ -10,6 +10,9 @@ dependencies {
     implementation project(':protomolt-metric-door')
     implementation project(':protomolt-search-door')
     implementation project(':protomolt-actions')
+    // With a co-mounted registry the module registers the rebuild-rollup
+    // workflow, the way the search door registers its own.
+    implementation project(':protomolt-registry')
     implementation libs.grpc.api
     implementation libs.slf4j.api
 

@@ -165,6 +165,30 @@ public record DocumentPlatformConfig(
      */
     public static final String ENV_SEARCH_READ_ONLY = "DOCUMENT_PLATFORM_SEARCH_READ_ONLY";
 
+    /**
+     * Env var for a reader's snapshot refresh interval in seconds: how
+     * often a read-only search node pulls newer snapshots into its live
+     * index. Absent means restart-only; a value demands
+     * {@link #ENV_SEARCH_READ_ONLY} and the snapshot family, because
+     * refresh is the reader's pull and the writer publishes on its commit
+     * cadence.
+     */
+    public static final String ENV_SEARCH_REFRESH_SECONDS =
+            "DOCUMENT_PLATFORM_SEARCH_REFRESH_SECONDS";
+
+    /**
+     * Env var for the default local metrics lake: where rebuilt rollups
+     * land when no {@code DOCUMENT_PLATFORM_METRICS_ICEBERG_*} family is
+     * set. The directory (a sqlite catalog plus Parquet data, created
+     * lazily on the first rebuild) defaults to
+     * {@value #DEFAULT_METRICS_LAKE_DIR}; with the catalog family set,
+     * rollups land in that lake instead and this variable is unused.
+     */
+    public static final String ENV_METRICS_LAKE_DIR = "DOCUMENT_PLATFORM_METRICS_LAKE_DIR";
+
+    /** The default local metrics lake directory. */
+    public static final String DEFAULT_METRICS_LAKE_DIR = "/data/metrics-lake";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

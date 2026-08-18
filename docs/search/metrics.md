@@ -66,10 +66,14 @@ storage. Group-by members need `facetable` (or `sortable`) on their
 indexing hint; a field present without the needed doc values fails
 loudly naming the hint to declare. FLOAT and DOUBLE doc values decode
 the mapper's sortable encoding; date dimensions bucket UTC under the
-resolved grain honoring the hint's resolution. `COUNT_DISTINCT` is
-deliberately absent until a bounded collector exists. The executor reads
-through the door store's `withSearcher` borrow seam, so acquire and
-release never leave the store.
+resolved grain honoring the hint's resolution. `COUNT_DISTINCT` counts
+exactly, over keyword terms or raw numeric values, up to a per-measure
+bound (100000 tracked values by default; the sets live in memory for
+the query's duration): a query that passes the bound is refused with
+`distinct-bound` naming the Iceberg backend as the engine that spills,
+never an estimate, never a silently truncated count. The executor
+reads through the door store's `withSearcher` borrow seam, so acquire
+and release never leave the store.
 
 ## The Iceberg engine
 
@@ -82,8 +86,9 @@ Trino and Spark stay external consumers of the same table. Columns are
 addressed by each member's `fieldPath` (the table keeps the message's
 nesting as structs, where the search index flattens), date buckets
 label themselves in UTC with exactly the Lucene backend's formats, and
-the rendered SQL is the `physical_plan`. `COUNT_DISTINCT` is supported
-here, the one aggregate the Lucene backend refuses; rows missing a
+the rendered SQL is the `physical_plan`. `COUNT_DISTINCT` runs
+unbounded here (the reduction spills), where the Lucene backend counts
+exactly only up to its in-memory bound; rows missing a
 dimension value (NULL, or the empty string on term dimensions) are
 excluded from group-by, matching the doc-values backend; tables
 carrying delete files are refused loudly, because the sink appends and
@@ -92,6 +97,51 @@ beside Lucene through the `DOCUMENT_PLATFORM_METRICS_ICEBERG_*` family
 (see [the platform's lake metrics section](../apps/document-platform.md#lake-metrics));
 on such a two-engine mount a query that leaves the backend unset is
 refused with `ambiguous-backend` naming both, per the design.
+
+## Rollups
+
+`RebuildRollup` is the platform's answer to pre-aggregations, and it is
+a workflow, not a second database: the aggregate query runs on the
+named engine and its complete result atomically replaces one lake table
+(`<namespace>.<table>`), so later reads scan the rollup instead of
+grouping the subject on the fly. The rebuild is exact or refused, never
+truncated: a result that fills the group budget (the query surface's
+own limit cap) refuses with `rollup-budget`, because a rollup that
+might be missing groups is worse than no rollup.
+
+The write side is a plugin seam: `RollupSink` in the SPI, with
+`IcebergRollupSink` as the shipped implementation — the rollup's schema
+is a flat protobuf message synthesized from the member names (dimension
+columns are the rendered strings, measure columns are doubles), written
+as Parquet through the same emitter every lake table here takes, so the
+rollup is scannable by DuckDB, Trino, or Spark and indexable into a
+search subject later. A mount without any sink refuses with
+`missing-sink`.
+
+The declared, durable form is the `rebuild-rollup` workflow: one
+checkpointed step under the jobs executor calling
+`MetricService/RebuildRollup`, registered with a co-mounted registry so
+operators submit it by name, with the run's output carrying the
+physical plan and the lake snapshot the replace committed — the
+evidence of what the rollup holds. Nothing runs until submitted:
+optional, as designed. The same rebuild is also a catalog verb
+(`rebuild-rollup`, beside `describe-mapping` and `query-metrics`), so
+an agent surface can refresh a rollup directly without the jobs role —
+one shared code path behind both doors, refusing identically.
+
+A rebuilt rollup is itself a queryable subject: the sink stamps the
+declaration (source subject, dimension columns, measure columns with
+their source aggregates) onto the table as Iceberg properties, and
+`rollup:<table>` resolves against the lake at request time — any
+rebuilt rollup is instantly queryable and describable with no
+side-channel configuration. Re-aggregation is honest or absent: COUNT
+and SUM columns re-serve as SUM (summing counts is counting), MIN as
+MIN and MAX as MAX, while AVG and COUNT_DISTINCT columns are not
+members at all — an average of averages is a wrong answer, so those
+columns stay scan-only outside the door. Date dimensions arrive as
+their rendered bucket labels and serve as keyword dimensions: a rollup
+cannot re-bucket time below the grain it was built at. A lake table
+the sink did not write refuses instead of guessing a shape.
 
 ## The platform mount
 
@@ -104,7 +154,7 @@ mapping subject. The document platform mounts it by default on port 9095
 (`DOCUMENT_PLATFORM_METRICS_GRPC_PORT`), serving `repo-document` with a
 `documents` COUNT measure, dimensions over the folded search metadata's
 document type, language, and category, and a processed-date time
-dimension defaulting to daily grain; the two verbs ride the registry's
+dimension defaulting to daily grain; the three verbs ride the registry's
 actions route. Each dimension field carries a facetable hint in the
 search mapping, because the executor reads the doc values that hint
 writes: the two declarations move together.
