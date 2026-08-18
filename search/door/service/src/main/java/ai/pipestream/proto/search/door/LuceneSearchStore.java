@@ -897,7 +897,10 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     public void close() {
         // The committer stops (and its in-flight tick drains) before any
         // writer closes, so a tick never commits against a closed writer.
-        committer.shutdownNow();
+        // A graceful shutdown, never shutdownNow: interrupting a thread
+        // inside writer.commit() is a tragic event that closes the writer
+        // under us, and the closes below then throw AlreadyClosed.
+        committer.shutdown();
         try {
             committer.awaitTermination(5, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
