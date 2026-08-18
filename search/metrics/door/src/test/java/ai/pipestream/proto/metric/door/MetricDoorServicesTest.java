@@ -77,11 +77,11 @@ class MetricDoorServicesTest {
         Map<String, MetricMember> members = new LinkedHashMap<>();
         members.put("segment", new MetricMember("segment",
                 MemberRole.MEMBER_ROLE_DIMENSION, Aggregate.AGGREGATE_UNSPECIFIED,
-                "segment", FieldKind.KEYWORD, List.of(), "", List.of(),
+                "segment", "segment", FieldKind.KEYWORD, List.of(), "", List.of(),
                 TimeGrain.TIME_GRAIN_UNSPECIFIED, "Sales segment", "internal"));
         members.put("revenue", new MetricMember("revenue",
                 MemberRole.MEMBER_ROLE_MEASURE, Aggregate.AGGREGATE_SUM,
-                "amount_cents", FieldKind.NUMERIC, List.of(), "", List.of(),
+                "amount_cents", "amount_cents", FieldKind.NUMERIC, List.of(), "", List.of(),
                 TimeGrain.TIME_GRAIN_UNSPECIFIED, "", ""));
         MetricMapping mapping = new MetricMapping("orders", "test.Order", members);
         subjects = Map.of("orders", new ServedMetricSubject(mapping,

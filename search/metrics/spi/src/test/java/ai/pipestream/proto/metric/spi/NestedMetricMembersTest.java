@@ -80,6 +80,7 @@ class NestedMetricMembersTest {
                 .isEqualTo("doc_id");
         assertThat(mapping.member("language")).hasValueSatisfying(member -> {
             assertThat(member.fieldName()).isEqualTo("meta_language");
+            assertThat(member.fieldPath()).isEqualTo("meta.language");
             assertThat(member.kind()).isEqualTo(FieldKind.KEYWORD);
         });
         assertThat(mapping.member("bytes_seed").orElseThrow().fieldName())
@@ -106,6 +107,8 @@ class NestedMetricMembersTest {
         MetricMapping mapping = MetricMappings.build("deep", root, OPTIONS);
         assertThat(mapping.member("kind").orElseThrow().fieldName())
                 .isEqualTo("b_c_kind");
+        assertThat(mapping.member("kind").orElseThrow().fieldPath())
+                .isEqualTo("b.c.kind");
     }
 
     @Test
@@ -133,9 +136,11 @@ class NestedMetricMembersTest {
         assertThat(mapping.member("gold_accounts").orElseThrow().rowFilters())
                 .containsExactly(
                         new EqualsFilter("gold_accounts", "profile_paying",
-                                DimensionKind.BOOLEAN, java.util.List.of("true")),
+                                "profile.paying", DimensionKind.BOOLEAN,
+                                java.util.List.of("true")),
                         new EqualsFilter("gold_accounts", "profile_tier",
-                                DimensionKind.TERM, java.util.List.of("gold")));
+                                "profile.tier", DimensionKind.TERM,
+                                java.util.List.of("gold")));
     }
 
     @Test

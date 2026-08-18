@@ -38,12 +38,16 @@ public record CompiledMetricQuery(
      *
      * @param member the public member name (the result-row key)
      * @param fieldName the engine's physical field name; empty for COUNT
+     * @param fieldPath the proto field path (dot-joined field names), the
+     *        column address for engines that keep the message's nesting
+     *        (an Iceberg struct column); empty for COUNT
      * @param aggregate the reduction to run
      * @param rowFilters this measure's extra row filters (from filter_cel),
      *        ANDed with the query-wide filters; empty = all rows
      */
     public record Measure(
-            String member, String fieldName, Aggregate aggregate, List<EqualsFilter> rowFilters) {
+            String member, String fieldName, String fieldPath, Aggregate aggregate,
+            List<EqualsFilter> rowFilters) {
         public Measure {
             rowFilters = List.copyOf(rowFilters);
         }
@@ -54,10 +58,13 @@ public record CompiledMetricQuery(
      *
      * @param member the public member name (the result-row key)
      * @param fieldName the engine's physical field name
+     * @param fieldPath the proto field path (dot-joined field names)
      * @param kind how the engine buckets it
      * @param grain the resolved calendar grain; UNSPECIFIED unless DATE
      */
-    public record Dimension(String member, String fieldName, DimensionKind kind, TimeGrain grain) {
+    public record Dimension(
+            String member, String fieldName, String fieldPath, DimensionKind kind,
+            TimeGrain grain) {
     }
 
     /** How an engine buckets a dimension. */
@@ -75,11 +82,13 @@ public record CompiledMetricQuery(
      *
      * @param member the public member name, for evidence and errors
      * @param fieldName the engine's physical field name
+     * @param fieldPath the proto field path (dot-joined field names)
      * @param kind how the engine matches it
      * @param values the legal values; never empty
      */
     public record EqualsFilter(
-            String member, String fieldName, DimensionKind kind, List<String> values) {
+            String member, String fieldName, String fieldPath, DimensionKind kind,
+            List<String> values) {
         public EqualsFilter {
             values = List.copyOf(values);
         }

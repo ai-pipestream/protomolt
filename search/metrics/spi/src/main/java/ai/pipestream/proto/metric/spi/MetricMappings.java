@@ -92,10 +92,10 @@ public final class MetricMappings {
         Map<String, MetricMember> members = new LinkedHashMap<>();
         Map<String, FieldDescriptor> memberFields = new LinkedHashMap<>();
         Map<String, FieldMetric> declarations = new LinkedHashMap<>();
-        Map<String, String> memberPrefixes = new LinkedHashMap<>();
+        Map<String, Prefixes> memberPrefixes = new LinkedHashMap<>();
         Set<String> visiting = new LinkedHashSet<>();
         visiting.add(descriptor.getFullName());
-        collect(descriptor, "", null, visiting, source,
+        collect(descriptor, new Prefixes("", ""), null, visiting, source,
                 members, memberFields, declarations, memberPrefixes, violations);
 
         checkCels(members, memberFields, declarations, memberPrefixes, violations);
@@ -119,14 +119,14 @@ public final class MetricMappings {
      */
     private static void collect(
             Descriptor type,
-            String prefix,
+            Prefixes prefix,
             String repeatedAncestor,
             Set<String> visiting,
             MetricHintSource source,
             Map<String, MetricMember> members,
             Map<String, FieldDescriptor> memberFields,
             Map<String, FieldMetric> declarations,
-            Map<String, String> memberPrefixes,
+            Map<String, Prefixes> memberPrefixes,
             List<String> violations) {
         for (FieldDescriptor field : type.getFields()) {
             Optional<FieldMetric> declared = source.field(field);
@@ -155,7 +155,7 @@ public final class MetricMappings {
                     && !TIMESTAMP_TYPE.equals(field.getMessageType().getFullName())
                     && visiting.add(field.getMessageType().getFullName())) {
                 collect(field.getMessageType(),
-                        prefix + field.getName() + "_",
+                        prefix.descend(field.getName()),
                         repeatedAncestor != null ? repeatedAncestor
                                 : field.isRepeated() ? field.getFullName() : null,
                         visiting, source,
@@ -169,7 +169,7 @@ public final class MetricMappings {
 
     /** One declared field's member, or empty when its violations preclude it. */
     private static Optional<MetricMember> buildMember(
-            FieldDescriptor field, String prefix, FieldMetric declared,
+            FieldDescriptor field, Prefixes prefix, FieldMetric declared,
             List<String> violations) {
         String path = field.getFullName();
         int before = violations.size();
@@ -249,7 +249,8 @@ public final class MetricMappings {
                 name,
                 declared.getRole(),
                 declared.getAggregate(),
-                prefix + field.getName(),
+                prefix.name() + field.getName(),
+                prefix.path() + field.getName(),
                 declared.getCel().isEmpty() ? kind : FieldKind.SYNTHETIC,
                 List.of(),
                 declared.getCel(),
@@ -284,7 +285,7 @@ public final class MetricMappings {
             Map<String, MetricMember> members,
             Map<String, FieldDescriptor> memberFields,
             Map<String, FieldMetric> declarations,
-            Map<String, String> memberPrefixes,
+            Map<String, Prefixes> memberPrefixes,
             List<String> violations) {
         CelEnvironmentFactory siblingEnv = CelEnvironmentFactory.builder();
         for (MetricMember member : members.values()) {
@@ -333,7 +334,7 @@ public final class MetricMappings {
         collectIdents(ast.getExpr(), requires);
         members.put(name, new MetricMember(
                 member.name(), member.role(), member.aggregate(), member.fieldName(),
-                member.kind(), member.rowFilters(), member.cel(),
+                member.fieldPath(), member.kind(), member.rowFilters(), member.cel(),
                 List.copyOf(requires), member.defaultGrain(),
                 member.description(), member.sensitivity()));
     }
@@ -343,7 +344,7 @@ public final class MetricMappings {
             MetricMember member,
             FieldDescriptor field,
             String filterCel,
-            String prefix,
+            Prefixes prefix,
             Map<String, MetricMember> members,
             List<String> violations) {
         // filter_cel is written against the DECLARING message: `this` is the
@@ -374,8 +375,9 @@ public final class MetricMappings {
         }
         members.put(name, new MetricMember(
                 member.name(), member.role(), member.aggregate(), member.fieldName(),
-                member.kind(), List.copyOf(filters), member.cel(), member.celRequires(),
-                member.defaultGrain(), member.description(), member.sensitivity()));
+                member.fieldPath(), member.kind(), List.copyOf(filters), member.cel(),
+                member.celRequires(), member.defaultGrain(), member.description(),
+                member.sensitivity()));
     }
 
     // -------------------------------------------------- filter_cel translation
@@ -387,7 +389,7 @@ public final class MetricMappings {
      * subset.
      */
     private static boolean translate(
-            CelExpr expr, String member, Descriptor descriptor, String prefix,
+            CelExpr expr, String member, Descriptor descriptor, Prefixes prefix,
             List<EqualsFilter> filters) {
         return switch (expr.getKind()) {
             case CALL -> switch (expr.call().function()) {
@@ -408,7 +410,7 @@ public final class MetricMappings {
     }
 
     private static boolean translateEquals(
-            CelExpr call, String member, Descriptor descriptor, String prefix,
+            CelExpr call, String member, Descriptor descriptor, Prefixes prefix,
             List<EqualsFilter> filters) {
         if (call.call().args().size() != 2) {
             return false;
@@ -428,13 +430,14 @@ public final class MetricMappings {
         FieldKind kind = kindOf(field);
         CelConstant value = constant.constant();
         if (kind == FieldKind.KEYWORD && value.getKind() == CelConstant.Kind.STRING_VALUE) {
-            filters.add(new EqualsFilter(member, prefix + field.getName(), DimensionKind.TERM,
+            filters.add(new EqualsFilter(member, prefix.name() + field.getName(),
+                    prefix.path() + field.getName(), DimensionKind.TERM,
                     List.of(value.stringValue())));
             return true;
         }
         if (kind == FieldKind.BOOLEAN && value.getKind() == CelConstant.Kind.BOOLEAN_VALUE) {
-            filters.add(new EqualsFilter(member, prefix + field.getName(),
-                    DimensionKind.BOOLEAN,
+            filters.add(new EqualsFilter(member, prefix.name() + field.getName(),
+                    prefix.path() + field.getName(), DimensionKind.BOOLEAN,
                     List.of(Boolean.toString(value.booleanValue()))));
             return true;
         }
@@ -443,7 +446,7 @@ public final class MetricMappings {
 
     /** A bare {@code this.f} (or its negation) over a bool field. */
     private static boolean translateBare(
-            CelExpr expr, String member, Descriptor descriptor, String prefix, String value,
+            CelExpr expr, String member, Descriptor descriptor, Prefixes prefix, String value,
             List<EqualsFilter> filters) {
         if (expr.getKind() != CelExpr.ExprKind.Kind.SELECT) {
             return false;
@@ -452,7 +455,8 @@ public final class MetricMappings {
         if (field == null || kindOf(field) != FieldKind.BOOLEAN) {
             return false;
         }
-        filters.add(new EqualsFilter(member, prefix + field.getName(), DimensionKind.BOOLEAN,
+        filters.add(new EqualsFilter(member, prefix.name() + field.getName(),
+                prefix.path() + field.getName(), DimensionKind.BOOLEAN,
                 List.of(value)));
         return true;
     }
@@ -478,6 +482,18 @@ public final class MetricMappings {
             case LIST -> expr.list().elements().forEach(e -> collectIdents(e, idents));
             default -> {
             }
+        }
+    }
+
+    /**
+     * The two accumulated addresses of one walk position: the flattened
+     * engine name (underscore-joined) and the proto field path
+     * (dot-joined).
+     */
+    private record Prefixes(String name, String path) {
+
+        Prefixes descend(String fieldName) {
+            return new Prefixes(name + fieldName + "_", path + fieldName + ".");
         }
     }
 }

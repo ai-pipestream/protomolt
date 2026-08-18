@@ -142,8 +142,10 @@ class MetricMappingsTest {
         // The filter_cel translated to the engine-neutral equality form.
         MetricMember orders = mapping.member("orders").orElseThrow();
         assertThat(orders.rowFilters()).containsExactly(
-                new EqualsFilter("orders", "paying", DimensionKind.BOOLEAN, List.of("true")),
-                new EqualsFilter("orders", "segment", DimensionKind.TERM, List.of("smb")));
+                new EqualsFilter("orders", "paying", "paying",
+                        DimensionKind.BOOLEAN, List.of("true")),
+                new EqualsFilter("orders", "segment", "segment",
+                        DimensionKind.TERM, List.of("smb")));
 
         // The calculated measure recorded what it reads.
         MetricMember average = mapping.member("average_order").orElseThrow();

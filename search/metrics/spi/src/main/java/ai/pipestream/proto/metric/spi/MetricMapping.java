@@ -48,8 +48,10 @@ public record MetricMapping(
      * @param role dimension or measure
      * @param aggregate the measure's reduction; UNSPECIFIED on dimensions
      *        and calculated measures
-     * @param fieldName the backing proto field name (also the engine's
-     *        physical name under the flat mapper convention)
+     * @param fieldName the flattened engine field name (the flat mapper
+     *        convention, underscore-joined)
+     * @param fieldPath the proto field path (dot-joined field names), the
+     *        column address for engines that keep the message's nesting
      * @param kind how engines bucket or reduce the field
      * @param rowFilters this measure's row filters, translated from its
      *        filter_cel; empty = all rows
@@ -66,6 +68,7 @@ public record MetricMapping(
             MemberRole role,
             Aggregate aggregate,
             String fieldName,
+            String fieldPath,
             FieldKind kind,
             List<CompiledMetricQuery.EqualsFilter> rowFilters,
             String cel,

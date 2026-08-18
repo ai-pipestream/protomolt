@@ -174,6 +174,7 @@ public final class MetricQueries {
             measures.add(new Measure(
                     member.name(),
                     member.aggregate() == Aggregate.AGGREGATE_COUNT ? "" : member.fieldName(),
+                    member.aggregate() == Aggregate.AGGREGATE_COUNT ? "" : member.fieldPath(),
                     member.aggregate(),
                     member.rowFilters()));
         }
@@ -211,7 +212,8 @@ public final class MetricQueries {
                                 + "dimension, got " + member.kind(), List.of());
             };
             filters.add(new EqualsFilter(
-                    member.name(), member.fieldName(), kind, filter.getEqualsList()));
+                    member.name(), member.fieldName(), member.fieldPath(), kind,
+                    filter.getEqualsList()));
         }
 
         return new Plan(
@@ -235,7 +237,7 @@ public final class MetricQueries {
             DimensionKind kind = member.kind() == FieldKind.BOOLEAN
                     ? DimensionKind.BOOLEAN
                     : DimensionKind.TERM;
-            return new Dimension(member.name(), member.fieldName(), kind,
+            return new Dimension(member.name(), member.fieldName(), member.fieldPath(), kind,
                     TimeGrain.TIME_GRAIN_UNSPECIFIED);
         }
         TimeGrain grain = requestedGrain != TimeGrain.TIME_GRAIN_UNSPECIFIED
@@ -251,7 +253,8 @@ public final class MetricQueries {
                     "the " + backend + " executor does not support date-grain bucketing",
                     List.of());
         }
-        return new Dimension(member.name(), member.fieldName(), DimensionKind.DATE, grain);
+        return new Dimension(member.name(), member.fieldName(), member.fieldPath(),
+                DimensionKind.DATE, grain);
     }
 
     // ------------------------------------------------------------- post-pass
