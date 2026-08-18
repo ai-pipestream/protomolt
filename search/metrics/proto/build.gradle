@@ -7,8 +7,10 @@ description = 'The metric service contract: descriptor-declared measures and dim
 dependencies {
     api project(':protomolt-protobuf-metric')
     // The request contract dogfoods the house validate.v1 rules (required
-    // subject, bounded limit, non-empty measures).
+    // subject, bounded limit, non-empty measures) and the canonical
+    // types.v1 DateRange for date filters.
     api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-types')
     api libs.protobuf.java
     api libs.protobuf.java.util
     api libs.grpc.api
@@ -21,6 +23,7 @@ dependencies {
     // Extract the option .proto files so protoc can resolve the imports.
     protobuf project(':protomolt-protobuf-metric')
     protobuf project(':protomolt-protobuf-validation')
+    protobuf project(':protomolt-protobuf-types')
 }
 
 protobuf {

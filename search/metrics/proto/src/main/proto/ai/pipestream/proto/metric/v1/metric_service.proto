@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.metric.v1;
 
 import "ai/pipestream/proto/metric/v1/metric.proto";
+import "ai/pipestream/proto/types/v1/ranges.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
@@ -51,27 +52,6 @@ message MemberRef {
   TimeGrain grain = 2;
 }
 
-// An inclusive UTC date range over a DATE dimension. The bounds are
-// ISO-8601 calendar dates ("2026-07-01"), schema-bounded to exactly that
-// shape, never a free string: calendar days are the range's semantics,
-// matching the bucket labels the response renders, so a caller never does
-// instant math or guesses inclusive-versus-exclusive. An unset side is
-// unbounded; both sides unset is refused, as is an inverted range.
-message MetricRange {
-  // Inclusive lower bound: the day's first instant, UTC. Unset = unbounded.
-  optional string gte = 1 [
-    (ai.pipestream.proto.validate.v1.field) = {
-      string: {date: true}
-    }
-  ];
-  // Inclusive upper bound: the day's last millisecond, UTC. Unset = unbounded.
-  optional string lte = 2 [
-    (ai.pipestream.proto.validate.v1.field) = {
-      string: {date: true}
-    }
-  ];
-}
-
 // One filter over a member: an equality set over a keyword or bool
 // dimension, or a date range over a DATE dimension. Exactly one form.
 message MetricFilter {
@@ -91,8 +71,12 @@ message MetricFilter {
       repeated: {max_items: 100, items: {string: {min_len: 1, max_len: 200}}}
     }
   ];
-  // Date range over a DATE dimension; exactly one of equals/range.
-  MetricRange range = 3;
+  // Date range over a DATE dimension; exactly one of equals/range. The
+  // canonical types.v1 day-grain range: ISO calendar-day bounds, an unset
+  // bound is an open end, an absent inclusivity flag means included, and
+  // excluding a bound drops that entire day. The type's own rules refuse
+  // an empty or inverted range at the gate.
+  ai.pipestream.proto.types.v1.DateRange range = 3;
 }
 
 // One aggregate query against a mapping subject.

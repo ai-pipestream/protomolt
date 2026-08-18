@@ -144,13 +144,13 @@ class MetricDoorServicesTest {
                         .setLimit(10)
                         .addFilters(ai.pipestream.proto.metric.MetricFilter.newBuilder()
                                 .setMember("created_at")
-                                .setRange(ai.pipestream.proto.metric.MetricRange
-                                        .newBuilder().setGte("July 1st, 2026")))
+                                .setRange(ai.pipestream.proto.types.DateRange
+                                        .newBuilder().setBegin("July 1st, 2026")))
                         .build()))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
                     assertThat(e.getStatus().getCode())
                             .isEqualTo(Status.Code.INVALID_ARGUMENT);
-                    assertThat(e.getStatus().getDescription()).contains("gte");
+                    assertThat(e.getStatus().getDescription()).contains("begin");
                 });
     }
 
