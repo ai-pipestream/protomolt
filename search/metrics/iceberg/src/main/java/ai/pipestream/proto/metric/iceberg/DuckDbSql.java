@@ -37,12 +37,26 @@ record DuckDbSql(String text, List<String> parameters) {
         StringJoiner where = new StringJoiner(" AND ");
         for (Dimension dimension : query.dimensions()) {
             String column = column(dimension.fieldPath());
-            where.add(dimension.kind() == DimensionKind.TERM
-                    ? "(" + column + " IS NOT NULL AND " + column + " <> '')"
-                    : column + " IS NOT NULL");
+            where.add(switch (dimension.kind()) {
+                case TERM -> "(" + column + " IS NOT NULL AND " + column + " <> '')";
+                case TREE_PATH -> {
+                    String rendered = renderedPath(column);
+                    yield "(" + rendered + " IS NOT NULL AND " + rendered + " <> '')";
+                }
+                default -> column + " IS NOT NULL";
+            });
         }
         for (EqualsFilter filter : query.filters()) {
             where.add(filterCondition(filter, parameters));
+        }
+        for (CompiledMetricQuery.PathPrefixFilter prefix : query.pathPrefixes()) {
+            // Descendant-or-self over the rendered path: equal to the prefix
+            // or below it. The "/" in the second arm keeps "ab" out of "a"'s
+            // subtree; starts_with is a plain prefix test, no LIKE wildcards.
+            String rendered = renderedPath(column(prefix.fieldPath()));
+            where.add("(" + rendered + " = ? OR starts_with(" + rendered + ", ? || '/'))");
+            parameters.add(prefix.path());
+            parameters.add(prefix.path());
         }
         for (CompiledMetricQuery.DateRangeFilter range : query.dateRanges()) {
             // Inclusive UTC epoch-millis bounds over the timestamp column,
@@ -81,7 +95,18 @@ record DuckDbSql(String text, List<String> parameters) {
             case TERM -> column;
             case BOOLEAN -> "CAST(" + column + " AS VARCHAR)";
             case DATE -> dateLabel(column, dimension);
+            case TREE_PATH -> renderedPath(column);
         };
+    }
+
+    /**
+     * The rendered root-first path, derived from the TreePath struct the
+     * lake already writes: the segments list joined on "/". No chain column
+     * is materialized; the struct is the column and the rendering is SQL,
+     * which is exactly how the labels match the Lucene backend's.
+     */
+    private static String renderedPath(String structColumn) {
+        return "array_to_string(" + structColumn + "['segments'], '/')";
     }
 
     /** The Lucene backend's bucket labels, produced in SQL over UTC. */

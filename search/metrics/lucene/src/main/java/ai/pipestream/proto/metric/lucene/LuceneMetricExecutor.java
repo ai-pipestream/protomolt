@@ -226,10 +226,17 @@ public final class LuceneMetricExecutor implements MetricExecutor {
 
     private static Query filterQuery(
             CompiledMetricQuery query, Map<String, ResolvedFieldHint> hints) {
-        if (query.filters().isEmpty() && query.dateRanges().isEmpty()) {
+        if (query.filters().isEmpty() && query.dateRanges().isEmpty()
+                && query.pathPrefixes().isEmpty()) {
             return new MatchAllDocsQuery();
         }
         BooleanQuery.Builder all = new BooleanQuery.Builder();
+        for (CompiledMetricQuery.PathPrefixFilter prefix : query.pathPrefixes()) {
+            // The mapper indexed the whole ancestor chain as terms, so
+            // descendant-or-self is one exact term match, never a scan.
+            all.add(new TermQuery(new Term(prefix.fieldName(), prefix.path())),
+                    BooleanClause.Occur.MUST);
+        }
         for (EqualsFilter filter : query.filters()) {
             BooleanQuery.Builder any = new BooleanQuery.Builder();
             for (String value : filter.values()) {
@@ -367,6 +374,16 @@ public final class LuceneMetricExecutor implements MetricExecutor {
             if (terms != null) {
                 if (!terms.advanceExact(doc)) {
                     return null;
+                }
+                if (dimension.kind() == CompiledMetricQuery.DimensionKind.TREE_PATH) {
+                    // The doc values hold the whole ancestor chain; the leaf
+                    // labels the bucket. Every ancestor is a strict prefix of
+                    // the full path, so the leaf is the chain's last ord.
+                    BytesRef last = null;
+                    for (int i = 0; i < terms.docValueCount(); i++) {
+                        last = terms.lookupOrd(terms.nextOrd());
+                    }
+                    return last.utf8ToString();
                 }
                 BytesRef term = terms.lookupOrd(terms.nextOrd());
                 return term.utf8ToString();

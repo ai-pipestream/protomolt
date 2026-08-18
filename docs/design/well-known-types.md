@@ -88,9 +88,22 @@ with at least one platform behavior attached — no shape zoo:
   TREE_PATH, facetable, with no hint at all) and every engine mapper
   emits the ancestor chain ("a", "a/b", "a/b/c") as keyword terms —
   hierarchical drill-down facets count at any depth and a path-prefix
-  filter is an exact term match. Still to come on this type: a prefix
-  form on the metric surface's `MetricFilter`, and lake struct
-  columns.
+  filter is an exact term match. The metric surface speaks the type
+  too (landed): a `TreePath` field is a `TREE_PATH` dimension (the
+  walk keeps it a leaf like Timestamp) that groups by the whole leaf
+  path — never per ancestor, which would count a row once per depth
+  and break additivity — and `MetricFilter.prefix` (a wire-plain
+  `TreePath`) is the descendant-or-self filter: Lucene answers it as
+  one exact term match against the indexed ancestor chain; the lake
+  needs no chain column at all, because the TreePath struct the lake
+  already writes *is* the column and DuckDB derives the rendered path
+  (`array_to_string(col['segments'], '/')`) for both grouping and
+  `starts_with` prefixing, so the two engines label buckets
+  identically. Equality on a TREE_PATH dimension is refused toward
+  prefix (a term match would silently mean descendant-or-self), and
+  rollups hold the rendered leaf path as a plain keyword: equality
+  works over a rollup subject, prefix honestly refuses there and runs
+  on the base subject.
 - **Adopt-and-validate `google.type`** (landed) — Money, Date,
   Interval, LatLng are not reinvented; the built-in
   `GoogleTypeRuleSource` (on the default validator chain) carries

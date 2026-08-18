@@ -180,7 +180,7 @@ class MetricQueriesTest {
                                 .setRange(ai.pipestream.proto.types.DateRange
                                         .newBuilder().setBegin("2026-07-01")))
                         .build())).getMessage())
-                .contains("pick one form");
+                .contains("more than one form");
 
         assertThat(refusalOf(() -> MetricQueries.query(mapping, executors,
                 request("revenue")

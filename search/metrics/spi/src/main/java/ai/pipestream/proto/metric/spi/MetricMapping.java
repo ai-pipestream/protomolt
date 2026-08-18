@@ -98,6 +98,8 @@ public record MetricMapping(
         BOOLEAN,
         /** google.protobuf.Timestamp: calendar-grain dimensions. */
         DATE,
+        /** ai.pipestream.proto.types.v1.TreePath: whole-path dimensions and prefix filters. */
+        TREE_PATH,
         /** No backing field: a calculated measure. */
         SYNTHETIC
     }
