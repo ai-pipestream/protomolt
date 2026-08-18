@@ -40,3 +40,25 @@ repository or a bad federation merge serves a refusal an operator can
 read, never an invalid document. The version is the commit that last
 touched the document, per document, and the served payload is the typed
 message's bytes ready for the consumer.
+
+## The Kafka plug
+
+`protomolt-config-kafka` reads a compacted topic as a table: the key
+is the house convention, a deterministic name-based UUID over the
+subject (the same key on every publish, exactly the identity
+compaction needs), the subject itself rides the
+`protomolt-config-subject` record header (verified on read: a key
+that does not derive from the header subject refuses), and the value
+is the typed message through the house serde against the
+registry, `validate.on.read` forced on — the config lane never reads an
+unvalidated document. Publishers write with the same serde and
+`validate.on.write`, so a document violating the type's declared rules
+cannot even serialize; a poisoned record smuggled past the writer gate
+refuses at read with its `partition:offset` coordinates, and the
+consumer keeps serving what it runs until the next honest publish heals
+the subject. No consumer group and no membership: the source assigns
+the partitions, reads from the beginning, keeps latest-per-subject
+itself (compaction lag is invisible), and treats a tombstone as the
+source no longer offering a document — which the consumer's
+absence-is-not-removal rule turns into "keep serving, note it". The
+record's `partition:offset` is the applied version, the evidence.

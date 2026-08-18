@@ -102,6 +102,7 @@ def supportedModules = [
         'protomolt-composer',
         'protomolt-config',
         'protomolt-config-registry',
+        'protomolt-config-kafka',
         'protomolt-server-common',
         'protomolt-server-jdk',
         'protomolt-server-vertx',
