@@ -182,6 +182,26 @@ class PlatformLakeMetricsTest {
                 assertThat(written.getRowsWritten()).isEqualTo(2);
                 assertThat(written.getSnapshotId()).isNotZero();
                 assertThat(written.getPhysicalPlan()).contains("SELECT");
+
+                // The rebuilt rollup is instantly a queryable subject: it
+                // resolves against the lake, serving its COUNT column as a
+                // SUM (summing counts is counting), single-engine so the
+                // backend stays unset.
+                QueryMetricsResponse fromRollup = stub.queryMetrics(
+                        QueryMetricsRequest.newBuilder()
+                                .setMappingSubject("rollup:documents_by_type")
+                                .addMeasures("documents")
+                                .setLimit(10)
+                                .build());
+                assertThat(fromRollup.getBackend())
+                        .isEqualTo(MetricBackend.METRIC_BACKEND_ICEBERG);
+                assertThat(fromRollup.getRows(0).getMeasuresMap())
+                        .containsEntry("documents", 3.0);
+                assertThat(stub.describeMapping(DescribeMappingRequest.newBuilder()
+                        .setMappingSubject("rollup:documents_by_type")
+                        .build()).getMembersList())
+                        .extracting(member -> member.getName())
+                        .containsExactlyInAnyOrder("document_type", "documents");
             });
         }
 
@@ -255,6 +275,16 @@ class PlatformLakeMetricsTest {
                         .isEqualTo("protomolt.documents_total");
                 assertThat(written.getBackend())
                         .isEqualTo(MetricBackend.METRIC_BACKEND_LUCENE);
+
+                // The default lake serves its rollups back as subjects too.
+                QueryMetricsResponse fromRollup = stub.queryMetrics(
+                        QueryMetricsRequest.newBuilder()
+                                .setMappingSubject("rollup:documents_total")
+                                .addMeasures("documents")
+                                .setLimit(10)
+                                .build());
+                assertThat(fromRollup.getBackend())
+                        .isEqualTo(MetricBackend.METRIC_BACKEND_ICEBERG);
             });
 
             assertThat(java.nio.file.Files.exists(defaultLake.resolve("catalog.db")))

@@ -429,7 +429,7 @@ class MetricDoorModuleTest {
         // production while the RPC works.
         final java.util.List<String> replaced = new java.util.ArrayList<>();
         ai.pipestream.proto.metric.spi.RollupSink sink =
-                (table, dimensions, measures, rows) -> {
+                (sourceSubject, table, dimensions, measures, rows) -> {
                     replaced.add(table);
                     return new ai.pipestream.proto.metric.spi.RollupSink.Written(
                             "protomolt." + table, rows.size(), 7L);

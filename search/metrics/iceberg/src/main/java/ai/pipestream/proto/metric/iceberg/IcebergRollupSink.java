@@ -61,10 +61,23 @@ public final class IcebergRollupSink implements RollupSink {
         this.namespace = namespace;
     }
 
+    /** Table property carrying the source subject: {@value}. */
+    public static final String PROPERTY_SOURCE = "protomolt.rollup.source";
+
+    /** Table property carrying the dimension columns (csv): {@value}. */
+    public static final String PROPERTY_DIMENSIONS = "protomolt.rollup.dimensions";
+
+    /**
+     * Table property carrying the measure columns as {@code name:AGGREGATE}
+     * csv entries: {@value}.
+     */
+    public static final String PROPERTY_MEASURES = "protomolt.rollup.measures";
+
     @Override
-    public Written replace(String table, List<String> dimensions, List<String> measures,
-            List<MetricRow> rows) {
-        Descriptor descriptor = rollupDescriptor(table, dimensions, measures);
+    public Written replace(String sourceSubject, String table, List<String> dimensions,
+            List<MeasureColumn> measures, List<MetricRow> rows) {
+        List<String> measureNames = measures.stream().map(MeasureColumn::member).toList();
+        Descriptor descriptor = rollupDescriptor(table, dimensions, measureNames);
         Schema schema = IcebergSchemas.fromDescriptor(descriptor);
         TableIdentifier identifier = TableIdentifier.of(namespace, table);
         Transaction replace;
@@ -79,9 +92,17 @@ public final class IcebergRollupSink implements RollupSink {
         // The mapping derives from the transaction table's schema, which
         // carries the catalog-assigned field ids (the pre-assignment ids
         // would resolve columns wrongly, as the sink's ensureTable notes).
+        // The rollup's own declaration rides the same properties, so the
+        // table is self-describing: a resolver can serve it back as a
+        // queryable subject with no side-channel configuration.
         replace.updateProperties()
                 .set(TableProperties.DEFAULT_NAME_MAPPING,
                         NameMappingParser.toJson(MappingUtil.create(replace.table().schema())))
+                .set(PROPERTY_SOURCE, sourceSubject)
+                .set(PROPERTY_DIMENSIONS, String.join(",", dimensions))
+                .set(PROPERTY_MEASURES, measures.stream()
+                        .map(column -> column.member() + ":" + column.sourceAggregate().name())
+                        .collect(java.util.stream.Collectors.joining(",")))
                 .commit();
         if (!rows.isEmpty()) {
             List<DynamicMessage> messages = new ArrayList<>(rows.size());
@@ -91,7 +112,7 @@ public final class IcebergRollupSink implements RollupSink {
                     message.setField(descriptor.findFieldByName(dimension),
                             row.getDimensionsOrDefault(dimension, ""));
                 }
-                for (String measure : measures) {
+                for (String measure : measureNames) {
                     if (row.containsMeasures(measure)) {
                         message.setField(descriptor.findFieldByName(measure),
                                 row.getMeasuresOrThrow(measure));

@@ -188,14 +188,16 @@ class MetricDoorServicesTest {
 
     /** A rollup sink that records the one replace it receives. */
     static final class FakeRollupSink implements ai.pipestream.proto.metric.spi.RollupSink {
+        String sourceSubject;
         String table;
         List<String> dimensions;
-        List<String> measures;
+        List<MeasureColumn> measures;
         List<MetricRow> rows;
 
         @Override
-        public Written replace(String table, List<String> dimensions,
-                List<String> measures, List<MetricRow> rows) {
+        public Written replace(String sourceSubject, String table, List<String> dimensions,
+                List<MeasureColumn> measures, List<MetricRow> rows) {
+            this.sourceSubject = sourceSubject;
             this.table = table;
             this.dimensions = dimensions;
             this.measures = measures;
@@ -211,6 +213,48 @@ class MetricDoorServicesTest {
                 .addDimensions(ai.pipestream.proto.metric.MemberRef.newBuilder()
                         .setName("segment"))
                 .setTable("revenue_by_segment");
+    }
+
+    @Test
+    void aResolverServesSubjectsBeyondTheStaticSetOnEveryDoor() throws Exception {
+        // The resolver answers after the static set misses, identically
+        // for the RPC and the verbs; a name it does not know still falls
+        // through to the unknown-subject refusal.
+        ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver = name ->
+                name.equals("rollup:orders_rollup")
+                        ? new ai.pipestream.proto.metric.spi.MetricSubjectResolver.Resolved(
+                                subjects.get("orders").mapping(), new FakeExecutor())
+                        : null;
+        try (MetricDoorServices resolving = MetricDoorServices.build(
+                subjects, null, resolver)) {
+            String name = InProcessServerBuilder.generateName();
+            resolving.startInProcess(name);
+            ManagedChannel resolvingChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                QueryMetricsResponse answered = MetricServiceGrpc
+                        .newBlockingStub(resolvingChannel)
+                        .queryMetrics(query()
+                                .setMappingSubject("rollup:orders_rollup").build());
+                assertThat(answered.getRows(0).getMeasuresOrThrow("revenue"))
+                        .isEqualTo(180.0);
+                assertThatThrownBy(() -> MetricServiceGrpc
+                        .newBlockingStub(resolvingChannel)
+                        .queryMetrics(query().setMappingSubject("rollup:nope").build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                                assertThat(e.getStatus().getDescription())
+                                        .contains("[unknown-subject]"));
+            } finally {
+                resolvingChannel.shutdownNow();
+            }
+        }
+
+        List<ProtoAction> actions = MetricActions.over(subjects, null, resolver);
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode describeInput = mapper.createObjectNode()
+                .put("mappingSubject", "rollup:orders_rollup");
+        ObjectNode described = actions.get(0)
+                .execute(describeInput, ActionContext.create());
+        assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
     }
 
     @Test
@@ -230,9 +274,12 @@ class MetricDoorServicesTest {
                 assertThat(written.getPhysicalPlan()).isEqualTo("fake-plan");
                 assertThat(written.getBackend())
                         .isEqualTo(MetricBackend.METRIC_BACKEND_LUCENE);
+                assertThat(rollups.sourceSubject).isEqualTo("orders");
                 assertThat(rollups.table).isEqualTo("revenue_by_segment");
                 assertThat(rollups.dimensions).containsExactly("segment");
-                assertThat(rollups.measures).containsExactly("revenue");
+                assertThat(rollups.measures).containsExactly(
+                        new ai.pipestream.proto.metric.spi.RollupSink.MeasureColumn(
+                                "revenue", Aggregate.AGGREGATE_SUM));
                 assertThat(rollups.rows).hasSize(1);
             } finally {
                 rollupChannel.shutdownNow();

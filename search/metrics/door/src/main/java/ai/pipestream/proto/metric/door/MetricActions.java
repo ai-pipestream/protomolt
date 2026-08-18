@@ -33,7 +33,14 @@ public final class MetricActions {
 
     /** The verbs over the same served subjects, without a rollup sink. */
     public static List<ProtoAction> over(Map<String, ServedMetricSubject> subjects) {
-        return over(subjects, null);
+        return over(subjects, null, null);
+    }
+
+    /** The verbs over the same served subjects, without a resolver. */
+    public static List<ProtoAction> over(
+            Map<String, ServedMetricSubject> subjects,
+            ai.pipestream.proto.metric.spi.RollupSink rollups) {
+        return over(subjects, rollups, null);
     }
 
     /**
@@ -43,27 +50,29 @@ public final class MetricActions {
      * @param rollups where rebuilt rollups land; {@code null} makes the
      *        rebuild verb refuse with {@code missing-sink}, exactly like
      *        the RPC on a sinkless mount
+     * @param resolver resolves subjects beyond the static set (rollup
+     *        tables), or {@code null} for none
      * @return the catalog verbs
      */
     public static List<ProtoAction> over(
             Map<String, ServedMetricSubject> subjects,
-            ai.pipestream.proto.metric.spi.RollupSink rollups) {
+            ai.pipestream.proto.metric.spi.RollupSink rollups,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
         Map<String, ServedMetricSubject> served = Map.copyOf(subjects);
-        return List.of(new DescribeMappingAction(served), new QueryMetricsAction(served),
-                new RebuildRollupAction(served, rollups));
+        return List.of(new DescribeMappingAction(served, resolver),
+                new QueryMetricsAction(served, resolver),
+                new RebuildRollupAction(served, rollups, resolver));
     }
 
     private static ServedMetricSubject subject(
-            Map<String, ServedMetricSubject> subjects, String name, ObjectMapper mapper)
-            throws ActionException {
-        ServedMetricSubject subject = subjects.get(name);
-        if (subject == null) {
-            throw refusal(new MetricRefusal(MetricRefusal.UNKNOWN_SUBJECT,
-                    "unknown mapping subject '" + name + "'; served subjects: "
-                            + String.join(", ", subjects.keySet()),
-                    List.copyOf(subjects.keySet())), mapper);
+            Map<String, ServedMetricSubject> subjects,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver,
+            String name, ObjectMapper mapper) throws ActionException {
+        try {
+            return Subjects.find(subjects, resolver, name);
+        } catch (MetricRefusal refusal) {
+            throw refusal(refusal, mapper);
         }
-        return subject;
     }
 
     private static ActionException refusal(MetricRefusal refusal, ObjectMapper mapper) {
@@ -86,9 +95,12 @@ public final class MetricActions {
     static final class DescribeMappingAction implements ProtoAction {
 
         private final Map<String, ServedMetricSubject> subjects;
+        private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
 
-        DescribeMappingAction(Map<String, ServedMetricSubject> subjects) {
+        DescribeMappingAction(Map<String, ServedMetricSubject> subjects,
+                ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
             this.subjects = subjects;
+            this.resolver = resolver;
         }
 
         @Override
@@ -124,7 +136,7 @@ public final class MetricActions {
             if (name == null || !name.isTextual() || name.asText().isBlank()) {
                 throw new ActionException("invalid-input", "mappingSubject is required");
             }
-            ServedMetricSubject subject = subject(subjects, name.asText(), mapper);
+            ServedMetricSubject subject = subject(subjects, resolver, name.asText(), mapper);
             DescribeMappingResponse response = MetricQueries.describe(subject.mapping(),
                     List.copyOf(subject.executors().keySet()));
             return toJson(response, mapper);
@@ -135,9 +147,12 @@ public final class MetricActions {
     static final class QueryMetricsAction implements ProtoAction {
 
         private final Map<String, ServedMetricSubject> subjects;
+        private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
 
-        QueryMetricsAction(Map<String, ServedMetricSubject> subjects) {
+        QueryMetricsAction(Map<String, ServedMetricSubject> subjects,
+                ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
             this.subjects = subjects;
+            this.resolver = resolver;
         }
 
         @Override
@@ -185,7 +200,7 @@ public final class MetricActions {
                         "request is not a valid QueryMetricsRequest: " + e.getMessage());
             }
             ServedMetricSubject subject = subject(
-                    subjects, request.getMappingSubject(), mapper);
+                    subjects, resolver, request.getMappingSubject(), mapper);
             try {
                 QueryMetricsResponse response = MetricQueries.query(
                         subject.mapping(), subject.executors(), request.build());
@@ -201,11 +216,14 @@ public final class MetricActions {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.pipestream.proto.metric.spi.RollupSink rollups;
+        private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
 
         RebuildRollupAction(Map<String, ServedMetricSubject> subjects,
-                ai.pipestream.proto.metric.spi.RollupSink rollups) {
+                ai.pipestream.proto.metric.spi.RollupSink rollups,
+                ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
             this.subjects = subjects;
             this.rollups = rollups;
+            this.resolver = resolver;
         }
 
         @Override
@@ -263,7 +281,7 @@ public final class MetricActions {
                         "measures is required: at least one measure member");
             }
             ServedMetricSubject subject = subject(
-                    subjects, request.getMappingSubject(), mapper);
+                    subjects, resolver, request.getMappingSubject(), mapper);
             try {
                 return toJson(Rollups.rebuild(subject, rollups, request.build()), mapper);
             } catch (MetricRefusal refusal) {

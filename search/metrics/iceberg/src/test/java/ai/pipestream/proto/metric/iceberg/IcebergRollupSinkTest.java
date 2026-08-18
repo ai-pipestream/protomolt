@@ -92,8 +92,9 @@ class IcebergRollupSinkTest {
 
     @Test
     void aRebuildReplacesTheTableInsteadOfAppending() throws Exception {
-        RollupSink.Written first = sink.replace("revenue_by_segment",
-                List.of("segment"), List.of("revenue"),
+        RollupSink.Written first = sink.replace("orders", "revenue_by_segment",
+                List.of("segment"), List.of(new RollupSink.MeasureColumn("revenue",
+                        ai.pipestream.proto.metric.Aggregate.AGGREGATE_SUM)),
                 List.of(row("mid", 200.0), row("smb", 180.0)));
         assertThat(first.table()).isEqualTo("protomolt.revenue_by_segment");
         assertThat(first.rowsWritten()).isEqualTo(2);
@@ -101,8 +102,9 @@ class IcebergRollupSinkTest {
         assertThat(revenueBySegment("revenue_by_segment"))
                 .containsExactly(Map.entry("mid", 200.0), Map.entry("smb", 180.0));
 
-        RollupSink.Written second = sink.replace("revenue_by_segment",
-                List.of("segment"), List.of("revenue"),
+        RollupSink.Written second = sink.replace("orders", "revenue_by_segment",
+                List.of("segment"), List.of(new RollupSink.MeasureColumn("revenue",
+                        ai.pipestream.proto.metric.Aggregate.AGGREGATE_SUM)),
                 List.of(row("ent", 999.0)));
         assertThat(second.snapshotId()).isNotEqualTo(first.snapshotId());
         assertThat(revenueBySegment("revenue_by_segment"))
@@ -112,14 +114,17 @@ class IcebergRollupSinkTest {
 
     @Test
     void anEmptyRollupCommitsAnEmptyTable() throws Exception {
-        sink.replace("empty_rollup", List.of("segment"), List.of("revenue"), List.of());
+        sink.replace("orders", "empty_rollup", List.of("segment"),
+                List.of(new RollupSink.MeasureColumn("revenue",
+                        ai.pipestream.proto.metric.Aggregate.AGGREGATE_SUM)), List.of());
         assertThat(revenueBySegment("empty_rollup")).isEmpty();
     }
 
     @Test
     void aMemberThatCannotBeAColumnRefusesByName() {
-        assertThatThrownBy(() -> sink.replace("bad", List.of("Weird-Name"),
-                List.of("revenue"), List.of()))
+        assertThatThrownBy(() -> sink.replace("orders", "bad", List.of("Weird-Name"),
+                List.of(new RollupSink.MeasureColumn("revenue",
+                        ai.pipestream.proto.metric.Aggregate.AGGREGATE_SUM)), List.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Weird-Name")
                 .hasMessageContaining("rollup column");

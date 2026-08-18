@@ -1,5 +1,6 @@
 package ai.pipestream.proto.metric.spi;
 
+import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.MetricRow;
 import java.util.List;
 
@@ -11,20 +12,47 @@ import java.util.List;
  * dimension columns are the rendered strings, measure columns are the
  * wire's doubles. The door owns everything before the write: membership,
  * backend resolution, and the completeness gate.
+ *
+ * <p>The sink also owns making the rollup self-describing: the source
+ * subject and each measure's source aggregate ride along, so a sink can
+ * stamp the declaration onto the table itself and a
+ * {@link MetricSubjectResolver} can serve the rollup back as a queryable
+ * subject without any side-channel configuration.</p>
  */
 public interface RollupSink {
 
     /**
      * Replaces the table with the rollup rows.
      *
+     * @param sourceSubject the mapping subject the rollup was built from
      * @param table the rollup table name inside the sink's namespace
      * @param dimensions the dimension member names, in column order
-     * @param measures the measure member names, in column order
+     * @param measures the measure columns, in column order, each carrying
+     *        the aggregate that produced it
      * @param rows the complete rollup
      * @return what landed
      */
-    Written replace(String table, List<String> dimensions, List<String> measures,
-            List<MetricRow> rows);
+    Written replace(String sourceSubject, String table, List<String> dimensions,
+            List<MeasureColumn> measures, List<MetricRow> rows);
+
+    /**
+     * One measure column of a rollup.
+     *
+     * @param member the measure member name (the column name)
+     * @param sourceAggregate the aggregate that produced the column's
+     *        values; what re-aggregation is honest depends on it
+     */
+    record MeasureColumn(String member, Aggregate sourceAggregate) {
+
+        public MeasureColumn {
+            if (member == null || member.isBlank()) {
+                throw new IllegalArgumentException("member must not be blank");
+            }
+            if (sourceAggregate == null) {
+                throw new IllegalArgumentException("sourceAggregate must not be null");
+            }
+        }
+    }
 
     /**
      * What one replace committed.
