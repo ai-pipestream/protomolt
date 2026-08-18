@@ -44,6 +44,19 @@ record DuckDbSql(String text, List<String> parameters) {
         for (EqualsFilter filter : query.filters()) {
             where.add(filterCondition(filter, parameters));
         }
+        for (CompiledMetricQuery.DateRangeFilter range : query.dateRanges()) {
+            // Inclusive UTC epoch-millis bounds over the timestamp column,
+            // matching the Lucene backend's doc-value comparison exactly.
+            String instant = "epoch_ms(timezone('UTC', " + column(range.fieldPath()) + "))";
+            if (range.gteEpochMillis() != null) {
+                where.add(instant + " >= CAST(? AS BIGINT)");
+                parameters.add(Long.toString(range.gteEpochMillis()));
+            }
+            if (range.lteEpochMillis() != null) {
+                where.add(instant + " <= CAST(? AS BIGINT)");
+                parameters.add(Long.toString(range.lteEpochMillis()));
+            }
+        }
 
         StringBuilder sql = new StringBuilder("SELECT ").append(select)
                 .append(" FROM read_parquet(").append(fileList(files)).append(")");

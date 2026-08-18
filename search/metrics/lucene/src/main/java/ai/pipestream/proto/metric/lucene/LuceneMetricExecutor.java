@@ -137,7 +137,7 @@ public final class LuceneMetricExecutor implements MetricExecutor {
             IndexSearcher searcher, IndexMapping mapping, CompiledMetricQuery query)
             throws IOException {
         Map<String, ResolvedFieldHint> hints = hintsByFieldName(mapping);
-        Query filter = filterQuery(query.filters());
+        Query filter = filterQuery(query, hints);
         Map<List<String>, GroupState> groups = new HashMap<>();
         DistinctBudget[] budgets = new DistinctBudget[query.measures().size()];
         for (int m = 0; m < query.measures().size(); m++) {
@@ -224,18 +224,38 @@ public final class LuceneMetricExecutor implements MetricExecutor {
                 + "; docs missing a dimension value are excluded";
     }
 
-    private static Query filterQuery(List<EqualsFilter> filters) {
-        if (filters.isEmpty()) {
+    private static Query filterQuery(
+            CompiledMetricQuery query, Map<String, ResolvedFieldHint> hints) {
+        if (query.filters().isEmpty() && query.dateRanges().isEmpty()) {
             return new MatchAllDocsQuery();
         }
         BooleanQuery.Builder all = new BooleanQuery.Builder();
-        for (EqualsFilter filter : filters) {
+        for (EqualsFilter filter : query.filters()) {
             BooleanQuery.Builder any = new BooleanQuery.Builder();
             for (String value : filter.values()) {
                 any.add(new TermQuery(new Term(filter.fieldName(), value)),
                         BooleanClause.Occur.SHOULD);
             }
             all.add(any.build(), BooleanClause.Occur.MUST);
+        }
+        for (CompiledMetricQuery.DateRangeFilter range : query.dateRanges()) {
+            // The bounds arrive as inclusive UTC epoch millis; a field that
+            // stores seconds compares in seconds (day bounds divide evenly
+            // downward, so inclusiveness survives the floor).
+            ResolvedFieldHint hint = hints.get(range.fieldName());
+            boolean seconds = hint != null && hint.dateResolution() != null
+                    && "SECONDS".equals(hint.dateResolution().name());
+            long lower = range.gteEpochMillis() == null
+                    ? Long.MIN_VALUE
+                    : seconds ? Math.floorDiv(range.gteEpochMillis(), 1000)
+                            : range.gteEpochMillis();
+            long upper = range.lteEpochMillis() == null
+                    ? Long.MAX_VALUE
+                    : seconds ? Math.floorDiv(range.lteEpochMillis(), 1000)
+                            : range.lteEpochMillis();
+            all.add(org.apache.lucene.document.SortedNumericDocValuesField
+                    .newSlowRangeQuery(range.fieldName(), lower, upper),
+                    BooleanClause.Occur.MUST);
         }
         return all.build();
     }

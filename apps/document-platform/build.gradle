@@ -30,6 +30,8 @@ dependencies {
     // the box.
     implementation project(':protomolt-metric-iceberg')
     implementation project(':protomolt-iceberg')
+    // The lake's optional object-store file plane (S3FileIO).
+    implementation project(':protomolt-iceberg-s3')
     implementation libs.iceberg.core
     runtimeOnly libs.sqlite.jdbc
     implementation project(':protomolt-repo-proto')

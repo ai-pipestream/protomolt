@@ -17,6 +17,8 @@ import java.util.List;
  * @param measures the measures to compute, in request order
  * @param dimensions the group-by dimensions, in request order
  * @param filters the query-wide row filters (AND), in request order
+ * @param dateRanges the query-wide date-range filters (AND), in request
+ *        order, bounds already resolved to inclusive UTC epoch millis
  * @param limit maximum result rows; already bounds-checked
  */
 public record CompiledMetricQuery(
@@ -25,12 +27,14 @@ public record CompiledMetricQuery(
         List<Measure> measures,
         List<Dimension> dimensions,
         List<EqualsFilter> filters,
+        List<DateRangeFilter> dateRanges,
         int limit) {
 
     public CompiledMetricQuery {
         measures = List.copyOf(measures);
         dimensions = List.copyOf(dimensions);
         filters = List.copyOf(filters);
+        dateRanges = List.copyOf(dateRanges);
     }
 
     /**
@@ -65,6 +69,24 @@ public record CompiledMetricQuery(
     public record Dimension(
             String member, String fieldName, String fieldPath, DimensionKind kind,
             TimeGrain grain) {
+    }
+
+    /**
+     * One inclusive UTC date range over a DATE dimension: a row matches
+     * when the field's instant falls inside the bounds. A {@code null}
+     * bound is unbounded on that side; never both.
+     *
+     * @param member the public member name, for evidence and errors
+     * @param fieldName the engine's physical field name
+     * @param fieldPath the proto field path (dot-joined field names)
+     * @param gteEpochMillis the inclusive lower bound (the day's first
+     *        instant, UTC), or null for unbounded
+     * @param lteEpochMillis the inclusive upper bound (the day's last
+     *        millisecond, UTC), or null for unbounded
+     */
+    public record DateRangeFilter(
+            String member, String fieldName, String fieldPath,
+            Long gteEpochMillis, Long lteEpochMillis) {
     }
 
     /** How an engine buckets a dimension. */

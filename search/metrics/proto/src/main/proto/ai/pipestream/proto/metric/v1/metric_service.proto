@@ -51,7 +51,29 @@ message MemberRef {
   TimeGrain grain = 2;
 }
 
-// One equality filter over a member.
+// An inclusive UTC date range over a DATE dimension. The bounds are
+// ISO-8601 calendar dates ("2026-07-01"), schema-bounded to exactly that
+// shape, never a free string: calendar days are the range's semantics,
+// matching the bucket labels the response renders, so a caller never does
+// instant math or guesses inclusive-versus-exclusive. An unset side is
+// unbounded; both sides unset is refused, as is an inverted range.
+message MetricRange {
+  // Inclusive lower bound: the day's first instant, UTC. Unset = unbounded.
+  optional string gte = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {min_len: 10, max_len: 10, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+    }
+  ];
+  // Inclusive upper bound: the day's last millisecond, UTC. Unset = unbounded.
+  optional string lte = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {min_len: 10, max_len: 10, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+    }
+  ];
+}
+
+// One filter over a member: an equality set over a keyword or bool
+// dimension, or a date range over a DATE dimension. Exactly one form.
 message MetricFilter {
   // The mapping member name the filter applies to. Required.
   string member = 1 [
@@ -60,13 +82,17 @@ message MetricFilter {
       string: {min_len: 1, max_len: 200}
     }
   ];
-  // Equality set: a row matches when the member equals any value. Required
-  // non-empty; an empty set would silently match nothing.
+  // Equality set: a row matches when the member equals any value, compared
+  // against the dimension's rendered form (the same strings result rows
+  // carry). An empty set without a range is refused by the compiler; it
+  // would silently match nothing.
   repeated string equals = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
-      repeated: {min_items: 1}
+      repeated: {max_items: 100, items: {string: {min_len: 1, max_len: 200}}}
     }
   ];
+  // Date range over a DATE dimension; exactly one of equals/range.
+  MetricRange range = 3;
 }
 
 // One aggregate query against a mapping subject.

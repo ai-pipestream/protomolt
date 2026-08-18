@@ -9,7 +9,7 @@ model. Design record: [metric mappings](../design/metric-mapping.md).
 
 | Artifact | Role |
 |---|---|
-| `protomolt-protobuf-metric` | The option dialect: `FieldMetric` (role, aggregate, name, filter_cel, cel, default_grain) and `MessageMetric` (subject, identity_field) |
+| `protomolt-protobuf-metric` | The option dialect: `FieldMetric` (role, aggregate, name, filter_cel, cel, default_grain) and `MessageMetric` (subject, identity_field, synthetic members) |
 | `protomolt-metric-proto` | The query contract: `MetricService` with `DescribeMapping` and `QueryMetrics`, validate.v1 rules on every request |
 | `protomolt-metric-spi` | Mapping build, the query compiler and its refusals, the `MetricExecutor` seam |
 | `protomolt-metric-lucene` | The shipped default engine: collectors over the search door's doc values |
@@ -38,6 +38,15 @@ it reads; at query time the compiler pulls those inputs into the engine
 query, evaluates the calculation per row, and trims what was not
 requested.
 
+A measure that is not a physical field is a **synthetic member**,
+declared on the message (`MessageMetric.members`) instead of a phantom
+field: `paying_count` is a COUNT with a `filter_cel` over `this` and no
+field at all, and a calculated `cel` works the same way. Each needs an
+explicit name and the MEASURE role; anything needing storage — every
+dimension, every SUM — stays a field, and a synthetic declaring one
+refuses at build time naming the member. Prefer a real field when the
+value already exists.
+
 ## Querying and refusing
 
 `MetricQueries.query` compiles a request against the mapping, refuses
@@ -50,6 +59,20 @@ is an explicit selector: unset on a single-engine mount resolves to the
 mount's engine (configuration, not a guess); unset on a multi-engine
 mount is refused naming the mounted set. The response's `physical_plan`
 is evidence for humans and agents, never input to a later query.
+
+A filter takes exactly one of two forms. An equality set matches a
+keyword or bool dimension against its rendered values (the same strings
+result rows carry, schema-bounded in count and length). A **date
+range** matches a DATE dimension against an inclusive UTC calendar
+window: the bounds are ISO-8601 dates, schema-bounded to exactly that
+shape (an unset side is unbounded), and the compiler resolves them once
+to inclusive epoch-millis bounds both engines compare identically — the
+Lucene backend over the date's doc values, the Iceberg backend in the
+rendered SQL. Both-empty, inverted, non-date bounds, a range on a
+non-DATE dimension, and both forms at once each refuse by name; an
+equality set on a DATE dimension points at the range form. Joins are
+deliberately absent from the query surface — see
+[metric joins](../design/metric-joins.md) for the design of record.
 
 The door mounts the validating interceptor from day one: the request
 protos' validate.v1 rules enforce the shape rules (required subject,
@@ -82,7 +105,12 @@ backend: one `SELECT ... GROUP BY` rendered from the compiled query and
 run by DuckDB over the Parquet files of the table the
 [Iceberg sink](../sink/iceberg.md) wrote from the same descriptor.
 DuckDB is an in-process reader, never a warehouse we operate;
-Trino and Spark stay external consumers of the same table. Columns are
+Trino and Spark stay external consumers of the same table. An
+object-store lake works the same way: scanned files materialize
+locally through the table's own `FileIO` for the query's duration, so
+the reader reaches exactly what the catalog reaches — no second
+credential path, no DuckDB extension — and the physical plan says how
+many files moved. Columns are
 addressed by each member's `fieldPath` (the table keeps the message's
 nesting as structs, where the search index flattens), date buckets
 label themselves in UTC with exactly the Lucene backend's formats, and

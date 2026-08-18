@@ -87,6 +87,13 @@ message MessageMetric {
   string subject = 1;
   // Identity field used to count rows / dedupe; empty = no default COUNT.
   string identity_field = 2;
+  // Synthetic members: measures with no backing field, declared on the
+  // message instead of a phantom field. Each needs an explicit name and
+  // MEASURE role, and is either a COUNT (optionally row-filtered by
+  // filter_cel over `this`, the message) or a calculated cel over sibling
+  // member names. Anything needing storage stays a field: prefer a real
+  // field when the value already exists.
+  repeated FieldMetric members = 3;
 }
 
 extend google.protobuf.FieldOptions {

@@ -116,18 +116,24 @@ family turns it on:
 | `..._ICEBERG_CATALOG_URI` | the catalog; absent means the lake engine is off, and any other family member set without it refuses by name. A `jdbc:` URI is a JDBC catalog (`jdbc:sqlite:` works out of the box, the one-container lake); `http(s)` is a REST catalog service. Any other scheme refuses. |
 | `..._ICEBERG_WAREHOUSE` | the warehouse location; required with a `jdbc:` URI, optional pass-through for REST |
 | `..._ICEBERG_NAMESPACE` | the namespace metric tables live under (default `protomolt`) |
+| `..._ICEBERG_S3_REGION` | the object store's region; setting any `S3_*` member puts the lake's file plane on S3 through Iceberg's `S3FileIO`, and this member is required with the group |
+| `..._ICEBERG_S3_ENDPOINT` | endpoint override (LocalStack, RustFS); implies path-style addressing |
+| `..._ICEBERG_S3_ACCESS_KEY`, `..._ICEBERG_S3_SECRET_KEY` | static credentials as a pair, or neither for the AWS default provider chain |
 
 Each metric subject reads the lake table named exactly like it —
 `repo-document` reads `<namespace>.repo-document` — loaded per query, so
 the [Iceberg sink](../sink/iceberg.md) can write the table after the node
 boots. A subject whose table does not exist refuses with `missing-table`
 instead of answering zero: the sink writes tables, this reader never
-creates one. Two details keep writer and reader on the same lake: this
-build is Hadoop-free, so both shapes read a local-filesystem warehouse
-through the sink's `LocalFileIO` (an object-store lake is a follow-up,
-because DuckDB would need object-store reach too), and a JDBC catalog
-scopes its table records by catalog *name*, so a writer sharing the
-catalog database must initialize with this node's name, `protomolt`.
+creates one. Two details keep writer and reader on the same lake: without
+the `S3_*` group both shapes read a local-filesystem warehouse through
+the sink's `LocalFileIO` (this build is Hadoop-free), while with it the
+warehouse lives on the object store and the metric reader reaches it
+through the table's own `FileIO` — scanned files materialize locally for
+the query's duration, so there is no second credential path and no
+DuckDB extension; and a JDBC catalog scopes its table records by catalog
+*name*, so a writer sharing the catalog database must initialize with
+this node's name, `protomolt`.
 
 With the family set the subject serves two engines, and per the design a
 query that leaves `backend` unset is refused with `ambiguous-backend`

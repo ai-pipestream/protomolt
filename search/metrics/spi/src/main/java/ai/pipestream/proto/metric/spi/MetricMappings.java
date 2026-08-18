@@ -98,7 +98,18 @@ public final class MetricMappings {
         collect(descriptor, new Prefixes("", ""), null, visiting, source,
                 members, memberFields, declarations, memberPrefixes, violations);
 
-        checkCels(members, memberFields, declarations, memberPrefixes, violations);
+        // Synthetic members: measures with no backing field, declared on
+        // the message. A COUNT (optionally row-filtered) or a calculated
+        // cel; anything needing storage stays a field.
+        messageMetric.ifPresent(declaration -> {
+            for (FieldMetric declared : declaration.getMembersList()) {
+                buildSynthetic(descriptor, declared,
+                        members, declarations, memberPrefixes, violations);
+            }
+        });
+
+        checkCels(descriptor, members, memberFields, declarations,
+                memberPrefixes, violations);
 
         if (!violations.isEmpty()) {
             throw new MetricSchemaException(descriptor.getFullName(), violations);
@@ -260,6 +271,65 @@ public final class MetricMappings {
                 sensitivity));
     }
 
+    /** One synthetic member, registered unless its violations preclude it. */
+    private static void buildSynthetic(
+            Descriptor root,
+            FieldMetric declared,
+            Map<String, MetricMember> members,
+            Map<String, FieldMetric> declarations,
+            Map<String, Prefixes> memberPrefixes,
+            List<String> violations) {
+        String name = declared.getName();
+        String label = "synthetic member " + (name.isEmpty() ? "(unnamed)" : "'" + name + "'")
+                + " on " + root.getFullName();
+        int before = violations.size();
+        if (name.isEmpty()) {
+            violations.add(label + " declares no name; a synthetic member has no"
+                    + " field name to fall back on");
+        }
+        if (declared.getRole() != MemberRole.MEMBER_ROLE_MEASURE) {
+            violations.add(label + " must be a MEASURE; a dimension needs storage,"
+                    + " so it stays a field");
+        }
+        if (declared.getDefaultGrain() != TimeGrain.TIME_GRAIN_UNSPECIFIED) {
+            violations.add(label + " declares a default_grain; grains belong to"
+                    + " DATE dimensions");
+        }
+        boolean calculated = !declared.getCel().isEmpty();
+        if (calculated && (declared.getAggregate() != Aggregate.AGGREGATE_UNSPECIFIED
+                || !declared.getFilterCel().isEmpty())) {
+            violations.add(label + " is calculated and also declares an aggregate"
+                    + " or filter_cel");
+        }
+        if (!calculated && declared.getAggregate() != Aggregate.AGGREGATE_COUNT) {
+            violations.add(label + " has no backing field: only COUNT (optionally"
+                    + " filtered) or a calculated cel works without one, got "
+                    + declared.getAggregate());
+        }
+        if (violations.size() > before) {
+            return;
+        }
+        if (members.containsKey(name)) {
+            violations.add(label + " collides with another member");
+            return;
+        }
+        members.put(name, new MetricMember(
+                name,
+                MemberRole.MEMBER_ROLE_MEASURE,
+                declared.getAggregate(),
+                "",
+                "",
+                FieldKind.SYNTHETIC,
+                List.of(),
+                declared.getCel(),
+                List.of(),
+                TimeGrain.TIME_GRAIN_UNSPECIFIED,
+                "",
+                ""));
+        declarations.put(name, declared);
+        memberPrefixes.put(name, new Prefixes("", ""));
+    }
+
     /** The metric shape of one field; null when no member can use it. */
     private static FieldKind kindOf(FieldDescriptor field) {
         return switch (field.getJavaType()) {
@@ -282,6 +352,7 @@ public final class MetricMappings {
      * it reads. Members that fail are replaced by violations.
      */
     private static void checkCels(
+            Descriptor root,
             Map<String, MetricMember> members,
             Map<String, FieldDescriptor> memberFields,
             Map<String, FieldMetric> declarations,
@@ -305,7 +376,13 @@ public final class MetricMappings {
             if (filterCel.isEmpty()) {
                 continue;
             }
-            checkFilter(entry.getKey(), member, field, filterCel,
+            // A synthetic member has no backing field: its filter_cel
+            // speaks about the root message itself.
+            Descriptor declaring = field != null ? field.getContainingType() : root;
+            String label = field != null
+                    ? "'" + field.getFullName() + "'"
+                    : "synthetic member '" + entry.getKey() + "'";
+            checkFilter(entry.getKey(), member, declaring, label, filterCel,
                     memberPrefixes.get(entry.getKey()), members, violations);
         }
     }
@@ -342,34 +419,34 @@ public final class MetricMappings {
     private static void checkFilter(
             String name,
             MetricMember member,
-            FieldDescriptor field,
+            Descriptor declaring,
+            String label,
             String filterCel,
             Prefixes prefix,
             Map<String, MetricMember> members,
             List<String> violations) {
         // filter_cel is written against the DECLARING message: `this` is the
-        // field's containing type, so a nested declaration filters over its
-        // own siblings and the translated field names take the same prefix
-        // as the member itself.
-        Descriptor declaring = field.getContainingType();
+        // field's containing type (the root message for a synthetic member),
+        // so a nested declaration filters over its own siblings and the
+        // translated field names take the same prefix as the member itself.
         CelAbstractSyntaxTree ast;
         try {
             ast = CelEnvironmentFactory.builder().addMessageVar("this", declaring)
                     .build().compile(filterCel).getAst();
         } catch (CelValidationException e) {
-            violations.add("filter_cel on '" + field.getFullName()
-                    + "' does not compile: " + e.getMessage());
+            violations.add("filter_cel on " + label
+                    + " does not compile: " + e.getMessage());
             return;
         }
         if (ast.getResultType().kind() != CelKind.BOOL) {
-            violations.add("filter_cel on '" + field.getFullName() + "' must be bool, got "
+            violations.add("filter_cel on " + label + " must be bool, got "
                     + ast.getResultType().name());
             return;
         }
         List<EqualsFilter> filters = new ArrayList<>();
         if (!translate(ast.getExpr(), name, declaring, prefix, filters)) {
-            violations.add("filter_cel on '" + field.getFullName()
-                    + "' is beyond the translatable subset: "
+            violations.add("filter_cel on " + label
+                    + " is beyond the translatable subset: "
                     + "equality over string or bool fields, joined by &&");
             return;
         }
