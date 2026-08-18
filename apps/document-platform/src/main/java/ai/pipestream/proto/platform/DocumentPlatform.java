@@ -143,6 +143,8 @@ public final class DocumentPlatform implements AutoCloseable {
         SearchSnapshotConfig snapshotConfig = config.mounts(SearchDoorModule.ROLE)
                 ? SearchSnapshotConfig.fromEnvironment(config.environment())
                 : null;
+        boolean searchReadOnly = config.mounts(SearchDoorModule.ROLE)
+                && searchReadOnly(config.environment());
         this.snapshotClient = snapshotConfig == null ? null : snapshotClient(snapshotConfig);
         this.search = config.mounts(SearchDoorModule.ROLE)
                 ? new SearchDoorModule(new SearchDoorModule.Config(
@@ -155,7 +157,9 @@ public final class DocumentPlatform implements AutoCloseable {
                                 : new IndexSnapshots(new S3SnapshotStore(
                                         snapshotClient,
                                         snapshotConfig.bucket(),
-                                        snapshotConfig.prefix()))))
+                                        snapshotConfig.prefix()),
+                                        searchReadOnly),
+                        searchReadOnly))
                 : null;
         this.metrics = config.mounts(MetricDoorModule.ROLE)
                 ? new MetricDoorModule(new MetricDoorModule.Config(
@@ -329,6 +333,19 @@ public final class DocumentPlatform implements AutoCloseable {
         if (snapshotClient != null) {
             snapshotClient.close();
         }
+    }
+
+    /** The strict read of {@link DocumentPlatformConfig#ENV_SEARCH_READ_ONLY}. */
+    static boolean searchReadOnly(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "").trim();
+        return switch (value) {
+            case "", "false" -> false;
+            case "true" -> true;
+            default -> throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_SEARCH_READ_ONLY
+                            + " must be true or false, got '" + value + "'");
+        };
     }
 
     /** The S3 client the snapshot store rides, per the family's settings. */

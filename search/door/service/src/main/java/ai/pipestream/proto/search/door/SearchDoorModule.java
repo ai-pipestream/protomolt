@@ -32,10 +32,12 @@ public final class SearchDoorModule implements ServiceModule {
      * @param subjects the mapping subjects to serve, keyed by subject name
      * @param snapshots commit-point snapshots of every subject's index, or
      *        {@code null} for none
+     * @param readOnly a reader node: no repo channel, no indexing surface,
+     *        no workflow registration, and restore-only snapshots
      */
     public record Config(
             int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
-            IndexSnapshots snapshots) {
+            IndexSnapshots snapshots, boolean readOnly) {
 
         /** Validates the configuration. */
         public Config {
@@ -46,12 +48,22 @@ public final class SearchDoorModule implements ServiceModule {
                 throw new IllegalArgumentException(
                         "at least one served mapping subject is required");
             }
+            if (readOnly && snapshots != null && !snapshots.readOnly()) {
+                throw new IllegalArgumentException("a read-only node must not write"
+                        + " snapshots: construct its IndexSnapshots read-only");
+            }
             subjects = Map.copyOf(subjects);
         }
 
-        /** A configuration without snapshots. */
+        /** A writable configuration. */
+        public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+                IndexSnapshots snapshots) {
+            this(grpcPort, indexDir, subjects, snapshots, false);
+        }
+
+        /** A writable configuration without snapshots. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects) {
-            this(grpcPort, indexDir, subjects, null);
+            this(grpcPort, indexDir, subjects, null, false);
         }
     }
 
@@ -81,8 +93,12 @@ public final class SearchDoorModule implements ServiceModule {
     public Set<String> requires() {
         // parse, registry, and jobs are optional at runtime (workflow and
         // replay registration are skipped when absent) but must wire first
-        // when co-mounted, so their contributions exist by this wire.
-        return Set.of("repo", "parse", "registry", "jobs");
+        // when co-mounted, so their contributions exist by this wire. A
+        // read-only node requires nothing: it fetches no documents and
+        // registers no workflows.
+        return config.readOnly()
+                ? Set.of()
+                : Set.of("repo", "parse", "registry", "jobs");
     }
 
     /** Per-call deadline on every repo read the door makes. */
@@ -90,6 +106,9 @@ public final class SearchDoorModule implements ServiceModule {
 
     @Override
     public ServiceMount wire(NodeContext context) throws Exception {
+        if (config.readOnly()) {
+            return wireReadOnly(context);
+        }
         GrpcDocumentFetcher repo = new GrpcDocumentFetcher(
                 context.channels().targetOf("repo"), REPO_RPC_TIMEOUT);
         try {
@@ -144,6 +163,37 @@ public final class SearchDoorModule implements ServiceModule {
                 .findFirst()
                 .ifPresent(submit -> context.contributions().contribute(
                         ProtoAction.class, new ReplayAction(repo, submit, door.store())));
+        return new ServiceMount() {
+            @Override
+            public void start() throws Exception {
+                netty = door.startNetty(config.grpcPort());
+            }
+
+            @Override
+            public void close() {
+                if (inProcess != null) {
+                    inProcess.shutdownNow();
+                }
+                door.close();
+            }
+        };
+    }
+
+    /**
+     * A reader node: no repo channel, no workflow registration, no replay,
+     * no write surface. The restored (or locally present) index serves the
+     * query RPCs, and the store still contributes for a co-mounted metrics
+     * role.
+     */
+    private ServiceMount wireReadOnly(NodeContext context) throws Exception {
+        door = SearchDoorServices.build(
+                new SearchDoorConfig(config.grpcPort(), config.indexDir(),
+                        config.subjects(), config.snapshots(), true),
+                null);
+        String name = ROLE + "-" + context.nodeId();
+        inProcess = door.startInProcess(name);
+        context.channels().publishInProcess(ROLE, name);
+        context.contributions().contribute(LuceneSearchStore.class, door.store());
         return new ServiceMount() {
             @Override
             public void start() throws Exception {

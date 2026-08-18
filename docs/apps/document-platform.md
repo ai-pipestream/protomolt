@@ -95,6 +95,12 @@ creates it. A node booting over an empty index directory with the family
 set restores each subject from the bucket before serving, which is what
 `PlatformSnapshotIT` proves end to end.
 
+`DOCUMENT_PLATFORM_SEARCH_READ_ONLY=true` makes the search role a
+reader: no repo channel, no `SearchIndexService`, and restore-only
+snapshots (a reader never uploads a commit or prunes the writer's
+blobs). Combined with the `metrics` role this is the remote metrics
+node — see [Role nodes](role-nodes.md).
+
 ## Configuration
 
 The repository half of the platform reads the `DOCUMENT_PLATFORM_*` family

@@ -46,12 +46,28 @@ public final class IndexSnapshots {
     private static final String MARKER_PREFIX = "segments_";
 
     private final SnapshotStore store;
+    private final boolean readOnly;
 
     public IndexSnapshots(SnapshotStore store) {
+        this(store, false);
+    }
+
+    /**
+     * @param store the blob store snapshots live in
+     * @param readOnly restore-only: {@link #snapshot} becomes a no-op, so a
+     *        reader node never uploads a commit or prunes the writer's blobs
+     */
+    public IndexSnapshots(SnapshotStore store, boolean readOnly) {
         if (store == null) {
             throw new IllegalArgumentException("store must not be null");
         }
         this.store = store;
+        this.readOnly = readOnly;
+    }
+
+    /** Whether this instance restores without ever writing. */
+    public boolean readOnly() {
+        return readOnly;
     }
 
     /** The snapshot key prefix identifying one subject's produced shape. */
@@ -130,6 +146,11 @@ public final class IndexSnapshots {
      */
     void snapshot(String subjectName, ServedMapping served,
             SnapshotDeletionPolicy policy, Path subjectDir) {
+        if (readOnly) {
+            // A reader restores; the writer's snapshots are not ours to
+            // overwrite or prune.
+            return;
+        }
         String prefix = identityPrefix(subjectName, served) + "/";
         IndexCommit commit;
         try {

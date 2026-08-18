@@ -45,12 +45,23 @@ jobs verbs, the parse-and-index workflow and the replay action all ride the
 registry's route), and the acquire roles belong with `intake` (they feed
 the door in-process). `metrics` belongs with `search`: the metric
 executor borrows the search door's live store, so a node claiming
-`metrics` without `search` refuses to boot (a remote metrics node,
-restoring its index from a snapshot, is a future composition); its
-`describe-mapping` and `query-metrics` verbs additionally need a
-co-mounted `registry` to be served. `repo` splits off cleanly today —
-that is the proven topology — and the same target mechanism carries
-further splits as the contribution surfaces grow wire equivalents.
+`metrics` without `search` refuses to boot; its `describe-mapping` and
+`query-metrics` verbs additionally need a co-mounted `registry` to be
+served. `repo` splits off cleanly today — that is the proven topology —
+and the same target mechanism carries further splits as the
+contribution surfaces grow wire equivalents.
+
+## The remote metrics node
+
+`PROTOMOLT_ROLES=search,metrics` with
+`DOCUMENT_PLATFORM_SEARCH_READ_ONLY=true` and the snapshot family
+(`DOCUMENT_PLATFORM_SEARCH_SNAPSHOT_S3_*`) pointing at the writer's
+bucket is a self-contained analytics node: it restores the index from
+the bucket on boot, needs no repo role or target, mounts no indexing
+surface (`SearchIndexService` answers UNIMPLEMENTED), and never writes
+to the bucket, so the writer's snapshots stay the writer's.
+`PlatformSnapshotIT` proves the composition end to end; to pick up the
+writer's newer snapshots, restart the reader over an empty directory.
 
 ## The worked example
 

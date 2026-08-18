@@ -50,6 +50,19 @@ class SearchSnapshotConfigTest {
     }
 
     @Test
+    void theReadOnlyFlagParsesStrictly() {
+        assertThat(DocumentPlatform.searchReadOnly(Map.of())).isFalse();
+        assertThat(DocumentPlatform.searchReadOnly(Map.of(
+                DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "true"))).isTrue();
+        assertThat(DocumentPlatform.searchReadOnly(Map.of(
+                DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "false"))).isFalse();
+        assertThatThrownBy(() -> DocumentPlatform.searchReadOnly(Map.of(
+                DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "yes")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY);
+    }
+
+    @Test
     void aLoneStaticCredentialRefusesByName() {
         assertThatThrownBy(() -> SearchSnapshotConfig.fromEnvironment(Map.of(
                 SearchSnapshotConfig.ENV_BUCKET, "search-snaps",
