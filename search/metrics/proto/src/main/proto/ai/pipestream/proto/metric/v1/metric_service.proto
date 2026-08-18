@@ -221,6 +221,44 @@ message RebuildRollupRequest {
       string: {min_len: 1, max_len: 200}
     }
   ];
+  // Optional rebuild-time enrichment: dimensions denormalized from a
+  // second subject. Joins happen here, never at query time.
+  RollupEnrichment enrichment = 7;
+}
+
+// One rebuild-time enrichment: a lookup against a second subject,
+// strictly one to at most one. A join key matching more than one
+// enrichment combination refuses the whole rebuild (join-fanout); a key
+// matching nothing leaves the pulled columns empty and the response
+// counts it. The pulled members land as ordinary dimension columns, so
+// the enriched rollup serves back through rollup:<table> unchanged.
+message RollupEnrichment {
+  // The subject whose dimensions enrich the aggregate. Required.
+  string subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // The join key: a dimension member named in the primary request's
+  // dimensions AND declared as a dimension on the enrichment subject.
+  // Rows match on the dimension's rendered string. Required.
+  string join_key = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Enrichment dimension members to pull; at least one, none colliding
+  // with a primary dimension, measure, or the join key.
+  repeated string members = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, items: {string: {min_len: 1, max_len: 200}}}
+    }
+  ];
+  // Engine for the lookup on the enrichment subject, resolved exactly
+  // like QueryMetrics against that subject's mounted engines.
+  MetricBackend backend = 4;
 }
 
 // What one RebuildRollup call wrote.
@@ -237,6 +275,11 @@ message RebuildRollupResponse {
   int64 snapshot_id = 5;
   // The reduction's physical plan: evidence of what the rollup holds.
   string physical_plan = 6;
+  // The enrichment subject, echoed; empty when the rebuild had none.
+  string enriched_from = 7;
+  // Rows whose join key matched no enrichment combination: their pulled
+  // columns are empty, counted here as evidence rather than silence.
+  int64 rows_unenriched = 8;
 }
 
 // Aggregate queries over descriptor-declared metric mappings. A sibling of

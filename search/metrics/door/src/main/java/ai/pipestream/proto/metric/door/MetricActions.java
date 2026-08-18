@@ -283,7 +283,8 @@ public final class MetricActions {
             ServedMetricSubject subject = subject(
                     subjects, resolver, request.getMappingSubject(), mapper);
             try {
-                return toJson(Rollups.rebuild(subject, rollups, request.build()), mapper);
+                return toJson(Rollups.rebuild(subject, rollups, request.build(),
+                        name -> Subjects.find(subjects, resolver, name)), mapper);
             } catch (MetricRefusal refusal) {
                 throw refusal(refusal, mapper);
             }

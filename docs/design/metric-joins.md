@@ -1,11 +1,10 @@
 # Metric joins
 
-Status: design of record for joins on the metric surface. The
+Status: design of record for joins on the metric surface, landed. The
 [metric mapping design](metric-mapping.md) lists "multi-fact views, join
 paths, fan-out grain, multi-stage measures" as out of scope and warns
 "do not sneak in"; this chapter is the considered answer that replaces
-sneaking. Nothing here is implemented; landing any of it means updating
-this chapter first.
+sneaking. Changing the landed shape means updating this chapter first.
 
 ## The position
 
@@ -32,22 +31,37 @@ What this buys:
   snapshot already say what it holds; an enriched rollup's evidence
   additionally names the enrichment source and its snapshot.
 
-## The shape (when it lands)
+## The shape (as landed)
 
-`RebuildRollupRequest` grows an optional enrichment: a second subject, a
-join key (a dimension member present in the aggregate result), and the
-dimension members to pull from the enrichment subject. The rebuild runs
-the primary aggregate exactly as today, then resolves each result row's
-key against the enrichment subject — a **lookup, strictly one-to-at-most-one**:
+`RebuildRollupRequest` carries an optional `RollupEnrichment`: a second
+subject, a join key (a dimension member present in both the primary
+request's dimensions and the enrichment subject's mapping), the
+dimension members to pull, and an optional engine selector for the
+lookup. The rebuild runs the primary aggregate exactly as today, then
+resolves each result row's key against the enrichment subject — a
+**lookup, strictly one-to-at-most-one**:
 
-- A key matching more than one enrichment row refuses the whole rebuild
-  (`join-fanout`), because a fan-out would multiply measures and a
-  rollup is exact or refused. This is the load-bearing rule.
+- The lookup is a dimensions-only aggregate on the enrichment subject
+  (`MetricQueries.lookup`: the distinct rendered combinations of the
+  join key and the pulled members under a synthetic COUNT), so the
+  enrichment subject needs no declared measure. It runs under the same
+  group budget as the rebuild and refuses rather than truncates when it
+  fills — an incomplete lookup cannot attest the join.
+- A key matching more than one enrichment combination refuses the whole
+  rebuild (`join-fanout`), because a fan-out would multiply measures
+  and a rollup is exact or refused. This is the load-bearing rule.
 - A key matching nothing leaves the enrichment columns empty; the
-  rollup notes how many rows went unenriched, evidence not silence.
-- The enrichment columns land as ordinary dimension columns in the
-  rollup table, so the rebuilt table serves back through
-  `rollup:<table>` with no resolver changes.
+  response counts them (`rows_unenriched`) and names the source
+  (`enriched_from`), evidence not silence.
+- A malformed enrichment — the key absent from the primary dimensions,
+  or a pulled member colliding with an existing rollup column —
+  refuses as `invalid-enrichment`; membership and role errors on the
+  enrichment subject refuse with the ordinary vocabulary.
+- The enrichment values land as ordinary dimension entries on the
+  result rows, and the pulled members join the rollup's dimension
+  columns, so the rebuilt table serves back through `rollup:<table>`
+  with no sink or resolver changes (as plain keywords, like every
+  rollup dimension).
 
 ## Stays out, with reasons
 
