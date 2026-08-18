@@ -30,8 +30,8 @@ public final class ParseCoordinatorServices implements AutoCloseable {
     private final ParseCoordinatorGrpcService coordinator;
     private Server server;
 
-    private ParseCoordinatorServices(
-            ParseCoordinatorConfig config, RoutingRules rules, ParserRegistry parsers) {
+    private ParseCoordinatorServices(ParseCoordinatorConfig config,
+            java.util.function.Supplier<RoutingRules> rules, ParserRegistry parsers) {
         this.repoChannel = openRepoChannel(config.repoTarget());
         this.parsers = parsers;
         DocumentServiceGrpc.DocumentServiceBlockingStub documents =
@@ -54,6 +54,25 @@ public final class ParseCoordinatorServices implements AutoCloseable {
      */
     public static ParseCoordinatorServices build(
             ParseCoordinatorConfig config, RoutingRules rules, ParserRegistry parsers) {
+        if (rules == null) {
+            throw new IllegalArgumentException("rules must not be null");
+        }
+        return build(config, () -> rules, parsers);
+    }
+
+    /**
+     * As {@link #build(ParseCoordinatorConfig, RoutingRules, ParserRegistry)}
+     * with a live rule supplier: distributed config swaps the compiled set
+     * and every later plan uses the new rules — the "config reload" the
+     * routing header always promised, with no CRUD surface.
+     *
+     * @param config service configuration
+     * @param rules the live rule-set supplier; read per plan
+     * @param parsers the parser fleet; closed with this factory
+     * @return the wired, not-yet-started stack
+     */
+    public static ParseCoordinatorServices build(ParseCoordinatorConfig config,
+            java.util.function.Supplier<RoutingRules> rules, ParserRegistry parsers) {
         if (config == null) {
             throw new IllegalArgumentException("config must not be null");
         }

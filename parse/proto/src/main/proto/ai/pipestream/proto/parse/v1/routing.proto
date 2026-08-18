@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.parse.v1;
 
 import "google/protobuf/struct.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.parse.v1";
@@ -15,6 +16,20 @@ option java_package = "ai.pipestream.proto.parse.v1";
 // CreateRule/UpdateRule rpc. Operators test rules against real documents
 // with the RouteDocument dry-run instead of mutating live config.
 // ============================================================================
+
+// The coordinator's whole rule set as one config document: what a
+// deployment distributes when routing rules move out of environment
+// variables and into distributed config. Exactly the shape the
+// header describes — service config, reloaded, never RPC CRUD.
+message RoutingConfig {
+  // The complete rule set; an empty set is refused, because a coordinator
+  // with no rules routes nothing and that must be said, not configured.
+  repeated RoutingRule rules = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1}
+    }
+  ];
+}
 
 // One routing rule: when the CEL guard matches the routing context, the
 // named parser runs with the given configuration.

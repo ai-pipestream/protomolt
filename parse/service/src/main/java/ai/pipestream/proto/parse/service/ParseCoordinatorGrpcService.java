@@ -68,7 +68,7 @@ public final class ParseCoordinatorGrpcService
     static final int SNIFF_HEAD_BYTES = 512;
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
-    private final RoutingRules rules;
+    private final java.util.function.Supplier<RoutingRules> rules;
     private final ParserRegistry parsers;
     private final String fallbackDrive;
     private final Duration parseDeadline;
@@ -85,7 +85,7 @@ public final class ParseCoordinatorGrpcService
      */
     public ParseCoordinatorGrpcService(
             DocumentServiceGrpc.DocumentServiceBlockingStub documents,
-            RoutingRules rules,
+            java.util.function.Supplier<RoutingRules> rules,
             ParserRegistry parsers,
             String fallbackDrive,
             Duration parseDeadline) {
@@ -134,7 +134,7 @@ public final class ParseCoordinatorGrpcService
         };
         Routing routing = routingOf(document);
         return RouteDocumentResponse.newBuilder()
-                .addAllPlannedParses(rules.plan(routing.context()))
+                .addAllPlannedParses(rules.get().plan(routing.context()))
                 .setContentType(routing.sniff().mimeType())
                 .setContentTypeSniffed(routing.sniff().sniffed())
                 .build();
@@ -149,7 +149,7 @@ public final class ParseCoordinatorGrpcService
 
         List<PlannedParse> planned = request.getParserOverrideCount() > 0
                 ? overridePlan(request.getParserOverrideList())
-                : rules.plan(routing.context());
+                : rules.get().plan(routing.context());
         planned = dedupeByParser(planned);
 
         List<TaskResult> outcomes = fanOut(planned, loaded.document(), routing);
