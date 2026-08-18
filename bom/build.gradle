@@ -78,6 +78,7 @@ def supportedModules = [
         'protomolt-metric-spi',
         'protomolt-metric-lucene',
         'protomolt-metric-door',
+        'protomolt-metric-iceberg',
         'protomolt-search-door',
         'protomolt-search-snapshot-s3',
         'protomolt-search-console',

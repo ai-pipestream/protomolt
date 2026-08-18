@@ -71,6 +71,25 @@ deliberately absent until a bounded collector exists. The executor reads
 through the door store's `withSearcher` borrow seam, so acquire and
 release never leave the store.
 
+## The Iceberg engine
+
+`IcebergMetricExecutor` (`protomolt-metric-iceberg`) is the lake-native
+backend: one `SELECT ... GROUP BY` rendered from the compiled query and
+run by DuckDB over the Parquet files of the table the
+[Iceberg sink](../sink/iceberg.md) wrote from the same descriptor.
+DuckDB is an in-process reader, never a warehouse we operate;
+Trino and Spark stay external consumers of the same table. Columns are
+addressed by each member's `fieldPath` (the table keeps the message's
+nesting as structs, where the search index flattens), date buckets
+label themselves in UTC with exactly the Lucene backend's formats, and
+the rendered SQL is the `physical_plan`. `COUNT_DISTINCT` is supported
+here, the one aggregate the Lucene backend refuses; rows missing a
+dimension value (NULL, or the empty string on term dimensions) are
+excluded from group-by, matching the doc-values backend; tables
+carrying delete files are refused loudly, because the sink appends and
+this reader trusts that. Mounting the backend on the platform waits on
+an Iceberg catalog configuration family, a follow-up.
+
 ## The platform mount
 
 `MetricDoorModule` (in `protomolt-metric-lucene`) is the composer role:
