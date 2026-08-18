@@ -82,12 +82,23 @@ with at least one platform behavior attached — no shape zoo:
   the lake. The audit's dotted-field-path family (identical regexes in
   three modules) and the flat `facetable` keyword facets are the
   consumers.
-- **Adopt-and-validate `google.type`** — Money, Date, Interval,
-  PostalAddress, PhoneNumber are not reinvented; a built-in rule
-  source carries constraints for them by type name. The audit found
-  the reinventions to converge: schema.org `Offer.price` (a decimal
-  string, because doubles lose money) beside `MonetaryAmount.value` (a
-  double, losing money) is the case study.
+- **Adopt-and-validate `google.type`** (landed) — Money, Date,
+  Interval, LatLng are not reinvented; the built-in
+  `GoogleTypeRuleSource` (on the default validator chain) carries
+  their documented invariants keyed by type full name, so any
+  descriptor named `google.type.*` gets them with no dependency on
+  the generated classes and no annotation on the schema. Money:
+  bounded nanos, sign agreement, ISO 4217 currency required as soon
+  as an amount is set (a zero Money stays legal). Interval: ordered
+  (CEL compares Timestamps natively). Date: documented field bounds
+  plus the day-without-month contradiction; whether a day exists in
+  its month is calendar work the structural bounds leave alone.
+  LatLng: coordinate bounds. The audit found the reinventions to
+  converge: schema.org `Offer.price` (a decimal string, because
+  doubles lose money) beside `MonetaryAmount.value` (a double, losing
+  money) is the case study. PostalAddress and PhoneNumber wait on
+  format work (postal vocabularies; E.164 already has the
+  phone_number Tier-1 format).
 
 ## Taxonomies and ontologies
 

@@ -1,6 +1,7 @@
 package ai.pipestream.proto.validate.spi;
 
 import ai.pipestream.proto.validate.source.AiPipestreamRuleSource;
+import ai.pipestream.proto.validate.source.GoogleTypeRuleSource;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -16,9 +17,11 @@ class ValidationRuleSourcesTest {
         List<ValidationRuleSource> sources = ValidationRuleSources.defaults();
 
         // No other ValidationRuleSource module is on this classpath, so the ServiceLoader
-        // contributes nothing and the built-in Pipestream reader stands alone.
-        assertThat(sources).hasSize(1);
+        // contributes nothing beyond the two built-in readers: the Pipestream dialect
+        // first, then the google.type well-known constraints.
+        assertThat(sources).hasSize(2);
         assertThat(sources.get(0)).isInstanceOf(AiPipestreamRuleSource.class);
+        assertThat(sources.get(1)).isInstanceOf(GoogleTypeRuleSource.class);
     }
 
     @Test
