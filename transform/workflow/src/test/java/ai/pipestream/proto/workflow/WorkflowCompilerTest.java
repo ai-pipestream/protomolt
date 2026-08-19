@@ -153,7 +153,7 @@ class WorkflowCompilerTest {
     void rejectsIdentitiesTheWorkflowContractCannotHold() {
         assertThatThrownBy(() -> WorkflowCompiler.compile(workflow("not a safe name!")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("workflow.name");
+                .hasMessageContaining("[name] string.slug");
     }
 
     @Test

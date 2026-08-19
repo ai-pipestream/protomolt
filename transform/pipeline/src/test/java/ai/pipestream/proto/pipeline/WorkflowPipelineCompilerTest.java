@@ -282,7 +282,7 @@ class WorkflowPipelineCompilerTest {
         assertThatThrownBy(() -> WorkflowPipelineCompiler.compile(Workflow.getDefaultInstance(),
                 PipelineFixtures.files()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("workflow.name");
+                .hasMessageContaining("[name] required");
     }
 
     private static Workflow workflowWithSteps(WorkflowStep... steps) {

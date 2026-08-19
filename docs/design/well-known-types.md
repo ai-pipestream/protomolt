@@ -96,6 +96,21 @@ references to path-safe, fingerprints, hosts, media types, UUIDs and
 SHA-1 to their parsers; the secret-reference and branch-id composites
 became scans), leaving the Java side regex-free.
 
+The workflow contract then adopted the `ClusterValidation` convention
+(2026-08-19): the name families, fingerprints, and media types are
+declared as `validate.v1` annotations on `grpc_workflow.proto`
+(`Workflow.name`, `WorkflowStep.name` and `.dependency`,
+`ServiceDependency` alias/profile/endpoint/fingerprint,
+`VersionedWorkflow`, `ArtifactReference`, `RunEvidence`,
+`StepEvidence.step_name` — the reference fields expressible only once
+`path_safe_name` existed), and `WorkflowValidation` runs
+`ProtoValidator` first, which recurses into nested messages, keeping
+hand code only for what annotations cannot express: duplicates,
+declared-dependency references, fingerprint agreement, and step-shape
+exclusivity. A blank-allowed field (`RunEvidence.workflow_version`)
+uses `ignore_if_zero`, because string formats otherwise reject the
+empty value.
+
 ## Tier 2: structural types with platform behavior
 
 Values with structure and invariants become messages in
