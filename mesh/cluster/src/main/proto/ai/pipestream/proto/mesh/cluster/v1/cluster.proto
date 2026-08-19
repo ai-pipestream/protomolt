@@ -71,7 +71,7 @@ message ClusterDescriptor {
   string cluster_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -110,7 +110,7 @@ message ClusterDescriptor {
   string fingerprint = 6 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-f]{64}$"}
+      string: {sha256_hex: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -143,7 +143,7 @@ message Endpoint {
   string endpoint_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -193,7 +193,7 @@ message NodeAdvertisement {
   string node_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -203,7 +203,7 @@ message NodeAdvertisement {
   string cluster_id = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -215,7 +215,7 @@ message NodeAdvertisement {
       max_items: 64
       unique: true
       items: {
-        string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+        string: {slug: true, max_len: 128}
       }
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
@@ -277,7 +277,7 @@ message CapabilityDescription {
   string name = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -321,7 +321,7 @@ message ProcessorAdvertisement {
   string processor_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -330,7 +330,7 @@ message ProcessorAdvertisement {
   string node_id = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -354,7 +354,7 @@ message ProcessorAdvertisement {
       max_items: 64
       unique: true
       items: {
-        string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+        string: {slug: true, max_len: 128}
       }
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
@@ -459,7 +459,7 @@ message CapacityAdvertisement {
   string node_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -525,7 +525,7 @@ message NodePresence {
   string node_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -534,7 +534,7 @@ message NodePresence {
   string cluster_id = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -671,7 +671,7 @@ message ClusterSnapshot {
   string fingerprint = 7 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-f]{64}$"}
+      string: {sha256_hex: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -731,7 +731,7 @@ message ClusterEvent {
   string node_id = 4 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

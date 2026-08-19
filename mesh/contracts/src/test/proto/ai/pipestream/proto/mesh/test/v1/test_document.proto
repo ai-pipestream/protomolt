@@ -45,7 +45,7 @@ message TestDocument {
   string document_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.mesh.v1.field) = {routing_key: true}

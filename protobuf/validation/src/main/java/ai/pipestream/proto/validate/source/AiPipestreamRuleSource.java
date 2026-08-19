@@ -276,6 +276,9 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         if (rules.getRegionCode()) {
             b.format(StringFormat.REGION_CODE);
         }
+        if (rules.getProtobufFqn()) {
+            b.format(StringFormat.PROTOBUF_FQN);
+        }
         return b.build();
     }
 

@@ -256,6 +256,20 @@ class ClusterValidationTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void identifiersFollowTheAgreedSlugContract() {
+        // The historical pattern allowed uppercase and doubled separators;
+        // the agreed slug contract does not, and this pins the tightening.
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.nodeBuilder("Node-1", 1, 1).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("slug");
+        assertThatThrownBy(() -> ClusterValidation.validate(
+                ClusterFixtures.nodeBuilder("node--1", 1, 1).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("slug");
+    }
+
     private static ClusterEvent nodeEvent(long seq, java.time.Instant occurredAt) {
         return ClusterEvent.newBuilder()
                 .setSeq(seq)

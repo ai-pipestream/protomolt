@@ -99,7 +99,7 @@ message TypedEdge {
       min_items: 1
       max_items: 64
       items: {
-        string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+        string: {slug: true, max_len: 128}
       }
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
@@ -150,7 +150,7 @@ message FanOutSpec {
     (ai.pipestream.proto.validate.v1.field).required = true,
     (ai.pipestream.proto.validate.v1.field).string = {
       max_len: 512
-      pattern: "^[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*$"
+      protobuf_fqn: true
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
