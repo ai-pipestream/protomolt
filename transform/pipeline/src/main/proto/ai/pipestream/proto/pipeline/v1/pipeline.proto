@@ -89,13 +89,13 @@ message Pipeline {
   // Name of the workflow this pipeline was compiled from; empty when the
   // pipeline was authored directly.
   string source_workflow_name = 9 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Lowercase SHA-256 fingerprint of the serialized source workflow; empty
   // exactly when source_workflow_name is empty.
   string source_workflow_fingerprint = 10 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-f]{64}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {sha256_hex: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Maximum messages any one live binding may carry. The executor rejects an
@@ -136,7 +136,7 @@ message PipelineStep {
   // Alias of a declared service dependency. Required on gRPC and structured
   // steps; must be empty on unnest and collect steps, which call no service.
   string dependency = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Optional boolean CEL gate over the scope, allowed on gRPC steps only. A

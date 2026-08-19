@@ -270,6 +270,21 @@ class ClusterValidationTest {
                 .hasMessageContaining("slug");
     }
 
+    @Test
+    void optionalIdentifiersAcceptEmptyAndStillRefuseNonSlugs() {
+        // trust_domain carries the optional idiom: the empty string declares
+        // absence and skips the format, a present value still has to be a slug.
+        ClusterDescriptor.Builder untrusted = ClusterFixtures.clusterBuilder().setTrustDomain("");
+        assertThatCode(() -> ClusterValidation.validate(sign(untrusted)))
+                .doesNotThrowAnyException();
+
+        ClusterDescriptor.Builder shouty =
+                ClusterFixtures.clusterBuilder().setTrustDomain("Trust--Domain");
+        assertThatThrownBy(() -> ClusterValidation.validate(sign(shouty)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("slug");
+    }
+
     private static ClusterEvent nodeEvent(long seq, java.time.Instant occurredAt) {
         return ClusterEvent.newBuilder()
                 .setSeq(seq)
@@ -277,6 +292,13 @@ class ClusterValidationTest {
                 .setType(ClusterEventType.CLUSTER_EVENT_TYPE_NODE_REGISTERED)
                 .setNodeId("node-1")
                 .setNode(ClusterFixtures.node("node-1"))
+                .build();
+    }
+
+    private static ClusterDescriptor sign(ClusterDescriptor.Builder builder) {
+        ClusterDescriptor unsigned = builder.clearFingerprint().build();
+        return unsigned.toBuilder()
+                .setFingerprint(ClusterValidation.descriptorFingerprint(unsigned))
                 .build();
     }
 
