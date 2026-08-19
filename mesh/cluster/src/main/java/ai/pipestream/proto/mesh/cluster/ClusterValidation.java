@@ -69,7 +69,6 @@ public final class ClusterValidation {
         advertisement.getSchemasServedList().forEach(MeshValidation::validate);
         requireUnique(advertisement.getEndpointsList(), Endpoint::getEndpointId,
                 "advertisement.endpoints.endpoint_id");
-        advertisement.getEndpointsList().forEach(ClusterValidation::validateEndpoint);
         validateAnnotations(advertisement);
     }
 
@@ -286,15 +285,6 @@ public final class ClusterValidation {
     /** Rejects a protobuf Duration outside the WKT seconds and nanos ranges. */
     private static void validateDuration(com.google.protobuf.Duration value, String field) {
         require(Durations.isValid(value), field + " must be a valid protobuf Duration");
-    }
-
-    private static void validateEndpoint(Endpoint endpoint) {
-        String address = endpoint.getAddress();
-        if (address.matches("^[A-Za-z0-9][A-Za-z0-9.-]{0,253}:[0-9]{1,5}$")) {
-            int port = Integer.parseInt(address.substring(address.lastIndexOf(':') + 1));
-            require(port >= 1 && port <= 65_535,
-                    "endpoint.address port must be between 1 and 65535: '" + address + "'");
-        }
     }
 
     private static <T> void requireUnique(List<T> values, Function<T, String> identity,

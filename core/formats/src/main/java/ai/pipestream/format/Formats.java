@@ -196,4 +196,18 @@ public final class Formats {
     public static boolean isDecimal(String value) {
         return Decimals.isDecimal(value);
     }
+
+    /**
+     * A dialable endpoint address: a {@code host:port} authority (valid port, IPv6 in
+     * brackets) or an absolute URI. Authority-shaped values never fall back to the URI
+     * reading, so {@code localhost:99999} refuses instead of passing as a URI.
+     */
+    public static boolean isEndpointAddress(String value) {
+        return Endpoints.isEndpointAddress(value);
+    }
+
+    /** A single bare identifier: {@code [A-Za-z_][A-Za-z0-9_]*}, no dots. */
+    public static boolean isIdentifier(String value) {
+        return Identifiers.isIdentifier(value);
+    }
 }

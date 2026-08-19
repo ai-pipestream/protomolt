@@ -321,7 +321,7 @@ message CollectStep {
     (ai.pipestream.proto.validate.v1.field).required = true,
     (ai.pipestream.proto.validate.v1.field).string = {
       max_len: 256
-      pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      identifier: true
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

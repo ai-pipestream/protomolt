@@ -147,11 +147,13 @@ message Endpoint {
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // Where the endpoint listens: a host:port pair or an absolute URI.
+  // Where the endpoint listens: a host:port pair (valid port; the named
+  // format enforces the 1-65535 range the old pattern left to hand code)
+  // or an absolute URI.
   string address = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^([A-Za-z0-9][A-Za-z0-9.-]{0,253}:[0-9]{1,5}|[A-Za-z][A-Za-z0-9+.-]*:[^ ]{1,2048})$"}
+      string: {endpoint_address: true, max_len: 2048}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

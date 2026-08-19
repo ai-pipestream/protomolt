@@ -67,7 +67,14 @@ public enum StringFormat {
             "value must be a GTIN (8, 12, 13, or 14 digits with a valid check digit)",
             Formats::isGtin),
     DECIMAL("string.decimal", "value must be an unsigned decimal string",
-            Formats::isDecimal);
+            Formats::isDecimal),
+    ENDPOINT_ADDRESS("string.endpoint_address",
+            "value must be a host:port pair with a valid port or an absolute URI",
+            Formats::isEndpointAddress),
+    IDENTIFIER("string.identifier",
+            "value must be a bare identifier (a letter or underscore, then letters, digits,"
+                    + " or underscores)",
+            Formats::isIdentifier);
 
     private final String ruleId;
     private final String defaultMessage;

@@ -125,6 +125,31 @@ class IdentifiersTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
+            "chunks",
+            "collect_into",
+            "_private",
+            "Field9",
+            "_",
+    })
+    void identifierAccepts(String value) {
+        assertThat(Identifiers.isIdentifier(value)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "",
+            "9starts_with_digit",
+            "has.dot",
+            "has-dash",
+            "has space",
+            "café",
+    })
+    void identifierRejects(String value) {
+        assertThat(Identifiers.isIdentifier(value)).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
             "foo",
             "foo.bar",
             "foo.bar.Baz",

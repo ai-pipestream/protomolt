@@ -178,6 +178,12 @@ class EdgeWorkflowValidationTest {
                 edgeStepEvidence().setEdge(edgeStepEvidence().getEdge().toBuilder()
                         .setEdgeFingerprint("not-a-fingerprint")))))
                 .hasMessageContaining("edge_fingerprint");
+        // The declared annotation alone carries the fingerprint format: this pins
+        // the pattern-to-sha256_hex conversion independently of the hand check.
+        assertThat(ProtoValidator.create().validate(edgeStepEvidence().getEdge().toBuilder()
+                .setEdgeFingerprint("not-a-fingerprint").build())
+                .violations())
+                .anyMatch(v -> v.ruleId().equals("string.sha256_hex"));
         assertThatThrownBy(() -> WorkflowValidation.validate(evidenceWith(
                 edgeStepEvidence().setEdge(edgeStepEvidence().getEdge().toBuilder()
                         .setSourceCount(0)))))
