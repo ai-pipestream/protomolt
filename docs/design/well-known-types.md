@@ -59,12 +59,20 @@ in their sweep (2026-08-18, 40 conversions): 26 slug-family sites to
 allowed uppercase and doubled separators, and the mesh contract test
 pins that they now refuse), 7 digest sites to `sha256_hex`/`sha1_hex`,
 5 UUID sites to `uuid` (case-identical), and 2 dotted-name sites to a
-new `protobuf_fqn` dialect field over the existing parser. Patterns
+new `protobuf_fqn` dialect field over the existing parser. A follow-up
+sweep (2026-08-19) converted the eight remaining `^$|` sites of the
+same families to `ignore_if_zero` plus the named format. Patterns
 that remain are the held alternations, single bare identifiers,
 at-least-one-dot names (the `protobuf_fqn` parser accepts dotless),
-and domain shapes like SKUs and GTINs. Still held: formats for alternations (`host:port` or
-URI) until multi-format semantics are designed; `semver` (nothing in
-the repo promises semver).
+and domain shapes like SKUs and GTINs — though GTIN is a conversion
+candidate, not a permanent hold: a `gtin` parser would verify the
+mod-10 check digit the regex cannot, and a `decimal` parser would
+name the schema.org price-in-a-string shape. Still held: formats for
+alternations (`host:port` or URI) until multi-format semantics are
+designed; `semver` (nothing in the repo promises semver). Known
+divergence to close: `WorkflowValidation`'s hand-rolled `NAME` regex
+still admits uppercase where the annotations now declare `slug`; the
+fix is delegating the Java validators to the `core/formats` parsers.
 
 ## Tier 2: structural types with platform behavior
 
