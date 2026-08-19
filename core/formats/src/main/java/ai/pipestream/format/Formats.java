@@ -174,4 +174,13 @@ public final class Formats {
     public static boolean isRegionCode(String value) {
         return Vocabularies.isRegionCode(value);
     }
+
+    /**
+     * Path-safe reference name: an ASCII letter or digit followed by letters, digits and
+     * {@code . _ -}. The mixed-origin name family (aliases carrying service FQNs, sanitized
+     * endpoints) where slug is too narrow. Compose with len rules for length bounds.
+     */
+    public static boolean isPathSafeName(String value) {
+        return Identifiers.isPathSafeName(value);
+    }
 }

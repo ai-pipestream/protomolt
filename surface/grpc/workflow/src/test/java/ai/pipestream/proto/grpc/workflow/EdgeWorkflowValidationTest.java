@@ -217,6 +217,18 @@ class EdgeWorkflowValidationTest {
                         twoBranches.getBranches(0).toBuilder()
                                 .setBranchId("other#0"))))))
                 .hasMessageContaining("its own step");
+        // The step-name half of a branch id follows the slug contract...
+        assertThatThrownBy(() -> WorkflowValidation.validate(evidenceWith(
+                edgeStepEvidence().setEdge(twoBranches.clone().setBranches(0,
+                        twoBranches.getBranches(0).toBuilder()
+                                .setBranchId("Tokenize#0"))))))
+                .hasMessageContaining("'<step-name>#<index>'");
+        // ...and the index half is at most four digits.
+        assertThatThrownBy(() -> WorkflowValidation.validate(evidenceWith(
+                edgeStepEvidence().setEdge(twoBranches.clone().setBranches(0,
+                        twoBranches.getBranches(0).toBuilder()
+                                .setBranchId("tokenize#00000"))))))
+                .hasMessageContaining("'<step-name>#<index>'");
         // Branch status is SUCCEEDED or FAILED only.
         assertThatThrownBy(() -> WorkflowValidation.validate(evidenceWith(
                 edgeStepEvidence().setEdge(twoBranches.clone().setBranches(0,

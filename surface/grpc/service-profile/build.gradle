@@ -7,6 +7,9 @@ description = 'Protobuf service profiles and durable descriptor artifacts for th
 dependencies {
     api libs.protobuf.java
     api libs.protobuf.java.util
+    // Validation delegates name, fingerprint, and host checks to the shared
+    // linear-scan parsers instead of hand-rolled regexes.
+    implementation project(':protomolt-formats')
 }
 
 protobuf {

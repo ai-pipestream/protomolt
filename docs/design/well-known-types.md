@@ -69,10 +69,28 @@ candidate, not a permanent hold: a `gtin` parser would verify the
 mod-10 check digit the regex cannot, and a `decimal` parser would
 name the schema.org price-in-a-string shape. Still held: formats for
 alternations (`host:port` or URI) until multi-format semantics are
-designed; `semver` (nothing in the repo promises semver). Known
-divergence to close: `WorkflowValidation`'s hand-rolled `NAME` regex
-still admits uppercase where the annotations now declare `slug`; the
-fix is delegating the Java validators to the `core/formats` parsers.
+designed; `semver` (nothing in the repo promises semver).
+
+The name-namespace alignment (2026-08-19) closed the divergence the
+sweeps exposed: the hand validators (`WorkflowValidation` and its
+profile, pipeline, and delegation siblings) had each hand-rolled the
+old name regex, admitting uppercase where the annotations now declare
+`slug`. Chasing it revealed that one shared regex was serving **two
+namespaces**: author-chosen *local names* (workflow, step, run, and
+delegation identities), which tighten to `slug`, and machine-derived
+*reference names* — dependency aliases carrying service
+fully-qualified names by the workflow compiler's own convention,
+sanitized endpoint placeholders, the hyphenated structured-step
+sentinel — where slug is deliberately too narrow. The reference
+family is now its own Tier-1 format, `path_safe_name` (an ASCII
+letter or digit, then letters, digits, `.`, `_` or `-`; the leading
+alphanumeric keeps a value safe as a single path segment), and
+`PipelineStep.dependency` — mis-declared `slug` by the optional-idiom
+sweep — is re-declared `path_safe_name`. Every hand validator now
+delegates to the `core/formats` linear-scan parsers (names to slug,
+references to path-safe, fingerprints, hosts, media types, UUIDs and
+SHA-1 to their parsers; the secret-reference and branch-id composites
+became scans), leaving the Java side regex-free.
 
 ## Tier 2: structural types with platform behavior
 

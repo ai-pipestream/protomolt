@@ -36,6 +36,19 @@ class DelegationValidationTest {
     }
 
     @Test
+    void delegationNamesFollowTheSlugContract() {
+        // The old hand-rolled pattern admitted uppercase; the delegation.proto
+        // annotations declare slug, and the Java validator now agrees.
+        assertThatThrownBy(() -> DelegationValidation.validate(WorkerHello.newBuilder()
+                .setWorkerId("Worker-Sol-1")
+                .setProtocolVersion(1)
+                .setProvider("sol")
+                .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("slug");
+    }
+
+    @Test
     void aHelloMustSpeakProtocolVersionOne() {
         assertThatThrownBy(() -> DelegationValidation.validate(WorkerHello.newBuilder()
                 .setWorkerId("worker-sol-1")

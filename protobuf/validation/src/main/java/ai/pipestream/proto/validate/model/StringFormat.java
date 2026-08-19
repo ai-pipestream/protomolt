@@ -59,7 +59,10 @@ public enum StringFormat {
     SLUG("string.slug", "value must be a lowercase slug (a-z0-9 with interior ., _ or -)",
             Formats::isSlug),
     REGION_CODE("string.region_code", "value must be an ISO 3166-1 alpha-2 region code",
-            Formats::isRegionCode);
+            Formats::isRegionCode),
+    PATH_SAFE_NAME("string.path_safe_name",
+            "value must be a path-safe name (a letter or digit, then letters, digits, ., _ or -)",
+            Formats::isPathSafeName);
 
     private final String ruleId;
     private final String defaultMessage;

@@ -14,22 +14,14 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
+import ai.pipestream.format.Formats;
 import java.util.HexFormat;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /** Structural and safety validation shared by repository implementations and callers. */
 public final class ServiceProfileValidation {
 
-    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}");
-    private static final Pattern FINGERPRINT = Pattern.compile("[0-9a-f]{64}");
-    private static final Pattern DNS_HOST = Pattern.compile(
-            "(?=.{1,253}\\.?$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*"
-                    + "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.?");
-    private static final Pattern IPV6_HOST = Pattern.compile("[0-9A-Fa-f:.]+");
-    private static final Pattern SECRET_REFERENCE = Pattern.compile(
-            "[A-Za-z][A-Za-z0-9+._-]{1,31}:(?=[A-Za-z0-9._:/@+-]{1,256}$)"
-                    + "(?=.*[A-Za-z0-9])[A-Za-z0-9._:/@+-]+");
+    private static final int MAX_NAME_LENGTH = 128;
 
     /** Maximum serialized profile size accepted by the durable repository. */
     public static final int MAX_PROFILE_BYTES = 256 * 1024;
@@ -99,7 +91,7 @@ public final class ServiceProfileValidation {
     /** Validates a descriptor artifact and its content-addressed fingerprint. */
     public static void validate(DescriptorArtifact artifact) {
         require(artifact != null, "artifact must not be null");
-        require(FINGERPRINT.matcher(artifact.getFingerprint()).matches(),
+        require(Formats.isSha256Hex(artifact.getFingerprint()),
                 "artifact.fingerprint must be a lowercase SHA-256 fingerprint");
         require(artifact.getDescriptorSet().size() > 0, "artifact.descriptor_set must not be empty");
         require(artifact.getDescriptorSet().size() <= MAX_DESCRIPTOR_ARTIFACT_BYTES,
@@ -118,15 +110,20 @@ public final class ServiceProfileValidation {
                 "artifact.fingerprint does not match descriptor_set SHA-256");
     }
 
-    /** Validates the path-safe profile name used by filesystem repositories. */
+    /**
+     * Validates the path-safe profile name used by filesystem repositories. Profile names
+     * carry service fully-qualified names by the workflow compiler's convention, so this is
+     * the path-safe reference family rather than the slug family.
+     */
     public static void validateName(String name, String field) {
-        require(name != null && NAME.matcher(name).matches(),
+        require(name != null && name.length() <= MAX_NAME_LENGTH
+                        && Formats.isPathSafeName(name),
                 field + " must be a single path-safe name");
     }
 
     /** Validates a descriptor fingerprint used as a content-addressed artifact key. */
     public static void validateFingerprint(String fingerprint) {
-        require(fingerprint != null && FINGERPRINT.matcher(fingerprint).matches(),
+        require(fingerprint != null && Formats.isSha256Hex(fingerprint),
                 "fingerprint must be a lowercase SHA-256 fingerprint");
     }
 
@@ -178,16 +175,54 @@ public final class ServiceProfileValidation {
     }
 
     private static void validateSecretReference(String value, String field) {
-        require(value == null || value.isBlank() || SECRET_REFERENCE.matcher(value).matches(),
+        require(value == null || value.isBlank() || isSecretReference(value),
                 field + " must be an empty value or a namespaced opaque reference");
+    }
+
+    /**
+     * A namespaced opaque secret reference: a 2-32 character scheme (a letter, then letters,
+     * digits or {@code + . _ -}), a colon, then 1-256 characters of {@code A-Za-z0-9._:/@+-}
+     * containing at least one letter or digit.
+     */
+    private static boolean isSecretReference(String value) {
+        int colon = value.indexOf(':');
+        if (colon < 2 || colon > 32) {
+            return false;
+        }
+        char first = value.charAt(0);
+        if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z'))) {
+            return false;
+        }
+        for (int i = 1; i < colon; i++) {
+            char c = value.charAt(i);
+            boolean ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '+' || c == '.' || c == '_' || c == '-';
+            if (!ok) {
+                return false;
+            }
+        }
+        int refLength = value.length() - colon - 1;
+        if (refLength < 1 || refLength > 256) {
+            return false;
+        }
+        boolean alphanumeric = false;
+        for (int i = colon + 1; i < value.length(); i++) {
+            char c = value.charAt(i);
+            boolean letterOrDigit = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9');
+            boolean ok = letterOrDigit || c == '.' || c == '_' || c == ':' || c == '/'
+                    || c == '@' || c == '+' || c == '-';
+            if (!ok) {
+                return false;
+            }
+            alphanumeric |= letterOrDigit;
+        }
+        return alphanumeric;
     }
 
     private static void validateHost(String host) {
         require(host != null && !host.isBlank(), "endpoint.host must not be blank");
-        boolean dns = DNS_HOST.matcher(host).matches();
-        boolean ipv6 = host.indexOf(':') >= 0 && host.chars().filter(c -> c == ':').count() >= 2
-                && IPV6_HOST.matcher(host).matches();
-        require(dns || ipv6,
+        require(Formats.isHostname(host) || Formats.isIp(host),
                 "endpoint.host must be a DNS name or unbracketed IP address, not a URI target");
     }
 

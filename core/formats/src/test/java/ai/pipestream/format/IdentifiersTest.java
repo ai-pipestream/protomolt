@@ -204,6 +204,38 @@ class IdentifiersTest {
         assertThat(Identifiers.isProtobufDotFqn(value)).isFalse();
     }
 
+    // ------------------------------------------------- path-safe name
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "nlp",
+            "pipeline.test.Worker",     // compiler convention: alias is the service FQN
+            "structured-generation",    // the structured-step sentinel
+            "localhost-9090",           // sanitized endpoint placeholder
+            "9lives",                   // digits may lead
+            "a..b",                     // doubled separators are the reference family's latitude
+            "trailing-",                // so are trailing separators
+    })
+    void pathSafeNameAccepts(String value) {
+        assertThat(Identifiers.isPathSafeName(value)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "",
+            "../escape",                // must start alphanumeric, so no dot traversal
+            "-leading",
+            "_leading",
+            "a/b",                      // no path separators
+            "a\\b",
+            "a b",
+            "a:b",
+            "café",                // ASCII only
+    })
+    void pathSafeNameRejects(String value) {
+        assertThat(Identifiers.isPathSafeName(value)).isFalse();
+    }
+
     @Test
     void uuidDashPositionsAreExact() {
         // Dashes must sit at offsets 8, 13, 18 and 23 — shifting any one of them breaks it.

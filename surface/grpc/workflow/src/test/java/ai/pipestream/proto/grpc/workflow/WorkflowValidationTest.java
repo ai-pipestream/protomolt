@@ -26,7 +26,7 @@ class WorkflowValidationTest {
         assertThatThrownBy(() -> WorkflowValidation.validate(TestWorkflows.workflow().toBuilder()
                 .setName("../escape").build()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("path-safe");
+                .hasMessageContaining("slug");
 
         assertThatThrownBy(() -> WorkflowValidation.validate(TestWorkflows.workflow().toBuilder()
                 .setSteps(0, TestWorkflows.workflow().getSteps(0).toBuilder()
@@ -39,6 +39,35 @@ class WorkflowValidationTest {
                         .setCompletion(StepCompletion.STEP_COMPLETION_UNSPECIFIED).build()).build()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("completion");
+    }
+
+    @Test
+    void namesAreSlugsWhileReferencesKeepTheWiderPathSafeFamily() {
+        // Local names (workflow and step identities) follow the slug contract now.
+        assertThatThrownBy(() -> WorkflowValidation.validate(TestWorkflows.workflow().toBuilder()
+                .setName("Analyze-Document").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("slug");
+
+        // Reference names stay path-safe: the compiler uses service FQNs as aliases
+        // and the structured sentinel carries a hyphen.
+        Workflow fqnAliased = TestWorkflows.workflow().toBuilder()
+                .clearDependencies()
+                .addDependencies(TestWorkflows.dependency().toBuilder()
+                        .setAlias("pipeline.test.Worker")
+                        .setServiceProfile("pipeline.test.Worker").build())
+                .setSteps(0, TestWorkflows.workflow().getSteps(0).toBuilder()
+                        .setDependency("pipeline.test.Worker").build())
+                .build();
+        WorkflowValidation.validate(fqnAliased);
+
+        assertThatThrownBy(() -> WorkflowValidation.validate(TestWorkflows.workflow().toBuilder()
+                .clearDependencies()
+                .addDependencies(TestWorkflows.dependency().toBuilder()
+                        .setAlias("../escape").build())
+                .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("path-safe reference");
     }
 
     @Test

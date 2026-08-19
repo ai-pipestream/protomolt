@@ -29,17 +29,12 @@ import com.google.protobuf.Timestamp;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.regex.Pattern;
+import ai.pipestream.format.Formats;
 
 /** Structural and safety validation shared by workflow repositories, actions, and compilers. */
 public final class WorkflowValidation {
 
-    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}");
-    private static final Pattern FINGERPRINT = Pattern.compile("[0-9a-f]{64}");
-    private static final Pattern BRANCH_ID = Pattern.compile(
-            "[A-Za-z0-9][A-Za-z0-9._-]{0,127}#[0-9]{1,4}");
-    private static final Pattern MEDIA_TYPE = Pattern.compile(
-            "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}");
+    private static final int MAX_NAME_LENGTH = 128;
     private static final int MAX_DEPENDENCIES = 64;
     private static final int MAX_STEPS = 256;
     private static final int MAX_RULES = 1_024;
@@ -99,7 +94,7 @@ public final class WorkflowValidation {
         for (WorkflowStep step : workflow.getStepsList()) {
             validateName(step.getName(), "step.name");
             require(stepNames.add(step.getName()), "duplicate step name: " + step.getName());
-            validateName(step.getDependency(), "step.dependency");
+            validateReference(step.getDependency(), "step.dependency");
             require(dependencyAliases.contains(step.getDependency()),
                     "step dependency is not declared: " + step.getDependency());
             if (step.hasStructured()) {
@@ -210,16 +205,27 @@ public final class WorkflowValidation {
     public static void validate(ArtifactReference reference) {
         require(reference != null, "artifact reference must not be null");
         validateFingerprint(reference.getSha256(), "artifact.sha256");
-        require(MEDIA_TYPE.matcher(reference.getMediaType()).matches(),
-                "artifact.media_type must be a bounded type/subtype");
+        require(Formats.isMediaType(reference.getMediaType()),
+                "artifact.media_type must be a media type in type/subtype form");
         require(Long.compareUnsigned(reference.getSizeBytes(), MAX_ARTIFACT_BYTES) <= 0,
                 "artifact.size_bytes exceeds the maximum of " + MAX_ARTIFACT_BYTES);
     }
 
-    /** Validates a path-safe workflow, version, run, dependency, or step identity. */
+    /** Validates a workflow, version, run, or step identity against the slug contract. */
     public static void validateName(String value, String field) {
-        require(value != null && NAME.matcher(value).matches(),
-                field + " must be a single path-safe name");
+        require(value != null && value.length() <= MAX_NAME_LENGTH && Formats.isSlug(value),
+                field + " must be a lowercase slug name");
+    }
+
+    /**
+     * Validates a reference name — a dependency alias, service profile, or endpoint. These
+     * carry service fully-qualified names and sanitized endpoint placeholders, so the contract
+     * is the wider path-safe family rather than the slug family.
+     */
+    public static void validateReference(String value, String field) {
+        require(value != null && value.length() <= MAX_NAME_LENGTH
+                        && Formats.isPathSafeName(value),
+                field + " must be a path-safe reference name");
     }
 
     /** Computes the lowercase SHA-256 identity of serialized workflow content. */
@@ -278,7 +284,7 @@ public final class WorkflowValidation {
         }
         Set<String> branchIds = new HashSet<>();
         for (BranchEvidence branch : evidence.getBranchesList()) {
-            require(BRANCH_ID.matcher(branch.getBranchId()).matches(),
+            require(isBranchId(branch.getBranchId()),
                     "edge_evidence.branches.branch_id must be '<step-name>#<index>'");
             require(branch.getBranchId().startsWith(stepName + "#"),
                     "edge_evidence.branches.branch_id must name its own step: "
@@ -302,9 +308,9 @@ public final class WorkflowValidation {
 
     /** Validates one named and fingerprinted service dependency. */
     public static void validate(ServiceDependency dependency) {
-        validateName(dependency.getAlias(), "dependency.alias");
-        validateName(dependency.getServiceProfile(), "dependency.service_profile");
-        validateName(dependency.getEndpoint(), "dependency.endpoint");
+        validateReference(dependency.getAlias(), "dependency.alias");
+        validateReference(dependency.getServiceProfile(), "dependency.service_profile");
+        validateReference(dependency.getEndpoint(), "dependency.endpoint");
         validateFingerprint(dependency.getDescriptorFingerprint(),
                 "dependency.descriptor_fingerprint");
     }
@@ -534,8 +540,27 @@ public final class WorkflowValidation {
 
     /** Validates a lowercase SHA-256 fingerprint. */
     public static void validateFingerprint(String value, String field) {
-        require(value != null && FINGERPRINT.matcher(value).matches(),
+        require(value != null && Formats.isSha256Hex(value),
                 field + " must be a lowercase SHA-256 fingerprint");
+    }
+
+    /** A fan-out branch id: a slug step name, {@code #}, then one to four digits. */
+    private static boolean isBranchId(String value) {
+        int hash = value.lastIndexOf('#');
+        if (hash <= 0 || hash > MAX_NAME_LENGTH || !Formats.isSlug(value.substring(0, hash))) {
+            return false;
+        }
+        int digits = value.length() - hash - 1;
+        if (digits < 1 || digits > 4) {
+            return false;
+        }
+        for (int i = hash + 1; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Validates bounded diagnostic or provenance text. */

@@ -9,11 +9,13 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * The two later-agreed Tier-1 formats wired through the dialect: a
+ * The later-agreed Tier-1 formats wired through the dialect: a
  * {@code slug: true} declaration refuses anything but the agreed contract
- * (lowercase a-z0-9, interior single '.', '_' or '-', alphanumeric ends)
- * and {@code region_code: true} refuses anything outside the JDK's ISO
- * 3166 table, both with their stable rule ids.
+ * (lowercase a-z0-9, interior single '.', '_' or '-', alphanumeric ends),
+ * {@code region_code: true} refuses anything outside the JDK's ISO
+ * 3166 table, and {@code path_safe_name: true} carries the wider
+ * reference-name family (aliases holding service FQNs), each with its
+ * stable rule id.
  */
 class SlugAndRegionRulesTest {
 
@@ -24,6 +26,11 @@ class SlugAndRegionRulesTest {
         DescriptorProtos.FieldOptions slugRule = DescriptorProtos.FieldOptions.newBuilder()
                 .setExtension(ValidateProto.field, FieldRules.newBuilder()
                         .setString(StringRules.newBuilder().setSlug(true)).build())
+                .build();
+        DescriptorProtos.FieldOptions referenceRule = DescriptorProtos.FieldOptions.newBuilder()
+                .setExtension(ValidateProto.field, FieldRules.newBuilder()
+                        .setIgnoreIfZero(true)
+                        .setString(StringRules.newBuilder().setPathSafeName(true)).build())
                 .build();
         DescriptorProtos.FieldOptions regionRule = DescriptorProtos.FieldOptions.newBuilder()
                 .setExtension(ValidateProto.field, FieldRules.newBuilder()
@@ -50,7 +57,14 @@ class SlugAndRegionRulesTest {
                                         .TYPE_STRING)
                                 .setLabel(DescriptorProtos.FieldDescriptorProto.Label
                                         .LABEL_OPTIONAL)
-                                .setOptions(regionRule)))
+                                .setOptions(regionRule))
+                        .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                                .setName("reference").setNumber(3)
+                                .setType(DescriptorProtos.FieldDescriptorProto.Type
+                                        .TYPE_STRING)
+                                .setLabel(DescriptorProtos.FieldDescriptorProto.Label
+                                        .LABEL_OPTIONAL)
+                                .setOptions(referenceRule)))
                 .build();
         try {
             return Descriptors.FileDescriptor
@@ -62,9 +76,14 @@ class SlugAndRegionRulesTest {
     }
 
     private static List<String> ruleIds(String name, String region) {
+        return ruleIds(name, region, "");
+    }
+
+    private static List<String> ruleIds(String name, String region, String reference) {
         return VALIDATOR.validate(DynamicMessage.newBuilder(DOC)
                         .setField(DOC.findFieldByName("name"), name)
                         .setField(DOC.findFieldByName("region"), region)
+                        .setField(DOC.findFieldByName("reference"), reference)
                         .build())
                 .violations().stream()
                 .map(ValidationResult.Violation::ruleId)
@@ -87,5 +106,17 @@ class SlugAndRegionRulesTest {
         assertThat(ruleIds("ok", "us")).containsExactly("string.region_code");
         // ignore_if_zero: absent-or-valid, the declared form of ^$|... .
         assertThat(ruleIds("ok", "")).isEmpty();
+    }
+
+    @Test
+    void pathSafeNamesCarryTheWiderReferenceFamily() {
+        // The compiler's FQN aliases and the hyphenated sentinel both pass...
+        assertThat(ruleIds("ok", "", "pipeline.test.Worker")).isEmpty();
+        assertThat(ruleIds("ok", "", "structured-generation")).isEmpty();
+        // ...where the slug contract would refuse them.
+        assertThat(ruleIds("pipeline.test.Worker", "", "")).containsExactly("string.slug");
+        // Traversal shapes still refuse by name.
+        assertThat(ruleIds("ok", "", "../escape"))
+                .containsExactly("string.path_safe_name");
     }
 }

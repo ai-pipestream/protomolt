@@ -7,6 +7,9 @@ description = 'Descriptor-grounded gRPC workflow, artifact, and run-evidence con
 dependencies {
     api libs.protobuf.java
     api project(':protomolt-grpc-service-profile')
+    // Validation delegates name, fingerprint, and media-type checks to the
+    // shared linear-scan parsers instead of hand-rolled regexes.
+    implementation project(':protomolt-formats')
     // Persisted workflow/evidence fields carry the house validation and
     // sensitivity metadata options.
     api project(':protomolt-protobuf-validation')
