@@ -15,6 +15,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.ExtensionRegistry;
 import com.google.protobuf.Message;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -25,9 +26,12 @@ import java.util.Optional;
  * <p>When the writer carries a {@link DescriptorRegistry} (so {@code google.protobuf.Any}
  * payloads can be rendered at all), every write method also runs the
  * {@link AnyPayloadGate} over the message: each packed payload is unpacked against that
- * same registry and offered to the {@code AnyPayloadValidator}s on the classpath — the
- * gate the engine write path applies during mapping expansion. A registry-less writer cannot
- * render non-empty Anys in the first place, so no gate runs there.
+ * same registry and validated. With a caller-supplied validator, the gate binds to it, so
+ * payloads validate under the caller's rule sources and taxonomy catalog — the same
+ * contract as the top-level message. Without one, the gate offers payloads to the
+ * {@code AnyPayloadValidator}s on the classpath — the gate the engine write path applies
+ * during mapping expansion. A registry-less writer cannot render non-empty Anys in the
+ * first place, so no gate runs there.
  */
 public final class ProtobufIndexer {
 
@@ -45,8 +49,15 @@ public final class ProtobufIndexer {
         this.mappingFactory = Objects.requireNonNull(mappingFactory, "mappingFactory");
         this.writer = Objects.requireNonNull(writer, "writer");
         this.validator = validator;
+        // A caller-supplied validator carries its own rule sources and taxonomy catalog:
+        // packed payloads must validate under exactly those, not the ServiceLoader gate's
+        // shared default (which mounts no taxonomies and knows no custom sources).
         this.anyPayloadGate = writer.descriptorRegistry()
-                .map(registry -> new AnyPayloadGate(registry, mappingFactory.hints()))
+                .map(registry -> validator == null
+                        ? new AnyPayloadGate(registry, mappingFactory.hints())
+                        : new AnyPayloadGate(registry,
+                                List.of(new DeclaredRulesAnyPayloadValidator(validator)),
+                                mappingFactory.hints()))
                 .orElse(null);
     }
 
