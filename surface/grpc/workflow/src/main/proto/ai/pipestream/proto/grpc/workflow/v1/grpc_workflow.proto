@@ -14,8 +14,11 @@ option java_package = "ai.pipestream.proto.grpc.workflow.v1";
 
 // A descriptor-grounded sequence of gRPC calls that can be checked, replayed, and promoted.
 message Workflow {
-  // Stable path-safe identity used by repositories and MCP resources.
-  string name = 1;
+  // Stable slug identity used by repositories and MCP resources.
+  string name = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 128}
+  }];
   // Human-readable purpose with no execution semantics.
   string description = 2;
   // Fully-qualified protobuf message accepted as the workflow input.
@@ -32,22 +35,43 @@ message Workflow {
 
 // One named and fingerprinted service dependency used by a workflow.
 message ServiceDependency {
-  // Workflow-local name referenced by steps.
-  string alias = 1;
-  // Stable service-profile name.
-  string service_profile = 2;
-  // Endpoint name within the profile.
-  string endpoint = 3;
+  // Workflow-local name referenced by steps. The compiler uses service
+  // fully-qualified names as aliases, so this is the path-safe reference
+  // family, not the slug family.
+  string alias = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {path_safe_name: true, max_len: 128}
+  }];
+  // Stable service-profile name; profile names carry FQNs.
+  string service_profile = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {path_safe_name: true, max_len: 128}
+  }];
+  // Endpoint name within the profile; sanitized from addresses, so path-safe.
+  string endpoint = 3 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {path_safe_name: true, max_len: 128}
+  }];
   // Lowercase SHA-256 fingerprint of the exact descriptor set used for checking.
-  string descriptor_fingerprint = 4;
+  string descriptor_fingerprint = 4 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
 }
 
 // One serial gRPC call or externally completed step.
 message WorkflowStep {
   // Unique step name used in later mapping scopes and evidence.
-  string name = 1;
-  // Alias of a declared service dependency.
-  string dependency = 2;
+  string name = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 128}
+  }];
+  // Alias of a declared service dependency: the path-safe reference family,
+  // because aliases carry service fully-qualified names.
+  string dependency = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {path_safe_name: true, max_len: 128}
+  }];
   // Fully-qualified gRPC method in Service/Method form. Empty exactly when
   // structured is set: a structured step has no gRPC method.
   string method = 3;
@@ -276,10 +300,16 @@ enum StepCompletion {
 message VersionedWorkflow {
   // Validated workflow content.
   Workflow workflow = 1;
-  // Path-safe immutable version selected by the promoter.
-  string version = 2;
+  // Immutable slug version selected by the promoter.
+  string version = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 128}
+  }];
   // Lowercase SHA-256 fingerprint of the serialized workflow.
-  string workflow_fingerprint = 3;
+  string workflow_fingerprint = 3 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
   // Time this version was promoted.
   google.protobuf.Timestamp created_at = 4;
 }
@@ -287,9 +317,15 @@ message VersionedWorkflow {
 // Content-addressed reference to bounded evidence bytes stored outside agent context.
 message ArtifactReference {
   // Lowercase SHA-256 fingerprint of the stored bytes.
-  string sha256 = 1;
+  string sha256 = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
   // IANA media type of the stored bytes.
-  string media_type = 2;
+  string media_type = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {mime_type: true}
+  }];
   // Exact byte length of the stored content.
   uint64 size_bytes = 3;
   // Whether the configured redaction pass ran before the bytes were persisted.
@@ -298,14 +334,26 @@ message ArtifactReference {
 
 // Evidence from one bounded workflow probe or replay.
 message RunEvidence {
-  // Stable path-safe identity for this run.
-  string run_id = 1;
+  // Stable slug identity for this run.
+  string run_id = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 128}
+  }];
   // Workflow identity used for the run.
-  string workflow_name = 2;
+  string workflow_name = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 128}
+  }];
   // Promoted version when one was used; empty is allowed for a draft probe.
-  string workflow_version = 3;
+  string workflow_version = 3 [(ai.pipestream.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {slug: true, max_len: 128}
+  }];
   // Lowercase SHA-256 fingerprint of the exact workflow content executed.
-  string workflow_fingerprint = 4;
+  string workflow_fingerprint = 4 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
   // Final or current run state.
   RunStatus status = 5;
   // Start time recorded by the execution host.
@@ -327,7 +375,10 @@ message RunEvidence {
 // Evidence from one workflow step.
 message StepEvidence {
   // Workflow step name.
-  string step_name = 1;
+  string step_name = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 128}
+  }];
   // Exact fully-qualified method observed during the run.
   string method = 2;
   // Final step state.

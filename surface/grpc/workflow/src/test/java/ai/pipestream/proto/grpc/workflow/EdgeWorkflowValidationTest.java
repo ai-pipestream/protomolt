@@ -92,15 +92,20 @@ class EdgeWorkflowValidationTest {
 
     @Test
     void edgeSourcesAreBoundedStepNameTokens() {
+        // Through the workflow, the declared annotations refuse the empty list first;
+        // the standalone contract keeps its own message for direct compiler callers.
         assertThatThrownBy(() -> WorkflowValidation.validate(
                 edgeWorkflow(WorkflowStep.newBuilder()
                         .setEdge(TypedEdge.newBuilder()
                                 .setProduceType("example.v1.Document")))))
+                .hasMessageContaining("at least 1");
+        assertThatThrownBy(() -> WorkflowValidation.validate(TypedEdge.newBuilder()
+                .setProduceType("example.v1.Document").build()))
                 .hasMessageContaining("edge.sources must not be empty");
         assertThatThrownBy(() -> WorkflowValidation.validate(
                 edgeWorkflow(WorkflowStep.newBuilder()
                         .setEdge(edge().toBuilder().addSources("not a name")))))
-                .hasMessageContaining("step.edge.sources");
+                .hasMessageContaining("edge.sources");
         TypedEdge.Builder sixtyFive = TypedEdge.newBuilder()
                 .setProduceType("example.v1.Document");
         for (int i = 0; i < 65; i++) {
@@ -108,7 +113,7 @@ class EdgeWorkflowValidationTest {
         }
         assertThatThrownBy(() -> WorkflowValidation.validate(
                 edgeWorkflow(WorkflowStep.newBuilder().setEdge(sixtyFive))))
-                .hasMessageContaining("exceeds the maximum");
+                .hasMessageContaining("at most 64 items");
         // The declared annotations enforce the same bounds.
         assertThat(ProtoValidator.create().validate(sixtyFive.build()).valid())
                 .isFalse();
@@ -223,12 +228,13 @@ class EdgeWorkflowValidationTest {
                         twoBranches.getBranches(0).toBuilder()
                                 .setBranchId("Tokenize#0"))))))
                 .hasMessageContaining("'<step-name>#<index>'");
-        // ...and the index half is at most four digits.
+        // ...and the index half is at most four digits, refused by the branch_id
+        // pattern annotation before the hand scan sees it.
         assertThatThrownBy(() -> WorkflowValidation.validate(evidenceWith(
                 edgeStepEvidence().setEdge(twoBranches.clone().setBranches(0,
                         twoBranches.getBranches(0).toBuilder()
                                 .setBranchId("tokenize#00000"))))))
-                .hasMessageContaining("'<step-name>#<index>'");
+                .hasMessageContaining("branch_id");
         // Branch status is SUCCEEDED or FAILED only.
         assertThatThrownBy(() -> WorkflowValidation.validate(evidenceWith(
                 edgeStepEvidence().setEdge(twoBranches.clone().setBranches(0,

@@ -230,26 +230,26 @@ class StructuredWorkflowValidationTest {
     @Test
     void rejectsInconsistentAttemptHistories() {
         Workflow workflow = structuredWorkflow().build();
-        // More than three attempts.
+        // More than three attempts; the declared annotations refuse first.
         assertThatThrownBy(() -> WorkflowValidation.validate(runEvidence(workflow,
                 evidence()
                         .addAttempts(attempt(3, AttemptOutcome.ATTEMPT_OUTCOME_PARSE_FAILED, 10, 5))
                         .addAttempts(attempt(4, AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED, 10, 5))
                         .build()).build()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("attempts exceeds");
+                .hasMessageContaining("at most 3 items");
         // Non-sequential numbering.
         assertThatThrownBy(() -> WorkflowValidation.validate(runEvidence(workflow,
                 evidence().setAttempts(1, attempt(3,
                         AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED, 10, 5)).build()).build()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("sequentially numbered");
-        // Undefined outcome.
+        // Undefined outcome; the annotation's required rule refuses the zero value.
         assertThatThrownBy(() -> WorkflowValidation.validate(runEvidence(workflow,
                 evidence().setAttempts(0, attempt(1,
                         AttemptOutcome.ATTEMPT_OUTCOME_UNSPECIFIED, 10, 5)).build()).build()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("defined");
+                .hasMessageContaining("outcome");
         // Total usage that is not the per-attempt sum.
         assertThatThrownBy(() -> WorkflowValidation.validate(runEvidence(workflow,
                 evidence().setTotalUsage(Usage.newBuilder()

@@ -6,9 +6,15 @@ import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
 import ai.pipestream.proto.grpc.workflow.v1.RunStatus;
 import ai.pipestream.proto.grpc.workflow.v1.StepCompletion;
 import ai.pipestream.proto.grpc.workflow.v1.VersionedWorkflow;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.ValidationResult;
+import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WorkflowValidationTest {
@@ -67,7 +73,56 @@ class WorkflowValidationTest {
                         .setAlias("../escape").build())
                 .build()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("path-safe reference");
+                .hasMessageContaining("path-safe name");
+
+        // The standalone dependency contract carries the same annotations for
+        // its direct pipeline callers.
+        assertThatThrownBy(() -> WorkflowValidation.validate(TestWorkflows.dependency()
+                .toBuilder().setAlias("../escape").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("path-safe name");
+    }
+
+    @Test
+    void declaredIdentityRulesCarryTheNameFamiliesWithoutTheHandValidator() {
+        // The contract annotations alone refuse bad identities: the divergence
+        // class the hand validator used to own is pinned at the proto layer.
+        assertThat(ruleIds(TestWorkflows.workflow().toBuilder()
+                .setName("Analyze-Document").build()))
+                .contains("string.slug");
+        assertThat(ruleIds(TestWorkflows.dependency().toBuilder()
+                .setAlias("../escape").build()))
+                .contains("string.path_safe_name");
+        assertThat(ruleIds(TestWorkflows.dependency().toBuilder()
+                .setDescriptorFingerprint("not-a-hash").build()))
+                .contains("string.sha256_hex");
+        assertThat(ruleIds(TestWorkflows.dependency().toBuilder()
+                .clearDescriptorFingerprint().build()))
+                .contains("required");
+        assertThat(ruleIds(TestWorkflows.artifact("{}", true).toBuilder()
+                .setMediaType("not a media type").build()))
+                .contains("string.mime_type");
+        assertThat(ruleIds(TestWorkflows.versionedWorkflow().toBuilder()
+                .setVersion("V1").build()))
+                .contains("string.slug");
+        // An FQN alias passes the reference family; the same value refuses as a slug.
+        assertThat(ruleIds(TestWorkflows.dependency().toBuilder()
+                .setAlias("pipeline.test.Worker").build()))
+                .doesNotContain("string.path_safe_name");
+        // A blank promoted version is allowed on run evidence; a bad one refuses.
+        assertThat(ruleIds(TestWorkflows.evidence().toBuilder()
+                .clearWorkflowVersion().build()))
+                .isEmpty();
+        assertThat(ruleIds(TestWorkflows.evidence().toBuilder()
+                .setWorkflowVersion("Not-A-Slug").build()))
+                .contains("string.slug");
+    }
+
+    private static List<String> ruleIds(Message message) {
+        return ProtoValidator.forMessageType(message.getDescriptorForType())
+                .validate(message).violations().stream()
+                .map(ValidationResult.Violation::ruleId)
+                .toList();
     }
 
     @Test

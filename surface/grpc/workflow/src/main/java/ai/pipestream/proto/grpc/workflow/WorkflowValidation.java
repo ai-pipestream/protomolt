@@ -24,14 +24,25 @@ import ai.pipestream.proto.grpc.workflow.v1.VersionedWorkflow;
 import ai.pipestream.proto.inference.v1.AttemptOutcome;
 import ai.pipestream.proto.inference.v1.FinishReason;
 import ai.pipestream.proto.inference.v1.Usage;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Duration;
+import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 import ai.pipestream.format.Formats;
 
-/** Structural and safety validation shared by workflow repositories, actions, and compilers. */
+/**
+ * Structural and safety validation shared by workflow repositories, actions, and compilers,
+ * following the {@code ClusterValidation} conventions: the contract's own {@code validate.v1}
+ * annotations (name families, fingerprints, media types) run first through
+ * {@link ProtoValidator}, which recurses into nested messages, then the checks annotations
+ * cannot express (duplicates, declared-dependency references, fingerprint agreement, step
+ * shape exclusivity) run here.
+ */
 public final class WorkflowValidation {
 
     private static final int MAX_NAME_LENGTH = 128;
@@ -71,7 +82,7 @@ public final class WorkflowValidation {
         require(workflow != null, "workflow must not be null");
         require(workflow.getSerializedSize() <= MAX_WORKFLOW_BYTES,
                 "workflow exceeds the maximum serialized size of " + MAX_WORKFLOW_BYTES + " bytes");
-        validateName(workflow.getName(), "workflow.name");
+        validateAnnotations(workflow);
         validateText(workflow.getDescription(), "workflow.description");
         validateType(workflow.getInputType(), "workflow.input_type");
         require(workflow.getDependenciesCount() > 0,
@@ -83,18 +94,17 @@ public final class WorkflowValidation {
                 "workflow.steps exceeds the maximum of " + MAX_STEPS);
         validatePositiveDuration(workflow.getDeadline(), "workflow.deadline");
 
+        // The annotation pass above already validated every dependency and step field;
+        // only the cross-item and cross-field invariants remain.
         Set<String> dependencyAliases = new HashSet<>();
         for (ServiceDependency dependency : workflow.getDependenciesList()) {
-            validate(dependency);
             require(dependencyAliases.add(dependency.getAlias()),
                     "duplicate dependency alias: " + dependency.getAlias());
         }
 
         Set<String> stepNames = new HashSet<>();
         for (WorkflowStep step : workflow.getStepsList()) {
-            validateName(step.getName(), "step.name");
             require(stepNames.add(step.getName()), "duplicate step name: " + step.getName());
-            validateReference(step.getDependency(), "step.dependency");
             require(dependencyAliases.contains(step.getDependency()),
                     "step dependency is not declared: " + step.getDependency());
             if (step.hasStructured()) {
@@ -146,11 +156,9 @@ public final class WorkflowValidation {
         require(versioned.getSerializedSize() <= MAX_WORKFLOW_BYTES,
                 "versioned workflow exceeds the maximum serialized size of "
                         + MAX_WORKFLOW_BYTES + " bytes");
+        validateAnnotations(versioned);
         require(versioned.hasWorkflow(), "versioned workflow content must be present");
         validate(versioned.getWorkflow());
-        validateName(versioned.getVersion(), "versioned_workflow.version");
-        validateFingerprint(versioned.getWorkflowFingerprint(),
-                "versioned_workflow.workflow_fingerprint");
         require(fingerprint(versioned.getWorkflow()).equals(versioned.getWorkflowFingerprint()),
                 "versioned_workflow.workflow_fingerprint does not match workflow content");
         validateTimestamp(versioned.getCreatedAt(), "versioned_workflow.created_at", true);
@@ -162,12 +170,7 @@ public final class WorkflowValidation {
         require(evidence.getSerializedSize() <= MAX_RUN_EVIDENCE_BYTES,
                 "run evidence exceeds the maximum serialized size of "
                         + MAX_RUN_EVIDENCE_BYTES + " bytes");
-        validateName(evidence.getRunId(), "run.run_id");
-        validateName(evidence.getWorkflowName(), "run.workflow_name");
-        if (!evidence.getWorkflowVersion().isBlank()) {
-            validateName(evidence.getWorkflowVersion(), "run.workflow_version");
-        }
-        validateFingerprint(evidence.getWorkflowFingerprint(), "run.workflow_fingerprint");
+        validateAnnotations(evidence);
         require(evidence.getStatus() == RunStatus.RUN_STATUS_RUNNING
                         || isTerminal(evidence.getStatus()),
                 "run.status must be recognized");
@@ -181,7 +184,6 @@ public final class WorkflowValidation {
                 "run.dependencies exceeds the maximum of " + MAX_DEPENDENCIES);
         Set<String> aliases = new HashSet<>();
         for (ServiceDependency dependency : evidence.getDependenciesList()) {
-            validate(dependency);
             require(aliases.add(dependency.getAlias()),
                     "duplicate run dependency alias: " + dependency.getAlias());
         }
@@ -204,9 +206,7 @@ public final class WorkflowValidation {
     /** Validates a content-addressed artifact reference. */
     public static void validate(ArtifactReference reference) {
         require(reference != null, "artifact reference must not be null");
-        validateFingerprint(reference.getSha256(), "artifact.sha256");
-        require(Formats.isMediaType(reference.getMediaType()),
-                "artifact.media_type must be a media type in type/subtype form");
+        validateAnnotations(reference);
         require(Long.compareUnsigned(reference.getSizeBytes(), MAX_ARTIFACT_BYTES) <= 0,
                 "artifact.size_bytes exceeds the maximum of " + MAX_ARTIFACT_BYTES);
     }
@@ -308,11 +308,8 @@ public final class WorkflowValidation {
 
     /** Validates one named and fingerprinted service dependency. */
     public static void validate(ServiceDependency dependency) {
-        validateReference(dependency.getAlias(), "dependency.alias");
-        validateReference(dependency.getServiceProfile(), "dependency.service_profile");
-        validateReference(dependency.getEndpoint(), "dependency.endpoint");
-        validateFingerprint(dependency.getDescriptorFingerprint(),
-                "dependency.descriptor_fingerprint");
+        require(dependency != null, "dependency must not be null");
+        validateAnnotations(dependency);
     }
 
     private static void validateOutput(WorkflowOutput output) {
@@ -322,7 +319,7 @@ public final class WorkflowValidation {
     }
 
     private static void validate(StepEvidence step) {
-        validateName(step.getStepName(), "step_evidence.step_name");
+        // step_name is covered by the RunEvidence annotation pass, which recurses here.
         require(step.getStatus() == StepStatus.STEP_STATUS_SUCCEEDED
                         || step.getStatus() == StepStatus.STEP_STATUS_FAILED
                         || step.getStatus() == StepStatus.STEP_STATUS_SKIPPED
@@ -606,6 +603,17 @@ public final class WorkflowValidation {
         return status == RunStatus.RUN_STATUS_SUCCEEDED
                 || status == RunStatus.RUN_STATUS_FAILED
                 || status == RunStatus.RUN_STATUS_CANCELLED;
+    }
+
+    private static void validateAnnotations(Message message) {
+        ValidationResult result = ProtoValidator.forMessageType(message.getDescriptorForType())
+                .validate(message);
+        if (!result.valid()) {
+            throw new IllegalArgumentException("message fails the workflow contract annotations: "
+                    + result.violations().stream()
+                    .map(v -> "[" + v.path() + "] " + v.ruleId() + ": " + v.message())
+                    .collect(Collectors.joining("; ")));
+        }
     }
 
     private static void require(boolean condition, String message) {
