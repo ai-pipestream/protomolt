@@ -129,6 +129,11 @@ public final class ProtoValidator {
     // (the binding is schema truth); the catalog is consulted per validation, so a live
     // mount swap changes verdicts without touching the compiled rule model.
     private final TaxonomyCatalog taxonomies;
+    // The mounted postal-code grammars behind the google.type.PostalAddress check. No
+    // schema declaration exists here — the type is the binding — so an unmounted region
+    // leaves the postal code unchecked (the data-free default), unlike the taxonomy
+    // rule's fail-closed stance.
+    private final ai.pipestream.proto.validate.spi.PostalCodeCatalog postalCodes;
     // Message-level CEL is compiled with `this` typed as the message under validation, so a rule on
     // a nested message sees its own fields. Evaluators are built lazily and cached per descriptor.
     private final Map<Descriptor, CelHandle> messageCelByType =
@@ -149,14 +154,17 @@ public final class ProtoValidator {
      */
     public ProtoValidator(CelEvaluator fieldCel, List<ValidationRuleSource> sources) {
         this(new CelHandle(null, Objects.requireNonNull(fieldCel, "fieldCel")), sources,
-                TaxonomyCatalog.empty());
+                TaxonomyCatalog.empty(),
+                ai.pipestream.proto.validate.spi.PostalCodeCatalog.empty());
     }
 
     private ProtoValidator(
-            CelHandle fieldCel, List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies) {
+            CelHandle fieldCel, List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies,
+            ai.pipestream.proto.validate.spi.PostalCodeCatalog postalCodes) {
         this.fieldCel = fieldCel;
         this.sources = List.copyOf(Objects.requireNonNull(sources, "sources"));
         this.taxonomies = Objects.requireNonNull(taxonomies, "taxonomies");
+        this.postalCodes = Objects.requireNonNull(postalCodes, "postalCodes");
     }
 
     /**
@@ -181,9 +189,21 @@ public final class ProtoValidator {
     /** As {@link #create()} but with an explicit rule-source chain and taxonomy catalog. */
     public static ProtoValidator create(
             List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies) {
+        return create(sources, taxonomies,
+                ai.pipestream.proto.validate.spi.PostalCodeCatalog.empty());
+    }
+
+    /**
+     * As {@link #create()} but additionally consulting {@code postalCodes} for the
+     * {@code google.type.PostalAddress} postal-code grammar check.
+     */
+    public static ProtoValidator create(
+            List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies,
+            ai.pipestream.proto.validate.spi.PostalCodeCatalog postalCodes) {
         Cel fieldEnv = celEnv().build();
         return new ProtoValidator(
-                new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)), sources, taxonomies);
+                new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)), sources, taxonomies,
+                postalCodes);
     }
 
     /**
@@ -1280,6 +1300,47 @@ public final class ProtoValidator {
                 validateRequiredOneof(message, descriptor, oneofName, path, violations);
             }
         }
+        if ("google.type.PostalAddress".equals(descriptor.getFullName())) {
+            applyPostalGrammar(message, descriptor, path, violations);
+        }
+    }
+
+    /**
+     * The operator-pack half of the PostalAddress contract: when the mounted pack
+     * carries the address's region, a non-empty postal code must match one of the
+     * region's masks ({@code N} a digit, {@code A} an uppercase letter, anything
+     * else literal — one linear scan per mask, no operator-supplied patterns). An
+     * unmounted region leaves the code unchecked, the data-free default.
+     */
+    private void applyPostalGrammar(
+            Message message, Descriptor descriptor, String path,
+            List<ValidationResult.Violation> violations) {
+        FieldDescriptor regionField = descriptor.findFieldByName("region_code");
+        FieldDescriptor codeField = descriptor.findFieldByName("postal_code");
+        if (regionField == null || codeField == null
+                || regionField.getJavaType() != FieldDescriptor.JavaType.STRING
+                || codeField.getJavaType() != FieldDescriptor.JavaType.STRING) {
+            return;
+        }
+        String code = (String) message.getField(codeField);
+        if (code.isEmpty()) {
+            return;
+        }
+        ai.pipestream.proto.validate.spi.PostalCodeCatalog.Mounted mounted = postalCodes
+                .region((String) message.getField(regionField)).orElse(null);
+        if (mounted == null) {
+            return;
+        }
+        for (String mask : mounted.masks()) {
+            if (ai.pipestream.format.PostalMasks.matches(code, mask)) {
+                return;
+            }
+        }
+        violations.add(violation(
+                path.isEmpty() ? "postal_code" : path + ".postal_code",
+                "postal.code_grammar",
+                "postal code does not match the mounted grammar for region \""
+                        + mounted.regionCode() + "\" at version " + mounted.version()));
     }
 
     /**

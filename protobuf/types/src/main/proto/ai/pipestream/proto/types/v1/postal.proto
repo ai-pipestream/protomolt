@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.types.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.types";
+option java_outer_classname = "PostalProto";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// The operator-loaded postal-code pack: per-region postal-code grammars as
+// UPU-convention masks, distributed as a config document on the config lane
+// (subject "postal-codes"). The platform bundles no postal data — the
+// mechanism ships, the data is the operator's (or a separately-licensed
+// pack), the taxonomy stance exactly.
+//
+// The document carries no name and no version: the subject is the identity,
+// the config source's version is the version, and that version rides every
+// grammar violation as evidence.
+message PostalCodePack {
+  // One entry per region; a duplicated region is refused at mount time.
+  repeated RegionPostalMasks regions = 1 [
+    (ai.pipestream.proto.validate.v1.field).repeated.min_items = 1
+  ];
+}
+
+// One region's postal-code grammar.
+message RegionPostalMasks {
+  // The ISO 3166-1 alpha-2 region the masks apply to.
+  string region_code = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {region_code: true}
+    }
+  ];
+  // The masks, at least one; a postal code must match one of them. In a
+  // mask, N matches a digit, A matches an uppercase letter, and every other
+  // character matches itself — a fixed template, deliberately never a
+  // pattern, so operator data cannot smuggle in a regular expression.
+  repeated string masks = 2 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        string: {min_len: 1, max_len: 16}
+      }
+    }
+  ];
+}

@@ -1,13 +1,12 @@
 # Screening
 
 Status: design of record for model-driven screening (PII and entity
-detection), decided 2026-08-18 with the project owner. The first
-slice is implemented end to end as of 2026-08-19 (see "What is
-implemented" below). Landing anything further means updating this
-chapter first. The hard line it
-rests on is stated in [well-known types](well-known-types.md)
-("Screening is not validation") and is restated here because every
-design decision below follows from it.
+detection). The first slice is implemented end to end (see "What is
+implemented" below); anything further changes this chapter first. The
+hard line it rests on is stated in
+[well-known types](well-known-types.md) ("Screening is not
+validation") and is restated here because every design decision below
+follows from it.
 
 ## The hard line
 
@@ -70,7 +69,7 @@ pre-upstream). The dependency boundary holds firm:
   operator-supplied pack, never bundled in-tree (the same
   Apache-clean licensing rule the taxonomy chapter enforces).
 
-## What is implemented (2026-08-19)
+## What is implemented
 
 The screening core is the `protomolt-screening` module
 (`transform/screening`), and it is the only module that depends on
@@ -107,7 +106,7 @@ cleaning uses:
   from config). Its own `validate.v1` rules are the lane's verify
   hook.
 
-The door mount (same day) completes the slice end to end:
+The door mount completes the slice end to end:
 
 - The declaration: `SearchMetadata.body` declares sensitivity
   `screened` — the first screened class in the schema. The

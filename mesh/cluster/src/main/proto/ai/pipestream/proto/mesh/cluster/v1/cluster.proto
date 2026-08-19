@@ -147,8 +147,7 @@ message Endpoint {
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // Where the endpoint listens: a host:port pair (valid port; the named
-  // format enforces the 1-65535 range the old pattern left to hand code)
+  // Where the endpoint listens: a host:port pair with a dialable port,
   // or an absolute URI.
   string address = 2 [
     (ai.pipestream.proto.validate.v1.field) = {

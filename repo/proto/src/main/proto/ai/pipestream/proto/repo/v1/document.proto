@@ -167,11 +167,9 @@ message ParserDocument {
 message SearchMetadata {
   // Document title or heading.
   optional string title = 1;
-  // Full text content of the document. Declared "screened": free text is
-  // where detected entities land, so a mounted screening policy applies
-  // here. The declaration is schema truth (THAT the field is screened);
-  // the verdicts are runtime facts carried with the model version as
-  // evidence, never as schema validity.
+  // Full text content of the document. Declared "screened": a mounted
+  // screening policy applies here; verdicts carry the model version as
+  // evidence and never ride schema validity.
   optional string body = 2 [(ai.pipestream.proto.meta.v1.field).sensitivity = "screened"];
   // Document type classification (e.g. "PDF", "HTML", "DOCX").
   optional string document_type = 3;
