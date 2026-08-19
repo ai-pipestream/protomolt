@@ -90,7 +90,7 @@ message DelegateRequest {
   ];
   // The task this frame concerns; empty on the session-scoped hello.
   string task_id = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // 1-based sequence inside this worker stream's (worker lane, task_id,
@@ -165,7 +165,7 @@ message DelegateResponse {
   ];
   // The task this frame concerns; empty on the session-scoped admission.
   string task_id = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // 1-based sequence inside this worker stream's (coordinator lane, task_id,
@@ -215,7 +215,7 @@ message WorkerHello {
   string worker_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -259,7 +259,7 @@ message WorkerCapability {
   string name = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -289,7 +289,7 @@ message AdmissionDecision {
   bool admitted = 1 [(ai.pipestream.proto.meta.v1.field).sensitivity = "internal"];
   // The coordinator's session uuid; empty when rejected.
   string session_id = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Why admission was refused; required when admitted is false.
@@ -422,7 +422,7 @@ message AcceptanceCheck {
   string name = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -734,7 +734,7 @@ message TaskMessage {
   string sender = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -742,7 +742,7 @@ message TaskMessage {
   string recipient = 3 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -750,7 +750,7 @@ message TaskMessage {
   string task_id = 4 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"}
+      string: {uuid: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -768,7 +768,7 @@ message TaskMessage {
   ];
   // The message this answers, when it continues a thread; empty otherwise.
   string reply_to = 6 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // The message body, bounded. Long content belongs in artifacts.
@@ -890,7 +890,7 @@ message CheckEvidence {
   string check_name = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -944,7 +944,7 @@ message CommitReference {
   string commit = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-f]{40}$"}
+      string: {sha1_hex: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -1061,7 +1061,7 @@ message RevisionRequested {
     (ai.pipestream.proto.validate.v1.field).repeated = {
       max_items: 64
       items: {
-        string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+        string: {slug: true, max_len: 128}
       }
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
@@ -1164,7 +1164,7 @@ message TranscriptEntry {
   string worker_id = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];

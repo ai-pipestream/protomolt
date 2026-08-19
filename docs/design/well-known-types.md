@@ -53,9 +53,16 @@ Landed later (2026-08-18, charset agreed with the project owner): a
 `-` separators, starting and ending alphanumeric, two separators never
 touching; length composes with the len rules, exactly as `hex` does —
 and a `region_code` format (ISO 3166-1 alpha-2 through the JDK's own
-table, the zero-bundling route again). The ~30 audited slug-family
-sites convert in their own sweep, one site at a time against the
-agreed contract. Still held: formats for alternations (`host:port` or
+table, the zero-bundling route again). The audited sites converted
+in their sweep (2026-08-18, 40 conversions): 26 slug-family sites to
+`slug` + `max_len: 128` (a deliberate tightening — the old pattern
+allowed uppercase and doubled separators, and the mesh contract test
+pins that they now refuse), 7 digest sites to `sha256_hex`/`sha1_hex`,
+5 UUID sites to `uuid` (case-identical), and 2 dotted-name sites to a
+new `protobuf_fqn` dialect field over the existing parser. Patterns
+that remain are the held alternations, single bare identifiers,
+at-least-one-dot names (the `protobuf_fqn` parser accepts dotless),
+and domain shapes like SKUs and GTINs. Still held: formats for alternations (`host:port` or
 URI) until multi-format semantics are designed; `semver` (nothing in
 the repo promises semver).
 

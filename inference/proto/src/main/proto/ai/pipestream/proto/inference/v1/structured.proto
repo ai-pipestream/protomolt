@@ -219,10 +219,7 @@ message GenerateStructuredResponse {
   string prompt_fingerprint = 8 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {
-        max_len: 64
-        pattern: "^[0-9a-f]{64}$"
-      }
+      string: {sha256_hex: true}
     }
   ];
 
@@ -230,10 +227,7 @@ message GenerateStructuredResponse {
   string schema_fingerprint = 9 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {
-        max_len: 64
-        pattern: "^[0-9a-f]{64}$"
-      }
+      string: {sha256_hex: true}
     }
   ];
 }

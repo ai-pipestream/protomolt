@@ -39,7 +39,7 @@ message MeshMessageOptions {
   repeated string capabilities = 3 [(ai.pipestream.proto.validate.v1.field).repeated = {
     max_items: 64
     items: {
-      string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      string: {slug: true, max_len: 128}
     }
   }];
   // The default route profile for entities of this type, by reference.

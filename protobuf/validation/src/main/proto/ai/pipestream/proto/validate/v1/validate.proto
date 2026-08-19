@@ -92,6 +92,9 @@ message StringRules {
   optional bool slug = 29;
   // Value must be an ISO 3166-1 alpha-2 region code (US, BR).
   optional bool region_code = 30;
+  // Value must be a fully-qualified protobuf name (dot-separated
+  // identifiers, no leading dot; a single identifier passes).
+  optional bool protobuf_fqn = 31;
 }
 
 // Standard constraints for int32 fields.

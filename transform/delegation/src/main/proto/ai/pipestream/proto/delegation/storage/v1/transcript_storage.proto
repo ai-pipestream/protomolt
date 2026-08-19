@@ -71,7 +71,7 @@ message EncryptedRepositoryState {
   string plaintext_sha256 = 6 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[0-9a-f]{64}$"}
+      string: {sha256_hex: true}
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
