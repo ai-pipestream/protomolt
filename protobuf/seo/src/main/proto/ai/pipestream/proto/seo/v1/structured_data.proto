@@ -331,7 +331,7 @@ message Offer {
       required: true
       string: {
         max_len: 30
-        pattern: "^[0-9]+(\\.[0-9]+)?$"
+        decimal: true
       }
     }
   ];
@@ -467,11 +467,13 @@ message Product {
       string: {max_len: 200}
     }
   ];
-  // Global Trade Item Number: 8, 12, 13, or 14 digits (schema.org gtin).
+  // Global Trade Item Number: 8, 12, 13, or 14 digits with a valid GS1
+  // check digit (schema.org gtin). A deliberate tightening over the old
+  // digit-count pattern, which accepted invalid barcodes.
   optional string gtin = 4 [
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD},
     (ai.pipestream.proto.validate.v1.field) = {
-      string: {pattern: "^[0-9]{8}([0-9]{4}|[0-9]{5}|[0-9]{6})?$"}
+      string: {gtin: true}
     }
   ];
   // The product's brand name (schema.org brand).

@@ -183,4 +183,17 @@ public final class Formats {
     public static boolean isPathSafeName(String value) {
         return Identifiers.isPathSafeName(value);
     }
+
+    /**
+     * GS1 Global Trade Item Number: 8, 12, 13, or 14 digits with a valid mod-10 check digit
+     * ({@code 00012345678905}).
+     */
+    public static boolean isGtin(String value) {
+        return TradeItemNumbers.isGtin(value);
+    }
+
+    /** Unsigned decimal string: {@code digits} or {@code digits.digits} ({@code 19.99}). */
+    public static boolean isDecimal(String value) {
+        return Decimals.isDecimal(value);
+    }
 }

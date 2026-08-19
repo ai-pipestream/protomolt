@@ -62,7 +62,12 @@ public enum StringFormat {
             Formats::isRegionCode),
     PATH_SAFE_NAME("string.path_safe_name",
             "value must be a path-safe name (a letter or digit, then letters, digits, ., _ or -)",
-            Formats::isPathSafeName);
+            Formats::isPathSafeName),
+    GTIN("string.gtin",
+            "value must be a GTIN (8, 12, 13, or 14 digits with a valid check digit)",
+            Formats::isGtin),
+    DECIMAL("string.decimal", "value must be an unsigned decimal string",
+            Formats::isDecimal);
 
     private final String ruleId;
     private final String defaultMessage;

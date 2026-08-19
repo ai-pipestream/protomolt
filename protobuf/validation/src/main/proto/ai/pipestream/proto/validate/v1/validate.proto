@@ -102,6 +102,16 @@ message StringRules {
   // fully-qualified names, sanitized endpoint placeholders) where the
   // slug contract is deliberately too narrow.
   optional bool path_safe_name = 32;
+
+  // Value must be a GS1 Global Trade Item Number: 8, 12, 13, or 14
+  // digits whose final digit is the GS1 mod-10 check digit. Stricter
+  // than a digit-count pattern: an invalid check digit refuses.
+  optional bool gtin = 33;
+
+  // Value must be an unsigned decimal string: one or more digits with
+  // an optional single fractional part. The money-in-a-string shape;
+  // deliberately unsigned and exponent-free.
+  optional bool decimal = 34;
 }
 
 // Standard constraints for int32 fields.

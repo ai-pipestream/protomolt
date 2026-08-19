@@ -282,6 +282,12 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         if (rules.getPathSafeName()) {
             b.format(StringFormat.PATH_SAFE_NAME);
         }
+        if (rules.getGtin()) {
+            b.format(StringFormat.GTIN);
+        }
+        if (rules.getDecimal()) {
+            b.format(StringFormat.DECIMAL);
+        }
         return b.build();
     }
 
