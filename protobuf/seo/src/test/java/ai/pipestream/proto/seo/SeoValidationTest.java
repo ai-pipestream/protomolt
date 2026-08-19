@@ -175,14 +175,43 @@ class SeoValidationTest {
     }
 
     @Test
-    void invalidGtinViolatesThePattern() {
+    void invalidGtinViolatesTheNamedFormat() {
         Product bad = validProduct().toBuilder().setGtin("1234").build();
         ValidationResult result = validate(bad);
         assertThat(result.valid()).isFalse();
         assertThat(result.violations())
                 .anySatisfy(v -> {
                     assertThat(v.path()).isEqualTo("gtin");
-                    assertThat(v.ruleId()).contains("pattern");
+                    assertThat(v.ruleId()).isEqualTo("string.gtin");
+                });
+    }
+
+    @Test
+    void aGtinWithAWrongCheckDigitRefuses() {
+        // The old digit-count pattern accepted this; the gtin format verifies
+        // the GS1 mod-10 check digit and refuses.
+        Product bad = validProduct().toBuilder().setGtin("00012345678906").build();
+        ValidationResult result = validate(bad);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.violations())
+                .anySatisfy(v -> {
+                    assertThat(v.path()).isEqualTo("gtin");
+                    assertThat(v.ruleId()).isEqualTo("string.gtin");
+                });
+    }
+
+    @Test
+    void aPriceMustBeAnUnsignedDecimalString() {
+        Product bad = validProduct().toBuilder()
+                .setOffers(0, validProduct().getOffers(0).toBuilder()
+                        .setPrice("19.99.9"))
+                .build();
+        ValidationResult result = validate(bad);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.violations())
+                .anySatisfy(v -> {
+                    assertThat(v.path()).contains("price");
+                    assertThat(v.ruleId()).isEqualTo("string.decimal");
                 });
     }
 }

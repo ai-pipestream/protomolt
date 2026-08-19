@@ -64,10 +64,14 @@ sweep (2026-08-19) converted the eight remaining `^$|` sites of the
 same families to `ignore_if_zero` plus the named format. Patterns
 that remain are the held alternations, single bare identifiers,
 at-least-one-dot names (the `protobuf_fqn` parser accepts dotless),
-and domain shapes like SKUs and GTINs — though GTIN is a conversion
-candidate, not a permanent hold: a `gtin` parser would verify the
-mod-10 check digit the regex cannot, and a `decimal` parser would
-name the schema.org price-in-a-string shape. Still held: formats for
+and domain shapes like SKUs. GTIN and the price decimal graduated
+(2026-08-19): `gtin` verifies the GS1 mod-10 check digit the old
+digit-count pattern could not — a barcode with a wrong check digit
+now refuses — and `decimal` names the schema.org money-in-a-string
+shape (unsigned, exponent-free, so no converted site loosens); both
+are linear scans and the SEO structured-data sites converted to
+them. SKUs stay a pattern: there is no universal SKU grammar, so the
+demo shop's shape is honestly local. Still held: formats for
 alternations (`host:port` or URI) until multi-format semantics are
 designed; `semver` (nothing in the repo promises semver).
 

@@ -401,7 +401,7 @@ public final class ProtoJsonSchemaGenerator {
                         IP_WITH_PREFIXLEN, IPV4_WITH_PREFIXLEN, IPV6_WITH_PREFIXLEN,
                         PROTOBUF_FQN, PROTOBUF_DOT_FQN, MIME_TYPE, LANGUAGE_TAG, CURRENCY_CODE,
                         PHONE_NUMBER, SHA256_HEX, SHA1_HEX, HEX, BASE64, SLUG, REGION_CODE,
-                        PATH_SAFE_NAME ->
+                        PATH_SAFE_NAME, GTIN, DECIMAL ->
                         schemaOf("x-pipestream-format", format.ruleId());
             };
         }
