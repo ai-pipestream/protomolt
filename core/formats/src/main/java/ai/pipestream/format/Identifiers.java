@@ -112,6 +112,24 @@ public final class Identifiers {
         return true;
     }
 
+    /**
+     * A single bare identifier, {@code [A-Za-z_][A-Za-z0-9_]*}: a protobuf field or message
+     * segment name with no dots. The family of the collect-into and unnest sites, where a
+     * dotted path would silently address the wrong shape.
+     */
+    public static boolean isIdentifier(String value) {
+        int n = value.length();
+        if (n == 0 || !isIdentifierStart(value.charAt(0))) {
+            return false;
+        }
+        for (int i = 1; i < n; i++) {
+            if (!isIdentifierPart(value.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** A fully-qualified protobuf name, e.g. {@code foo.bar.Baz} (no leading dot). */
     public static boolean isProtobufFqn(String value) {
         return isDottedIdentifiers(value, false);

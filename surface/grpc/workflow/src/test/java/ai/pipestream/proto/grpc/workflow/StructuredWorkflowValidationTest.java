@@ -225,6 +225,16 @@ class StructuredWorkflowValidationTest {
                 evidence().setSchemaFingerprint("Z".repeat(64)).build()).build()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("schema_fingerprint");
+        // The declared annotations alone carry both fingerprint formats: this pins
+        // the pattern-to-sha256_hex conversion independently of the hand checks.
+        assertThat(ai.pipestream.proto.validate.ProtoValidator.create()
+                .validate(evidence()
+                        .setPromptFingerprint("not-a-hash")
+                        .setSchemaFingerprint("Z".repeat(64))
+                        .build())
+                .violations())
+                .filteredOn(v -> v.ruleId().equals("string.sha256_hex"))
+                .hasSize(2);
     }
 
     @Test

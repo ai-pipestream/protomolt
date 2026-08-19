@@ -239,6 +239,8 @@ class ClusterValidationTest {
                                 .setTlsMode(ai.pipestream.proto.mesh.cluster.v1.TlsMode.TLS_MODE_SYSTEM))
                         .build()))
                 .isInstanceOf(IllegalArgumentException.class);
+        // An authority-shaped address with a bad port refuses through the named
+        // format and never falls back to the URI reading.
         assertThatThrownBy(() -> ClusterValidation.validate(
                 ClusterFixtures.nodeBuilder("node-1", 1, 1)
                         .clearEndpoints()
@@ -248,7 +250,7 @@ class ClusterValidationTest {
                                 .setTlsMode(TlsMode.TLS_MODE_SYSTEM))
                         .build()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("between 1 and 65535");
+                .hasMessageContaining("string.endpoint_address");
         assertThatThrownBy(() -> ClusterValidation.validate(
                 ClusterFixtures.processorBuilder("proc-1", "node-1")
                         .setKind(ai.pipestream.proto.mesh.v1.ProcessorKind.PROCESSOR_KIND_UNSPECIFIED)

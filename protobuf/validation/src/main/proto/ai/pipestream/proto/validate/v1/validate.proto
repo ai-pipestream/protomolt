@@ -112,6 +112,17 @@ message StringRules {
   // an optional single fractional part. The money-in-a-string shape;
   // deliberately unsigned and exponent-free.
   optional bool decimal = 34;
+
+  // Value must be a dialable endpoint address: a host:port authority
+  // (valid host, port 1-65535, IPv6 in brackets) or an absolute URI.
+  // Precedence, not alternation: an authority-shaped value must carry
+  // a valid port and never falls back to the URI reading, so
+  // localhost:99999 refuses instead of passing as a URI.
+  optional bool endpoint_address = 35;
+
+  // Value must be a single bare identifier ([A-Za-z_][A-Za-z0-9_]*,
+  // no dots): a protobuf field or message segment name.
+  optional bool identifier = 36;
 }
 
 // Standard constraints for int32 fields.

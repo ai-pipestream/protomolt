@@ -111,6 +111,24 @@ exclusivity. A blank-allowed field (`RunEvidence.workflow_version`)
 uses `ignore_if_zero`, because string formats otherwise reject the
 empty value.
 
+The multi-format question (2026-08-19) resolved against a generic
+`any_of` combinator. Of the three held "alternation" patterns, two are
+single grammars (the `scheme:ref` key and credential references, held
+because any shared format would loosen one of them), and the third —
+the cluster endpoint address — is a *precedence* grammar, not an
+alternation: a value shaped like `host:port` must carry a valid port
+and never falls back to the URI reading, because `localhost:99999`
+parses as a URI with scheme `localhost`, which is exactly the
+confusion the old hand check existed to stop. A naive any-of cannot
+express that. The outcome is the named format `endpoint_address`
+(tag 35, `Endpoints` scan: authority shape → host-and-port with a
+dialable port, else absolute URI with a non-empty rest), which retired
+the last live regex in `ClusterValidation`, and `identifier` (tag 36,
+a bare `[A-Za-z_][A-Za-z0-9_]*` protobuf segment name) for the
+collect-into sites. Combinators stay out of the dialect: an
+alternation with precedence is a domain grammar, and domain grammars
+become named formats.
+
 ## Tier 2: structural types with platform behavior
 
 Values with structure and invariants become messages in

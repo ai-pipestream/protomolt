@@ -214,7 +214,7 @@ message FanOutSpec {
     (ai.pipestream.proto.validate.v1.field).required = true,
     (ai.pipestream.proto.validate.v1.field).string = {
       max_len: 256
-      pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      identifier: true
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
@@ -428,7 +428,7 @@ message EdgeEvidence {
   // from the workflow. Binds this evidence to the exact edge.
   string edge_fingerprint = 1 [
     (ai.pipestream.proto.validate.v1.field).required = true,
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
+    (ai.pipestream.proto.validate.v1.field).string.sha256_hex = true,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // The produced (or projected) value validated clean before execution; with
@@ -528,14 +528,14 @@ message StructuredGenerationEvidence {
   // briefed with. The instructions themselves are never persisted.
   string prompt_fingerprint = 5 [
     (ai.pipestream.proto.validate.v1.field).required = true,
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
+    (ai.pipestream.proto.validate.v1.field).string.sha256_hex = true,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Lowercase SHA-256 hex of the response JSON Schema the model was
   // constrained with. The schema itself is never persisted.
   string schema_fingerprint = 6 [
     (ai.pipestream.proto.validate.v1.field).required = true,
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$",
+    (ai.pipestream.proto.validate.v1.field).string.sha256_hex = true,
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Whether the final typed output re-validated clean against the target

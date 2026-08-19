@@ -288,6 +288,12 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         if (rules.getDecimal()) {
             b.format(StringFormat.DECIMAL);
         }
+        if (rules.getEndpointAddress()) {
+            b.format(StringFormat.ENDPOINT_ADDRESS);
+        }
+        if (rules.getIdentifier()) {
+            b.format(StringFormat.IDENTIFIER);
+        }
         return b.build();
     }
 
