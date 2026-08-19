@@ -145,7 +145,11 @@ class WorkflowWorkbenchMcpTest {
             record.putObject("input").put("text", "hello");
             record.put("runId", "run-1");
             JsonNode evidence = mcp.tool("record-workflow-run", record);
-            assertThat(evidence.path("ok").asBoolean()).isTrue();
+            assertThat(evidence.path("ok").asBoolean())
+                    .as("record failed at step %s (%s)",
+                            evidence.path("failedStep").asText(),
+                            evidence.path("failureKind").asText())
+                    .isTrue();
             assertThat(evidence.path("evidence").path("steps")).hasSize(2);
             assertThat(evidence.path("evidence").path("workflowFingerprint").asText())
                     .isEqualTo(fingerprint);
@@ -155,7 +159,11 @@ class WorkflowWorkbenchMcpTest {
             replay.put("runId", "run-1");
             replay.set("schema", schema());
             JsonNode replayed = mcp.tool("replay-workflow", replay);
-            assertThat(replayed.path("ok").asBoolean()).isTrue();
+            assertThat(replayed.path("ok").asBoolean())
+                    .as("replay failed: %s; steps: %s",
+                            replayed.path("failure").asText(),
+                            replayed.path("steps").toString())
+                    .isTrue();
             assertThat(replayed.path("steps")).hasSize(2);
 
             ObjectNode promote = MAPPER.createObjectNode();
