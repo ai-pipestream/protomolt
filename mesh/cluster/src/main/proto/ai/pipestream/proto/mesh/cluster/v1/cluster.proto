@@ -84,7 +84,7 @@ message ClusterDescriptor {
   // The trust domain the cluster authenticates nodes within; empty when the
   // deployment does not partition trust.
   string trust_domain = 3 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
   ];
@@ -466,7 +466,7 @@ message CapacityAdvertisement {
   ];
   // The processor the snapshot describes; empty for a node-wide snapshot.
   string processor_id = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Maximum entities the target executes concurrently; 0 declares no limit.
@@ -737,7 +737,7 @@ message ClusterEvent {
   ];
   // The processor the event concerns, for processor events.
   string processor_id = 5 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // The state that changed, matching the event type.

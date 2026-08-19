@@ -314,7 +314,7 @@ message ProfileReference {
   // Profile version inside the name; empty names the registry's current
   // promoted version.
   string version = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 64}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Lowercase SHA-256 hex of the canonical profile content, when the caller
@@ -350,7 +350,7 @@ message EntityStatus {
   // Path-safe id of the processor currently holding the entity; empty while
   // the entity is unassigned.
   string processor_id = 2 [
-    (ai.pipestream.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal",
     (ai.pipestream.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
   ];
