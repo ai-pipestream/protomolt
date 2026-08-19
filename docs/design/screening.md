@@ -1,10 +1,10 @@
 # Screening
 
 Status: design of record for model-driven screening (PII and entity
-detection), decided 2026-08-18 with the project owner. The screening
-core landed 2026-08-19 (see "What is implemented" below); the door
-mount and config-lane subscription are the next slice. Landing
-anything further means updating this chapter first. The hard line it
+detection), decided 2026-08-18 with the project owner. The first
+slice is implemented end to end as of 2026-08-19 (see "What is
+implemented" below). Landing anything further means updating this
+chapter first. The hard line it
 rests on is stated in [well-known types](well-known-types.md)
 ("Screening is not validation") and is restated here because every
 design decision below follows from it.
@@ -107,10 +107,28 @@ cleaning uses:
   from config). Its own `validate.v1` rules are the lane's verify
   hook.
 
-Still open, in order: the platform mount (a `DOCUMENT_PLATFORM_…` env
-naming the screening subjects, `DistributedConfig` subscription, the
-model_ref resolution to a mounted artifact, and the mask policy wired
-on one door with findings surfaced as evidence), and packed
+The door mount (same day) completes the slice end to end:
+
+- The declaration: `SearchMetadata.body` declares sensitivity
+  `screened` — the first screened class in the schema. The
+  declaration is durable schema truth; nothing else about screening
+  touches the document contract.
+- The mount: `DOCUMENT_PLATFORM_SCREENING=<name>` follows config
+  subject `screening:<name>` on the lane (requires the config-refresh
+  interval, the taxonomy rule); the platform builds the screener from
+  each applied document (`model_ref` resolves as `file:<path>` in
+  this slice — operator-mounted data) and swaps it into the door. A
+  reference that fails to resolve is logged and not applied, so the
+  previous mount, or the fail-closed absence, stays live.
+- The door: a screening-configured door refuses indexing fail-closed
+  until a mount is live (the taxonomy gate's boot stance), masks
+  detected spans in screened fields on the way in, and the
+  IndexDocumentResponse carries the screened field paths, the model
+  version, and the threshold as evidence — never the detected text.
+  REFUSE surfaces as a failed precondition naming the finding.
+
+Still open: model references beyond `file:` (the operator-pack
+mechanism, shared with the postal-code pack question), and packed
 `google.protobuf.Any` payload recursion (the sensitivity masker's
 payload-resolver seam is the template).
 

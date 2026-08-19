@@ -40,16 +40,29 @@ final class SearchDoorGrpcServices {
         // their declared rules (typically over the mounted taxonomy catalog)
         // before anything indexes. Null keeps the historical behavior.
         private final ai.pipestream.proto.validate.ProtoValidator documentGate;
+        // The optional screening mount, consulted per request because mounts
+        // swap on the config lane. Null means screening was never configured;
+        // a non-null supplier returning null means the mount is not live yet,
+        // which refuses fail-closed.
+        private final java.util.function.Supplier<ai.pipestream.proto.screening.Screener>
+                screening;
 
         Index(LuceneSearchStore store, DocumentFetcher fetcher) {
-            this(store, fetcher, null);
+            this(store, fetcher, null, null);
         }
 
         Index(LuceneSearchStore store, DocumentFetcher fetcher,
                 ai.pipestream.proto.validate.ProtoValidator documentGate) {
+            this(store, fetcher, documentGate, null);
+        }
+
+        Index(LuceneSearchStore store, DocumentFetcher fetcher,
+                ai.pipestream.proto.validate.ProtoValidator documentGate,
+                java.util.function.Supplier<ai.pipestream.proto.screening.Screener> screening) {
             this.store = store;
             this.fetcher = fetcher;
             this.documentGate = documentGate;
+            this.screening = screening;
         }
 
         @Override
@@ -81,9 +94,37 @@ final class SearchDoorGrpcServices {
                         return;
                     }
                 }
+                IndexDocumentResponse.Builder response = IndexDocumentResponse.newBuilder();
+                if (screening != null) {
+                    ai.pipestream.proto.screening.Screener screener = screening.get();
+                    if (screener == null) {
+                        // Configured but no mount live yet: fail-closed, the
+                        // taxonomy gate's boot stance.
+                        observer.onError(Status.FAILED_PRECONDITION.withDescription(
+                                "screening is configured but no mount is live;"
+                                        + " refusing fail-closed").asRuntimeException());
+                        return;
+                    }
+                    ai.pipestream.proto.screening.Screener.Verdict verdict;
+                    try {
+                        verdict = screener.screen(document);
+                    } catch (ai.pipestream.proto.screening.Screener
+                            .ScreeningRefusedException e) {
+                        observer.onError(Status.FAILED_PRECONDITION
+                                .withDescription(e.getMessage()).asRuntimeException());
+                        return;
+                    }
+                    document = (Document) verdict.message();
+                    for (ai.pipestream.proto.screening.Screener.Finding finding
+                            : verdict.findings()) {
+                        response.addScreenedFields(finding.path());
+                        response.setScreeningModelVersion(finding.modelVersion());
+                        response.setScreeningThreshold(finding.threshold());
+                    }
+                }
                 LuceneSearchStore.IndexResult result =
                         store.index(request.getMappingSubject(), document);
-                observer.onNext(IndexDocumentResponse.newBuilder()
+                observer.onNext(response
                         .setDocId(result.docId())
                         .setChunksIndexed(result.chunksIndexed())
                         .setPolicyDigest(result.policyDigest())

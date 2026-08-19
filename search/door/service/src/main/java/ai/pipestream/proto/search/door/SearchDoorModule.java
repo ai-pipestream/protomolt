@@ -41,7 +41,8 @@ public final class SearchDoorModule implements ServiceModule {
     public record Config(
             int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
             IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
-            ai.pipestream.proto.validate.spi.TaxonomyCatalog taxonomies) {
+            ai.pipestream.proto.validate.spi.TaxonomyCatalog taxonomies,
+            java.util.function.Supplier<ai.pipestream.proto.screening.Screener> screening) {
 
         /** Validates the configuration. */
         public Config {
@@ -71,30 +72,39 @@ public final class SearchDoorModule implements ServiceModule {
             subjects = Map.copyOf(subjects);
         }
 
+        /** A configuration without a screening mount. */
+        public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+                IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
+                ai.pipestream.proto.validate.spi.TaxonomyCatalog taxonomies) {
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds,
+                    taxonomies, null);
+        }
+
         /**
          * A configuration without a taxonomy catalog: no document gate, the
          * door's historical behavior.
          */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots, boolean readOnly, long refreshSeconds) {
-            this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds, null);
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds,
+                    null, null);
         }
 
         /** A configuration without periodic refresh. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots, boolean readOnly) {
-            this(grpcPort, indexDir, subjects, snapshots, readOnly, 0L, null);
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, 0L, null, null);
         }
 
         /** A writable configuration. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots) {
-            this(grpcPort, indexDir, subjects, snapshots, false, 0L, null);
+            this(grpcPort, indexDir, subjects, snapshots, false, 0L, null, null);
         }
 
         /** A writable configuration without snapshots. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects) {
-            this(grpcPort, indexDir, subjects, null, false, 0L, null);
+            this(grpcPort, indexDir, subjects, null, false, 0L, null, null);
         }
     }
 
@@ -152,7 +162,10 @@ public final class SearchDoorModule implements ServiceModule {
                     config.taxonomies() == null
                             ? null
                             : ai.pipestream.proto.validate.ProtoValidator
-                                    .create(config.taxonomies()));
+                                    .create(config.taxonomies()),
+                    // A configured screening supplier turns the mask policy
+                    // on: fetched documents screen over the live mount.
+                    config.screening());
         } catch (RuntimeException e) {
             // A failed mount (for instance a subject naming an absent
             // embedding provider) must not leak the repo channel.

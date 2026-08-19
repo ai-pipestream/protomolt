@@ -13,6 +13,8 @@ dependencies {
     // The purge-command contract dogfoods the house validate.v1 rules (the
     // protomolt serde enforces them on write).
     api project(':protomolt-protobuf-validation')
+    // SearchMetadata.body declares the screened sensitivity class.
+    api project(':protomolt-protobuf-metadata')
 
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api

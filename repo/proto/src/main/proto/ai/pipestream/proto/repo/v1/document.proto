@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.repo.v1;
 
+import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "ai/pipestream/proto/repo/v1/security.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
@@ -166,8 +167,12 @@ message ParserDocument {
 message SearchMetadata {
   // Document title or heading.
   optional string title = 1;
-  // Full text content of the document.
-  optional string body = 2;
+  // Full text content of the document. Declared "screened": free text is
+  // where detected entities land, so a mounted screening policy applies
+  // here. The declaration is schema truth (THAT the field is screened);
+  // the verdicts are runtime facts carried with the model version as
+  // evidence, never as schema validity.
+  optional string body = 2 [(ai.pipestream.proto.meta.v1.field).sensitivity = "screened"];
   // Document type classification (e.g. "PDF", "HTML", "DOCX").
   optional string document_type = 3;
   // Original source URI where the document was obtained.
