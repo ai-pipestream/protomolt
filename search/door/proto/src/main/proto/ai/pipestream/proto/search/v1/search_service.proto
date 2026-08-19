@@ -51,6 +51,15 @@ message IndexDocumentResponse {
   // Digest of the chunking policy the chunks were derived under; empty when
   // no chunks were written. Chunk identity is <doc_id>#<digest12>#<ordinal>.
   string policy_digest = 3;
+  // Screening evidence, present only when a screening mount acted: the
+  // screened field paths (never the detected text), and the model version
+  // and threshold that produced the verdicts, because a verdict without the
+  // model that produced it is not auditable.
+  repeated string screened_fields = 4;
+  // The version of the model that produced the verdicts.
+  string screening_model_version = 5;
+  // The mount's confidence threshold at verdict time.
+  double screening_threshold = 6;
 }
 
 // Input of the parse-and-index workflow: parse one stored document through

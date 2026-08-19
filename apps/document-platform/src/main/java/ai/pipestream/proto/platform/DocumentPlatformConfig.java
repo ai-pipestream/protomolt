@@ -248,6 +248,18 @@ public record DocumentPlatformConfig(
      */
     public static final String ENV_TAXONOMIES = "DOCUMENT_PLATFORM_TAXONOMIES";
 
+    /**
+     * The screening mount name. Set, the search door screens fetched
+     * documents over the mount published at config subject
+     * {@code screening:<name>}: fields declaring the mount's sensitivity
+     * class run through the mounted model, detected spans act by the
+     * mount's policy, and the response carries the model version and
+     * threshold as evidence. Fail-closed while no mount is live. Requires
+     * the config lane ({@link #ENV_CONFIG_REFRESH_SECONDS}); absent keeps
+     * the door's behavior exactly.
+     */
+    public static final String ENV_SCREENING = "DOCUMENT_PLATFORM_SCREENING";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

@@ -25,7 +25,8 @@ public final class SearchDoorServices implements AutoCloseable {
     private Server server;
 
     private SearchDoorServices(SearchDoorConfig config, DocumentFetcher fetcher,
-            ai.pipestream.proto.validate.ProtoValidator documentGate) {
+            ai.pipestream.proto.validate.ProtoValidator documentGate,
+            java.util.function.Supplier<ai.pipestream.proto.screening.Screener> screening) {
         this.config = config;
         this.fetcher = fetcher;
         this.store = new LuceneSearchStore(config.indexDir(), config.subjects(),
@@ -34,7 +35,7 @@ public final class SearchDoorServices implements AutoCloseable {
         // not mounted, so its RPCs answer UNIMPLEMENTED.
         this.index = config.readOnly()
                 ? null
-                : new SearchDoorGrpcServices.Index(store, fetcher, documentGate);
+                : new SearchDoorGrpcServices.Index(store, fetcher, documentGate, screening);
         this.search = new SearchDoorGrpcServices.Search(store);
     }
 
@@ -69,13 +70,38 @@ public final class SearchDoorServices implements AutoCloseable {
      */
     public static SearchDoorServices build(SearchDoorConfig config, DocumentFetcher fetcher,
             ai.pipestream.proto.validate.ProtoValidator documentGate) {
+        return build(config, fetcher, documentGate, null);
+    }
+
+    /**
+     * As the document-gate overload, with a screening mount: fetched
+     * documents screen through the supplied
+     * screener before indexing, so a mounted mask policy redacts detected
+     * spans on the way in and the response carries the model version and
+     * threshold as evidence. The supplier is consulted per request because
+     * mounts swap on the config lane; a configured door whose supplier
+     * returns {@code null} (no mount live yet) refuses indexing fail-closed,
+     * the taxonomy gate's boot stance. {@code null} for the supplier itself
+     * means screening was never configured.
+     *
+     * @param config the door configuration
+     * @param fetcher the document fetcher; see the two-argument overload
+     * @param documentGate the validator fetched documents must pass, or
+     *        {@code null} for no gate
+     * @param screening the live screening mount, or {@code null} when
+     *        screening is not configured
+     * @return the wired, not-yet-started stack
+     */
+    public static SearchDoorServices build(SearchDoorConfig config, DocumentFetcher fetcher,
+            ai.pipestream.proto.validate.ProtoValidator documentGate,
+            java.util.function.Supplier<ai.pipestream.proto.screening.Screener> screening) {
         if (config == null) {
             throw new IllegalArgumentException("config must not be null");
         }
         if (fetcher == null && !config.readOnly()) {
             throw new IllegalArgumentException("fetcher must not be null");
         }
-        return new SearchDoorServices(config, fetcher, documentGate);
+        return new SearchDoorServices(config, fetcher, documentGate, screening);
     }
 
     /**

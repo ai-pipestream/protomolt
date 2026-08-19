@@ -108,6 +108,8 @@ public final class DocumentPlatform implements AutoCloseable {
     private final LocalLakeRollupSink defaultRollupLake;
     private final ai.pipestream.proto.config.DistributedConfig distributedConfig;
     private final SwappableTaxonomyCatalog taxonomies;
+    private final SwappableScreening screening;
+    private final String screeningMountName;
     private final java.util.concurrent.ScheduledExecutorService configRefresher;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
@@ -191,6 +193,8 @@ public final class DocumentPlatform implements AutoCloseable {
         // config lane exists. Fail-closed until then.
         List<String> taxonomyNames = taxonomiesFromEnvironment(config.environment());
         this.taxonomies = taxonomyNames.isEmpty() ? null : new SwappableTaxonomyCatalog();
+        this.screeningMountName = screeningFromEnvironment(config.environment());
+        this.screening = screeningMountName == null ? null : new SwappableScreening();
         this.search = config.mounts(SearchDoorModule.ROLE)
                 ? new SearchDoorModule(new SearchDoorModule.Config(
                         config.searchGrpcPort(),
@@ -206,7 +210,8 @@ public final class DocumentPlatform implements AutoCloseable {
                                         searchReadOnly),
                         searchReadOnly,
                         searchRefreshSeconds,
-                        taxonomies))
+                        taxonomies,
+                        screening))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricDoorModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -285,14 +290,24 @@ public final class DocumentPlatform implements AutoCloseable {
                                 + DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
                                 + " or unset the taxonomies");
             }
+            if (screening != null && configRefreshSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        DocumentPlatformConfig.ENV_SCREENING + " is set but the config"
+                                + " lane is off: screening mounts arrive as config"
+                                + " documents, so set "
+                                + DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                                + " or unset the screening mount");
+            }
             if (configRefreshSeconds > 0) {
-                if (parse == null && taxonomies == null) {
+                if (parse == null && taxonomies == null && screening == null) {
                     throw new IllegalArgumentException(
                             DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
                                     + " is set but this node mounts no config consumer:"
                                     + " the config lane serves the parse role's routing"
-                                    + " rules and the taxonomy mounts, so mount 'parse',"
-                                    + " set " + DocumentPlatformConfig.ENV_TAXONOMIES
+                                    + " rules and the taxonomy and screening mounts, so"
+                                    + " mount 'parse', set "
+                                    + DocumentPlatformConfig.ENV_TAXONOMIES + " or "
+                                    + DocumentPlatformConfig.ENV_SCREENING
                                     + ", or unset the interval");
                 }
                 ai.pipestream.proto.config.kafka.KafkaConfigSource.Config kafka =
@@ -342,6 +357,21 @@ public final class DocumentPlatform implements AutoCloseable {
                     taxonomies.swap(ai.pipestream.proto.config.TaxonomyMounts
                             .follow(distributedConfig, taxonomyNames));
                     LOG.info("taxonomy mounts following {}", taxonomyNames);
+                }
+                if (screening != null) {
+                    // The door was already handed the swappable mount; it
+                    // refuses fail-closed until the first document applies.
+                    String subject = "screening:" + screeningMountName;
+                    distributedConfig.subscribe(subject,
+                            ai.pipestream.proto.types.ScreeningConfig.getDefaultInstance())
+                            .onChange((document, version) -> {
+                                screening.swap(mountScreener(document));
+                                LOG.info("screening mount applied from config '{}'"
+                                        + " version {} (class '{}', policy {})", subject,
+                                        version, document.getSensitivityClass(),
+                                        document.getPolicy());
+                            });
+                    LOG.info("screening mount following '{}'", subject);
                 }
                 // The boot pull: a present config document is the routing
                 // truth from the first plan, ahead of the environment's
@@ -720,6 +750,43 @@ public final class DocumentPlatform implements AutoCloseable {
                             + "'; unset it for restart-only");
         }
         return seconds;
+    }
+
+    /**
+     * The strict read of {@link DocumentPlatformConfig#ENV_SCREENING}: one
+     * screening mount name, trimmed. Absent means no screening, exactly as
+     * before.
+     */
+    static String screeningFromEnvironment(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_SCREENING, "").trim();
+        return value.isEmpty() ? null : value;
+    }
+
+    /**
+     * Builds the mounted screener from one applied config document. The
+     * model reference resolves as a local file ({@code file:<path>}) in this
+     * slice: model artifacts are operator-mounted data, never bundled. A
+     * reference the host cannot resolve throws, which the config lane logs
+     * without applying, so the previous mount (or the fail-closed absence)
+     * stays live.
+     */
+    static ai.pipestream.proto.screening.Screener mountScreener(
+            ai.pipestream.proto.types.ScreeningConfig config) {
+        String ref = config.getModelRef();
+        if (!ref.startsWith("file:")) {
+            throw new IllegalArgumentException("screening model_ref must be a file:"
+                    + " reference in this slice, got '" + ref + "'");
+        }
+        java.nio.file.Path path = java.nio.file.Path.of(ref.substring("file:".length()));
+        try (java.io.InputStream model = java.nio.file.Files.newInputStream(path)) {
+            return new ai.pipestream.proto.screening.Screener(
+                    ai.pipestream.proto.screening.OpenNlpScreeningEngine.load(model),
+                    config);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(
+                    "cannot read the screening model at " + path, e);
+        }
     }
 
     /**
