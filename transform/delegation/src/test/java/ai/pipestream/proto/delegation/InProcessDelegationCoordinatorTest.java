@@ -6,6 +6,7 @@ import ai.pipestream.proto.delegation.v1.CheckpointReference;
 import ai.pipestream.proto.delegation.v1.DelegateResponse;
 import ai.pipestream.proto.delegation.v1.Lane;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
+import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
 import io.grpc.ManagedChannel;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,6 +34,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 class InProcessDelegationCoordinatorTest {
+
+    /**
+     * Every wait in this class is event-driven (a latch or the coordinator's condition-based
+     * waitForEvent), so it returns the moment the event arrives. The budget is only the ceiling
+     * for a genuine hang, which makes generosity free: a loaded CI box gets slack instead of a
+     * flake.
+     */
+    private static final Duration WAIT_BUDGET = Duration.ofSeconds(30);
 
     @TempDir
     Path repository;
@@ -95,7 +105,7 @@ class InProcessDelegationCoordinatorTest {
                 (task, events) -> GrpcJavaTaskFixtures.result(
                         task.offer().getAttempt(), task.expectedRevision(), complete))));
 
-        assertTrue(worker.awaitAdmission(Duration.ofSeconds(2)));
+        assertTrue(worker.awaitAdmission(WAIT_BUDGET));
         String taskId = UUID.randomUUID().toString();
         coordinator.offer("scripted-kimi", taskId, job.spec(), Duration.ofSeconds(30));
 
@@ -122,7 +132,7 @@ class InProcessDelegationCoordinatorTest {
     void waitForEventBlocksUntilOfferArrives() throws Exception {
         coordinator = new InProcessDelegationCoordinator();
         startServer(new ScriptedWorkerRunner(hello(), List.of()));
-        assertTrue(worker.awaitAdmission(Duration.ofSeconds(2)));
+        assertTrue(worker.awaitAdmission(WAIT_BUDGET));
         long cursor = coordinator.transcript().getEntriesCount();
         String taskId = UUID.randomUUID().toString();
 
@@ -130,7 +140,7 @@ class InProcessDelegationCoordinatorTest {
                 "scripted-kimi", taskId, GrpcJavaTaskFixtures.job().spec(),
                 Duration.ofSeconds(30)));
         InProcessDelegationCoordinator.Event event = coordinator.waitForEvent(
-                taskId, cursor, Duration.ofSeconds(2)).orElseThrow();
+                taskId, cursor, WAIT_BUDGET).orElseThrow();
         offer.join();
 
         assertEquals(taskId, event.taskId());
@@ -147,7 +157,7 @@ class InProcessDelegationCoordinatorTest {
             return GrpcJavaTaskFixtures.result(task.offer().getAttempt(),
                     task.expectedRevision(), "a".repeat(40));
         })));
-        assertTrue(worker.awaitAdmission(Duration.ofSeconds(2)));
+        assertTrue(worker.awaitAdmission(WAIT_BUDGET));
         String taskId = UUID.randomUUID().toString();
 
         coordinator.offer("scripted-kimi", taskId, job.spec(), Duration.ofSeconds(30));
@@ -171,11 +181,11 @@ class InProcessDelegationCoordinatorTest {
             }
             throw new InterruptedException("lease ended");
         })));
-        assertTrue(worker.awaitAdmission(Duration.ofSeconds(2)));
+        assertTrue(worker.awaitAdmission(WAIT_BUDGET));
         String taskId = UUID.randomUUID().toString();
         TaskOffer offer = coordinator.offer("scripted-kimi", taskId,
                 GrpcJavaTaskFixtures.job().spec(), Duration.ofSeconds(30));
-        assertTrue(running.await(2, TimeUnit.SECONDS));
+        assertTrue(running.await(WAIT_BUDGET.toNanos(), TimeUnit.NANOSECONDS));
 
         assertEquals(1, coordinator.expireLeases(
                 Instant.ofEpochSecond(offer.getExpiresAt().getSeconds() + 1)));
@@ -210,7 +220,7 @@ class InProcessDelegationCoordinatorTest {
                     return GrpcJavaTaskFixtures.result(task.offer().getAttempt(),
                             task.expectedRevision(), "b".repeat(40));
                 })));
-        assertTrue(worker.awaitAdmission(Duration.ofSeconds(2)));
+        assertTrue(worker.awaitAdmission(WAIT_BUDGET));
         String taskId = UUID.randomUUID().toString();
 
         coordinator.offer("scripted-kimi", taskId, job.spec(), Duration.ofSeconds(30));
@@ -241,10 +251,10 @@ class InProcessDelegationCoordinatorTest {
         startServer(new ScriptedWorkerRunner(hello(), List.of((task, events) ->
                 GrpcJavaTaskFixtures.result(task.offer().getAttempt(),
                         task.expectedRevision(), "c".repeat(40)))));
-        assertTrue(worker.awaitAdmission(Duration.ofSeconds(2)));
+        assertTrue(worker.awaitAdmission(WAIT_BUDGET));
         String taskId = UUID.randomUUID().toString();
         coordinator.offer("scripted-kimi", taskId, job.spec(), Duration.ofSeconds(30));
-        assertTrue(reviewStarted.await(2, TimeUnit.SECONDS));
+        assertTrue(reviewStarted.await(WAIT_BUDGET.toNanos(), TimeUnit.NANOSECONDS));
 
         try {
             assertTimeoutPreemptively(Duration.ofSeconds(1),
@@ -265,7 +275,7 @@ class InProcessDelegationCoordinatorTest {
                 CandidateReviewer.manual());
         startServer(new ScriptedWorkerRunner(hello(), List.of()));
 
-        assertFalse(worker.awaitAdmission(Duration.ofSeconds(2)));
+        assertFalse(worker.awaitAdmission(WAIT_BUDGET));
         IllegalStateException failure = org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalStateException.class,
                 () -> coordinator.offer("scripted-kimi", UUID.randomUUID().toString(),
@@ -275,39 +285,43 @@ class InProcessDelegationCoordinatorTest {
 
     private InProcessDelegationCoordinator.Event waitForAccepted(String taskId)
             throws InterruptedException {
-        long cursor = 0;
-        Instant deadline = Instant.now().plusSeconds(5);
-        while (Instant.now().isBefore(deadline)) {
-            InProcessDelegationCoordinator.Event event = coordinator.waitForEvent(
-                    taskId, cursor, Duration.ofSeconds(1)).orElse(null);
-            if (event == null) {
-                continue;
-            }
-            cursor = event.cursor();
-            if (event.entry().getLane() == Lane.LANE_COORDINATOR
-                    && event.entry().getCoordinatorFrame().hasAccepted()) {
-                return event;
-            }
-        }
-        throw new AssertionError("completion acceptance did not arrive");
+        return awaitEvent(taskId, entry -> entry.getLane() == Lane.LANE_COORDINATOR
+                && entry.getCoordinatorFrame().hasAccepted(),
+                "completion acceptance");
     }
 
     private void waitForWorkerFailure(String taskId) throws InterruptedException {
+        awaitEvent(taskId, entry -> entry.getLane() == Lane.LANE_WORKER
+                && entry.getWorkerFrame().hasFailed(),
+                "worker failure");
+    }
+
+    /**
+     * Drains events for one task until the matcher fires, against a monotonic deadline. The
+     * wall clock never participates: waitForEvent gets the full remaining budget each round,
+     * so a non-matching event simply advances the cursor without shrinking the budget to a
+     * fixed poll slice.
+     */
+    private InProcessDelegationCoordinator.Event awaitEvent(String taskId,
+            Predicate<TranscriptEntry> matcher, String awaited)
+            throws InterruptedException {
         long cursor = 0;
-        Instant deadline = Instant.now().plusSeconds(5);
-        while (Instant.now().isBefore(deadline)) {
+        long deadline = System.nanoTime() + WAIT_BUDGET.toNanos();
+        while (true) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                throw new AssertionError(awaited + " did not arrive");
+            }
             InProcessDelegationCoordinator.Event event = coordinator.waitForEvent(
-                    taskId, cursor, Duration.ofSeconds(1)).orElse(null);
+                    taskId, cursor, Duration.ofNanos(remaining)).orElse(null);
             if (event == null) {
                 continue;
             }
             cursor = event.cursor();
-            if (event.entry().getLane() == Lane.LANE_WORKER
-                    && event.entry().getWorkerFrame().hasFailed()) {
-                return;
+            if (matcher.test(event.entry())) {
+                return event;
             }
         }
-        throw new AssertionError("worker failure did not arrive");
     }
 
     private void startServer(WorkerRunner runner) throws IOException {
