@@ -1,12 +1,13 @@
 # Screening
 
 Status: design of record for model-driven screening (PII and entity
-detection), decided 2026-08-18 with the project owner. Nothing here is
-implemented; landing any of it means updating this chapter first. The
-hard line it rests on is stated in
-[well-known types](well-known-types.md) ("Screening is not
-validation") and is restated here because every design decision below
-follows from it.
+detection), decided 2026-08-18 with the project owner. The screening
+core landed 2026-08-19 (see "What is implemented" below); the door
+mount and config-lane subscription are the next slice. Landing
+anything further means updating this chapter first. The hard line it
+rests on is stated in [well-known types](well-known-types.md)
+("Screening is not validation") and is restated here because every
+design decision below follows from it.
 
 ## The hard line
 
@@ -69,10 +70,55 @@ pre-upstream). The dependency boundary holds firm:
   operator-supplied pack, never bundled in-tree (the same
   Apache-clean licensing rule the taxonomy chapter enforces).
 
+## What is implemented (2026-08-19)
+
+The screening core is the `protomolt-screening` module
+(`transform/screening`), and it is the only module that depends on
+OpenNLP's api/runtime artifacts beyond the existing chunker and text
+cleaning uses:
+
+- `ScreeningEngine` — the detector seam: `detect(text)` returns typed
+  character-offset detections with the model's confidence, and
+  `modelVersion()` is mandatory, because a verdict without the model
+  that produced it is not auditable. `OpenNlpScreeningEngine` is the
+  OpenNLP implementation (whitespace tokenization, any
+  `TokenNameFinder`, token spans mapped back to character offsets);
+  `load(InputStream)` mounts a `TokenNameFinderModel` and takes the
+  evidence version from the model's own manifest. Tests drive the
+  engine through OpenNLP's dictionary name finder, so no model
+  artifact is ever bundled in-tree (the runtime artifact is
+  inference-only by design — no trainers on the classpath).
+- `Screener` — applies one mount to a message: every string field
+  whose `meta.v1` sensitivity equals the mount's screened class is
+  screened (singular, repeated, nested, and map-valued shapes);
+  nothing else ever reaches the engine. At-or-above-threshold
+  detections act by policy: MASK replaces the span with the masker's
+  `***` literal, TAG records the finding, REFUSE (explicit opt-in)
+  throws with the finding as evidence. Below-threshold detections are
+  dropped without a trace, and findings never carry the detected
+  text — an unactioned or quoted span would itself be evidence of the
+  content. Every finding is `{path, type, confidence, model version,
+  threshold, policy}`.
+- `ScreeningConfig` (`ai.pipestream.proto.types.v1`, with
+  `ScreeningPolicy`) — the mount document for the config lane,
+  the taxonomy pattern exactly: no name and no version inside (the
+  subject `screening:<name>` is the identity, the source's version is
+  the version; the model version comes from the loaded model, never
+  from config). Its own `validate.v1` rules are the lane's verify
+  hook.
+
+Still open, in order: the platform mount (a `DOCUMENT_PLATFORM_…` env
+naming the screening subjects, `DistributedConfig` subscription, the
+model_ref resolution to a mounted artifact, and the mask policy wired
+on one door with findings surfaced as evidence), and packed
+`google.protobuf.Any` payload recursion (the sensitivity masker's
+payload-resolver seam is the template).
+
 ## Sequencing
 
 Screening lands after the search-first product surface is proven; the
 chapter exists so that when it lands, it lands on these rails instead
-of inventing new ones. The first implementation slice, when scheduled:
-one screened sensitivity class, one mounted model config document, the
-mask policy on one door, and the model version in the mask evidence.
+of inventing new ones. The first implementation slice: one screened
+sensitivity class, one mounted model config document, the mask policy
+on one door, and the model version in the mask evidence. The core of
+that slice is implemented (above); the door mount completes it.

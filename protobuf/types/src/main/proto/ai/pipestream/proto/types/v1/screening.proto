@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.types.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.types";
+option java_outer_classname = "ScreeningProto";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// One mounted screening policy: which sensitivity class is screened, the
+// model that screens it, and what a detection does. Distributed as a config
+// document on the config lane, the taxonomy pattern exactly.
+//
+// The document carries no name and no version. Its config subject
+// ("screening:<name>") is the identity and the config source's version is
+// the version. The model's own version is not declared here either: the
+// loaded model reports it, and every verdict carries that reported version
+// as evidence, so a config claiming a version could only agree or lie.
+//
+// Screening is not validation (the design chapter's hard line): nothing in
+// this document rides a validate.v1 rule on screened data, and no schema
+// compat gate depends on it. The rules HERE only keep the mount document
+// itself well-formed.
+message ScreeningConfig {
+  // The meta.v1 sensitivity class this mount screens (e.g. "pii"). Fields
+  // whose declared sensitivity equals this class are screened; every other
+  // field is untouched.
+  string sensitivity_class = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 64}
+    }
+  ];
+  // Operator-supplied model reference: where the host resolves the mounted
+  // model artifact. Model artifacts are data, never bundled; the reference
+  // family (mounted pack paths, artifact addresses) has no shared grammar
+  // yet, so only presence and bounds are declared.
+  string model_ref = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512}
+    }
+  ];
+  // Minimum confidence a detection needs before the policy acts. Detections
+  // below the threshold are dropped, never recorded: an unactioned span
+  // would itself be evidence of the text's content.
+  double threshold = 3 [
+    (ai.pipestream.proto.validate.v1.field).double = {
+      gte: 0.0
+      lte: 1.0
+    }
+  ];
+  // What an at-or-above-threshold detection does.
+  ScreeningPolicy policy = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: 0}
+    }
+  ];
+}
+
+// What a detection does to the screened value. Mask-or-tag is the default
+// posture; only an explicit policy refuses, because a probabilistic false
+// positive must be a redaction the evidence can audit, not an outage.
+enum ScreeningPolicy {
+  // Never valid on a mount; the document's rules refuse it.
+  SCREENING_POLICY_UNSPECIFIED = 0;
+  // Detected spans are replaced in the value before it travels on.
+  SCREENING_POLICY_MASK = 1;
+  // The value travels unchanged; the finding is recorded as evidence.
+  SCREENING_POLICY_TAG = 2;
+  // The message is refused outright. Explicit opt-in only.
+  SCREENING_POLICY_REFUSE = 3;
+}

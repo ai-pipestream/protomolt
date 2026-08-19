@@ -1,0 +1,27 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The screening layer: model-driven detection over meta.v1 sensitivity classes with mask-or-tag policy and the model version as evidence'
+
+dependencies {
+    api libs.protobuf.java
+    // The ScreeningConfig mount document and its policy enum.
+    api project(':protomolt-protobuf-types')
+    // Sensitivity classes are read from descriptor metadata.
+    implementation project(':protomolt-protobuf-metadata')
+    // OpenNLP enters the dependency graph here and nowhere else:
+    // core/formats and the validation core stay zero-dependency.
+    implementation libs.opennlp.api
+    implementation libs.opennlp.runtime
+    implementation libs.slf4j.api
+
+    testRuntimeOnly libs.slf4j.simple
+}
+
+// Test fixture messages only — no gRPC service here.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}
