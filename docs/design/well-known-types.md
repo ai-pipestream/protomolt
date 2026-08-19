@@ -1,8 +1,7 @@
 # Well-known types
 
-Status: design of record for the validated typed commons, decided
-2026-08-18 with the project owner. Tier 1 is landing; later tiers change
-this chapter first.
+Status: design of record for the validated typed commons. Changes land
+in this chapter first.
 
 ## The principle: wire-plain, server-strict
 
@@ -32,102 +31,66 @@ Apache, NOTICE attribution when code moves) rather than the jar added —
 OpenNLP itself arrives only in the screening layer below, which
 depends on it anyway.
 
-The repo audit (2026-08-18, ~100 regex sites across 101 protos, 52%
-dialect adoption) fixed the initial format set: `date`, `date_time`,
-`mime_type`, `language_tag`, `currency_code`, `phone_number`,
-`sha256_hex`, `sha1_hex`, `hex` (composes with `len` for sized ids like
-W3C trace ids), and `base64`, joining the seven formats the dialect
-already had (`email`, `uuid`, `hostname`, `uri`, `ip`, `ipv4`, `ipv6`).
-Two audit findings shaped the mechanics:
+The format set: `date`, `date_time`, `mime_type`, `language_tag`,
+`currency_code`, `phone_number`, `sha256_hex`, `sha1_hex`, `hex`
+(composes with `len` for sized ids like W3C trace ids), `base64`,
+`email`, `uuid`, `hostname`, `uri`, `ip`, `ipv4`, `ipv6`, `slug`,
+`region_code`, `protobuf_fqn`, `path_safe_name`, `gtin`, `decimal`,
+`endpoint_address`, and `identifier`. Mechanics:
 
-- The `^$|...` alternation idiom (20+ sites) is now a declaration:
+- "Absent or valid" is a declaration, not a regex alternation:
   `ignore_if_zero: true` on the field rules skips every rule at the
-  zero value — "absent or valid" without a regex.
+  zero value.
 - Vocabulary formats bundle **no data**: the JDK's own strict BCP 47
-  parser answers `language_tag` and the JDK's ISO 4217 table answers
-  `currency_code` (Unicode CLDR underneath), so nothing needs
-  attribution and nothing needs maintaining.
+  parser answers `language_tag`, its ISO 4217 table answers
+  `currency_code`, and its ISO 3166 table answers `region_code`
+  (Unicode CLDR underneath), so nothing needs attribution and nothing
+  needs maintaining.
 
-Landed later (2026-08-18, charset agreed with the project owner): a
-`slug` format — lowercase `a-z0-9` with interior single `.`, `_` or
-`-` separators, starting and ending alphanumeric, two separators never
-touching; length composes with the len rules, exactly as `hex` does —
-and a `region_code` format (ISO 3166-1 alpha-2 through the JDK's own
-table, the zero-bundling route again). The audited sites converted
-in their sweep (2026-08-18, 40 conversions): 26 slug-family sites to
-`slug` + `max_len: 128` (a deliberate tightening — the old pattern
-allowed uppercase and doubled separators, and the mesh contract test
-pins that they now refuse), 7 digest sites to `sha256_hex`/`sha1_hex`,
-5 UUID sites to `uuid` (case-identical), and 2 dotted-name sites to a
-new `protobuf_fqn` dialect field over the existing parser. A follow-up
-sweep (2026-08-19) converted the eight remaining `^$|` sites of the
-same families to `ignore_if_zero` plus the named format. Patterns
-that remain are the held alternations, single bare identifiers,
-at-least-one-dot names (the `protobuf_fqn` parser accepts dotless),
-and domain shapes like SKUs. GTIN and the price decimal graduated
-(2026-08-19): `gtin` verifies the GS1 mod-10 check digit the old
-digit-count pattern could not — a barcode with a wrong check digit
-now refuses — and `decimal` names the schema.org money-in-a-string
-shape (unsigned, exponent-free, so no converted site loosens); both
-are linear scans and the SEO structured-data sites converted to
-them. SKUs stay a pattern: there is no universal SKU grammar, so the
-demo shop's shape is honestly local. Still held: formats for
-alternations (`host:port` or URI) until multi-format semantics are
-designed; `semver` (nothing in the repo promises semver).
+Name identities split into **two namespaces**. Author-chosen *local
+names* (workflow, step, run, and delegation identities) are `slug`:
+lowercase `a-z0-9` with interior single `.`, `_` or `-` separators,
+starting and ending alphanumeric, two separators never touching;
+length composes with the len rules. Machine-derived *reference names*
+— dependency aliases carrying service fully-qualified names by the
+workflow compiler's own convention, sanitized endpoint placeholders,
+the hyphenated structured-step sentinel — are `path_safe_name`: an
+ASCII letter or digit, then letters, digits, `.`, `_` or `-`; the
+leading alphanumeric keeps a value safe as a single path segment.
+The hand validators delegate to the `core/formats` linear-scan
+parsers throughout (names to slug, references to path-safe,
+fingerprints, hosts, media types, UUIDs and SHA-1 to their parsers;
+the secret-reference and branch-id composites are scans): no regex on
+the Java side.
 
-The name-namespace alignment (2026-08-19) closed the divergence the
-sweeps exposed: the hand validators (`WorkflowValidation` and its
-profile, pipeline, and delegation siblings) had each hand-rolled the
-old name regex, admitting uppercase where the annotations now declare
-`slug`. Chasing it revealed that one shared regex was serving **two
-namespaces**: author-chosen *local names* (workflow, step, run, and
-delegation identities), which tighten to `slug`, and machine-derived
-*reference names* — dependency aliases carrying service
-fully-qualified names by the workflow compiler's own convention,
-sanitized endpoint placeholders, the hyphenated structured-step
-sentinel — where slug is deliberately too narrow. The reference
-family is now its own Tier-1 format, `path_safe_name` (an ASCII
-letter or digit, then letters, digits, `.`, `_` or `-`; the leading
-alphanumeric keeps a value safe as a single path segment), and
-`PipelineStep.dependency` — mis-declared `slug` by the optional-idiom
-sweep — is re-declared `path_safe_name`. Every hand validator now
-delegates to the `core/formats` linear-scan parsers (names to slug,
-references to path-safe, fingerprints, hosts, media types, UUIDs and
-SHA-1 to their parsers; the secret-reference and branch-id composites
-became scans), leaving the Java side regex-free.
+The workflow contract follows the `ClusterValidation` convention: the
+name families, fingerprints, and media types are `validate.v1`
+annotations on `grpc_workflow.proto`, and `WorkflowValidation` runs
+`ProtoValidator` first (it recurses into nested messages), keeping
+hand code only for what annotations cannot express — duplicates,
+declared-dependency references, fingerprint agreement, step-shape
+exclusivity. Blank-allowed fields use `ignore_if_zero`, because
+string formats reject the empty value.
 
-The workflow contract then adopted the `ClusterValidation` convention
-(2026-08-19): the name families, fingerprints, and media types are
-declared as `validate.v1` annotations on `grpc_workflow.proto`
-(`Workflow.name`, `WorkflowStep.name` and `.dependency`,
-`ServiceDependency` alias/profile/endpoint/fingerprint,
-`VersionedWorkflow`, `ArtifactReference`, `RunEvidence`,
-`StepEvidence.step_name` — the reference fields expressible only once
-`path_safe_name` existed), and `WorkflowValidation` runs
-`ProtoValidator` first, which recurses into nested messages, keeping
-hand code only for what annotations cannot express: duplicates,
-declared-dependency references, fingerprint agreement, and step-shape
-exclusivity. A blank-allowed field (`RunEvidence.workflow_version`)
-uses `ignore_if_zero`, because string formats otherwise reject the
-empty value.
+Domain formats: `gtin` verifies the GS1 mod-10 check digit, so a
+barcode with a wrong check digit refuses; `decimal` is the schema.org
+money-in-a-string shape, unsigned and exponent-free; both are linear
+scans. `endpoint_address` is a *precedence* grammar, not an
+alternation: a value shaped like `host:port` must carry a dialable
+port and never falls back to the URI reading (`localhost:99999`
+parses as a URI with scheme `localhost` otherwise); anything else
+must be an absolute URI with a non-empty rest. `identifier` is a bare
+`[A-Za-z_][A-Za-z0-9_]*` protobuf segment name. There is no generic
+`any_of` combinator in the dialect: an alternation with precedence is
+a domain grammar, and domain grammars become named formats.
 
-The multi-format question (2026-08-19) resolved against a generic
-`any_of` combinator. Of the three held "alternation" patterns, two are
-single grammars (the `scheme:ref` key and credential references, held
-because any shared format would loosen one of them), and the third —
-the cluster endpoint address — is a *precedence* grammar, not an
-alternation: a value shaped like `host:port` must carry a valid port
-and never falls back to the URI reading, because `localhost:99999`
-parses as a URI with scheme `localhost`, which is exactly the
-confusion the old hand check existed to stop. A naive any-of cannot
-express that. The outcome is the named format `endpoint_address`
-(tag 35, `Endpoints` scan: authority shape → host-and-port with a
-dialable port, else absolute URI with a non-empty rest), which retired
-the last live regex in `ClusterValidation`, and `identifier` (tag 36,
-a bare `[A-Za-z_][A-Za-z0-9_]*` protobuf segment name) for the
-collect-into sites. Combinators stay out of the dialect: an
-alternation with precedence is a domain grammar, and domain grammars
-become named formats.
+What stays a pattern, and why: the `scheme:ref` key and credential
+references (single grammars that differ per site; a shared format
+would loosen one of them), single bare-identifier and
+at-least-one-dot name sites (the `protobuf_fqn` parser accepts
+dotless), and SKUs (no universal SKU grammar exists, so the demo
+shop's shape is honestly local). No `semver` format: nothing in the
+repo promises semver.
 
 ## Tier 2: structural types with platform behavior
 
@@ -135,7 +98,7 @@ Values with structure and invariants become messages in
 `protomolt/types/v1`, each carrying cross-field rules and shipping only
 with at least one platform behavior attached — no shape zoo:
 
-- **DateRange / LongRange / DoubleRange** (landed) — `{begin, end,
+- **DateRange / LongRange / DoubleRange** — `{begin, end,
   include_head, include_tail}` with begin-not-after-end,
   at-least-one-bound, and flag-without-bound rules as message-level
   CEL. Bounds are `optional` (an unset bound is an open end) and an
@@ -155,7 +118,7 @@ with at least one platform behavior attached — no shape zoo:
   waiver), the compiler honors open ends and the exclusivity flags,
   and the compiled bounds stay inclusive epoch millis so the
   executors never see the flags.
-- **TreePath** (landed) — a taxonomy path as repeated segments, root
+- **TreePath** — a taxonomy path as repeated segments, root
   first, wire-plain; the "/" delimiter exists only in rendered forms,
   so a segment must not contain it (that rule is what keeps `["a/b"]`
   and `["a", "b"]` distinguishable). At least one segment; segments
@@ -165,7 +128,7 @@ with at least one platform behavior attached — no shape zoo:
   emits the ancestor chain ("a", "a/b", "a/b/c") as keyword terms —
   hierarchical drill-down facets count at any depth and a path-prefix
   filter is an exact term match. The metric surface speaks the type
-  too (landed): a `TreePath` field is a `TREE_PATH` dimension (the
+  too: a `TreePath` field is a `TREE_PATH` dimension (the
   walk keeps it a leaf like Timestamp) that groups by the whole leaf
   path — never per ancestor, which would count a row once per depth
   and break additivity — and `MetricFilter.prefix` (a wire-plain
@@ -180,7 +143,7 @@ with at least one platform behavior attached — no shape zoo:
   rollups hold the rendered leaf path as a plain keyword: equality
   works over a rollup subject, prefix honestly refuses there and runs
   on the base subject.
-- **Adopt-and-validate `google.type`** (landed) — Money, Date,
+- **Adopt-and-validate `google.type`** — Money, Date,
   Interval, LatLng are not reinvented; the built-in
   `GoogleTypeRuleSource` (on the default validator chain) carries
   their documented invariants keyed by type full name, so any
@@ -194,16 +157,24 @@ with at least one platform behavior attached — no shape zoo:
   LatLng: coordinate bounds. The audit found the reinventions to
   converge: schema.org `Offer.price` (a decimal string, because
   doubles lose money) beside `MonetaryAmount.value` (a double, losing
-  money) is the case study. PostalAddress and PhoneNumber landed
-  data-free (2026-08-18): PhoneNumber requires exactly one kind, its
+  money) is the case study. PostalAddress and PhoneNumber are
+  data-free: PhoneNumber requires exactly one kind, its
   e164 form goes through the Tier-1 E.164 parser, a short code is
   complete or refused, and the extension keeps its documented
   40-character bound; PostalAddress requires its `region_code`
   (checked against the JDK's ISO 3166 table — zero bundling), takes
   BCP 47 language codes, and pins `revision` to 0. Per-country
-  postal-code grammar is deliberately data the platform does not
-  bundle: it waits on an operator-loaded pack, the same stance the
-  taxonomy section takes.
+  postal-code grammar is operator-loaded data, never bundled: one
+  config document (`PostalCodePack`, subject `postal-codes`) whose
+  regions carry UPU-convention masks — `N` a digit, `A` an uppercase
+  letter, anything else literal. A mask is a fixed template matched
+  by one linear scan, so operator data can never smuggle in a regular
+  expression. A validator built over the mounted catalog enforces the
+  masks on `google.type.PostalAddress`: a mounted region's non-empty
+  `postal_code` must match one mask (`postal.code_grammar`, pack
+  version as evidence); an unmounted region is unchecked, because no
+  schema declaration binds a postal code to the pack — it is a
+  per-region opt-in, not a fail-closed gate.
 
 ## Taxonomies and ontologies
 
@@ -214,13 +185,13 @@ order of preference:
    zero bundling, zero attribution, zero list maintenance.
 2. **Structural validation without data** (media types per RFC 6838,
    URIs per RFC 3986): the grammar is the standard.
-3. **Operator-loaded taxonomy documents** (landed) for everything
+3. **Operator-loaded taxonomy documents** for everything
    else: a `Taxonomy` is a config document on the config lane, and
    the validator checks a bound `TreePath` field's membership against
    the *mounted* taxonomy. The mechanism ships; the data is the
    operator's (or a separately-licensed pack).
 
-The taxonomy mechanics, as landed. A `Taxonomy` (types/v1) is just
+The taxonomy mechanics. A `Taxonomy` (types/v1) is just
 `repeated TreePath entries`: an entry names a node by its full path
 from the root, and every ancestor along the way is a node too, so
 listing the leaves is enough. The document carries no name and no
@@ -250,13 +221,12 @@ validation side of the screening line below.
 
 The first platform consumer is the search door's **document gate**,
 opt-in by environment (`DOCUMENT_PLATFORM_TAXONOMIES`, a
-comma-separated list of names; it requires the config lane): the door
-historically indexed fetched documents without validating their
-declared rules, and with taxonomies named it validates each fetched
-document over the live mounts before anything indexes — membership
-enforced as of index time, refusals naming the violations, and
-fail-closed while a declared taxonomy has not yet mounted. Unset, the
-door behaves exactly as before. Packed `google.protobuf.Any` payloads
+comma-separated list of names; it requires the config lane): with
+taxonomies named, the door validates each fetched document over the
+live mounts before anything indexes — membership enforced as of index
+time, refusals naming the violations, fail-closed while a declared
+taxonomy has not yet mounted. Unset, no declared-rules validation
+runs at index time. Packed `google.protobuf.Any` payloads
 stay with the seams that own a descriptor registry (the indexing
 facade and the engines' payload gate); this door's registry-free gate
 deliberately covers the document's own typed fields.
