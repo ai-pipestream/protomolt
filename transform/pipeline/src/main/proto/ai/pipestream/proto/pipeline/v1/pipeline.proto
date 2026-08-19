@@ -135,8 +135,10 @@ message PipelineStep {
   ];
   // Alias of a declared service dependency. Required on gRPC and structured
   // steps; must be empty on unnest and collect steps, which call no service.
+  // The workflow compiler uses service fully-qualified names as aliases, so
+  // this is the path-safe reference family, not the slug family.
   string dependency = 2 [
-    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
+    (ai.pipestream.proto.validate.v1.field) = {ignore_if_zero: true, string: {path_safe_name: true, max_len: 128}},
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
   // Optional boolean CEL gate over the scope, allowed on gRPC steps only. A

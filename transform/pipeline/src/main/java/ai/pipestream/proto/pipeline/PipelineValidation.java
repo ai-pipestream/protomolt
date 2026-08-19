@@ -11,9 +11,10 @@ import ai.pipestream.proto.pipeline.v1.PipelineStep;
 import ai.pipestream.proto.pipeline.v1.StructuredStep;
 import ai.pipestream.proto.pipeline.v1.UnnestStep;
 
+import ai.pipestream.format.Formats;
+
 import java.util.HashSet;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Structural and safety validation for the pipeline contract, mirroring the validate.v1
@@ -32,10 +33,6 @@ public final class PipelineValidation {
     private static final int MAX_RULES = 1_024;
     private static final int MAX_IDENTIFIER_LENGTH = 128;
     private static final int MAX_STREAM_MESSAGES = 100_000;
-    private static final Pattern IDENTIFIER =
-            Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-    private static final Pattern DOTTED_PATH = Pattern.compile(
-            "[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*");
 
     private PipelineValidation() {
     }
@@ -107,7 +104,7 @@ public final class PipelineValidation {
                         && !step.getName().equals("target"),
                 "step.name must be an identifier other than 'input'/'target'");
         if (!step.getDependency().isEmpty()) {
-            WorkflowValidation.validateName(step.getDependency(), "step.dependency");
+            WorkflowValidation.validateReference(step.getDependency(), "step.dependency");
             require(aliases == null || aliases.contains(step.getDependency()),
                     "step dependency is not declared: " + step.getDependency());
         }
@@ -202,7 +199,7 @@ public final class PipelineValidation {
         require(identifier(unnest.getSource()),
                 "step.unnest.source must be an identifier");
         require(unnest.getPath().length() <= 512
-                        && DOTTED_PATH.matcher(unnest.getPath()).matches(),
+                        && Formats.isProtobufFqn(unnest.getPath()),
                 "step.unnest.path must be a non-blank dotted field path of at most "
                         + "512 characters");
     }
@@ -214,7 +211,7 @@ public final class PipelineValidation {
                 "step.collect.source must be an identifier");
         WorkflowValidation.validateType(collect.getCollectType(), "step.collect.collect_type");
         require(collect.getCollectInto().length() <= 256
-                        && IDENTIFIER.matcher(collect.getCollectInto()).matches(),
+                        && bareIdentifier(collect.getCollectInto()),
                 "step.collect.collect_into must be a non-blank field name of at most "
                         + "256 characters");
     }
@@ -238,8 +235,12 @@ public final class PipelineValidation {
     }
 
     private static boolean identifier(String value) {
-        return value.length() <= MAX_IDENTIFIER_LENGTH
-                && IDENTIFIER.matcher(value).matches();
+        return value.length() <= MAX_IDENTIFIER_LENGTH && bareIdentifier(value);
+    }
+
+    /** A single dotless protobuf identifier: the FQN parser confined to one segment. */
+    private static boolean bareIdentifier(String value) {
+        return value.indexOf('.') < 0 && Formats.isProtobufFqn(value);
     }
 
     private static void require(boolean condition, String message) {

@@ -279,6 +279,9 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         if (rules.getProtobufFqn()) {
             b.format(StringFormat.PROTOBUF_FQN);
         }
+        if (rules.getPathSafeName()) {
+            b.format(StringFormat.PATH_SAFE_NAME);
+        }
         return b.build();
     }
 

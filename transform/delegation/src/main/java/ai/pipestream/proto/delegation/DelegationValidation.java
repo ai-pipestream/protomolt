@@ -27,12 +27,12 @@ import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
 import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
+import ai.pipestream.format.Formats;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Structural and safety validation for the delegation contract, mirroring the validate.v1
@@ -58,11 +58,7 @@ public final class DelegationValidation {
     private static final int MAX_SCOPE_ITEMS = 256;
     private static final int MAX_NEEDS = 32;
     private static final int MAX_ATTEMPT = 1_024;
-    private static final Pattern NAME =
-            Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}");
-    private static final Pattern UUID = Pattern.compile(
-            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
-    private static final Pattern SHA1 = Pattern.compile("[0-9a-f]{40}");
+    private static final int MAX_NAME_LENGTH = 128;
 
     private DelegationValidation() {
     }
@@ -234,7 +230,7 @@ public final class DelegationValidation {
                 "admission.reason must say why when the worker is rejected");
         bounded(admission.getReason(), 2_048, "admission.reason");
         require(admission.getAdmitted()
-                        == UUID.matcher(admission.getSessionId()).matches(),
+                        == Formats.isUuid(admission.getSessionId()),
                 "admission.session_id must be a uuid exactly when the worker is"
                         + " admitted");
     }
@@ -423,13 +419,13 @@ public final class DelegationValidation {
      */
     public static void validate(TaskMessage message, String envelopeTaskId) {
         require(message != null, "task message must not be null");
-        require(UUID.matcher(message.getMessageId()).matches(),
+        require(Formats.isUuid(message.getMessageId()),
                 "task_message.message_id must be a uuid: " + message.getMessageId());
         validateName(message.getSender(), "task_message.sender");
         validateName(message.getRecipient(), "task_message.recipient");
         require(!message.getSender().equals(message.getRecipient()),
                 "task_message.recipient must differ from task_message.sender");
-        require(UUID.matcher(message.getTaskId()).matches(),
+        require(Formats.isUuid(message.getTaskId()),
                 "task_message.task_id must be a uuid: " + message.getTaskId());
         require(message.getTaskId().equals(envelopeTaskId),
                 "task_message.task_id must equal the frame's task_id");
@@ -437,7 +433,7 @@ public final class DelegationValidation {
                         && message.getKind() != TaskMessageKind.UNRECOGNIZED,
                 "task_message.kind must be a defined kind");
         require(message.getReplyTo().isEmpty()
-                        || UUID.matcher(message.getReplyTo()).matches(),
+                        || Formats.isUuid(message.getReplyTo()),
                 "task_message.reply_to must be a uuid or empty: " + message.getReplyTo());
         require(!message.getText().isBlank(), "task_message.text must not be blank");
         bounded(message.getText(), 8_192, "task_message.text");
@@ -469,16 +465,16 @@ public final class DelegationValidation {
         require(!commit.getRepository().isBlank(),
                 "commit.repository must not be blank");
         bounded(commit.getRepository(), 512, "commit.repository");
-        require(SHA1.matcher(commit.getCommit()).matches(),
+        require(Formats.isSha1Hex(commit.getCommit()),
                 "commit.commit must be a full lowercase SHA-1: " + commit.getCommit());
         bounded(commit.getSubject(), 256, "commit.subject");
     }
 
     private static void validateEnvelope(String frameId, String taskId, long seq,
                                          boolean hasSentAt, Timestamp sentAt) {
-        require(UUID.matcher(frameId).matches(),
+        require(Formats.isUuid(frameId),
                 "frame.frame_id must be a uuid: " + frameId);
-        require(taskId.isEmpty() || UUID.matcher(taskId).matches(),
+        require(taskId.isEmpty() || Formats.isUuid(taskId),
                 "frame.task_id must be a uuid or empty: " + taskId);
         require(seq >= 1, "frame.seq must be at least 1");
         require(hasSentAt, "frame.sent_at must be set");
@@ -500,8 +496,8 @@ public final class DelegationValidation {
     }
 
     private static void validateName(String value, String field) {
-        require(NAME.matcher(value).matches(),
-                field + " must be a path-safe name: " + value);
+        require(value.length() <= MAX_NAME_LENGTH && Formats.isSlug(value),
+                field + " must be a lowercase slug name: " + value);
     }
 
     private static void validateTimestamp(Timestamp value, String field) {

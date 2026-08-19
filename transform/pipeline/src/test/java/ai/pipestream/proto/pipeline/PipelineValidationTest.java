@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -35,6 +36,21 @@ class PipelineValidationTest {
     void validPipelinePasses() {
         assertThatCode(() -> PipelineValidation.validate(validPipeline()))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void declaredDependencyRulesCarryThePathSafeReferenceFamily() {
+        // The workflow compiler uses service FQNs as dependency aliases, so the
+        // annotation on PipelineStep.dependency is path_safe_name, not slug: the
+        // declared rules must accept exactly what the Java validator accepts.
+        ai.pipestream.proto.validate.ProtoValidator validator =
+                ai.pipestream.proto.validate.ProtoValidator.create();
+        PipelineStep step = validPipeline().getSteps(0);
+        assertThat(validator.validate(step).violations()).isEmpty();
+
+        assertThat(validator.validate(step.toBuilder().setDependency("../escape").build())
+                .violations())
+                .anySatisfy(v -> assertThat(v.ruleId()).isEqualTo("string.path_safe_name"));
     }
 
     @Test

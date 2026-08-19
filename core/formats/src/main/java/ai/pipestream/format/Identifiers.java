@@ -36,6 +36,35 @@ public final class Identifiers {
         return true;
     }
 
+    /**
+     * A path-safe reference name: an ASCII letter or digit followed by letters, digits and
+     * {@code .}, {@code _} or {@code -}. This is the mixed-origin name family — dependency
+     * aliases carrying service fully-qualified names, sanitized endpoint placeholders,
+     * compiler sentinels — where the slug contract is deliberately too narrow. The leading
+     * alphanumeric keeps the value safe as a single path segment ({@code ..} and a bare
+     * {@code .} are unreachable). Length is unconstrained here — compose with the len rules.
+     */
+    public static boolean isPathSafeName(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        char first = value.charAt(0);
+        if (!isAsciiAlphanumeric(first)) {
+            return false;
+        }
+        for (int i = 1; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!isAsciiAlphanumeric(c) && c != '.' && c != '_' && c != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAsciiAlphanumeric(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    }
+
     /** Canonical dashed UUID, e.g. {@code 123e4567-e89b-12d3-a456-426614174000} (8-4-4-4-12 hex). */
     public static boolean isUuid(String value) {
         if (value.length() != 36) {

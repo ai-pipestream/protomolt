@@ -95,6 +95,13 @@ message StringRules {
   // Value must be a fully-qualified protobuf name (dot-separated
   // identifiers, no leading dot; a single identifier passes).
   optional bool protobuf_fqn = 31;
+
+  // Value must be a path-safe reference name: an ASCII letter or digit
+  // followed by letters, digits, dots, underscores or dashes. The
+  // mixed-origin name family (dependency aliases carrying service
+  // fully-qualified names, sanitized endpoint placeholders) where the
+  // slug contract is deliberately too narrow.
+  optional bool path_safe_name = 32;
 }
 
 // Standard constraints for int32 fields.

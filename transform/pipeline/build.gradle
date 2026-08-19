@@ -10,6 +10,7 @@ dependencies {
     // FanOutSpec, StructuredGenerationSpec, StepCompletion, and CelMappingRule
     // unchanged, and validates them with WorkflowValidation.
     api project(':protomolt-grpc-workflow')
+    implementation project(':protomolt-formats')
     // Persisted pipeline fields carry the house validation and sensitivity
     // metadata options.
     api project(':protomolt-protobuf-validation')
