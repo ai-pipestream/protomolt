@@ -939,7 +939,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 .withHost(options.host())
                                 .withPort(options.registryPort())
                                 .withApiToken(options.apiToken()),
-                        store, catalog);
+                        store, catalog, callers);
                 registryPort = registry.start();
             }
 

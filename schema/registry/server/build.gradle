@@ -5,6 +5,7 @@ dependencies {
     api project(':protomolt-workflow')
     api project(':protomolt-registry')
     api project(':protomolt-actions')
+    api project(':protomolt-authz')
 
     implementation project(':protomolt-emit-parquet')
     // MessageType (parquet-column) rides in on parquet-hadoop's compile scope; the parquet-schema

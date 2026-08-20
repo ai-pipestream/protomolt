@@ -30,67 +30,6 @@ class TokenAuthTest {
     private static HttpClient http;
     private static String base;
 
-    /** An empty but functional store. */
-    private static final class EmptyStore implements SchemaRegistryStore {
-        @Override
-        public List<String> subjects() {
-            return List.of();
-        }
-
-        @Override
-        public List<Integer> versions(String subject) {
-            return List.of();
-        }
-
-        @Override
-        public Optional<StoredSchema> version(String subject, int version) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<StoredSchema> latest(String subject) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<StoredSchema> byGlobalId(int globalId) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<StoredSchema> findByContent(String subject, String schemaText,
-                                                    List<SchemaReference> references) {
-            return Optional.empty();
-        }
-
-        @Override
-        public StoredSchema register(String subject, String schemaText,
-                                     List<SchemaReference> references) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Optional<String> compatibilityMode(String subject) {
-            return Optional.empty();
-        }
-
-        @Override
-        public void setCompatibilityMode(String subject, String mode) {
-        }
-
-        @Override
-        public String globalCompatibilityMode() {
-            return "BACKWARD";
-        }
-
-        @Override
-        public void setGlobalCompatibilityMode(String mode) {
-        }
-
-        @Override
-        public void close() {
-        }
-    }
 
     @BeforeAll
     static void start() {

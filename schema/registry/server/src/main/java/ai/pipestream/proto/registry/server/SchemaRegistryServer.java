@@ -1,6 +1,8 @@
 package ai.pipestream.proto.registry.server;
 
 import ai.pipestream.proto.actions.ActionCatalog;
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.registry.ConfigSupport;
 import ai.pipestream.proto.registry.InvalidConfigException;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
@@ -90,6 +92,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private final SchemaRegistryServerConfig config;
     private final SchemaRegistryStore store;
     private final ActionCatalog actions;
+    private final ai.pipestream.proto.authz.CallerResolver resolver;
     private final ObjectMapper json = new ObjectMapper();
     private final ProtoSourceCompiler compiler = new ProtoSourceCompiler();
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
@@ -112,9 +115,26 @@ public final class SchemaRegistryServer implements AutoCloseable {
      */
     public SchemaRegistryServer(SchemaRegistryServerConfig config, SchemaRegistryStore store,
                                 ActionCatalog actions) {
+        this(config, store, actions, null);
+    }
+
+    /**
+     * With a resolver, a credential a mounted access policy names authenticates as its
+     * principal: reads require {@code schema-read}, writes require {@code schema-write},
+     * and the action endpoint dispatches through the scoped catalog so each verb's own
+     * declaration applies.
+     */
+    public SchemaRegistryServer(SchemaRegistryServerConfig config, SchemaRegistryStore store,
+                                ActionCatalog actions,
+                                ai.pipestream.proto.authz.CallerResolver resolver) {
         this.config = Objects.requireNonNull(config, "config");
         this.store = Objects.requireNonNull(store, "store");
         this.actions = actions;
+        if (resolver != null && config.apiToken() == null) {
+            throw new IllegalArgumentException(
+                    "an access-policy resolver requires the operator api token");
+        }
+        this.resolver = resolver;
     }
 
     /** Starts the server and returns the bound port. */
@@ -204,14 +224,26 @@ public final class SchemaRegistryServer implements AutoCloseable {
                     json.createObjectNode().put("status", "UP")));
             return;
         }
-        if (config.apiToken() != null && !authorized(exchange)) {
-            // The registry holds schema, config, and workflow writes plus action execution:
-            // the same shared secret that guards gRPC/REST/MCP guards it, health excepted.
-            writeError(exchange, 401, 401, "Missing or invalid API token 'api_token'");
-            return;
+        // The registry holds schema, config, and workflow writes plus action execution:
+        // the same credentials that guard gRPC/REST/MCP guard it, health excepted.
+        Caller resolved = Caller.operator();
+        if (config.apiToken() != null) {
+            resolved = callerFor(exchange);
+            if (resolved == null) {
+                writeError(exchange, 401, 401, "Missing or invalid API token 'api_token'");
+                return;
+            }
         }
+        Caller caller = resolved;
         List<String> segments = decodeSegments(rawPath);
         String nativePrefix = config.nativePathPrefix().substring(1);
+
+        String required = requiredScope(segments, method, nativePrefix);
+        if (required != null && !caller.holds(required)) {
+            writeError(exchange, 403, 403, "caller '" + caller.name() + "' does not hold '"
+                    + required + "', which " + method + " " + rawPath + " requires");
+            return;
+        }
 
         if (matches(segments, "subjects")) {
             requireMethod(exchange, method, "GET", () -> listSubjects(exchange));
@@ -274,18 +306,42 @@ public final class SchemaRegistryServer implements AutoCloseable {
         } else if (actions != null && segments.size() == 2 && segments.get(0).equals(nativePrefix)
                 && segments.get(1).equals("actions")) {
             requireMethod(exchange, method, "GET",
-                    () -> writeJson(exchange, 200, actions.list()));
+                    () -> writeJson(exchange, 200, actions.list(caller)));
         } else if (actions != null && segments.size() == 3 && segments.get(0).equals(nativePrefix)
                 && segments.get(1).equals("actions")) {
             requireMethod(exchange, method, "POST",
-                    () -> executeAction(exchange, segments.get(2)));
+                    () -> executeAction(exchange, segments.get(2), caller));
         } else {
             writeError(exchange, 404, 404, "HTTP 404 Not Found");
         }
     }
 
-    /** True when the request presents the shared secret (constant-time comparison). */
-    private boolean authorized(HttpExchange exchange) {
+    /**
+     * The scope a route requires, or null when the dispatched action's own declaration
+     * applies (the action endpoint). Reads are {@code schema-read}, including the
+     * POST-shaped content lookup; every mutation is {@code schema-write}.
+     */
+    private static String requiredScope(List<String> segments, String method,
+                                        String nativePrefix) {
+        if (segments.size() >= 2 && segments.get(0).equals(nativePrefix)
+                && segments.get(1).equals("actions")) {
+            return null;
+        }
+        if ("GET".equals(method)) {
+            return Scopes.SCHEMA_READ;
+        }
+        if ("POST".equals(method) && segments.size() == 2 && segments.get(0).equals("subjects")) {
+            return Scopes.SCHEMA_READ;
+        }
+        return Scopes.SCHEMA_WRITE;
+    }
+
+    /**
+     * The caller the request authenticates as: the operator token with process authority,
+     * a credential the access policy names as its principal, anything else null (the
+     * refusal carries nothing an attacker could use to recover a credential).
+     */
+    private Caller callerFor(HttpExchange exchange) {
         String presented = exchange.getRequestHeaders().getFirst("api_token");
         if (presented == null) {
             String authorization = exchange.getRequestHeaders().getFirst("authorization");
@@ -293,10 +349,15 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 presented = authorization.substring(7).trim();
             }
         }
-        return presented != null && !presented.isBlank()
-                && java.security.MessageDigest.isEqual(
-                        config.apiToken().getBytes(StandardCharsets.UTF_8),
-                        presented.getBytes(StandardCharsets.UTF_8));
+        if (presented == null || presented.isBlank()) {
+            return null;
+        }
+        if (java.security.MessageDigest.isEqual(
+                config.apiToken().getBytes(StandardCharsets.UTF_8),
+                presented.getBytes(StandardCharsets.UTF_8))) {
+            return Caller.operator();
+        }
+        return resolver == null ? null : resolver.resolve(presented).orElse(null);
     }
 
     // ---------------------------------------------------------------- subjects protocol
@@ -812,18 +873,20 @@ public final class SchemaRegistryServer implements AutoCloseable {
 
     // ---------------------------------------------------------------- actions mount
 
-    private void executeAction(HttpExchange exchange, String name) throws IOException {
+    private void executeAction(HttpExchange exchange, String name, Caller caller)
+            throws IOException {
         JsonNode body = readJsonBody(exchange);
         if (body == null || !body.isObject()) {
             writeError(exchange, 400, 400, "Action input must be a JSON object");
             return;
         }
         try {
-            writeJson(exchange, 200, actions.execute(name, (ObjectNode) body));
+            writeJson(exchange, 200, actions.execute(name, (ObjectNode) body, caller));
         } catch (ActionException e) {
             int status = switch (e.code()) {
                 case "unknown-action" -> 404;
                 case "invalid-input" -> 400;
+                case "permission-denied" -> 403;
                 default -> 422;
             };
             writeJson(exchange, status, e.toJson(json));
