@@ -27,6 +27,14 @@ message SearchDoc {
   string source_system = 4 [(ai.pipestream.proto.projection.v1.from) = {
     literal: {string_value: "filing-index"}
   }];
+  optional string category = 5 [
+    (ai.pipestream.proto.projection.v1.from) = {
+      paths: {path: "category"}
+    },
+    (ai.pipestream.proto.projection.v1.default_from) = {
+      cel: "source.kind.lowerAscii()"
+    }
+  ];
 }
 ```
 
@@ -36,8 +44,11 @@ target shape, and the mapping is data, not glue code.
 
 ## Provenance kinds
 
-Each mapped field declares exactly one provenance. Fields without the
-`(from)` option are never populated.
+Each mapped field declares primary provenance with `(from)`, fallback
+provenance with `(default_from)`, or both. When both are present, `from` is
+resolved first and `default_from` runs only when the primary result is absent.
+The fallback never overwrites a primary value. A field with neither option is
+never populated.
 
 - **`paths`**: candidate dotted source paths, tried in order; the first that
   resolves to a present value wins. A path that does not resolve against the
@@ -51,6 +62,12 @@ Each mapped field declares exactly one provenance. Fields without the
   not a join), and one that fails at evaluation fails the projection.
 - **`literal`**: a constant `google.protobuf.Value`, independent of the
   source (provenance tags, fixed classifications).
+
+`default_from` accepts the same three forms. In particular, a CEL default is
+materialized into the projected protobuf before indexing, so every search
+backend sees the same stored value and no backend needs its own expression
+runtime. Runtime CEL failures remain projection failures; a calculated default
+does not silently disappear.
 
 Values are coerced to the target field type with the usual rules
 (`TypeConverter`): exact types pass through, scalars widen, messages re-parse
@@ -117,6 +134,9 @@ request-time field-selection APIs where FieldMask is the right mechanism.
   projection with the field named in the error.
 - **CEL sees real values**, including proto3 defaults, so path fallback and CEL
   can legitimately disagree about "absent" for the same field.
+- **Defaults apply during projection, not mutation.** `default_from` fills a
+  newly projected target only when its primary provenance is absent. It is not
+  an instruction to overwrite an already stored message during an update.
 
 ## Relationship to the rest of ProtoMolt
 
