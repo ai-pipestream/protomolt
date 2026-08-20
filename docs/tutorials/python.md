@@ -47,7 +47,7 @@ print(reflected["services"])
 ```
 
 ```
-['ai.pipestream.protomolt.v1.ProtoMoltService', 'grpc.reflection.v1.ServerReflection']
+['ai.pipestream.proto.grpc.service.v1.ProtoMoltService', 'grpc.reflection.v1.ServerReflection']
 ```
 
 ## 3. Generate the Python message modules
@@ -72,7 +72,7 @@ for f in generated["files"]:
 ```
 
 ```
-gen/ai/pipestream/protomolt/v1/protomolt_service_pb2.py
+gen/ai/pipestream/proto/grpc/service/v1/protomolt_service_pb2.py
 ```
 
 Real `protoc --python_out` output, from a server, on demand.
@@ -87,11 +87,11 @@ import sys
 sys.path.insert(0, "gen")
 
 import grpc
-from ai.pipestream.protomolt.v1 import protomolt_service_pb2 as pb2
+from ai.pipestream.proto.grpc.service.v1 import protomolt_service_pb2 as pb2
 
 channel = grpc.insecure_channel("localhost:9090")
 list_types = channel.unary_unary(
-    "/ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes",
+    "/ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
     request_serializer=pb2.ListTypesRequest.SerializeToString,
     response_deserializer=pb2.ListTypesResponse.FromString,
 )
@@ -116,7 +116,7 @@ typed surface:
 
 ```python
 compile_rpc = channel.unary_unary(
-    "/ai.pipestream.protomolt.v1.ProtoMoltService/Compile",
+    "/ai.pipestream.proto.grpc.service.v1.ProtoMoltService/Compile",
     request_serializer=pb2.CompileRequest.SerializeToString,
     response_deserializer=pb2.CompileResponse.FromString,
 )

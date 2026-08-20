@@ -62,13 +62,13 @@ final class DemoSchemas {
             String workflow = """
                     {"name": "compile-and-list",
                      "schema": {"sources": {"%s": %s}},
-                     "inputType": "ai.pipestream.protomolt.v1.CompileRequest",
+                     "inputType": "ai.pipestream.proto.grpc.service.v1.CompileRequest",
                      "steps": [
                        {"name": "compiled", "target": "127.0.0.1:%d",
-                        "method": "ai.pipestream.protomolt.v1.ProtoMoltService/Compile",
+                        "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/Compile",
                         "rules": ["sources = input.sources"]},
                        {"name": "types", "target": "127.0.0.1:%d",
-                        "method": "ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes",
+                        "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
                         "rules": ["schema.descriptor_set_base64 = compiled.descriptor_set_base64"]}
                      ]}
                     """.formatted(

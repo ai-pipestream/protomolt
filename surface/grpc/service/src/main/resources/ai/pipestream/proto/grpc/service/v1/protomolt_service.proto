@@ -11,7 +11,7 @@
 // theirs with the GenerateStubs RPC below.
 syntax = "proto3";
 
-package ai.pipestream.protomolt.v1;
+package ai.pipestream.proto.grpc.service.v1;
 
 import "google/protobuf/struct.proto";
 

@@ -140,7 +140,7 @@ class ProtoMoltServeTest {
         try {
             ReflectionClient.Result discovered = ReflectionClient.discover(channel, 10_000);
             assertThat(discovered.services())
-                    .contains("ai.pipestream.protomolt.v1.ProtoMoltService");
+                    .contains("ai.pipestream.proto.grpc.service.v1.ProtoMoltService");
         } finally {
             channel.shutdownNow();
         }

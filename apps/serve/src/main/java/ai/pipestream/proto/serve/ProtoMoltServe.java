@@ -1159,7 +1159,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         ProtoMoltServe serve = start(options);
         LOG.info("""
                 ProtoMolt serving:
-                  gRPC  {}:{}   ai.pipestream.protomolt.v1.ProtoMoltService (reflection on)
+                  gRPC  {}:{}   ai.pipestream.proto.grpc.service.v1.ProtoMoltService (reflection on)
                   REST  http://{}:{}/grpc-json/ProtoMoltService/{Method}
                   API   http://{}:{}/openapi.json
                   Docs  http://{}:{}/docs

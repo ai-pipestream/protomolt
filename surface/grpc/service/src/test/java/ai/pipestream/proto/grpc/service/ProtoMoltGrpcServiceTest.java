@@ -102,7 +102,7 @@ class ProtoMoltGrpcServiceTest {
     @Test
     void schemaCompilesAndDeclaresFortyOneRpcs() {
         assertThat(ProtoMoltServiceSchema.service().getFullName())
-                .isEqualTo("ai.pipestream.protomolt.v1.ProtoMoltService");
+                .isEqualTo("ai.pipestream.proto.grpc.service.v1.ProtoMoltService");
         assertThat(ProtoMoltServiceSchema.service().getMethods()).hasSize(44);
     }
 
@@ -326,7 +326,7 @@ class ProtoMoltGrpcServiceTest {
     void reflectionListsTheServiceAndItsDescriptors() throws Exception {
         ReflectionClient.Result discovered = ReflectionClient.discover(channel, 10_000);
         assertThat(discovered.services())
-                .contains("ai.pipestream.protomolt.v1.ProtoMoltService");
+                .contains("ai.pipestream.proto.grpc.service.v1.ProtoMoltService");
         assertThat(discovered.descriptorSet().getFileList())
                 .anySatisfy(f -> assertThat(f.getName())
                         .isEqualTo(ProtoMoltServiceSchema.RESOURCE_PATH));
@@ -341,7 +341,7 @@ class ProtoMoltGrpcServiceTest {
                 0, ProtoMoltCatalog.full(ActionContext.create()))) {
             JsonNode result = call("GrpcInvoke", """
                     {"target": "localhost:%d",
-                     "method": "ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes",
+                     "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
                      "schema": {"sources": {"%s": %s}},
                      "request": {"schema": {"sources": {"shop/v1/order.proto": %s}}}}
                     """.formatted(self.port(), ProtoMoltServiceSchema.RESOURCE_PATH,
