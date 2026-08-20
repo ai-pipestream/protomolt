@@ -14,7 +14,7 @@ dependencies {
     implementation libs.awssdk.sts
     implementation libs.awssdk.url.connection.client
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.protobuf.java.util
     testImplementation libs.iceberg.data
     testImplementation libs.iceberg.parquet

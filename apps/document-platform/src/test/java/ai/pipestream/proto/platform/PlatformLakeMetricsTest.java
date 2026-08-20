@@ -3,8 +3,8 @@ package ai.pipestream.proto.platform;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import ai.pipestream.proto.lake.iceberg.IcebergSink;
-import ai.pipestream.proto.lake.iceberg.LocalFileIO;
+import ai.pipestream.proto.iceberg.IcebergSink;
+import ai.pipestream.proto.iceberg.LocalFileIO;
 import ai.pipestream.proto.metric.DescribeMappingRequest;
 import ai.pipestream.proto.metric.MemberRef;
 import ai.pipestream.proto.metric.MetricBackend;

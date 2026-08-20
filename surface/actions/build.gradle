@@ -6,7 +6,7 @@ dependencies {
     // ActionContext.transcoder() returns ProtobufJsonTranscoder from this module.
     api project(':protomolt-http-json')
 
-    implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-sources')
     implementation project(':protomolt-compat')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')

@@ -11,7 +11,7 @@ import ai.pipestream.proto.pipeline.v1.PipelineStep;
 import ai.pipestream.proto.pipeline.v1.StructuredStep;
 import ai.pipestream.proto.pipeline.v1.UnnestStep;
 
-import ai.pipestream.format.Formats;
+import ai.pipestream.proto.formats.Formats;
 
 import java.util.HashSet;
 import java.util.Set;

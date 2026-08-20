@@ -1,8 +1,8 @@
 package ai.pipestream.proto.samples;
 
-import ai.pipestream.proto.graph.GraphAuth;
-import ai.pipestream.proto.graph.GraphClient;
-import ai.pipestream.proto.graph.GraphFiles;
+import ai.pipestream.proto.acquire.msgraph.GraphAuth;
+import ai.pipestream.proto.acquire.msgraph.GraphClient;
+import ai.pipestream.proto.acquire.msgraph.GraphFiles;
 import ai.pipestream.proto.shapes.SchemaInferrer;
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
 import com.fasterxml.jackson.databind.JsonNode;

@@ -8,7 +8,7 @@ dependencies {
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-server-jdk')
     // Live SharePoint read -> infer-schema sample.
-    implementation project(':protomolt-msgraph')
+    implementation project(':protomolt-acquire-msgraph')
     implementation project(':protomolt-shapes')
     implementation libs.protobuf.java.util
 

@@ -1,6 +1,6 @@
 package ai.pipestream.proto.kafka.connect.iceberg;
 
-import ai.pipestream.proto.lake.iceberg.IcebergPartitions;
+import ai.pipestream.proto.iceberg.IcebergPartitions;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;

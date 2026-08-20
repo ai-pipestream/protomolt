@@ -12,7 +12,7 @@ dependencies {
 
     runtimeOnly libs.grpc.netty.shaded
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.protobuf
 }

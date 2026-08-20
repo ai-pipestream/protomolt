@@ -29,7 +29,7 @@ dependencies {
     implementation project(':protomolt-grpc-invoke')
     implementation libs.protobuf.java.util
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     // The end-to-end tests compile workflows into workflows with the existing
     // compiler before compiling workflows into pipelines.
     testImplementation project(':protomolt-workflow')

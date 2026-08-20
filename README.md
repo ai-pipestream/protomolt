@@ -19,14 +19,14 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 
 | Group | Artifacts | Purpose |
 |---|---|---|
-| `core/` | `descriptors`, `helpers`, `proto-sources` | `DescriptorRegistry` and loader SPI; `Any`/`Struct` handling, type conversion, message diff, schema hygiene checks; proto source-set model, runtime `.proto` compilation, publisher SPI |
+| `core/` | `descriptors`, `helpers`, `sources` | `DescriptorRegistry` and loader SPI; `Any`/`Struct` handling, type conversion, message diff, schema hygiene checks; proto source-set model, runtime `.proto` compilation, publisher SPI |
 | `core/formats/` | `formats` | Zero-dependency RFC validators (email, hostname, IP, URI) backing the validation string formats |
 | `core/codegen/` | `codegen` | Live code generation: every libprotoc generator (8 languages) and the grpc-java plugin as WebAssembly, no native toolchain |
 | `core/compat/` | `compat` | Breaking-change detection: typed schema diffs and backward/forward/full compatibility policies |
 | `core/acp/` | `acp` | Agent Client Protocol core: newline-delimited JSON-RPC 2.0 on virtual threads, a blocking client, and an agent runtime, with no reactive runtime |
-| `acquire/gather/` | `gather`, `gather-git`, `gather-maven` | Acquire `.proto` sources from directories, jars, Git repositories, and Maven coordinates; adapt any gatherer to a descriptor loader |
-| `acquire/msgraph/` | `msgraph` | Microsoft Graph: OneDrive/SharePoint files and list-item metadata, and Copilot connector ingestion over the external connections API |
-| `acquire/connector/` | `connector` | Push-style streaming inputs behind one bounded, pausable SPI: gRPC server streams and Kafka topics feed a synchronous pipeline through the `SourcePump` bridge |
+| `acquire/gather/` | `acquire-gather`, `acquire-gather-git`, `acquire-gather-maven` | Acquire `.proto` sources from directories, jars, Git repositories, and Maven coordinates; adapt any gatherer to a descriptor loader |
+| `acquire/msgraph/` | `acquire-msgraph` | Microsoft Graph: OneDrive/SharePoint files and list-item metadata, and Copilot connector ingestion over the external connections API |
+| `acquire/connector/` | `acquire-connector` | Push-style streaming inputs behind one bounded, pausable SPI: gRPC server streams and Kafka topics feed a synchronous pipeline through the `SourcePump` bridge |
 | `schema/registry/` | `registry`, `registry-server` | Git-backed schema registry: subject/version store with compatibility-gated writes, served over the Confluent protocol |
 | `schema/` | `schema-apicurio`, `schema-apicurio-deployment`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries; the Apicurio loader's Quarkus build-time half |
 | `protobuf/` | `protobuf-metadata`, `protobuf-quality`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; CEL-scored quality dimensions declared as message options; protovalidate dialect and conformance harness |
@@ -57,7 +57,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `surface/acp/` | `acp-agent` | The action catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio, on the `acp` transport |
 | `surface/actions/` | `actions` | Self-describing verb catalog (compile, validate, diff, check-compat, render, evaluate) for consoles and LLM tooling |
 | `host/server/` | `server-common`, `server-jdk`, `server-vertx`, `server-netty`, `server-spring`, `server-micronaut`, `server-quarkus` | HTTP hosts for the REST gateway, over shared config and helpers |
-| `host/integrations/` | `spring`, `quarkus`, `quarkus-deployment` | Dependency-injection wiring (beans and producers, not HTTP hosts); the Quarkus extension's build-time half |
+| `host/integration/` | `integration-spring`, `integration-quarkus`, `integration-quarkus-deployment` | Dependency-injection wiring (beans and producers, not HTTP hosts); the Quarkus extension's build-time half |
 | `apps/serve/` | `serve` | One-process server: the gRPC service with reflection, the verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, optional registry |
 | `apps/cli/` | `cli` | The command line: run any catalog verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same catalog |
 | `apps/agent-host/` | `agent-host` | Persistent Codex and Kimi processes attached to delegation over MCP, with structured command gates, cursor recovery, and provider session resume |

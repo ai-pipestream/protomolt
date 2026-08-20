@@ -1,12 +1,12 @@
 # Framework integrations
 
-The `host/integrations/` modules wire ProtoMolt into a dependency-injection
+The `host/integration/` modules wire ProtoMolt into a dependency-injection
 container. They provide beans, not HTTP endpoints: the HTTP hosts live in
 `host/server/` (see [REST gateway and servers](rest-gateway.md)). A Spring
-application typically pairs `protomolt-spring` with
+application typically pairs `protomolt-integration-spring` with
 `protomolt-server-spring`; the same split applies to Quarkus.
 
-## Spring Boot (`protomolt-spring`)
+## Spring Boot (`protomolt-integration-spring`)
 
 `ProtoToolsAutoConfiguration` is a standard auto-configuration (registered
 via `AutoConfiguration.imports`). It provides, each guarded by
@@ -27,7 +27,7 @@ The default token validator rejects all tokens; define a
 host reads its mount point from
 `pipestream.proto.rest.path-prefix` (default `/grpc-json`).
 
-## Quarkus (`protomolt-quarkus`)
+## Quarkus (`protomolt-integration-quarkus`)
 
 The Quarkus extension (feature name `protomolt`, runtime + deployment
 modules) provides the same object graph as CDI `@DefaultBean` producers, so

@@ -8,5 +8,5 @@ dependencies {
     // The tests cross-check frames against Kafka's own ByteUtils.writeVarint and compile
     // fixture schemas to exercise indexPath/messageAt; neither reaches the main classpath.
     testImplementation libs.kafka.clients
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
 }

@@ -3,7 +3,7 @@ package ai.pipestream.proto.metric.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import ai.pipestream.proto.lake.iceberg.LocalFileIO;
+import ai.pipestream.proto.iceberg.LocalFileIO;
 import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.MemberRef;
 import ai.pipestream.proto.metric.MemberRole;
@@ -147,7 +147,7 @@ class IcebergRollupSubjectsTest {
     @Test
     void aTableWithoutADeclarationRefusesInsteadOfGuessing() {
         // A lake table the sink did not write: real, but not a rollup.
-        ai.pipestream.proto.lake.iceberg.IcebergSink.ensureTable(catalog,
+        ai.pipestream.proto.iceberg.IcebergSink.ensureTable(catalog,
                 org.apache.iceberg.catalog.TableIdentifier.of("protomolt", "foreign_table"),
                 MetricRow.getDescriptor());
         assertThatThrownBy(() -> resolver.resolve("rollup:foreign_table"))

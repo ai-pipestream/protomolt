@@ -1,0 +1,21 @@
+plugins {
+    alias(libs.plugins.quarkus.extension)
+}
+
+description = 'Quarkus extension for Pipestream protobuf tools'
+
+quarkusExtension {
+    deploymentModule = 'protomolt-integration-quarkus-deployment'
+}
+
+dependencies {
+    implementation platform(libs.quarkus.bom)
+    api project(':protomolt-mapper-cel')
+    api project(':protomolt-http-rest')
+    api project(':protomolt-server-common')
+    api libs.quarkus.arc
+}
+
+tasks.matching { it.name == 'validateExtension' }.configureEach {
+    enabled = false
+}

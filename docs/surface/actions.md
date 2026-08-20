@@ -58,7 +58,7 @@ that only needs the built-ins does not pull them in. Each implements the same
 | `reflect` | `protomolt-grpc-invoke` | Fetch a live gRPC server's schema over server reflection, given only its address; servers without reflection return `ok: false` |
 | `grpc-invoke` | `protomolt-grpc-invoke` | Call a unary or server-streaming gRPC method with no generated stubs; requests and responses are proto3 JSON |
 | `generate-stubs` | `protomolt-codegen` | Generate message code in java, kotlin, python, cpp, csharp, ruby, php, and objc, plus `grpc-java` service stubs, using protoc as WebAssembly |
-| `gather-git` | `protomolt-gather-git` | Gather `.proto` sources from a git repository (branch, tag, or commit) and compile them; returns the source texts plus a descriptor set usable as a schema input |
+| `gather-git` | `protomolt-acquire-gather-git` | Gather `.proto` sources from a git repository (branch, tag, or commit) and compile them; returns the source texts plus a descriptor set usable as a schema input |
 | `run-workflow` | `protomolt-workflow` | Execute a workflow: serial unary gRPC calls, each request mapped from the workflow input and prior steps' responses, with gates, per-step validation, and nested deadlines |
 | `check-workflow` | `protomolt-workflow` | Verify a workflow without running it: methods resolve and are unary, step names are valid scope variables, gates are boolean CEL, and every mapping type-checks |
 | `compile-workflow` | `protomolt-workflow` | Compile a checked workflow into the deterministic descriptor-grounded workflow contract |

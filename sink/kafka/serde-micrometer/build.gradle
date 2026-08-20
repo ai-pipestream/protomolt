@@ -5,6 +5,6 @@ dependencies {
     implementation libs.micrometer.core
 
     testImplementation libs.kafka.clients
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.slf4j.simple
 }

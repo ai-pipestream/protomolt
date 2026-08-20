@@ -17,7 +17,7 @@ dependencies {
     compileOnly libs.hadoop.client.api
     testCompileOnly libs.hadoop.client.api
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     // The example Group reader used to verify round-trips materializes a Hadoop
     // Configuration; the writer under test never does.
     testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.5.0'

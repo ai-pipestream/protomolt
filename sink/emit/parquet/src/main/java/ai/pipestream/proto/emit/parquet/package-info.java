@@ -9,7 +9,7 @@
  *
  * <p>{@link ProtoParquetSchemas} defines the descriptor-to-Parquet mapping and holds
  * {@link ProtoParquetSchemas.FieldIdResolver}, the hook table formats use to stamp their own
- * column ids into the file schema; the {@code ai.pipestream.proto.lake.iceberg} package supplies
+ * column ids into the file schema; the {@code ai.pipestream.proto.iceberg} package supplies
  * one so Iceberg readers resolve columns natively. {@link ParquetExportOptions} carries the two export
  * controls: projecting columns out of the file entirely, and masking values by sensitivity class
  * through {@link ai.pipestream.proto.meta.SensitivityMasker}.</p>

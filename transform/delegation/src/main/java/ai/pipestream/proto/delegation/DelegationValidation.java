@@ -27,7 +27,7 @@ import ai.pipestream.proto.delegation.v1.TranscriptEntry;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
 import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
-import ai.pipestream.format.Formats;
+import ai.pipestream.proto.formats.Formats;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
 

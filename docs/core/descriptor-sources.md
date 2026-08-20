@@ -30,10 +30,10 @@ Descriptor desc = registry.findDescriptorByFullName("com.example.Person");
 | `ApicurioDescriptorLoader` | `protomolt-schema-apicurio` | Apicurio Registry v3 |
 | `ConfluentSchemaRegistryLoader` | `protomolt-schema-confluent` | Confluent Schema Registry subjects API |
 | `ConfluentDescriptorSource` | `protomolt-schema-confluent` | Binary `FileDescriptorSet` over HTTP or from the classpath |
-| `GatheringDescriptorLoader` | `protomolt-gather` | Any [gatherer](../acquire/gathering.md): local directories, jars, Git repositories, Maven coordinates |
+| `GatheringDescriptorLoader` | `protomolt-acquire-gather` | Any [gatherer](../acquire/gathering.md): local directories, jars, Git repositories, Maven coordinates |
 
 Text-based sources (the registry loaders, every gatherer) share one
-compilation pipeline: `ProtoSourceCompiler` in `protomolt-proto-sources`,
+compilation pipeline: `ProtoSourceCompiler` in `protomolt-sources`,
 which links `.proto` text with Square Wire and builds runtime descriptors,
 no `protoc` binary involved. The write-side counterpart of this SPI is
 [schema publishing](../schema/publishing.md).

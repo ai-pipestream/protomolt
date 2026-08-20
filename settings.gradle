@@ -22,8 +22,8 @@ project(':protomolt-descriptors').projectDir = file('core/descriptors')
 include 'protomolt-helpers'
 project(':protomolt-helpers').projectDir = file('core/helpers')
 
-include 'protomolt-proto-sources'
-project(':protomolt-proto-sources').projectDir = file('core/sources')
+include 'protomolt-sources'
+project(':protomolt-sources').projectDir = file('core/sources')
 
 include 'protomolt-formats'
 project(':protomolt-formats').projectDir = file('core/formats')
@@ -39,23 +39,23 @@ project(':protomolt-acp').projectDir = file('core/acp')
 
 // acquire/ — how protos and documents get in.
 
-include 'protomolt-gather'
-project(':protomolt-gather').projectDir = file('acquire/gather/core')
+include 'protomolt-acquire-gather'
+project(':protomolt-acquire-gather').projectDir = file('acquire/gather/core')
 
-include 'protomolt-gather-git'
-project(':protomolt-gather-git').projectDir = file('acquire/gather/git')
+include 'protomolt-acquire-gather-git'
+project(':protomolt-acquire-gather-git').projectDir = file('acquire/gather/git')
 
-include 'protomolt-gather-maven'
-project(':protomolt-gather-maven').projectDir = file('acquire/gather/maven')
+include 'protomolt-acquire-gather-maven'
+project(':protomolt-acquire-gather-maven').projectDir = file('acquire/gather/maven')
 
-include 'protomolt-msgraph'
-project(':protomolt-msgraph').projectDir = file('acquire/msgraph')
+include 'protomolt-acquire-msgraph'
+project(':protomolt-acquire-msgraph').projectDir = file('acquire/msgraph')
 
 include 'protomolt-acquire-confluence'
 project(':protomolt-acquire-confluence').projectDir = file('acquire/confluence')
 
-include 'protomolt-connector'
-project(':protomolt-connector').projectDir = file('acquire/connector')
+include 'protomolt-acquire-connector'
+project(':protomolt-acquire-connector').projectDir = file('acquire/connector')
 
 include 'protomolt-acquire-pull'
 project(':protomolt-acquire-pull').projectDir = file('acquire/pull')
@@ -442,14 +442,14 @@ project(':protomolt-server-micronaut').projectDir = file('host/server/micronaut'
 include 'protomolt-server-quarkus'
 project(':protomolt-server-quarkus').projectDir = file('host/server/quarkus')
 
-include 'protomolt-quarkus'
-project(':protomolt-quarkus').projectDir = file('host/integrations/quarkus/runtime')
+include 'protomolt-integration-quarkus'
+project(':protomolt-integration-quarkus').projectDir = file('host/integration/quarkus/runtime')
 
-include 'protomolt-quarkus-deployment'
-project(':protomolt-quarkus-deployment').projectDir = file('host/integrations/quarkus/deployment')
+include 'protomolt-integration-quarkus-deployment'
+project(':protomolt-integration-quarkus-deployment').projectDir = file('host/integration/quarkus/deployment')
 
-include 'protomolt-spring'
-project(':protomolt-spring').projectDir = file('host/integrations/spring')
+include 'protomolt-integration-spring'
+project(':protomolt-integration-spring').projectDir = file('host/integration/spring')
 
 // apps/ — the shipped end-user artifacts.
 

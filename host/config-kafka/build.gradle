@@ -14,7 +14,7 @@ dependencies {
     testImplementation project(':protomolt-registry')
     testImplementation project(':protomolt-registry-service')
     testImplementation project(':protomolt-schema-confluent')
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.testcontainers.junit.jupiter
     testImplementation libs.testcontainers.redpanda
     testRuntimeOnly libs.slf4j.simple

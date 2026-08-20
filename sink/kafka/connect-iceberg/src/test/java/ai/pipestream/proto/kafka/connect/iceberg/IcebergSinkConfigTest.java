@@ -98,11 +98,11 @@ class IcebergSinkConfigTest {
         IcebergSinkConfig config = config(Map.of(
                 IcebergSinkConfig.PARTITION, "region,at:day,qty:bucket[16]"));
         assertThat(config.partitionBy()).containsExactly(
-                new ai.pipestream.proto.lake.iceberg.IcebergPartitions.PartitionField(
+                new ai.pipestream.proto.iceberg.IcebergPartitions.PartitionField(
                         "region", "identity"),
-                new ai.pipestream.proto.lake.iceberg.IcebergPartitions.PartitionField(
+                new ai.pipestream.proto.iceberg.IcebergPartitions.PartitionField(
                         "at", "day"),
-                new ai.pipestream.proto.lake.iceberg.IcebergPartitions.PartitionField(
+                new ai.pipestream.proto.iceberg.IcebergPartitions.PartitionField(
                         "qty", "bucket[16]"));
     }
 

@@ -14,7 +14,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
-import ai.pipestream.format.Formats;
+import ai.pipestream.proto.formats.Formats;
 import java.util.HexFormat;
 import java.util.Set;
 

@@ -3,7 +3,7 @@ package ai.pipestream.proto.metric.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import ai.pipestream.proto.lake.iceberg.LocalFileIO;
+import ai.pipestream.proto.iceberg.LocalFileIO;
 import ai.pipestream.proto.metric.MetricRow;
 import ai.pipestream.proto.metric.spi.RollupSink;
 import java.nio.file.Path;

@@ -1,6 +1,6 @@
 # Publishing schemas to registries
 
-`SchemaPublisher` (in `protomolt-proto-sources`) is the write-side
+`SchemaPublisher` (in `protomolt-sources`) is the write-side
 counterpart of `DescriptorLoader`: it registers a `ProtoSourceSet`: however
 it was [gathered](../acquire/gathering.md): with a schema registry. Implementations
 exist for Confluent-compatible registries and Apicurio Registry v3, so a

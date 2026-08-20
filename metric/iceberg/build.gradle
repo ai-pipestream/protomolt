@@ -14,7 +14,7 @@ dependencies {
 
     // The proof writes the fixture table through the real sink and reads
     // the numbers back through the executor.
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     // The object-store proof: the sink writes to LocalStack S3 through
     // S3FileIO and the executor materializes the scan back.
     testImplementation project(':protomolt-iceberg-s3')

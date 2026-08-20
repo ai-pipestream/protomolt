@@ -5,7 +5,7 @@
  * worker registers, {@link ai.pipestream.proto.kafka.connect.iceberg.IcebergSinkConfig} declares
  * its settings, and {@link ai.pipestream.proto.kafka.connect.iceberg.IcebergSinkTask} decodes each
  * delivered batch into row messages and commits it as one snapshot through
- * {@link ai.pipestream.proto.lake.iceberg.IcebergSink}. Rows are written by ProtoMolt's
+ * {@link ai.pipestream.proto.iceberg.IcebergSink}. Rows are written by ProtoMolt's
  * descriptor-driven Parquet emitter, so no generated stubs and no Hadoop classes are needed on the
  * worker.</p>
  *

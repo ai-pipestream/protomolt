@@ -1,8 +1,8 @@
 package ai.pipestream.proto.systemtests;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.gather.GatheringDescriptorLoader;
-import ai.pipestream.proto.gather.git.GitProtoGatherer;
+import ai.pipestream.proto.acquire.gather.GatheringDescriptorLoader;
+import ai.pipestream.proto.acquire.gather.git.GitProtoGatherer;
 import ai.pipestream.proto.index.opensearch.OpenSearchMappingGenerator;
 import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.index.spi.IndexFieldKind;

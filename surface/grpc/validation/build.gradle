@@ -9,6 +9,6 @@ dependencies {
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.stub
     testImplementation libs.grpc.protobuf
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.slf4j.simple
 }

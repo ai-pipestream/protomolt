@@ -1,6 +1,6 @@
 package ai.pipestream.proto.validate.cel;
 
-import ai.pipestream.format.Formats;
+import ai.pipestream.proto.formats.Formats;
 import com.google.common.primitives.UnsignedLong;
 import com.google.protobuf.ByteString;
 import dev.cel.common.CelFunctionDecl;

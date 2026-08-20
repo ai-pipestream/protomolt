@@ -8,15 +8,15 @@ def supportedModules = [
         'protomolt-workflow',
         'protomolt-helpers',
         'protomolt-formats',
-        'protomolt-proto-sources',
-        'protomolt-gather',
-        'protomolt-gather-git',
-        'protomolt-gather-maven',
+        'protomolt-sources',
+        'protomolt-acquire-gather',
+        'protomolt-acquire-gather-git',
+        'protomolt-acquire-gather-maven',
         'protomolt-emit',
         'protomolt-emit-okf',
         'protomolt-emit-parquet',
         'protomolt-emit-parquet-s3',
-        'protomolt-msgraph',
+        'protomolt-acquire-msgraph',
         'protomolt-acquire-confluence',
         'protomolt-acquire-pull',
         'protomolt-acquire-s3',
@@ -40,7 +40,7 @@ def supportedModules = [
         'protomolt-agent-host',
         'protomolt-acp',
         'protomolt-acp-agent',
-        'protomolt-connector',
+        'protomolt-acquire-connector',
         'protomolt-kafka-connect',
         'protomolt-kafka-connect-iceberg',
         'protomolt-kafka-connect-opensearch',
@@ -102,9 +102,9 @@ def supportedModules = [
         'protomolt-rerank-tei',
         'protomolt-rerank-ovms',
         'protomolt-rerank-harness',
-        'protomolt-quarkus',
-        'protomolt-quarkus-deployment',
-        'protomolt-spring',
+        'protomolt-integration-quarkus',
+        'protomolt-integration-quarkus-deployment',
+        'protomolt-integration-spring',
         'protomolt-composer',
         'protomolt-config',
         'protomolt-config-registry',
@@ -154,7 +154,7 @@ catalog {
             String alias = moduleName.substring('protomolt-'.length())
             library(alias, project.group.toString(), moduleName).versionRef('protomolt')
         }
-        bundle('core', ['descriptors', 'helpers', 'proto-sources'])
+        bundle('core', ['descriptors', 'helpers', 'sources'])
         bundle('schema-governance', ['compat', 'registry', 'registry-service'])
         bundle('validation', ['protobuf-validation',
                               'protobuf-validation-protovalidate'])

@@ -3,7 +3,7 @@ description = 'Core protobuf mapping APIs'
 dependencies {
     api project(':protomolt-helpers')
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation platform(libs.junit.bom)
     testImplementation libs.junit.jupiter
     testImplementation libs.assertj.core

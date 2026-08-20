@@ -1,7 +1,7 @@
 package ai.pipestream.proto.kafka.connect.iceberg;
 
 import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
-import ai.pipestream.proto.lake.iceberg.IcebergSink;
+import ai.pipestream.proto.iceberg.IcebergSink;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;

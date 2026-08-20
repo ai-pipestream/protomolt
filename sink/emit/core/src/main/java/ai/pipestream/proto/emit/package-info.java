@@ -9,7 +9,7 @@
  * cases that need no destination at all, such as the deterministic in-memory zip a verb
  * response carries a whole bundle in.</p>
  *
- * <p>This package is the mirror image of the {@code ai.pipestream.proto.gather} modules:
+ * <p>This package is the mirror image of the {@code ai.pipestream.proto.acquire.gather} modules:
  * gatherers turn a place into proto sources, renderers turn schemas or messages into a bundle,
  * and sinks turn a bundle back into a place. The renderers themselves live in sibling modules —
  * {@code ai.pipestream.proto.emit.okf} for Open Knowledge Format documents and

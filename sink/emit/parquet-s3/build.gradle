@@ -8,7 +8,7 @@ dependencies {
     // The lightest HTTP client (JDK HttpURLConnection - no Netty, no Apache HttpClient).
     implementation libs.awssdk.url.connection.client
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     // The example Group reader used to verify round-trips; protomolt-emit-parquet keeps
     // parquet-hadoop as an implementation detail, so tests declare it themselves.
     testImplementation libs.parquet.hadoop
