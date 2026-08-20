@@ -256,7 +256,7 @@ public final class SensitivityMasker {
      * packed type travels with the schema that declares the {@code Any} field, and honestly
      * empty-handed when the payload is a type this schema never heard of.
      */
-    private static PayloadResolver importedTypes(Message message) {
+    public static PayloadResolver importedTypes(Message message) {
         FileDescriptor root = message.getDescriptorForType().getFile();
         return typeName -> {
             Deque<FileDescriptor> queue = new ArrayDeque<>(List.of(root));

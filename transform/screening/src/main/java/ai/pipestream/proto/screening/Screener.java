@@ -2,9 +2,15 @@ package ai.pipestream.proto.screening;
 
 import ai.pipestream.proto.meta.DescriptorMetadata;
 import ai.pipestream.proto.meta.FieldMeta;
+import ai.pipestream.proto.meta.SensitivityMasker.PayloadResolver;
+import ai.pipestream.proto.meta.SensitivityMasker;
 import ai.pipestream.proto.types.ScreeningConfig;
 import ai.pipestream.proto.types.ScreeningPolicy;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 
 import java.util.ArrayList;
@@ -31,26 +37,43 @@ import java.util.Objects;
  *
  * <p>The walk covers singular and repeated string fields, recurses into
  * singular, repeated, and map-valued nested messages, and screens
- * string-valued map entries under the map field's own sensitivity. Packed
- * {@code google.protobuf.Any} payloads are not unpacked here; the payload
- * resolver seam of the sensitivity masker is the recorded follow-up for
- * that.
+ * string-valued map entries under the map field's own sensitivity. A packed
+ * {@code google.protobuf.Any} payload is opened through the sensitivity
+ * masker's {@link PayloadResolver} seam, screened as any other message, and
+ * repacked under the same type URL only when a span was masked; a payload
+ * whose type the resolver cannot answer is reported in
+ * {@link Verdict#unresolvedPaths()}, never failed and never passed over in
+ * silence — its fields are exactly the ones nobody screened.
  */
 public final class Screener {
 
     /** The masker's REDACT literal, shared so masked values read identically. */
     private static final String MASKED = "***";
 
+    private static final String ANY_TYPE = "google.protobuf.Any";
+
     private final ScreeningEngine engine;
     private final ScreeningConfig config;
+    private final PayloadResolver resolver;
 
     /**
      * @param engine the detection engine
      * @param config the mount: screened class, threshold, and policy
      */
     public Screener(ScreeningEngine engine, ScreeningConfig config) {
+        this(engine, config, null);
+    }
+
+    /**
+     * @param engine the detection engine
+     * @param config the mount: screened class, threshold, and policy
+     * @param resolver resolves packed payload types; null selects the default,
+     *        the screened message's own file and its transitive imports
+     */
+    public Screener(ScreeningEngine engine, ScreeningConfig config, PayloadResolver resolver) {
         this.engine = Objects.requireNonNull(engine, "engine");
         this.config = Objects.requireNonNull(config, "config");
+        this.resolver = resolver;
         if (config.getSensitivityClass().isEmpty()) {
             throw new IllegalArgumentException("config.sensitivity_class must be present");
         }
@@ -62,11 +85,16 @@ public final class Screener {
 
     /**
      * The screening outcome: the (possibly masked) message and the findings.
+     * A non-empty {@link #unresolvedPaths()} means packed payloads went
+     * unscreened; a caller treating screening as a boundary decides what an
+     * unopened payload means rather than assume the output is clean.
      *
      * @param message the message after policy application
      * @param findings one entry per acted-on detection
+     * @param unresolvedPaths packed payloads whose type the resolver could not answer
      */
-    public record Verdict(Message message, List<Finding> findings) {
+    public record Verdict(Message message, List<Finding> findings,
+                          List<String> unresolvedPaths) {
     }
 
     /**
@@ -112,18 +140,27 @@ public final class Screener {
     public Verdict screen(Message message) {
         Objects.requireNonNull(message, "message");
         List<Finding> findings = new ArrayList<>();
-        Message screened = walk(message, "", findings);
-        return new Verdict(screened, List.copyOf(findings));
+        List<String> unresolved = new ArrayList<>();
+        Pass pass = new Pass(findings, unresolved,
+                resolver != null ? resolver : SensitivityMasker.importedTypes(message));
+        Message screened = walk(message, "", pass);
+        return new Verdict(screened, List.copyOf(findings), List.copyOf(unresolved));
     }
 
-    private Message walk(Message message, String prefix, List<Finding> findings) {
+    /** One screen()'s shared state: findings, unresolved payloads, the resolver. */
+    private record Pass(List<Finding> findings, List<String> unresolved,
+                        PayloadResolver resolver) {
+    }
+
+    private Message walk(Message message, String prefix, Pass pass) {
+        List<Finding> findings = pass.findings();
         Message.Builder builder = null;
         for (Map.Entry<FieldDescriptor, Object> entry : message.getAllFields().entrySet()) {
             FieldDescriptor field = entry.getKey();
             String path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
             boolean screened = screenedClass(field);
             if (field.isMapField()) {
-                builder = walkMap(message, builder, field, path, screened, findings);
+                builder = walkMap(message, builder, field, path, screened, pass);
             } else if (field.isRepeated()) {
                 int count = message.getRepeatedFieldCount(field);
                 for (int i = 0; i < count; i++) {
@@ -138,7 +175,7 @@ public final class Screener {
                         }
                     } else if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                         Message nested = (Message) message.getRepeatedField(field, i);
-                        Message walked = walk(nested, elementPath, findings);
+                        Message walked = walkNested(nested, elementPath, pass);
                         if (walked != nested) {
                             builder = builder(message, builder);
                             builder.setRepeatedField(field, i, walked);
@@ -153,7 +190,7 @@ public final class Screener {
                 }
             } else if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 Message nested = (Message) entry.getValue();
-                Message walked = walk(nested, path, findings);
+                Message walked = walkNested(nested, path, pass);
                 if (walked != nested) {
                     builder = builder(message, builder);
                     builder.setField(field, walked);
@@ -163,9 +200,55 @@ public final class Screener {
         return builder == null ? message : builder.build();
     }
 
+    /** Nested dispatch: a packed payload opens through the resolver, the rest recurse. */
+    private Message walkNested(Message nested, String path, Pass pass) {
+        if (ANY_TYPE.equals(nested.getDescriptorForType().getFullName())) {
+            return screenAny(nested, path, pass);
+        }
+        return walk(nested, path, pass);
+    }
+
+    /**
+     * Opens one packed payload, screens it, and repacks under the same type URL
+     * only when a span was masked — a payload nothing changed keeps its exact
+     * bytes. An unanswerable type or bytes that disagree with the type URL are
+     * reported, never failed.
+     */
+    private Message screenAny(Message any, String path, Pass pass) {
+        FieldDescriptor urlField = any.getDescriptorForType().findFieldByName("type_url");
+        FieldDescriptor valueField = any.getDescriptorForType().findFieldByName("value");
+        if (urlField == null || valueField == null) {
+            return any;
+        }
+        String typeUrl = (String) any.getField(urlField);
+        ByteString packed = (ByteString) any.getField(valueField);
+        if (typeUrl.isEmpty() || packed.isEmpty()) {
+            return any;
+        }
+        String typeName = typeUrl.substring(typeUrl.lastIndexOf('/') + 1);
+        Descriptor payloadType = pass.resolver().find(typeName);
+        if (payloadType == null) {
+            pass.unresolved().add(path);
+            return any;
+        }
+        Message payload;
+        try {
+            payload = DynamicMessage.parseFrom(payloadType, packed);
+        } catch (InvalidProtocolBufferException e) {
+            pass.unresolved().add(path);
+            return any;
+        }
+        Message screened = walk(payload, path, pass);
+        if (screened == payload) {
+            return any;
+        }
+        return any.toBuilder().setField(valueField, screened.toByteString()).build();
+    }
+
     /** Map entries screen their values under the map field's own sensitivity. */
     private Message.Builder walkMap(Message message, Message.Builder builder,
-            FieldDescriptor field, String path, boolean screened, List<Finding> findings) {
+            FieldDescriptor field, String path, boolean screened, Pass pass) {
+        List<Finding> findings = pass.findings();
         FieldDescriptor keyField = field.getMessageType().findFieldByName("key");
         FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
         int count = message.getRepeatedFieldCount(field);
@@ -182,7 +265,7 @@ public final class Screener {
                 }
             } else if (valueField.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 Message nested = (Message) mapEntry.getField(valueField);
-                Message walked = walk(nested, entryPath, findings);
+                Message walked = walkNested(nested, entryPath, pass);
                 if (walked != nested) {
                     builder = builder(message, builder);
                     builder.setRepeatedField(field, i,

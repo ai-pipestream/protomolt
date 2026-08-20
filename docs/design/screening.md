@@ -126,10 +126,13 @@ The door mount completes the slice end to end:
   version, and the threshold as evidence — never the detected text.
   REFUSE surfaces as a failed precondition naming the finding.
 
+Packed `google.protobuf.Any` payloads open through the sensitivity
+masker's payload-resolver seam: screened as any other message,
+repacked under the same type URL only when a span was masked, and a
+type the resolver cannot answer reported in the verdict's
+`unresolvedPaths`, never failed and never passed over in silence.
 Still open: model references beyond `file:` (the operator-pack
-mechanism, shared with the postal-code pack question), and packed
-`google.protobuf.Any` payload recursion (the sensitivity masker's
-payload-resolver seam is the template).
+mechanism, shared with the postal-code pack question).
 
 ## Sequencing
 

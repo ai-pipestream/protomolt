@@ -174,7 +174,10 @@ with at least one platform behavior attached — no shape zoo:
   `postal_code` must match one mask (`postal.code_grammar`, pack
   version as evidence); an unmounted region is unchecked, because no
   schema declaration binds a postal code to the pack — it is a
-  per-region opt-in, not a fail-closed gate.
+  per-region opt-in, not a fail-closed gate. On the document platform,
+  `DOCUMENT_PLATFORM_POSTAL_CODES=true` follows the pack off the
+  config lane into the search door's document gate; until the pack
+  applies, every region is unchecked, the same opt-in stance.
 
 ## Taxonomies and ontologies
 
