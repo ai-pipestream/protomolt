@@ -5,14 +5,14 @@ import ai.pipestream.proto.repo.v1.Document;
 import java.util.Map;
 
 /**
- * The submission seam between a pull connector and the intake door: one assembled document in,
+ * The submission seam between a pull connector and the intake service: one assembled document in,
  * the intake receipt out. The production implementation is {@link GrpcIntakeFeed}; tests inject
  * fakes to exercise pull logic without a transport.
  */
 public interface IntakeFeed extends AutoCloseable {
 
     /**
-     * Submits one document through the intake door.
+     * Submits one document through the intake service.
      *
      * @param document the assembled document (see {@link PullDocuments#document})
      * @param datasourceId the datasource the document belongs to

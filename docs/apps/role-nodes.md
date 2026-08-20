@@ -16,7 +16,8 @@ channels; a required role *outside* the selection is reached remotely
 through `PROTOMOLT_<ROLE>_TARGET` (e.g. `PROTOMOLT_REPO_TARGET=repo-node:9090`),
 opened as a plaintext gRPC channel. The same rule the golden path proved
 in-process holds across the wire: intake authenticates, saves land in the
-repository, the door indexes and serves — wherever each role happens to run.
+repository, the search service indexes and serves — wherever each role
+happens to run.
 
 The roles the platform binary knows
 (`DocumentPlatformConfig.KNOWN_ROLES`):
@@ -30,8 +31,8 @@ The roles the platform binary knows
 | `jobs` | durable workflow runs | needs the jobs database |
 | `intake` | authenticated ingest gRPC | needs a key store |
 | `playground` | parser playground page | |
-| `search` | search door gRPC | needs the index directory |
-| `metrics` | metric door gRPC (`MetricService`) | needs `search` on the same node: it aggregates over the search index in process |
+| `search` | search service gRPC | needs the index directory |
+| `metrics` | metric service gRPC (`MetricService`) | needs `search` on the same node: it aggregates over the search index in process |
 | `search-console` | the search page + operations panel | panel needs a local registry or `DOCUMENT_PLATFORM_ACTIONS_URL` |
 | `acquire-s3` | the `pull-s3` verb | opt-in; `PROTOMOLT_ACQUIRE_*` config |
 | `acquire-jdbc` | the `pull-jdbc` verb | opt-in; `PROTOMOLT_ACQUIRE_*` config |
@@ -43,8 +44,8 @@ actions catalog and workflow store from what co-mounted modules contribute
 at wire time. So `registry`, `jobs` and `parse` belong on one node (the
 jobs verbs, the parse-and-index workflow and the replay action all ride the
 registry's route), and the acquire roles belong with `intake` (they feed
-the door in-process). `metrics` belongs with `search`: the metric
-executor borrows the search door's live store, so a node claiming
+the intake service in-process). `metrics` belongs with `search`: the
+metric executor borrows the search service's live store, so a node claiming
 `metrics` without `search` refuses to boot; its `describe-mapping` and
 `query-metrics` verbs additionally need a co-mounted `registry` to be
 served. `repo` splits off cleanly today — that is the proven topology —
@@ -78,6 +79,6 @@ reader picks up newer snapshots by restarting over an empty directory.
 boots the one image twice: a `repo-node` (`PROTOMOLT_ROLES=repo`) and an
 `app-node` with everything else and
 `PROTOMOLT_REPO_TARGET=repo-node:9090`. `PlatformRoleNodeIT` proves the
-same split in-tree: a document ingested through the intake node's door is
+same split in-tree: a document ingested through the intake node is
 read back from the repo node's store, surfaces outside a node's role list
 refuse by role name, and configuration is only demanded for selected roles.

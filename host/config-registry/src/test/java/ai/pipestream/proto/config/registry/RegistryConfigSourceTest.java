@@ -26,7 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The registry plug end to end: a schema with declared rules registers,
- * the registry's config door refuses a document violating those rules
+ * the registry's config gate refuses a document violating those rules
  * and versions a valid one by commit, the source reads the typed bytes
  * back, and the consumer applies them with the commit as evidence. The
  * whole lane is the house stack — git store, native HTTP surface,
@@ -99,7 +99,7 @@ class RegistryConfigSourceTest {
     }
 
     @Test
-    void theDoorGatesTheSourceReadsAndTheConsumerAppliesWithTheCommitAsEvidence()
+    void theGateChecksTheSourceReadsAndTheConsumerAppliesWithTheCommitAsEvidence()
             throws Exception {
         // A document violating the type's own declared rules never
         // reaches Git.
@@ -107,7 +107,7 @@ class RegistryConfigSourceTest {
                 {"messageType": "configit.v1.Throttle", "config": {"limit": 0}}""");
         assertThat(refused.statusCode()).isEqualTo(422);
         assertThat(refused.body()).contains("limit");
-        // The refusal happened at the door: nothing reached Git.
+        // The refusal happened at the service: nothing reached Git.
         assertThat(store.config("parse-throttle")).isEmpty();
 
         // An unregistered type refuses naming it.
@@ -163,7 +163,7 @@ class RegistryConfigSourceTest {
 
     @Test
     void aHandEditedRepositoryServesARefusalNeverAnInvalidDocument() throws Exception {
-        // Straight into the store, past the door: the way a hand edit or a
+        // Straight into the store, past the service: the way a hand edit or a
         // bad federation merge would land. The read gate still refuses.
         store.putConfig("hand-edited",
                 "{\"messageType\": \"configit.v1.Throttle\", \"config\": {\"limit\": 0}}");

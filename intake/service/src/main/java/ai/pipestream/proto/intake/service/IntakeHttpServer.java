@@ -31,7 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The HTTP lane of the intake door: {@code POST /v1/intake:upload}, raw
+ * The HTTP lane of the intake service: {@code POST /v1/intake:upload}, raw
  * binary body. It mirrors repo-service's raw-upload route
  * ({@code UploadHttpServer}) with {@code x-api-key} replacing the raw account
  * headers — the account is never a request parameter here, it rides the API

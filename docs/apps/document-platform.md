@@ -2,10 +2,10 @@
 
 The document platform is the one-container deployment of the document
 pipeline: `apps/document-platform` wires repo-service, the authenticated
-intake door, the parsing coordinator, the durable jobs worker, the schema
-registry, the search door with its console page and metric door, and the
-streaming parser playground into one JVM
-over the in-process transport. It is the productized form of what
+intake service, the parsing coordinator, the durable jobs worker, the
+schema registry, the search service with its console page and the metric
+service, and the streaming parser playground into one JVM over the
+in-process transport. It is the productized form of what
 `GoldenPathSystemTest` proves. The same binary boots as specialized nodes
 via `PROTOMOLT_ROLES` — see [Role nodes](role-nodes.md).
 
@@ -24,8 +24,8 @@ the jobs store) and RustFS for object storage. Ports:
 | 9090 | repo-service gRPC (DocumentService, DriveService, health, reflection) |
 | 9092 | intake gRPC (`IntakeService`, API-key authenticated) |
 | 9093 | parsing coordinator gRPC (`ParseCoordinatorService`) |
-| 9094 | search door gRPC (`SearchService`, `SearchIndexService`) |
-| 9095 | metric door gRPC (`MetricService`) |
+| 9094 | search service gRPC (`SearchService`, `SearchIndexService`) |
+| 9095 | metric service gRPC (`MetricService`) |
 | 8081 | schema registry HTTP, with the jobs verbs on `/protomolt/actions` |
 | 8095 | parser playground |
 | 8096 | search console (the search page + operations panel) |
@@ -45,19 +45,20 @@ the jobs store) and RustFS for object storage. Ports:
 - The `parse-and-index` workflow registers too: the same submission with
   `{"workflowName": "parse-and-index", "input": {"address": {...},
   "mappingSubject": "repo-document"}}` parses the document and indexes it
-  under the [search door](../search/door.md)'s `repo-document` subject, so a
-  completed run means the document answers queries on the search port.
+  under the [search service](../search/service.md)'s `repo-document`
+  subject, so a completed run means the document answers queries on the
+  search port.
 - The `replay-documents` action re-runs a stored workflow over a drive's
   documents (one durable run each): the operation behind a chunking-policy
-  or mapping change, with the door's atomic replace-by-identity keeping
+  or mapping change, with the service's atomic replace-by-identity keeping
   replays duplicate-free.
-- The search door serves the `repo-document` mapping subject over the index
-  at `DOCUMENT_PLATFORM_SEARCH_INDEX_DIR` (default `/data/search-index`).
+- The search service serves the `repo-document` mapping subject over the
+  index at `DOCUMENT_PLATFORM_SEARCH_INDEX_DIR` (default `/data/search-index`).
   The lexical lane always works; the vector lane activates when a Model2Vec
   model directory is configured (`PROTOMOLT_MODEL2VEC_PATH`), with the
   policy's dims read from the loaded model.
-- The metric door answers over the same live index: `repo-document` serves
-  a `documents` COUNT measure, group-by dimensions on document type,
+- The metric service answers over the same live index: `repo-document`
+  serves a `documents` COUNT measure, group-by dimensions on document type,
   language, and category, and a processed-date time dimension (daily grain
   by default) through `MetricService` on the metrics port, with the
   `describe-mapping` and `query-metrics` verbs riding the registry's
@@ -72,14 +73,15 @@ the jobs store) and RustFS for object storage. Ports:
   `pipeline` drives provision at boot; the compose file seeds account
   `demo` with API key `demo-key`.
 
-Key stores follow the intake door's convention: OIDC introspection
+Key stores follow the intake service's convention: OIDC introspection
 (`DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL` + client id/secret) or
 the env-seeded table (`DOCUMENT_PLATFORM_INTAKE_KEYS`).
 
 ## Index snapshots
 
 The search index can snapshot to S3 at commit points and restore on boot
-(see [the door's snapshot section](../search/door.md#index-snapshots)).
+(see [the search service's snapshot
+section](../search/service.md#index-snapshots)).
 The `DOCUMENT_PLATFORM_SEARCH_SNAPSHOT_S3_*` family turns it on:
 
 | Variable | Meaning |
@@ -116,9 +118,9 @@ environment-only configuration, exactly as before.
 
 The first consumer is the parse role's routing rules: the routing
 contract publishes to the registry at boot beside the document model,
-so the registry's config door gates a `parse-routing` document (an
+so the registry's config gate checks a `parse-routing` document (an
 `ai.pipestream.proto.parse.v1.RoutingConfig`) against it — an empty
-rule set refuses at the door, because a coordinator with no rules
+rule set refuses at the gate, because a coordinator with no rules
 routes nothing and that must be said, not configured. A valid document
 swaps the live rules on the next interval with no reboot and no CRUD
 surface (the reload the routing contract always promised), and a
@@ -186,5 +188,5 @@ registry subjects, authenticated ingest, submit-workflow to completion, the
 parsed result read back, parse-and-index to a lexical search hit on the
 search port, replay without duplication, the playground page, the
 search console (page, subjects, a search hit through the JSON bridge, and
-the operations proxy), and the metric door counting the corpus over its
+the operations proxy), and the metric service counting the corpus over its
 own port and through the catalog verbs.

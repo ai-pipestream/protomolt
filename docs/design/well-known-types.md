@@ -7,7 +7,7 @@ in this chapter first.
 
 A well-known type stays a plain proto scalar on the wire. Any protobuf
 client in any language produces and consumes it untouched; a protomolt
-door enforces the semantics and hands a foreign producer a structured
+gate enforces the semantics and hands a foreign producer a structured
 `INVALID_ARGUMENT` naming the violation — never silent corruption,
 never a client-side library requirement. On protomolt-to-protomolt
 paths the same declaration also fires client-side (the serde's
@@ -15,7 +15,7 @@ validate-on-write), so bad data dies at the edge. Foreign systems
 degrade gracefully; house systems get the full contract. One
 declaration enforces at every gate the platform already mounts: the
 gRPC interceptor, the serde's write and read paths, the registry's
-config door, and the config consumer's apply.
+config gate, and the config consumer's apply.
 
 ## Tier 1: named formats, not wrappers
 
@@ -176,7 +176,7 @@ with at least one platform behavior attached — no shape zoo:
   schema declaration binds a postal code to the pack — it is a
   per-region opt-in, not a fail-closed gate. On the document platform,
   `DOCUMENT_PLATFORM_POSTAL_CODES=true` follows the pack off the
-  config lane into the search door's document gate; until the pack
+  config lane into the search service's document gate; until the pack
   applies, every region is unchecked, the same opt-in stance.
 
 ## Taxonomies and ontologies
@@ -203,7 +203,7 @@ the config source's version (a git commit, a topic offset) is the
 version, the config lane's own version-as-evidence stance; a copy of
 either inside the document could only agree or lie. The `Taxonomy`
 *type* is registered and compat-gated like any schema; the documents
-are per-mesh operator data behind the registry's config door (which
+are per-mesh operator data behind the registry's config gate (which
 re-gates on read — config documents deliberately do not federate).
 
 A field binds to a taxonomy in the schema: `taxonomy: "products"` on
@@ -222,16 +222,16 @@ is left to the type's own structural rules. Given a mounted version
 the verdict is deterministic, which is what keeps this on the
 validation side of the screening line below.
 
-The first platform consumer is the search door's **document gate**,
+The first platform consumer is the search service's **document gate**,
 opt-in by environment (`DOCUMENT_PLATFORM_TAXONOMIES`, a
 comma-separated list of names; it requires the config lane): with
-taxonomies named, the door validates each fetched document over the
+taxonomies named, the service validates each fetched document over the
 live mounts before anything indexes — membership enforced as of index
 time, refusals naming the violations, fail-closed while a declared
 taxonomy has not yet mounted. Unset, no declared-rules validation
 runs at index time. Packed `google.protobuf.Any` payloads
 stay with the seams that own a descriptor registry (the indexing
-facade and the engines' payload gate); this door's registry-free gate
+facade and the engines' payload gate); this service's registry-free gate
 deliberately covers the document's own typed fields.
 
 Licensing rule, in force because this project intends to be

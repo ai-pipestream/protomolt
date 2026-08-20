@@ -1,4 +1,4 @@
-description = 'The search console: a framework-free product page over the search door (subjects, lanes, hits) with an operations panel riding the actions route'
+description = 'The search console: a framework-free product page over the search service (subjects, lanes, hits) with an operations panel riding the actions route'
 
 dependencies {
     api project(':protomolt-composer')

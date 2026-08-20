@@ -126,8 +126,8 @@ class ParseCoordinatorIT {
                 ParserRegistry.of(Map.of(
                         "textract",
                         ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + "parse-it-parser")));
-        coordinator.startInProcess("parse-it-door");
-        coordinatorChannel = InProcessChannelBuilder.forName("parse-it-door").build();
+        coordinator.startInProcess("parse-it-coordinator");
+        coordinatorChannel = InProcessChannelBuilder.forName("parse-it-coordinator").build();
         stub = ParseCoordinatorServiceGrpc.newBlockingStub(coordinatorChannel);
     }
 

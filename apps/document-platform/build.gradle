@@ -2,7 +2,7 @@ plugins {
     id 'application'
 }
 
-description = 'The document platform in one container: repo-service, the authenticated intake door, the parsing coordinator with the embedded reference parser, the durable jobs worker, the git-backed schema registry (on by default, jobs verbs mounted), the streaming parser playground, and the search door, all wired over the in-process transport'
+description = 'The document platform in one container: repo-service, the authenticated intake service, the parsing coordinator with the embedded reference parser, the durable jobs worker, the git-backed schema registry (on by default, jobs verbs mounted), the streaming parser playground, and the search service, all wired over the in-process transport'
 
 dependencies {
     implementation project(':protomolt-composer')
@@ -14,7 +14,7 @@ dependencies {
     implementation project(':protomolt-parse-document')
     implementation project(':protomolt-parse-playground')
     implementation project(':protomolt-jobs-service')
-    implementation project(':protomolt-search-door')
+    implementation project(':protomolt-search-service')
     implementation project(':protomolt-screening')
     implementation project(':protomolt-search-snapshot-s3')
     implementation platform(libs.awssdk.bom)
@@ -73,7 +73,7 @@ dependencies {
     testRuntimeOnly libs.slf4j.simple
 }
 
-// The search door links the Lucene 11 line, which ships Java 25 bytecode:
+// The search service links the Lucene 11 line, which ships Java 25 bytecode:
 // the app and its tests need a 25 runtime (same pin as :protomolt-index-lucene).
 tasks.withType(Test).configureEach {
     javaLauncher = javaToolchains.launcherFor {

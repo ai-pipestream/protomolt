@@ -79,7 +79,7 @@ rollup, pre-aggregation, or metric store as product nouns.
 
 | Word | Means here | Does not mean |
 |---|---|---|
-| mapping subject | Named queryable surface, same idea as the search door's `ServedMapping` | A Cube "view" product object |
+| mapping subject | Named queryable surface, same idea as the search service's `ServedMapping` | A Cube "view" product object |
 | member | A named field on that mapping, with role `DIMENSION` or `MEASURE` | A quality dimension (`quality.v1`) |
 | metric query | Request: subject, measures, group-by members, filters, grain, limit | Ad-hoc warehouse SQL |
 | grain | Time truncation on a `DATE` member (`DAY`, `WEEK`, `MONTH`, ...) | A Cube time dimension object |
@@ -140,7 +140,7 @@ ProtoMolt's agent surface is core, free, and protocol-plural:
 
 - A self-describing action catalog: 17 descriptor-only defaults, 31 in
   the stdio MCP binary, 41 in the full catalog, plus host-contributed
-  verbs (delegation, mesh, federation, door replay, connector pulls) to
+  verbs (delegation, mesh, federation, search replay, connector pulls) to
   roughly sixty on a composed platform. Every verb declares name,
   tool-grade description, and JSON Schema input, so the catalog **is**
   the MCP manifest with no translation layer. Stable kebab-case error
@@ -179,13 +179,13 @@ The last one is the analytics gap, not an agentic gap.
 
 Cube has 28 warehouse drivers and no ingest. ProtoMolt ingests (S3,
 JDBC, Microsoft Graph, Confluence, Kafka Connect, stream connectors
-through the intake door), parses (coordinator plus plugin SPI plus the
+through the intake service), parses (coordinator plus plugin SPI plus the
 streaming gRParse adapter; the gRParse service behind it speaks a
 docling-shaped contract with selectable OCR engines including
 Tesseract, PDF backends, table-structure extraction, and a VLM
 pipeline, which is the docling-parity parsing story), transforms (mapping, masking, projections, joins,
 quality), indexes (Lucene, OpenSearch, Solr renderers), retrieves
-(search door: lexical, vector, hybrid lanes with chunk identity and
+(search service: lexical, vector, hybrid lanes with chunk identity and
 membership-gated refusals), and lands lake tables (descriptor-driven
 Iceberg, Hadoop-free, with Parquet column metrics for external
 engines). The same message can be parsed, validated, projected,
@@ -215,10 +215,11 @@ of overlap rather than product-versus-product.
 | Row-level security with JWT query rewrite | Authorization scopes landed with a caller model; the compile-time rewrite is not built | Behind (planned, v1.1 here) |
 | Ingest / parse / RAG / lake write | The whole acquire-to-sink platform | Ours alone |
 
-One asterisk on our own column: the door's `validate.v1` annotations on
+One asterisk on our own column: the search service's `validate.v1`
+annotations on
 `search.v1` are machine-readable contract, but the validating server
 interceptors are not yet installed in any production server; live
-enforcement is the door's hand-written refusals. Closing that is part
+enforcement is the service's hand-written refusals. Closing that is part
 of landing search, not part of the metric work.
 
 ## The gap, precisely
@@ -236,14 +237,14 @@ below.
 ## Sequencing: search lands first
 
 Decision of record: the metric work does not start until the search
-surface is finished. "Finished" means the open door items in
+surface is finished. "Finished" means the open search-service items in
 [planned-work](planned-work.md), at minimum: typed `SearchHit.stored`
 values (aggregating over stringified values is how metric layers rot),
 validating interceptors installed so `validate.v1` is enforced where it
 is declared, coordinator-side body derivation, and retrieval evidence.
-Those items make the door trustworthy; the metric layer then reuses its
+Those items make the service trustworthy; the metric layer then reuses its
 nouns (subjects, refusal voice, mount pattern) and its hardened store.
-Starting metrics before that just builds a second door with the same
+Starting metrics before that just builds a second service with the same
 unfinished edges.
 
 ## Decisions of record
@@ -254,7 +255,7 @@ unfinished edges.
    same catalog and protocols they already use for everything else.
 2. **One mapping, engines behind an interface.** The mapping is the
    contract; execution is a `MetricExecutor` SPI, and **Lucene is the
-   shipped default executor** (it reads doc values the door already
+   shipped default executor** (it reads doc values the search service already
    writes). The subject's mount chooses the engine. A query only names
    a backend to disambiguate: on a single-engine mount an unset backend
    means the mount's engine, which is configuration, not a guess; on a
@@ -264,7 +265,7 @@ unfinished edges.
 3. **Refuse, never guess.** Unknown subject, unknown member, grain on a
    non-`DATE` member, measure used as group-by, empty measures, `limit`
    over the bound: refused by name with the legal set, same voice as
-   [the search door](../search/door.md).
+   [the search service](../search/service.md).
 4. **Do not overload `SearchService`.** Retrieval stays `Search` /
    `IndexDocument`. Aggregation is a sibling service and sibling
    actions. Hybrid "search then aggregate the hits" is a later
@@ -447,7 +448,7 @@ you cannot annotate still serve.
 ### Query contract
 
 New package `ai.pipestream.proto.metric.v1` (service file, may live in
-`search/metrics/proto` the way `search.v1` lives in `search/door/proto`).
+`search/metrics/proto` the way `search.v1` lives in `search/proto`).
 
 ```protobuf
 enum MetricBackend {
@@ -520,10 +521,11 @@ message DescribeMappingResponse {
 
 The request messages carry `validate.v1` annotations from day one, and
 the metric service mounts the validating interceptor from day one; the
-door's annotate-now-enforce-later split is a debt this surface does not
+search service's annotate-now-enforce-later split is a debt this surface
+does not
 inherit.
 
-`ListSubjects` already exists on the search door. Metric mounts either
+`ListSubjects` already exists on the search service. Metric mounts either
 reuse it (same subject names) or add `ListMetricSubjects` if the served
 sets diverge. Prefer reuse: a subject that is indexed and metric-mapped
 is one name.
@@ -583,7 +585,7 @@ the analytics engine never touches the contract.
 ### Execution
 
 **Lucene (interactive, document-native, the shipped default).** Requires the subject already
-indexed by the search door. Group-by members must be `facetable` (or
+indexed by the search service. Group-by members must be `facetable` (or
 `sortable` for single-valued numerics); the doc values are already
 written today, so this backend is a read path over existing storage.
 `COUNT` is document count in the filter. `SUM`/`AVG`/`MIN`/`MAX` need
@@ -609,7 +611,7 @@ is the DuckDB SQL. Both are evidence.
 
 ### Mounting
 
-Follow the search door: a host lists metric subjects at boot
+Follow the search service: a host lists metric subjects at boot
 (`ServedMetricMapping`: subject, message type, backends, optional
 Iceberg table identifier). Unknown configuration fails the mount, not
 the first query. The document platform is the first host that should
@@ -624,7 +626,7 @@ pre-aggregations: declared, durable, evidenced, and optional.
 
 ### Index snapshots to S3
 
-A door/store feature that metrics inherits, not a metric module. Per
+A search-store feature that metrics inherits, not a metric module. Per
 the separation rule it lands with the search store and is useful with
 no metric code on the classpath.
 
@@ -689,8 +691,8 @@ alone per the platform rule; none requires the others at runtime.
 | `search/metrics/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` SPI |
 | `search/metrics/lucene/` | `protomolt-metric-lucene` | Collector backend |
 | `search/metrics/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend |
-| `search/metrics/door/` or next to `search/door/` | `protomolt-metric-door` | `MetricService`, subject mount, refusals |
-| actions registered by the door module | `describe-mapping`, `query-metrics` | Catalog + MCP |
+| `search/metrics/service/`, beside `search/service/` | `protomolt-metric-service` | `MetricService`, subject mount, refusals |
+| actions registered by the metric service module | `describe-mapping`, `query-metrics` | Catalog + MCP |
 
 Keep option reading independent of any backend so `describe-mapping`
 works in unit tests with no index and no table.
@@ -703,7 +705,7 @@ A later implementation is done when all of the following hold:
    schema error in the list above fails the build with the field path.
 2. `DescribeMapping` returns exactly the declared members and the
    mounted backends; `meta.v1` description and sensitivity flow through.
-3. `QueryMetrics` on Lucene over a search-door subject returns the same
+3. `QueryMetrics` on Lucene over a search-service subject returns the same
    `SUM` / `COUNT` / group-by as a hand-checked fixture, including a
    filtered measure (`filter_cel`).
 4. `QueryMetrics` on Iceberg/DuckDB over a table written by
@@ -719,7 +721,8 @@ A later implementation is done when all of the following hold:
    the shape rules, with the hand-written refusals covering only what
    annotations cannot express (membership, role checks).
 7. `describe-mapping` and `query-metrics` appear in the action
-   inventory and answer on the MCP catalog when the door module is
+   inventory and answer on the MCP catalog when the metric service module
+   is
    mounted.
 8. No new noun appears in user-facing strings except mapping, member,
    measure/dimension as roles, grain, backend, and the two action names.
@@ -733,8 +736,9 @@ list to answer them.
    `paying_percentage` without extra proto fields. If v1, add
    `repeated FieldMetric members` on `MessageMetric`.
 2. **Where does `MetricService` live?** Own module vs. second service
-   inside `protomolt-search-door`. Own module keeps retrieval and
-   aggregation independently mountable; the door already owns subjects.
+   inside `protomolt-search-service`. Own module keeps retrieval and
+   aggregation independently mountable; the search service already owns
+   subjects.
 3. **DuckDB dependency.** Acceptable in `protomolt-metric-iceberg` if
    it stays Hadoop-free and isolated the way the Iceberg module already
    tests. Alternative: generate SQL only and require a caller-supplied
@@ -742,9 +746,10 @@ list to answer them.
 4. **Result types.** v1 uses `map<string, double>` for measures.
    `COUNT` that exceeds a double's integer exactness, or money that
    must stay integer cents, may want `google.protobuf.Value` or a
-   typed cell. The door's typed-`stored` work should settle the cell
+   typed cell. The search service's typed-`stored` work should settle the
+   cell
    representation first; decide before the proto freezes.
-5. **Shared subjects with the search door.** Same name and same
+5. **Shared subjects with the search service.** Same name and same
    descriptor, or a parallel metric-subject list? Same name is simpler
    for `parse-and-index` then `query-metrics`.
 6. **`COUNT(*)` without a measure field.** `MessageMetric.identity_field`
@@ -759,4 +764,4 @@ list to answer them.
 Do not land a console page, a default demo cube, a SQL proxy, or a
 "semantic layer" README section. Land the option proto, the SPI, one
 backend, the two actions, and the refusal tests. The document platform
-can mount it in a follow-up the way it mounted the search door.
+can mount it in a follow-up the way it mounted the search service.

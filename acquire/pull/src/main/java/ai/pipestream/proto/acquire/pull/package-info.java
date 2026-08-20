@@ -1,6 +1,6 @@
 /**
  * The core every pull connector shares. A pull connector reads a source of record (a bucket, a
- * database) and feeds what changed through the intake door — never into repo-service directly,
+ * database) and feeds what changed through the intake service — never into repo-service directly,
  * so account identity keeps riding the API key and every intake rule (scope narrowing, payload
  * caps, save shape) applies to pulled documents exactly as to pushed ones.
  *

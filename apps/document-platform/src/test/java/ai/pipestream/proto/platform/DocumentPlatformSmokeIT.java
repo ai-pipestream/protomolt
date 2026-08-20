@@ -30,7 +30,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.ManagedChannel;
-import ai.pipestream.proto.search.door.RepoDocumentMapping;
+import ai.pipestream.proto.search.service.RepoDocumentMapping;
 import ai.pipestream.proto.search.v1.DeleteAndUnindexRequest;
 import ai.pipestream.proto.search.v1.ParseAndIndexRequest;
 import ai.pipestream.proto.search.v1.SearchLane;
@@ -62,12 +62,12 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * Smoke-proves the one-container platform through its OWN composition root
  * and its EXTERNAL surfaces only: every call in this test crosses a real
- * TCP port the container would expose. Ingest over the intake door, a
+ * TCP port the container would expose. Ingest over the intake service, a
  * durable parse submitted through the registry's submit-workflow action and
  * completed by the running worker, the parsed result read back over repo's
  * public gRPC, the registry serving the fleet document model, the playground
  * page serving, the durable parse-and-index workflow producing a search hit
- * through the search door, a replay that re-derives without duplicating, and
+ * through the search service, a replay that re-derives without duplicating, and
  * the delete-and-unindex workflow leaving the document unsearchable.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -176,7 +176,7 @@ class DocumentPlatformSmokeIT {
 
     @Test
     @Order(2)
-    void aDocumentEntersThroughTheAuthenticatedDoorOverTcp() {
+    void aDocumentEntersThroughTheAuthenticatedIntakeServiceOverTcp() {
         Metadata metadata = new Metadata();
         metadata.put(ApiKeyServerInterceptor.API_KEY, API_KEY);
         receipt = IntakeServiceGrpc.newBlockingStub(intakeChannel)
@@ -346,7 +346,7 @@ class DocumentPlatformSmokeIT {
 
     @Test
     @Order(7)
-    void theSearchConsoleServesAndBridgesTheDoor() throws Exception {
+    void theSearchConsoleServesAndBridgesTheSearchService() throws Exception {
         String base = "http://127.0.0.1:" + platform.searchConsolePort();
         HttpResponse<String> page = HTTP.send(
                 HttpRequest.newBuilder(URI.create(base + "/")).GET().build(),
@@ -388,8 +388,8 @@ class DocumentPlatformSmokeIT {
 
     @Test
     @Order(8)
-    void theMetricDoorCountsTheCorpusOverTcpAndThroughTheCatalogVerbs() throws Exception {
-        // The gRPC surface: the same live index the search door serves.
+    void theMetricServiceCountsTheCorpusOverTcpAndThroughTheCatalogVerbs() throws Exception {
+        // The gRPC surface: the same live index the search service serves.
         ManagedChannel metricsChannel = NettyChannelBuilder
                 .forAddress("127.0.0.1", platform.metricsPort())
                 .usePlaintext()

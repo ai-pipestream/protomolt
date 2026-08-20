@@ -50,7 +50,7 @@ modules:
     name: buf.build/ai-pipestream/parse
   - path: search/metrics/proto/src/main/proto
     name: buf.build/ai-pipestream/metric
-  - path: search/door/proto/src/main/proto
+  - path: search/proto/src/main/proto
     name: buf.build/ai-pipestream/search
   # The canonical parser-fleet document model. Vendored byte-identical across
   # the fleet repos (gRParse owns the reference copy today); local lint fixes

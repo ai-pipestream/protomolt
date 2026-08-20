@@ -175,7 +175,7 @@ docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --dem
 ```
 
 The document platform publishes as `protomolt-document-platform` (JRE 25 — the
-search door links the Lucene 11 line, which ships Java 25 bytecode). It needs its
+search service links the Lucene 11 line, which ships Java 25 bytecode). It needs its
 PostgreSQL databases and an S3-compatible store alongside;
 [`deploy/document-platform/compose.yml`](../../deploy/document-platform/compose.yml)
 is the worked example, and `repo-service` publishes standalone as

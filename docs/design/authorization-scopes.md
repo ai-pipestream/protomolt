@@ -33,7 +33,7 @@ declares. Scopes only gate; they never transform a request, and a
 caller can never widen what a scope grants by phrasing the request
 differently.
 
-This generalizes the intake door's model, which is the in-tree
+This generalizes the intake service's model, which is the in-tree
 precedent: a credential resolves to an authority object, requests may
 only narrow within it, and anything outside it is `PERMISSION_DENIED`
 by name. The account service's `IdentityResolver` seam was declared
@@ -53,10 +53,10 @@ policy is a loud failure, not a silently dead grant.
 | `workflow-run` | Workflow and pipeline execution and their evidence verbs: recording, replay, promotion, work-record export and evaluation |
 | `artifact-access` | Reading and writing the artifact repository outside a workflow run's own recording |
 | `worker-coordinate` | The delegation and mesh coordination surfaces: offering tasks, accepting checkpoints, steering workers, node registration and capacity |
-| `search-query` | Querying a search door |
-| `search-index` | The door's workflow-driven indexing, deletion, and replay verbs |
-| `metrics-query` | Querying a metrics door: describing mappings and running aggregate queries |
-| `metrics-rebuild` | Rebuilding a metrics door's rollup tables |
+| `search-query` | Querying a search service |
+| `search-index` | The search service's workflow-driven indexing, deletion, and replay verbs |
+| `metrics-query` | Querying a metric service: describing mappings and running aggregate queries |
+| `metrics-rebuild` | Rebuilding a metric service's rollup tables |
 
 Every scope in the vocabulary guards at least one live operation, and
 every guarded operation names exactly one required scope. Operations
@@ -88,8 +88,8 @@ Surfaces that are not catalog verbs carry their own declarations in
 the same vocabulary: the registry server's routes split into
 `schema-read` and `schema-write` at the route table, with its action
 endpoint dispatching through the scoped catalog so each verb's own
-declaration applies; the search and metrics doors declare their
-scopes per service, with method overrides where one verb differs.
+declaration applies; the search and metric services declare their
+scopes per gRPC service, with method overrides where one verb differs.
 
 ## The access policy document
 
@@ -154,7 +154,7 @@ scope; the boundary there is process ownership, not a header.
 Resolution happens once per request (or once per MCP session, at
 initialization), at the transport edge where the credential is
 presented. The resolved caller travels explicitly — a `Caller` value
-passed to the catalog, a gRPC `Context` key inside door services —
+passed to the catalog, a gRPC `Context` key inside the serving roles —
 never a thread-local guessed at later.
 
 | Surface | Where |
@@ -163,7 +163,7 @@ never a thread-local guessed at later.
 | REST gateway | The per-route token check resolves the caller; a missing scope is `403` with the same named refusal (`401` stays what it means: not authenticated) |
 | MCP over HTTP | The caller is pinned to the session at `initialize`; `tools/list` serves only tools whose scope the caller holds; `tools/call` refuses the rest by name |
 | Registry server | Route-table split before dispatch: reads, writes, and action execution each name their scope |
-| Search and metrics doors | An identity interceptor beside the validating one, mounted only when the door is started with a resolver; a door without one stays an open, trusted-network surface, as today |
+| Search and metric services | An identity interceptor beside the validating one, mounted only when the service is started with a resolver; a service without one stays an open, trusted-network surface, as today |
 | Console sessions | A console login issues a session bound to a principal's scopes, never to the operator token — which un-disables the console in token mode, closing the console-sessions item |
 
 The refusal is uniform everywhere: error code `permission-denied`,
@@ -183,7 +183,7 @@ line, or an error detail; principals are named, credentials are not.
   expiry, no JWT parsing. A credential is an opaque string whose
   digest a policy names; issuance and distribution belong to the
   operator or an external IdP. The resolver is a seam — the intake
-  door already resolves keys against OIDC introspection and JDBC
+  service already resolves keys against OIDC introspection and JDBC
   stores, and the same seam here admits the same stores.
 - **It does not authenticate workers.** A delegation worker's id is an
   application-level claim inside an already-authorized coordinator
@@ -194,7 +194,7 @@ line, or an error detail; principals are named, credentials are not.
   documents, service profiles, delegation transcripts) remain
   authenticated-only in this version, a recorded edge rather than a
   silent one.
-- **It is not tenancy.** The intake door's account-bound scope, with
+- **It is not tenancy.** The intake service's account-bound scope, with
   its per-account axes, stays exactly as it is; this vocabulary gates
   the operator-facing surfaces. Mapping external principals onto
   accounts remains the account service's `IdentityResolver` seam.
@@ -227,7 +227,7 @@ action against its required scope.
   an external issuer's scope claims) — the verification machinery
   exists; binding it to call credentials is its own decision.
 - OIDC introspection and JDBC resolvers at the serve layer, mirroring
-  the intake door's stores.
+  the intake service's stores.
 - Per-scope rate and payload budgets, following the intake scope's
   per-key caps.
 - The metric mapping's row-level rewrite, which starts from the

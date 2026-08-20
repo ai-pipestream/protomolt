@@ -2,9 +2,9 @@ package ai.pipestream.proto.metric.spi;
 
 /**
  * Resolves metric subjects that are not part of the mount's boot-static
- * set — rollup tables, which appear after boot by design. The door
+ * set — rollup tables, which appear after boot by design. The service
  * consults a resolver only after its static subjects miss, and a
- * {@code null} resolution falls through to the door's unknown-subject
+ * {@code null} resolution falls through to the service's unknown-subject
  * refusal, so a resolver never widens what a mount serves silently: what
  * it resolves is self-describing state the mount already owns (a lake
  * table carrying its own declaration), not new configuration.

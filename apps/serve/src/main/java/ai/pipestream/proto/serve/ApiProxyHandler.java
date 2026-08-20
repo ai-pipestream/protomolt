@@ -17,7 +17,7 @@ import java.util.function.IntSupplier;
  * Bridges the console's same-origin API base onto a loopback port this process runs:
  * {@code /api/protomolt/*} to the in-process registry and {@code /api/serve/*} back onto
  * this server's own verbs. Strips the prefix, forwards the method, body, and the headers
- * that matter, and streams the answer back — a same-origin door to services already
+ * that matter, and streams the answer back — a same-origin entry point to services already
  * listening on localhost, not a general-purpose proxy.
  */
 final class ApiProxyHandler implements HttpHandler {

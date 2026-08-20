@@ -1,22 +1,22 @@
-description = 'Lucene metric executor — aggregate collectors over the doc values the search door already writes'
+description = 'Lucene metric executor — aggregate collectors over the doc values the search service already writes'
 
 dependencies {
     api project(':protomolt-metric-spi')
     api project(':protomolt-index-spi')
     api libs.lucene.core
-    // The metrics role module: composer types in its signature, the door
-    // services behind it, and the search door's store it aggregates over.
+    // The metrics role module: composer types in its signature, the metric
+    // services behind it, and the search service's store it aggregates over.
     api project(':protomolt-composer')
-    implementation project(':protomolt-metric-door')
-    implementation project(':protomolt-search-door')
+    implementation project(':protomolt-metric-service')
+    implementation project(':protomolt-search-service')
     implementation project(':protomolt-actions')
     // With a co-mounted registry the module registers the rebuild-rollup
-    // workflow, the way the search door registers its own.
+    // workflow, the way the search service registers its own.
     implementation project(':protomolt-registry')
     implementation libs.grpc.api
     implementation libs.slf4j.api
 
-    // The composed-role proof dials the fake repo and the metric door over
+    // The composed-role proof dials the fake repo and the metric service over
     // their real wire contracts.
     testImplementation project(':protomolt-repo-proto')
     testImplementation libs.grpc.netty.shaded

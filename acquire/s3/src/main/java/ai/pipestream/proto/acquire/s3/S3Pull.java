@@ -23,7 +23,7 @@ import java.util.Map;
 /**
  * One S3 pull pass: list the bucket (optionally under a prefix), take every object strictly
  * past the watermark in {@code (lastModified, key)} order, fetch it, and feed it through the
- * intake door with stable identity {@code s3://bucket/key} — so a changed object re-saves its
+ * intake service with stable identity {@code s3://bucket/key} — so a changed object re-saves its
  * own document and an unchanged one dedupes at the repository.
  *
  * <p>The watermark is {@code <epochMillis>/<key>} of the newest object a previous pull

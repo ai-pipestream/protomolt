@@ -8,7 +8,7 @@
 #
 #   docker compose -f deploy/document-platform/compose.yml up
 #
-# JRE 25: the search door links the Lucene 11 line, which ships Java 25
+# JRE 25: the search service links the Lucene 11 line, which ships Java 25
 # bytecode; on an older JRE the first search would fail to load classes.
 FROM eclipse-temurin:25-jre
 

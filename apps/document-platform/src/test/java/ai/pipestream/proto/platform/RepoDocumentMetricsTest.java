@@ -9,7 +9,7 @@ import ai.pipestream.proto.metric.MemberRole;
 import ai.pipestream.proto.metric.TimeGrain;
 import ai.pipestream.proto.metric.spi.MetricMapping;
 import ai.pipestream.proto.metric.spi.MetricMapping.FieldKind;
-import ai.pipestream.proto.search.door.RepoDocumentMapping;
+import ai.pipestream.proto.search.service.RepoDocumentMapping;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;

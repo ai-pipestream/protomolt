@@ -8,10 +8,10 @@ import ai.pipestream.proto.metric.MetricServiceGrpc;
 import ai.pipestream.proto.metric.QueryMetricsRequest;
 import ai.pipestream.proto.metric.QueryMetricsResponse;
 import ai.pipestream.proto.repo.v1.NodeAddress;
-import ai.pipestream.proto.search.door.IndexSnapshots;
-import ai.pipestream.proto.search.door.RepoDocumentMapping;
-import ai.pipestream.proto.search.door.SearchDoorModule;
-import ai.pipestream.proto.search.door.SnapshotStore;
+import ai.pipestream.proto.search.service.IndexSnapshots;
+import ai.pipestream.proto.search.service.RepoDocumentMapping;
+import ai.pipestream.proto.search.service.SearchServiceModule;
+import ai.pipestream.proto.search.service.SnapshotStore;
 import ai.pipestream.proto.search.v1.IndexDocumentRequest;
 import ai.pipestream.proto.search.v1.SearchIndexServiceGrpc;
 import io.grpc.ManagedChannel;
@@ -81,18 +81,18 @@ class RemoteMetricsNodeTest {
 
         // The writer: indexes three typed documents, snapshots on close.
         Map<String, ai.pipestream.proto.repo.v1.Document> corpus = Map.of(
-                "doc-1", MetricDoorModuleTest.document(
+                "doc-1", MetricServiceModuleTest.document(
                         "doc-1", "First", "PDF", "2026-07-10T10:00:00Z"),
-                "doc-2", MetricDoorModuleTest.document(
+                "doc-2", MetricServiceModuleTest.document(
                         "doc-2", "Second", "HTML", "2026-08-05T10:00:00Z"),
-                "doc-3", MetricDoorModuleTest.document(
+                "doc-3", MetricServiceModuleTest.document(
                         "doc-3", "Third", "PDF", "2026-08-20T10:00:00Z"));
-        SearchDoorModule writer = new SearchDoorModule(new SearchDoorModule.Config(
+        SearchServiceModule writer = new SearchServiceModule(new SearchServiceModule.Config(
                 0, work.resolve("writer-index"),
                 Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()),
                 new IndexSnapshots(blobs)));
         try (Composer.Node node = Composer.emptyBuilder()
-                .module(new MetricDoorModuleTest.FakeRepoModule(corpus))
+                .module(new MetricServiceModuleTest.FakeRepoModule(corpus))
                 .module(writer)
                 .environment(Map.of())
                 .build()
@@ -115,12 +115,12 @@ class RemoteMetricsNodeTest {
         }
 
         // The remote metrics node: read-only search + metrics, NO repo.
-        SearchDoorModule readerSearch = new SearchDoorModule(new SearchDoorModule.Config(
+        SearchServiceModule readerSearch = new SearchServiceModule(new SearchServiceModule.Config(
                 0, work.resolve("reader-index"),
                 Map.of(RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served()),
                 new IndexSnapshots(blobs, true),
                 true));
-        MetricDoorModule metrics = MetricDoorModuleTest.metricsModule(0);
+        MetricServiceModule metrics = MetricServiceModuleTest.metricsModule(0);
         try (Composer.Node node = Composer.emptyBuilder()
                 .module(readerSearch)
                 .module(metrics)

@@ -53,7 +53,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The S3 connector against the real stack: a LocalStack source bucket pulled through the real
- * intake door into a real repo-service (Postgres + LocalStack). Proves stable identity (a
+ * intake service into a real repo-service (Postgres + LocalStack). Proves stable identity (a
  * changed object replaces its own document), watermark incrementality, repository dedupe, the
  * cap, and the {@code pull-s3} verb's JSON round trip.
  */
@@ -112,7 +112,7 @@ class S3PullIT {
                         IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES),
                 new InMemoryApiKeyIdentityResolver()
                         .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
-        intake.startInProcess("s3-pull-it-door");
+        intake.startInProcess("s3-pull-it-intake");
 
         sourceS3 = S3Client.builder()
                 .region(Region.of(LOCALSTACK.getRegion()))
@@ -126,7 +126,7 @@ class S3PullIT {
         sourceS3.createBucket(b -> b.bucket(SOURCE_BUCKET));
 
         feed = new RecordingFeed(new GrpcIntakeFeed(
-                GrpcIntakeFeed.INPROCESS_TARGET_PREFIX + "s3-pull-it-door", API_KEY));
+                GrpcIntakeFeed.INPROCESS_TARGET_PREFIX + "s3-pull-it-intake", API_KEY));
         pull = new S3Pull(sourceS3, feed);
     }
 

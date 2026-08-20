@@ -9,7 +9,7 @@ option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.intake.v1";
 
 // ============================================================================
-// INTAKE — the platform front door.
+// INTAKE — the only authenticated way into the platform.
 //
 // IntakeService is the ONLY public ingest surface of the platform. It
 // authenticates the caller, narrows the request to the caller's scope, wraps
@@ -157,7 +157,7 @@ message IngestStreamResponse {
   bool deduplicated = 7;
 }
 
-// The platform front door: authenticated ingest into repo-service.
+// The only authenticated way in: ingest into repo-service.
 //
 // Every rpc requires the API-key credential in call metadata (`x-api-key`
 // or `authorization`); no request message carries identity. See the file

@@ -2,7 +2,7 @@ description = 'Schema registry core: subject/version store SPI and the git-backe
 
 dependencies {
     api project(':protomolt-proto-sources')
-    // The config door parses proto3-JSON documents and runs the type's own
+    // The config gate parses proto3-JSON documents and runs the type's own
     // declared rules before anything reaches Git.
     implementation project(':protomolt-protobuf-validation')
     implementation libs.protobuf.java.util

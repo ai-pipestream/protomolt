@@ -8,7 +8,7 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * The search console as a mountable role. The door target comes from the node's channels
+ * The search console as a mountable role. The service target comes from the node's channels
  * (in-process when the search role is co-mounted); the actions route is plain configuration
  * because the registry serves HTTP, not gRPC — pass blank to mount the console without the
  * operations panel.

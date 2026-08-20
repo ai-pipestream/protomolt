@@ -13,7 +13,7 @@ import ai.pipestream.proto.metric.QueryMetricsRequest;
 import ai.pipestream.proto.metric.QueryMetricsResponse;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
-import ai.pipestream.proto.search.door.RepoDocumentMapping;
+import ai.pipestream.proto.search.service.RepoDocumentMapping;
 import com.google.protobuf.Timestamp;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
@@ -37,7 +37,7 @@ import org.junit.jupiter.api.io.TempDir;
  * family: the Iceberg sink writes the {@code repo-document} table into a
  * one-container lake (a sqlite JDBC catalog over a local warehouse), the
  * platform boots with {@code DOCUMENT_PLATFORM_METRICS_ICEBERG_*} set,
- * and the metric door answers {@code METRIC_BACKEND_ICEBERG} queries
+ * and the metric service answers {@code METRIC_BACKEND_ICEBERG} queries
  * over the table while refusing an unset backend by naming both mounted
  * engines. A lake without the subject's table refuses by name instead of
  * answering zero.

@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  */
 class ScopeServerInterceptorTest {
 
-    private static final String OPERATOR = "door-operator";
+    private static final String OPERATOR = "test-operator";
     private static final String ANALYST = "analyst-credential";
     private static final String HEALTH = "grpc.health.v1.Health";
 

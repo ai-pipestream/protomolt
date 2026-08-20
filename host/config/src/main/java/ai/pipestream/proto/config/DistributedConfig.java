@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
  * {@link ConfigSource}, applied verify-then-swap. Each refresh fetches
  * every subscribed subject, parses the payload strictly as the declared
  * type, enforces the type's own declared validate.v1 rules — the same
- * enforcement the wire doors mount, applied before anything applies —
+ * enforcement the wire boundaries mount, applied before anything applies —
  * and only then swaps the current config atomically and notifies
  * listeners. A document that fails any step is refused with the reason
  * and the node keeps serving the config it already has: exact or

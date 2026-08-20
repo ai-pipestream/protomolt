@@ -1,0 +1,16 @@
+description = 'The metric service: the MetricService over served subjects, the validating interceptor mounted from day one, and the describe-mapping, query-metrics, and rebuild-rollup catalog verbs'
+
+dependencies {
+    api project(':protomolt-metric-spi')
+    api project(':protomolt-authz-grpc')
+    implementation project(':protomolt-grpc-validation')
+    implementation project(':protomolt-actions')
+    implementation libs.protobuf.java.util
+    implementation libs.jackson.databind
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.grpc.inprocess
+    implementation libs.slf4j.api
+
+    testRuntimeOnly libs.slf4j.simple
+}

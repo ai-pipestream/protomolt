@@ -2,7 +2,7 @@
  * The Confluence Cloud crawler core: read a workspace over the REST v2 API and emit the
  * domain protos.
  *
- * <p>{@link ai.pipestream.proto.acquire.confluence.ConfluenceClient} is the transport door -
+ * <p>{@link ai.pipestream.proto.acquire.confluence.ConfluenceClient} is the transport client -
  * basic auth from the account email plus API token, cursor pagination over
  * {@code _links.next}, the throttling contract honored (429 retried after
  * {@code Retry-After} with jitter), and a politeness gap between requests.

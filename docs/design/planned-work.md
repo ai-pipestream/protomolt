@@ -172,16 +172,16 @@ in-flight count as the complete device load.
 The scopes layer is implemented — the closed vocabulary and caller model,
 per-action declarations enforced at the catalog, the access-policy document
 (startup file and config-lane mount), scoped serving on gRPC, REST, MCP,
-the registry's route split, door identity with the service scope table,
-and console sessions bound to principals. Design of record:
+the registry's route split, identity on the serving roles with their scope
+table, and console sessions bound to principals. Design of record:
 [authorization scopes](authorization-scopes.md). Still open:
 
-- **Platform role wiring.** The document platform's roles mount doors and
-  the registry without a resolver; adopting `AccessPolicyMounts` there
+- **Platform role wiring.** The document platform's roles mount their
+  services and the registry without a resolver; adopting `AccessPolicyMounts` there
   makes fleet re-scoping live, the same consumer step the trust mount
   still awaits.
 - **External resolvers at the serve layer.** OIDC introspection and JDBC
-  stores behind `CallerResolver`, mirroring the intake door's key stores.
+  stores behind `CallerResolver`, mirroring the intake service's key stores.
 - **Per-scope budgets**, following the intake scope's per-key caps.
 - **Row-level rewrite** stays sequenced in the
   [metric mapping](metric-mapping.md) as its v1.1, now unblocked.
@@ -203,11 +203,11 @@ envelopes. Enforce compatible changes in CI once a release baseline exists.
 Digest-pin generator build images and archives. Package the required license
 and notice material and keep the binary checksum enforced by the build.
 
-### Search door hardening (from the Phase 2 review)
+### Search service hardening (from the Phase 2 review)
 
 The 2026-08-15 review confirmed these as real gaps, deliberately
 deferred; the hardening train closed most of them (see
-[the door guide](../search/door.md)): `search.v1` carries
+[the search service guide](../search/service.md)): `search.v1` carries
 `DeleteDocument`, the `delete-and-unindex` workflow ties un-indexing to
 repository deletion, `replay-documents` with `prune` reconciles a subject
 against the repository listing (which now serves only AVAILABLE rows),
@@ -216,7 +216,7 @@ read carries a call deadline, and `k` is bounded. Still open:
 
 - `SearchHit.stored` is string-only. The `search.v1` request messages now
   carry `validate.v1` annotations as machine-readable contract, but the
-  live enforcement remains the door's Java refusals: the repo-wide
+  live enforcement remains the service's Java refusals: the repo-wide
   validating interceptors are not yet installed in any production server.
 - Body derivation belongs in the coordinator: the text parser claiming
   `body` fixed the reference path, but gRParse-parsed documents still index

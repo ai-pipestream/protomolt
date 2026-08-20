@@ -34,8 +34,8 @@ import java.util.regex.Pattern;
  *
  * <ul>
  *   <li>{@code GET /} — the page</li>
- *   <li>{@code GET /subjects} — the door's served surface, proto3 JSON</li>
- *   <li>{@code POST /search} — a proto3-JSON {@code SearchRequest} in, hits out; the door's
+ *   <li>{@code GET /subjects} — the service's served surface, proto3 JSON</li>
+ *   <li>{@code POST /search} — a proto3-JSON {@code SearchRequest} in, hits out; the service's
  *       refusals pass through verbatim (they are written for humans)</li>
  *   <li>{@code GET /actions}, {@code POST /actions/<name>} — same-origin proxy onto the
  *       registry's actions route, so the operations panel needs no CORS; answers 503 when the
@@ -52,7 +52,7 @@ public final class SearchConsoleServer implements AutoCloseable {
 
     private final HttpServer http;
     private final ManagedChannel channel;
-    private final SearchServiceGrpc.SearchServiceBlockingStub door;
+    private final SearchServiceGrpc.SearchServiceBlockingStub service;
     private final Supplier<String> actionsBaseUrl;
     private final HttpClient actionsClient = HttpClient.newHttpClient();
 
@@ -60,22 +60,22 @@ public final class SearchConsoleServer implements AutoCloseable {
      * Creates the server (not yet started).
      *
      * @param port the HTTP port (0 for ephemeral)
-     * @param doorTarget the search door: a {@code host:port} authority or
+     * @param serviceTarget the search service: a {@code host:port} authority or
      *        {@code inprocess:<name>}
      * @param actionsBaseUrl supplies the registry actions route to proxy operations to, e.g.
      *        {@code http://127.0.0.1:8081/protomolt/actions} — a supplier because a co-mounted
      *        registry's port is only known once it starts; a blank answer disables the panel
      */
-    public SearchConsoleServer(int port, String doorTarget, Supplier<String> actionsBaseUrl)
+    public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl)
             throws IOException {
-        if (doorTarget == null || doorTarget.isBlank()) {
-            throw new IllegalArgumentException("doorTarget must not be blank");
+        if (serviceTarget == null || serviceTarget.isBlank()) {
+            throw new IllegalArgumentException("serviceTarget must not be blank");
         }
-        this.channel = doorTarget.startsWith(INPROCESS_TARGET_PREFIX)
+        this.channel = serviceTarget.startsWith(INPROCESS_TARGET_PREFIX)
                 ? InProcessChannelBuilder.forName(
-                        doorTarget.substring(INPROCESS_TARGET_PREFIX.length())).build()
-                : NettyChannelBuilder.forTarget(doorTarget).usePlaintext().build();
-        this.door = SearchServiceGrpc.newBlockingStub(channel);
+                        serviceTarget.substring(INPROCESS_TARGET_PREFIX.length())).build()
+                : NettyChannelBuilder.forTarget(serviceTarget).usePlaintext().build();
+        this.service = SearchServiceGrpc.newBlockingStub(channel);
         this.actionsBaseUrl = actionsBaseUrl == null ? () -> "" : actionsBaseUrl;
         this.http = HttpServer.create(new InetSocketAddress(port), 0);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
@@ -122,10 +122,10 @@ public final class SearchConsoleServer implements AutoCloseable {
     private void serveSubjects(HttpExchange exchange) throws IOException {
         try {
             String json = JsonFormat.printer().print(
-                    door.listSubjects(ListSubjectsRequest.getDefaultInstance()));
+                    service.listSubjects(ListSubjectsRequest.getDefaultInstance()));
             respond(exchange, 200, "application/json; charset=utf-8", json);
         } catch (StatusRuntimeException e) {
-            respondDoorError(exchange, e);
+            respondServiceError(exchange, e);
         }
     }
 
@@ -145,11 +145,11 @@ public final class SearchConsoleServer implements AutoCloseable {
             return;
         }
         try {
-            SearchResponse hits = door.search(request.build());
+            SearchResponse hits = service.search(request.build());
             respond(exchange, 200, "application/json; charset=utf-8",
                     JsonFormat.printer().print(hits));
         } catch (StatusRuntimeException e) {
-            respondDoorError(exchange, e);
+            respondServiceError(exchange, e);
         }
     }
 
@@ -203,8 +203,8 @@ public final class SearchConsoleServer implements AutoCloseable {
         }
     }
 
-    /** The door's refusals reach the page verbatim; they are written for humans. */
-    private void respondDoorError(HttpExchange exchange, StatusRuntimeException e)
+    /** The service's refusals reach the page verbatim; they are written for humans. */
+    private void respondServiceError(HttpExchange exchange, StatusRuntimeException e)
             throws IOException {
         int status = switch (e.getStatus().getCode()) {
             case INVALID_ARGUMENT -> 400;
@@ -213,7 +213,7 @@ public final class SearchConsoleServer implements AutoCloseable {
             default -> 502;
         };
         if (status == 502) {
-            LOG.error("search door call failed", e);
+            LOG.error("search service call failed", e);
         }
         String description = e.getStatus().getDescription();
         respond(exchange, status, "application/json; charset=utf-8", errorJson(

@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'The intake contract: the platform front door — authenticated unary, client-streaming and HTTP ingest lanes in front of repo-service'
+description = 'The intake contract: the only authenticated way in — unary, client-streaming and HTTP ingest lanes in front of repo-service'
 
 dependencies {
     api project(':protomolt-repo-proto')

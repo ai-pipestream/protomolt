@@ -8,8 +8,8 @@ Windows agent. Two lanes:
   columns behind every document: read them as data-rich JSON that
   `infer-schema` turns into typed messages, write content and patch columns
   back.
-- **Copilot connectors** (output): the external connections API uses the same
-  door Microsoft's closed-source, Windows-only Graph Connector Agent walks
+- **Copilot connectors** (output): the external connections API is the same
+  one Microsoft's closed-source, Windows-only Graph Connector Agent walks
   through, spoken directly. Create a connection, register a schema rendered
   from indexing hints, PUT external items; Microsoft 365 Search and Copilot
   index them. This is the roll-your-own-agent lane: cross-platform, no MSI,

@@ -14,11 +14,11 @@ import org.slf4j.LoggerFactory;
  * Standalone entry point: environment-configured intake over Netty.
  *
  * <p>Key-store selection, in precedence order: when
- * {@code DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL} is set the door
+ * {@code DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL} is set the service
  * authenticates against the IdP's RFC 7662 introspection endpoint (the
  * Keycloak-shaped production default; client id/secret ride the companion
  * env vars). Otherwise, when
- * {@code DOCUMENT_PLATFORM_INTAKE_KEYS_JDBC_URL} is set the door uses the
+ * {@code DOCUMENT_PLATFORM_INTAKE_KEYS_JDBC_URL} is set the service uses the
  * JDBC-backed key store in the operator's own PostgreSQL — the air-gapped
  * deployment, no IdP involved (username/password ride the companion env
  * vars; see {@link IntakeKeyStoreConfig}). Otherwise the store is seeded
@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
  * env-seeded store for demos and single-tenant deployments. Exactly one
  * source must be configured: setting BOTH the OIDC url and the JDBC url is
  * rejected loudly (two authentication authorities is a misconfiguration,
- * not a precedence question), and a door with no key store at all is
+ * not a precedence question), and a service with no key store at all is
  * refused just as loudly.
  */
 public final class IntakeServiceMain {
@@ -38,10 +38,10 @@ public final class IntakeServiceMain {
     /** Env var naming the IdP's RFC 7662 introspection endpoint. */
     public static final String ENV_OIDC_URL = "DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL";
 
-    /** Env var carrying this door's client id at the IdP. */
+    /** Env var carrying this service's client id at the IdP. */
     public static final String ENV_OIDC_CLIENT_ID = "DOCUMENT_PLATFORM_INTAKE_OIDC_CLIENT_ID";
 
-    /** Env var carrying this door's client secret at the IdP. */
+    /** Env var carrying this service's client secret at the IdP. */
     public static final String ENV_OIDC_CLIENT_SECRET =
             "DOCUMENT_PLATFORM_INTAKE_OIDC_CLIENT_SECRET";
 
@@ -78,7 +78,7 @@ public final class IntakeServiceMain {
      * password then become required, validated by
      * {@link IntakeKeyStoreConfig#fromEnvironmentMap} BEFORE any connection
      * is attempted); else the env-seeded in-memory store. Setting both urls
-     * is rejected by name — the door must have exactly one authentication
+     * is rejected by name — the service must have exactly one authentication
      * authority.
      *
      * <p>Public because it is THE selection logic: every composition root
@@ -96,7 +96,7 @@ public final class IntakeServiceMain {
         if (oidcConfigured && jdbcConfigured) {
             throw new IllegalArgumentException(
                     ENV_OIDC_URL + " and " + IntakeKeyStoreConfig.ENV_JDBC_URL
-                            + " are both set; the door takes exactly one key store"
+                            + " are both set; the service takes exactly one key store"
                             + " (unset one of them)");
         }
         if (oidcConfigured) {
@@ -124,7 +124,7 @@ public final class IntakeServiceMain {
 
     /**
      * Parses the {@code DOCUMENT_PLATFORM_INTAKE_KEYS} format. Rejects a
-     * missing or empty value loudly — an intake door with zero keys can
+     * missing or empty value loudly — an intake service with zero keys can
      * authenticate nobody, and silently booting one would only look healthy.
      */
     static InMemoryApiKeyIdentityResolver resolverFromEnvironment(String spec) {

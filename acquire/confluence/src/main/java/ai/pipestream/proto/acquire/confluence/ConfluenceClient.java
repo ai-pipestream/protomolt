@@ -18,7 +18,7 @@ import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * A thin authorized door to the Confluence Cloud REST API v2: JSON in, JSON
+ * A thin authorized client for the Confluence Cloud REST API v2: JSON in, JSON
  * out, basic auth from the account email plus API token, and the service's
  * throttling contract honored - 429 responses are retried after the
  * server-directed {@code Retry-After} with jitter, and a politeness limiter

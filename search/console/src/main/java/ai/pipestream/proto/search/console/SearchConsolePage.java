@@ -2,8 +2,8 @@ package ai.pipestream.proto.search.console;
 
 /**
  * The page: no build step, no framework. The subject and lane pickers are populated from
- * {@code /subjects}, so what the page offers is exactly what the door serves; refusals from
- * the door render verbatim, because the door writes them for humans.
+ * {@code /subjects}, so what the page offers is exactly what the service serves; refusals from
+ * the service render verbatim, because the service writes them for humans.
  */
 final class SearchConsolePage {
 

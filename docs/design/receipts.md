@@ -201,7 +201,7 @@ Publishing a record's manifest digest to the registry — which already
 treats a Git commit as a version — yields an append-only, replicated
 log of issued records for free. The log is one typed document
 (`WorkRecordLog`, subject `work-records`) appended through the
-existing config door: each publish is a registry commit, the commit
+existing config gate: each publish is a registry commit, the commit
 history is the append-only view, and the document is the current one.
 A relying party who can see the registry can detect equivocation (two
 entries claiming one record id with different digests) and rollback

@@ -10,7 +10,7 @@ import java.util.List;
  * never a mix. The sink owns the lake's addressing (catalog, namespace)
  * and the table's schema, derived from the rollup's member names —
  * dimension columns are the rendered strings, measure columns are the
- * wire's doubles. The door owns everything before the write: membership,
+ * wire's doubles. The service owns everything before the write: membership,
  * backend resolution, and the completeness gate.
  *
  * <p>The sink also owns making the rollup self-describing: the source

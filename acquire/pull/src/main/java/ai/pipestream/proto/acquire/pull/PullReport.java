@@ -7,7 +7,7 @@ import java.util.List;
  * The outcome of one pull pass: counts, per-item errors, and the watermark to hand to the next
  * pull. Connectors are stateless — the watermark is the caller's to keep.
  *
- * @param submitted items newly saved through the door
+ * @param submitted items newly saved through the service
  * @param deduplicated items the repository recognized as already present
  * @param failed items that errored; they stay behind the watermark and retry next pull
  * @param errors one line per failed item

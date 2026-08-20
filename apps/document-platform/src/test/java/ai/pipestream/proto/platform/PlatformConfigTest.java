@@ -18,9 +18,9 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The config lane end to end on the platform: the routing contract
  * publishes to the co-mounted registry at boot, a parse-routing config
- * document gates against it at the registry door, the running node
+ * document gates against it at the registry gate, the running node
  * follows a put on its refresh interval and swaps the live routing
- * rules, an invalid document refuses at the door and never applies, and
+ * rules, an invalid document refuses at the service and never applies, and
  * a rebooted node reads the distributed config ahead of its environment
  * defaults.
  */
@@ -60,13 +60,13 @@ class PlatformConfigTest {
     }
 
     @Test
-    void theNodeFollowsTheConfigAndRefusesInvalidDocumentsAtTheDoor() throws Exception {
+    void theNodeFollowsTheConfigAndRefusesInvalidDocumentsAtTheGate() throws Exception {
         Path registryGit = work.resolve("registry-git");
         try (DocumentPlatform platform = DocumentPlatform.start(config(registryGit), null)) {
             // Boot state: the environment's default rules.
             assertThat(ruleIds(platform)).containsExactly("default-text");
 
-            // An invalid document (no rules) refuses at the registry door
+            // An invalid document (no rules) refuses at the registry gate
             // against the published routing contract and never applies.
             HttpResponse<String> refused = putConfig(platform.registryPort(), """
                     {"messageType": "ai.pipestream.proto.parse.v1.RoutingConfig",

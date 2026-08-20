@@ -1,6 +1,6 @@
 # The document platform, self-contained: one platform container (repo-service,
-# intake door, parsing coordinator with the embedded reference parser, durable
-# jobs worker, schema registry, parser playground, search door), one
+# intake service, parsing coordinator with the embedded reference parser, durable
+# jobs worker, schema registry, parser playground, search service), one
 # PostgreSQL instance carrying the two platform databases, and RustFS as the
 # S3-compatible object store. Build the app first:
 #
