@@ -120,9 +120,9 @@ not the record's.
 The snapshot is itself a typed config document. Inside the platform it
 distributes on the [config lane](config-distribution.md) exactly like
 taxonomies, screening mounts, and postal packs: registry-stored,
-verify-then-swap, commit as version. Outside the platform it is a file
-the relying party pins. Same document, two custody models, and the
-lane is never required for verification.
+verify-then-swap, commit as version, subject `trust-snapshot`. Outside
+the platform it is a file the relying party pins. Same document, two
+custody models, and the lane is never required for verification.
 
 ## Verification: named checks, named refusals
 
@@ -196,10 +196,14 @@ no byte of the manifest.
 
 Publishing a record's manifest digest to the registry — which already
 treats a Git commit as a version — yields an append-only, replicated
-log of issued records for free. A relying party who can see the
-registry can detect equivocation (two records claiming the same run)
-and rollback (a record the issuer later pretends not to have issued).
-This is a projection of the registry's existing behavior, not a new
+log of issued records for free. The log is one typed document
+(`WorkRecordLog`, subject `work-records`) appended through the
+existing config door: each publish is a registry commit, the commit
+history is the append-only view, and the document is the current one.
+A relying party who can see the registry can detect equivocation (two
+entries claiming one record id with different digests) and rollback
+(an entry the history shows and the document no longer carries). This
+is a projection of the registry's existing behavior, not a new
 transparency system; SCITT-style receipts remain a later composition.
 
 ## Disclosure projections

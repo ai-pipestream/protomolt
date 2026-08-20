@@ -9,6 +9,9 @@ dependencies {
     api project(':protomolt-protobuf-validation')
     // The Taxonomy config document type TaxonomyMounts follows.
     implementation project(':protomolt-protobuf-types')
+    // The mounted trust snapshot is the receipt layer's document, exposed
+    // through Mounted.
+    api project(':protomolt-receipt')
     implementation libs.slf4j.api
 
     // The proof's document type is a house wire message with declared

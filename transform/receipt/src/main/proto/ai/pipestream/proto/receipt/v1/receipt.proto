@@ -433,6 +433,51 @@ message TrustedKey {
   google.protobuf.Timestamp not_after = 6;
 }
 
+// The registry-published log of issued records. One document per lane
+// (subject "work-records"); each publish is a registry commit, so the
+// commit history is the append-only view and the document is the current
+// one. A relying party who can see the registry detects equivocation (two
+// entries claiming one record id with different digests) and rollback (an
+// entry the history shows and the document no longer carries).
+message WorkRecordLog {
+  // Issued records, appended in issuance order.
+  repeated WorkRecordLogEntry entries = 1 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 4096
+  ];
+}
+
+// One issued record's log entry.
+message WorkRecordLogEntry {
+  // The record's own name, unique per issuer.
+  string record_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    }
+  ];
+  // Who issued the record.
+  string issuer = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 256}
+    }
+  ];
+  // The record's manifest digest.
+  string manifest_sha256 = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    }
+  ];
+  // The prior record's manifest digest when the record is a re-issue.
+  string prior_manifest_sha256 = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {sha256_hex: true}
+    }
+  ];
+}
+
 // Key states.
 enum KeyState {
   // Unset; always refused.
