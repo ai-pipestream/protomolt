@@ -52,7 +52,11 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import ai.pipestream.proto.sources.ProtoSourceSet;
 import ai.pipestream.proto.sources.publish.PublishOptions;
+import ai.pipestream.proto.authz.AccessPolicies;
+import ai.pipestream.proto.authz.AccessPolicyCallers;
+import io.grpc.Metadata;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.stub.MetadataUtils;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -91,6 +95,10 @@ public final class DocumentPlatform implements AutoCloseable {
     public static final String VALIDATE_SUBJECT =
             "ai/pipestream/proto/validate/v1/validate.proto";
 
+    /** The registry subject the access-policy contract publishes under. */
+    public static final String ACCESS_POLICY_SUBJECT =
+            "ai/pipestream/proto/authz/v1/access_policy.proto";
+
     /** The config subject the parse role's routing rules read: {@value}. */
     public static final String PARSE_ROUTING_CONFIG_SUBJECT = "parse-routing";
 
@@ -112,6 +120,8 @@ public final class DocumentPlatform implements AutoCloseable {
     private final SwappableScreening screening;
     private final String screeningMountName;
     private final java.util.concurrent.ScheduledExecutorService configRefresher;
+    private final String apiToken;
+    private final SwappableCallers callers;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -119,17 +129,57 @@ public final class DocumentPlatform implements AutoCloseable {
             throw new IllegalArgumentException(
                     "resolver is required: this node mounts the intake service");
         }
+        this.apiToken = apiTokenFromEnvironment(config.environment());
+        java.nio.file.Path accessPolicyFile =
+                accessPolicyFromEnvironment(config.environment());
+        if (accessPolicyFile != null && apiToken == null) {
+            throw new IllegalArgumentException(DocumentPlatformConfig.ENV_ACCESS_POLICY
+                    + " is set but the operator token is not: an access policy"
+                    + " requires " + DocumentPlatformConfig.ENV_API_TOKEN);
+        }
+        if (apiToken != null && config.mounts(SearchConsoleModule.ROLE)) {
+            throw new IllegalArgumentException("the search console has no principal"
+                    + " sessions yet, so a token-guarded node would serve it as an"
+                    + " unauthenticated bypass: unmount 'search-console' or run"
+                    + " without " + DocumentPlatformConfig.ENV_API_TOKEN);
+        }
+        this.callers = apiToken == null ? null : new SwappableCallers();
+        if (accessPolicyFile != null) {
+            try {
+                callers.swap(new AccessPolicyCallers(
+                        AccessPolicies.load(accessPolicyFile)));
+                LOG.info("access policy mounted from {}", accessPolicyFile);
+            } catch (IOException e) {
+                throw new IllegalStateException("failed to read the access policy at "
+                        + accessPolicyFile + ": " + e.getMessage(), e);
+            }
+        }
         Composer.Builder composer = Composer.emptyBuilder()
                 .environment(config.environment())
-                .remoteOpener(target ->
-                        NettyChannelBuilder.forTarget(target).usePlaintext().build());
+                .remoteOpener(target -> {
+                    NettyChannelBuilder builder =
+                            NettyChannelBuilder.forTarget(target).usePlaintext();
+                    if (apiToken != null) {
+                        // A guarded node presents its own authority to its
+                        // remote roles; unguarded roles ignore the header.
+                        Metadata identity = new Metadata();
+                        identity.put(Metadata.Key.of("api_token",
+                                Metadata.ASCII_STRING_MARSHALLER), apiToken);
+                        builder.intercept(
+                                MetadataUtils.newAttachHeadersInterceptor(identity));
+                    }
+                    return builder.build();
+                });
 
         this.repo = config.mounts(RepoServiceModule.ROLE)
                 ? new RepoServiceModule(config.repo()) : null;
         this.registry = config.mounts(RegistryModule.ROLE)
                 ? new RegistryModule(
                         config.registryGit(),
-                        SchemaRegistryServerConfig.defaults().withPort(config.registryPort()))
+                        SchemaRegistryServerConfig.defaults()
+                                .withPort(config.registryPort())
+                                .withApiToken(apiToken),
+                        callers)
                 : null;
         if (config.mounts(ParseModule.ROLE)) {
             RoutingRules rules = config.rulesJson() != null
@@ -215,7 +265,8 @@ public final class DocumentPlatform implements AutoCloseable {
                         searchRefreshSeconds,
                         taxonomies,
                         screening,
-                        postalCodes))
+                        postalCodes)
+                        .secured(apiToken, callers))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricServiceModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -249,7 +300,8 @@ public final class DocumentPlatform implements AutoCloseable {
                                                         metricsCatalog,
                                                         lakeConfig.namespace()))))),
                         rollupSink,
-                        rollupSubjects))
+                        rollupSubjects)
+                        .secured(apiToken, callers))
                 : null;
         this.searchConsole = config.mounts(SearchConsoleModule.ROLE)
                 ? new SearchConsoleModule(new SearchConsoleModule.Config(
@@ -312,15 +364,16 @@ public final class DocumentPlatform implements AutoCloseable {
             }
             if (configRefreshSeconds > 0) {
                 if (parse == null && taxonomies == null && screening == null
-                        && postalCodes == null) {
+                        && postalCodes == null && callers == null) {
                     throw new IllegalArgumentException(
                             DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
                                     + " is set but this node mounts no config consumer:"
                                     + " the config lane serves the parse role's routing"
-                                    + " rules and the taxonomy and screening mounts, so"
-                                    + " mount 'parse', set "
-                                    + DocumentPlatformConfig.ENV_TAXONOMIES + " or "
-                                    + DocumentPlatformConfig.ENV_SCREENING
+                                    + " rules, the taxonomy and screening mounts, and"
+                                    + " the access policy, so mount 'parse', set "
+                                    + DocumentPlatformConfig.ENV_TAXONOMIES + ", "
+                                    + DocumentPlatformConfig.ENV_SCREENING + ", or "
+                                    + DocumentPlatformConfig.ENV_API_TOKEN
                                     + ", or unset the interval");
                 }
                 ai.pipestream.proto.config.kafka.KafkaConfigSource.Config kafka =
@@ -347,7 +400,7 @@ public final class DocumentPlatform implements AutoCloseable {
                         configUrl = "http://127.0.0.1:" + registry.httpPort() + "/protomolt";
                     }
                     configSource = new ai.pipestream.proto.config.registry
-                            .RegistryConfigSource(configUrl, null);
+                            .RegistryConfigSource(configUrl, apiToken);
                 }
                 this.distributedConfig = ai.pipestream.proto.config.DistributedConfig
                         .over(configSource);
@@ -393,6 +446,22 @@ public final class DocumentPlatform implements AutoCloseable {
                                         document.getPolicy());
                             });
                     LOG.info("screening mount following '{}'", subject);
+                }
+                if (callers != null) {
+                    // The policy follows the lane like every other mount: a
+                    // malformed document throws here, the refresh logs it,
+                    // and the previous policy stays live.
+                    distributedConfig.subscribe(
+                            ai.pipestream.proto.config.AccessPolicyMounts.SUBJECT,
+                            ai.pipestream.proto.authz.AccessPolicy.getDefaultInstance())
+                            .onChange((policy, version) -> {
+                                callers.swap(new AccessPolicyCallers(policy));
+                                LOG.info("access policy applied from config '{}'"
+                                        + " version {} ({} principal(s))",
+                                        ai.pipestream.proto.config
+                                                .AccessPolicyMounts.SUBJECT,
+                                        version, policy.getPrincipalsCount());
+                            });
                 }
                 // The boot pull: a present config document is the routing
                 // truth from the first plan, ahead of the environment's
@@ -454,6 +523,11 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         if (searchConsole != null) {
             surfaces.add("search console http " + searchConsole.port());
+        }
+        if (apiToken != null) {
+            surfaces.add(accessPolicyFile != null
+                    ? "operator token + access policy"
+                    : "operator token");
         }
         LOG.info("document platform up as roles {}: {}",
                 config.roles(), String.join(", ", surfaces));
@@ -792,6 +866,21 @@ public final class DocumentPlatform implements AutoCloseable {
                 + " must be 'true' or unset, not '" + value + "'");
     }
 
+    /** The operator token ({@code PROTOMOLT_API_TOKEN}), or null for an open node. */
+    static String apiTokenFromEnvironment(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_API_TOKEN, "").trim();
+        return value.isEmpty() ? null : value;
+    }
+
+    /** The boot access-policy file ({@code PROTOMOLT_ACCESS_POLICY}), or null. */
+    static java.nio.file.Path accessPolicyFromEnvironment(
+            Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_ACCESS_POLICY, "").trim();
+        return value.isEmpty() ? null : java.nio.file.Path.of(value);
+    }
+
     static String screeningFromEnvironment(Map<String, String> environment) {
         String value = environment
                 .getOrDefault(DocumentPlatformConfig.ENV_SCREENING, "").trim();
@@ -963,9 +1052,11 @@ public final class DocumentPlatform implements AutoCloseable {
                 .add(DOCUMENT_SUBJECT, classpathProto(DOCUMENT_SUBJECT), "platform")
                 .add(VALIDATE_SUBJECT, classpathProto(VALIDATE_SUBJECT), "platform")
                 .add(ROUTING_SUBJECT, classpathProto(ROUTING_SUBJECT), "platform")
+                .add(ACCESS_POLICY_SUBJECT, classpathProto(ACCESS_POLICY_SUBJECT),
+                        "platform")
                 .build();
         try (ConfluentSchemaPublisher publisher = new ConfluentSchemaPublisher(
-                URI.create("http://127.0.0.1:" + registry.httpPort()))) {
+                URI.create("http://127.0.0.1:" + registry.httpPort()), apiToken)) {
             publisher.publish(sources, PublishOptions.defaults()).throwIfFailed();
         } catch (Exception e) {
             throw new IllegalStateException("publishing the document model failed", e);

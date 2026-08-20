@@ -1,6 +1,7 @@
 package ai.pipestream.proto.search.service;
 
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
 import ai.pipestream.proto.composer.ServiceMount;
@@ -49,10 +50,16 @@ public final class SearchServiceModule implements ServiceModule {
             IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
             TaxonomyCatalog taxonomies,
             Supplier<Screener> screening,
-            PostalCodeCatalog postalCodes) {
+            PostalCodeCatalog postalCodes,
+            String apiToken,
+            CallerResolver callers) {
 
         /** Validates the configuration. */
         public Config {
+            if (callers != null && apiToken == null) {
+                throw new IllegalArgumentException(
+                        "an access-policy resolver requires the operator api token");
+            }
             if (indexDir == null) {
                 throw new IllegalArgumentException("indexDir must not be null");
             }
@@ -77,6 +84,25 @@ public final class SearchServiceModule implements ServiceModule {
                         "refreshSeconds needs snapshots to refresh from");
             }
             subjects = Map.copyOf(subjects);
+        }
+
+        /** An open configuration: no operator token, no access policy. */
+        public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+                IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
+                TaxonomyCatalog taxonomies,
+                Supplier<Screener> screening,
+                PostalCodeCatalog postalCodes) {
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds,
+                    taxonomies, screening, postalCodes, null, null);
+        }
+
+        /**
+         * The same configuration served behind the operator token, with the
+         * resolver's principals scope-checked.
+         */
+        public Config secured(String token, CallerResolver resolver) {
+            return new Config(grpcPort, indexDir, subjects, snapshots, readOnly,
+                    refreshSeconds, taxonomies, screening, postalCodes, token, resolver);
         }
 
         /** A configuration without a postal-code pack. */
@@ -238,7 +264,10 @@ public final class SearchServiceModule implements ServiceModule {
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
-                netty = service.startNetty(config.grpcPort());
+                netty = config.apiToken() == null
+                        ? service.startNetty(config.grpcPort())
+                        : service.startNetty(config.grpcPort(),
+                                config.apiToken(), config.callers());
             }
 
             @Override
@@ -272,7 +301,10 @@ public final class SearchServiceModule implements ServiceModule {
 
             @Override
             public void start() throws Exception {
-                netty = service.startNetty(config.grpcPort());
+                netty = config.apiToken() == null
+                        ? service.startNetty(config.grpcPort())
+                        : service.startNetty(config.grpcPort(),
+                                config.apiToken(), config.callers());
                 if (config.refreshSeconds() > 0) {
                     refresher = java.util.concurrent.Executors
                             .newSingleThreadScheduledExecutor(runnable -> {

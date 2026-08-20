@@ -90,6 +90,7 @@ public final class ConfluentSchemaPublisher implements SchemaPublisher, AutoClos
     private final URI baseUrl;
     private final HttpClient client;
     private final Duration requestTimeout;
+    private final String apiToken;
     private final ObjectMapper json = new ObjectMapper();
 
     /**
@@ -111,9 +112,27 @@ public final class ConfluentSchemaPublisher implements SchemaPublisher, AutoClos
      * @param requestTimeout per-request timeout applied to every registry call
      */
     public ConfluentSchemaPublisher(URI baseUrl, Duration connectTimeout, Duration requestTimeout) {
+        this(baseUrl, connectTimeout, requestTimeout, null);
+    }
+
+    /**
+     * Creates a publisher that authenticates every call, for registries guarded by an
+     * operator api token or an access-policy credential holding {@code schema-write}.
+     *
+     * @param baseUrl base URL of the Confluent-compatible registry
+     * @param apiToken the credential sent as the {@code api_token} header; null publishes
+     *                 unauthenticated
+     */
+    public ConfluentSchemaPublisher(URI baseUrl, String apiToken) {
+        this(baseUrl, DEFAULT_CONNECT_TIMEOUT, DEFAULT_REQUEST_TIMEOUT, apiToken);
+    }
+
+    private ConfluentSchemaPublisher(URI baseUrl, Duration connectTimeout,
+                                     Duration requestTimeout, String apiToken) {
         String url = Objects.requireNonNull(baseUrl, "baseUrl").toString();
         this.baseUrl = URI.create(url.endsWith("/") ? url.substring(0, url.length() - 1) : url);
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
+        this.apiToken = apiToken;
         this.client = HttpClient.newBuilder()
                 .connectTimeout(Objects.requireNonNull(connectTimeout, "connectTimeout"))
                 .build();
@@ -341,22 +360,28 @@ public final class ConfluentSchemaPublisher implements SchemaPublisher, AutoClos
     // ---------------------------------------------------------------- HTTP plumbing
 
     private HttpResponse<String> get(String path, String description) throws SchemaPublishException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + path))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(requestTimeout)
                 .header("Accept", SCHEMA_REGISTRY_ACCEPT)
-                .GET()
-                .build();
+                .GET();
+        if (apiToken != null) {
+            builder.header("api_token", apiToken);
+        }
+        HttpRequest request = builder.build();
         return send(request, description);
     }
 
     private HttpResponse<String> post(String path, String body, String description)
             throws SchemaPublishException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + path))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(requestTimeout)
                 .header("Accept", SCHEMA_REGISTRY_ACCEPT)
                 .header("Content-Type", SCHEMA_REGISTRY_CONTENT_TYPE)
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (apiToken != null) {
+            builder.header("api_token", apiToken);
+        }
+        HttpRequest request = builder.build();
         return send(request, description);
     }
 

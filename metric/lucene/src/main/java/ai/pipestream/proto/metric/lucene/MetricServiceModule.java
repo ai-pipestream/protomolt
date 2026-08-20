@@ -1,5 +1,6 @@
 package ai.pipestream.proto.metric.lucene;
 
+import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
@@ -106,10 +107,16 @@ public final class MetricServiceModule implements ServiceModule {
      */
     public record Config(int grpcPort, Map<String, Subject> subjects,
             ai.pipestream.proto.metric.spi.RollupSink rollupSink,
-            ai.pipestream.proto.metric.spi.MetricSubjectResolver subjectResolver) {
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver subjectResolver,
+            String apiToken,
+            CallerResolver callers) {
 
         /** Validates the configuration. */
         public Config {
+            if (callers != null && apiToken == null) {
+                throw new IllegalArgumentException(
+                        "an access-policy resolver requires the operator api token");
+            }
             if (subjects == null || subjects.isEmpty()) {
                 throw new IllegalArgumentException(
                         "at least one served metric subject is required");
@@ -117,15 +124,32 @@ public final class MetricServiceModule implements ServiceModule {
             subjects = Map.copyOf(subjects);
         }
 
+        /** An open configuration: no operator token, no access policy. */
+        public Config(int grpcPort, Map<String, Subject> subjects,
+                ai.pipestream.proto.metric.spi.RollupSink rollupSink,
+                ai.pipestream.proto.metric.spi.MetricSubjectResolver subjectResolver) {
+            this(grpcPort, subjects, rollupSink, subjectResolver, null, null);
+        }
+
+        /**
+         * The same configuration served behind the operator token, with the
+         * resolver's principals scope-checked.
+         */
+        public Config secured(String token,
+                CallerResolver resolver) {
+            return new Config(grpcPort, subjects, rollupSink, subjectResolver,
+                    token, resolver);
+        }
+
         /** A configuration without a subject resolver. */
         public Config(int grpcPort, Map<String, Subject> subjects,
                 ai.pipestream.proto.metric.spi.RollupSink rollupSink) {
-            this(grpcPort, subjects, rollupSink, null);
+            this(grpcPort, subjects, rollupSink, null, null, null);
         }
 
         /** A configuration without a rollup sink. */
         public Config(int grpcPort, Map<String, Subject> subjects) {
-            this(grpcPort, subjects, null, null);
+            this(grpcPort, subjects, null, null, null, null);
         }
     }
 
@@ -230,7 +254,10 @@ public final class MetricServiceModule implements ServiceModule {
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
-                netty = service.startNetty(config.grpcPort());
+                netty = config.apiToken() == null
+                        ? service.startNetty(config.grpcPort())
+                        : service.startNetty(config.grpcPort(),
+                                config.apiToken(), config.callers());
             }
 
             @Override

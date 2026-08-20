@@ -1,6 +1,7 @@
 description = 'Lucene metric executor — aggregate collectors over the doc values the search service already writes'
 
 dependencies {
+    api project(':protomolt-authz')
     api project(':protomolt-metric-spi')
     api project(':protomolt-search-index-spi')
     api libs.lucene.core

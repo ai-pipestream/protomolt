@@ -1,6 +1,7 @@
 package ai.pipestream.proto.registry.service;
 
 import ai.pipestream.proto.actions.ActionCatalog;
+import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.composer.NodeContext;
@@ -33,6 +34,7 @@ public final class RegistryModule implements ServiceModule {
 
     private final Path repositoryDir;
     private final SchemaRegistryServerConfig serverConfig;
+    private final CallerResolver callers;
     private GitSchemaRegistryStore store;
     private SchemaRegistryServer server;
     private int httpPort = -1;
@@ -44,14 +46,34 @@ public final class RegistryModule implements ServiceModule {
      * @param serverConfig the HTTP server configuration
      */
     public RegistryModule(Path repositoryDir, SchemaRegistryServerConfig serverConfig) {
+        this(repositoryDir, serverConfig, null);
+    }
+
+    /**
+     * Creates the module with an access-policy resolver: a credential the
+     * policy names authenticates as its principal and is scope-checked on
+     * every route. Requires the server config to carry the operator token.
+     *
+     * @param repositoryDir the git repository backing the registry
+     * @param serverConfig the HTTP server configuration
+     * @param callers resolves access-policy credentials, or {@code null}
+     *        for the operator token alone
+     */
+    public RegistryModule(Path repositoryDir, SchemaRegistryServerConfig serverConfig,
+            CallerResolver callers) {
         if (repositoryDir == null) {
             throw new IllegalArgumentException("repositoryDir must not be null");
         }
         if (serverConfig == null) {
             throw new IllegalArgumentException("serverConfig must not be null");
         }
+        if (callers != null && serverConfig.apiToken() == null) {
+            throw new IllegalArgumentException(
+                    "an access-policy resolver requires the operator api token");
+        }
         this.repositoryDir = repositoryDir;
         this.serverConfig = serverConfig;
+        this.callers = callers;
     }
 
     @Override
@@ -82,7 +104,7 @@ public final class RegistryModule implements ServiceModule {
                 catalog = catalog.register(new RegistryRemotesAction(federation))
                         .register(new RegistrySyncAction(federation))
                         .register(new PublishConfigAction(store));
-                server = new SchemaRegistryServer(serverConfig, store, catalog);
+                server = new SchemaRegistryServer(serverConfig, store, catalog, callers);
                 httpPort = server.start();
             }
 

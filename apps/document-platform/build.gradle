@@ -5,6 +5,7 @@ plugins {
 description = 'The document platform in one container: repo-service, the authenticated intake service, the parsing coordinator with the embedded reference parser, the durable jobs worker, the git-backed schema registry (on by default, jobs verbs mounted), the streaming parser playground, and the search service, all wired over the in-process transport'
 
 dependencies {
+    implementation project(':protomolt-authz')
     implementation project(':protomolt-composer')
     implementation project(':protomolt-repo-service')
     implementation project(':protomolt-repo-container')
@@ -60,6 +61,7 @@ dependencies {
     implementation project(':protomolt-sources')
     implementation project(':protomolt-grpc-service-profile')
     implementation libs.grpc.netty.shaded
+    implementation libs.grpc.stub
     implementation libs.grpc.inprocess
     implementation libs.jackson.databind
     implementation libs.slf4j.api

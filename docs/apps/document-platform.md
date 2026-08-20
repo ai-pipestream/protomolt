@@ -176,6 +176,21 @@ never the Iceberg query backend, so the single-engine query surface is
 unchanged. The `rebuild-rollup` workflow registers with the co-mounted
 registry and submits through the jobs role like any other workflow.
 
+## The operator token and access policy
+
+`PROTOMOLT_API_TOKEN` makes the node guarded: the registry's HTTP
+surface and the search and metric gRPC servers demand a credential, and
+the node's own outbound calls — remote-role channels, the boot publish,
+the config lane's pulls — present the same token, so a split-role fleet
+stays whole when every node is guarded. `PROTOMOLT_ACCESS_POLICY` names
+an [access policy](../design/authorization-scopes.md) file read at
+boot, and the config-lane subject `access-policy` re-scopes a running
+node without a restart; a guarded registry node publishes the policy
+contract at boot so the config gate can validate the documents. A
+policy without the token refuses at boot, and a guarded node refuses
+the search console role, which has no principal sessions yet. Both
+variables unset is the open, trusted-network node.
+
 ## Configuration
 
 The repository half of the platform reads the `DOCUMENT_PLATFORM_*` family

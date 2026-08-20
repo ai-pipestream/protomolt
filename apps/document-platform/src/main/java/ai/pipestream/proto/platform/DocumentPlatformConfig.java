@@ -90,6 +90,21 @@ public record DocumentPlatformConfig(
     /** Env var selecting the roles this node mounts (comma-separated). */
     public static final String ENV_ROLES = "PROTOMOLT_ROLES";
 
+    /**
+     * The operator api token. Set, every network surface a serving role
+     * exposes (registry HTTP, search and metric gRPC) demands it, and the
+     * node's own remote-role channels present it. Unset, the node stays an
+     * open, trusted-network surface.
+     */
+    public static final String ENV_API_TOKEN = "PROTOMOLT_API_TOKEN";
+
+    /**
+     * Path of an access-policy file (JSON or binary {@code AccessPolicy})
+     * read at boot; the config-lane subject {@code access-policy} re-scopes
+     * a running node without a restart. Requires {@link #ENV_API_TOKEN}.
+     */
+    public static final String ENV_ACCESS_POLICY = "PROTOMOLT_ACCESS_POLICY";
+
     /** Env var naming a remote actions route for a console mounted without a registry. */
     public static final String ENV_ACTIONS_URL = "DOCUMENT_PLATFORM_ACTIONS_URL";
 
