@@ -187,6 +187,11 @@ line, or an error detail; principals are named, credentials are not.
   application-level claim inside an already-authorized coordinator
   stream; `worker-coordinate` gates who may open that stream, not
   which worker id it may assert.
+- **MCP resources stay behind authentication.** `tools/list` and
+  `tools/call` are scope-checked; the resource reads (registry
+  documents, service profiles, delegation transcripts) remain
+  authenticated-only in this version, a recorded edge rather than a
+  silent one.
 - **It is not tenancy.** The intake door's account-bound scope, with
   its per-account axes, stays exactly as it is; this vocabulary gates
   the operator-facing surfaces. Mapping external principals onto

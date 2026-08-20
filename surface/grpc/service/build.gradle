@@ -2,6 +2,7 @@ description = 'The action catalog as a gRPC service: every verb a typed RPC, ser
 
 dependencies {
     api project(':protomolt-actions')
+    api project(':protomolt-authz')
     api project(':protomolt-grpc-channel-policy')
     api libs.grpc.api
     api libs.protobuf.java

@@ -2,6 +2,7 @@ package ai.pipestream.proto.grpc.service;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.Caller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -42,11 +43,18 @@ public final class CatalogBridge {
     }
 
     /**
-     * Dispatches {@code request} to the action behind {@code method} and returns the result as
-     * the method's output message.
+     * Dispatches {@code request} to the action behind {@code method} with process authority
+     * and returns the result as the method's output message.
      */
     public static DynamicMessage execute(ActionCatalog catalog, MethodDescriptor method,
                                          MessageOrBuilder request) throws ActionException {
+        return execute(catalog, method, request, Caller.operator());
+    }
+
+    /** Dispatches like {@link #execute}, as {@code caller}: the scope check runs first. */
+    public static DynamicMessage execute(ActionCatalog catalog, MethodDescriptor method,
+                                         MessageOrBuilder request, Caller caller)
+            throws ActionException {
         String action = actionName(method);
         ObjectNode input;
         try {
@@ -57,7 +65,7 @@ public final class CatalogBridge {
                     "Request does not render as the '" + action + "' input envelope: "
                             + e.getMessage());
         }
-        ObjectNode output = catalog.execute(action, input);
+        ObjectNode output = catalog.execute(action, input, caller);
         Descriptor outputType = method.getOutputType();
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(outputType);
         try {
