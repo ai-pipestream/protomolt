@@ -269,27 +269,10 @@ public final class RecordVerifier {
     }
 
     private static Map<String, TrustedIssuer> indexSnapshot(TrustSnapshot trust) {
-        if (trust == null) {
-            throw new IllegalArgumentException("trust snapshot must not be null");
-        }
-        ValidationResult rules = ProtoValidator.create().validate(trust);
-        if (!rules.valid()) {
-            throw new IllegalArgumentException(
-                    "trust snapshot is invalid: " + violations(rules));
-        }
+        TrustSnapshots.requireWellFormed(trust);
         Map<String, TrustedIssuer> issuers = new LinkedHashMap<>();
         for (TrustedIssuer issuer : trust.getIssuersList()) {
-            if (issuers.put(issuer.getIssuer(), issuer) != null) {
-                throw new IllegalArgumentException(
-                        "trust snapshot duplicates issuer '" + issuer.getIssuer() + "'");
-            }
-            Set<String> keyIds = new HashSet<>();
-            for (TrustedKey key : issuer.getKeysList()) {
-                if (!keyIds.add(key.getKeyId())) {
-                    throw new IllegalArgumentException("trust snapshot duplicates key '"
-                            + key.getKeyId() + "' under issuer '" + issuer.getIssuer() + "'");
-                }
-            }
+            issuers.put(issuer.getIssuer(), issuer);
         }
         return issuers;
     }
