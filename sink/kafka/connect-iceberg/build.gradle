@@ -30,8 +30,8 @@ dependencies {
 tasks.register('connectPluginZip', Zip) {
     description = 'Packages the Kafka Connect Iceberg plugin as a plugin.path-ready zip'
     group = 'distribution'
-    archiveBaseName = 'protomolt-connect-iceberg-plugin'
+    archiveBaseName = 'protomolt-kafka-connect-iceberg-plugin'
     from tasks.named('jar')
     from configurations.runtimeClasspath
-    into 'protomolt-connect-iceberg'
+    into 'protomolt-kafka-connect-iceberg'
 }

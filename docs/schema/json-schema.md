@@ -1,6 +1,6 @@
 # JSON Schema generation
 
-`protomolt-jsonschema` renders any message type as a JSON Schema
+`protomolt-http-jsonschema` renders any message type as a JSON Schema
 (draft 2020-12) describing its canonical proto3 JSON form.
 
 ```java

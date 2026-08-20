@@ -1,8 +1,8 @@
 package ai.pipestream.proto.server.vertx;
 
-import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
-import ai.pipestream.proto.rest.MalformedRequestException;
-import ai.pipestream.proto.rest.ProtoRestGateway;
+import ai.pipestream.proto.http.openapi.ProtoOpenApiGenerator;
+import ai.pipestream.proto.http.rest.MalformedRequestException;
+import ai.pipestream.proto.http.rest.ProtoRestGateway;
 import ai.pipestream.proto.server.ProtoRestHttpSupport;
 import ai.pipestream.proto.server.ProtoRestServerHost;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;

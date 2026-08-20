@@ -2,7 +2,7 @@ description = 'Spring integration for Pipestream protobuf tools'
 
 dependencies {
     api project(':protomolt-mapper-cel')
-    api project(':protomolt-rest')
+    api project(':protomolt-http-rest')
     compileOnly libs.spring.context
     // Boot is optional: plain-Spring users can still @Import the configuration.
     compileOnly libs.spring.boot.autoconfigure

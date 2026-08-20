@@ -7,7 +7,7 @@ dependencies {
     compileOnly libs.kafka.connect.api
 
     implementation project(':protomolt-kafka-wire')
-    implementation project(':protomolt-json')
+    implementation project(':protomolt-http-json')
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
@@ -27,8 +27,8 @@ dependencies {
 tasks.register('connectPluginZip', Zip) {
     description = 'Packages the Kafka Connect plugin as a plugin.path-ready zip'
     group = 'distribution'
-    archiveBaseName = 'protomolt-connect-plugin'
+    archiveBaseName = 'protomolt-kafka-connect-plugin'
     from tasks.named('jar')
     from configurations.runtimeClasspath
-    into 'protomolt-connect'
+    into 'protomolt-kafka-connect'
 }

@@ -1,11 +1,11 @@
 package ai.pipestream.proto.server.spring;
 
-import ai.pipestream.proto.json.ProtobufJsonTranscoder;
-import ai.pipestream.proto.rest.ApiTokenRequirement;
-import ai.pipestream.proto.rest.ProtoApiTokenValidator;
-import ai.pipestream.proto.rest.ProtoRestGateway;
-import ai.pipestream.proto.rest.ProtoRestMethod;
-import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
+import ai.pipestream.proto.http.json.ProtobufJsonTranscoder;
+import ai.pipestream.proto.http.rest.ApiTokenRequirement;
+import ai.pipestream.proto.http.rest.ProtoApiTokenValidator;
+import ai.pipestream.proto.http.rest.ProtoRestGateway;
+import ai.pipestream.proto.http.rest.ProtoRestMethod;
+import ai.pipestream.proto.http.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;

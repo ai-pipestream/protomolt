@@ -10,5 +10,5 @@ dependencies {
     testImplementation libs.spring.webmvc
     testImplementation libs.spring.test
     testImplementation 'jakarta.servlet:jakarta.servlet-api:6.1.0'
-    testImplementation project(':protomolt-json')
+    testImplementation project(':protomolt-http-json')
 }

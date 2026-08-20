@@ -1,6 +1,6 @@
 # Kafka Connect: OpenSearch sink
 
-`protomolt-connect-opensearch` lands topic records in OpenSearch as documents
+`protomolt-kafka-connect-opensearch` lands topic records in OpenSearch as documents
 shaped by the schema itself: the `(ai.pipestream.proto.index.hints.v1.index)`
 field options compiled into the configured descriptor set drive field kinds,
 engine names, analyzers, vectors, and `google.protobuf.Any` handling. There
@@ -28,8 +28,8 @@ converge instead of duplicating.
 ## Installation
 
 ```bash
-./gradlew :protomolt-connect-opensearch:connectPluginZip
-unzip sink/kafka/connect-opensearch/build/distributions/protomolt-connect-opensearch-plugin-*.zip \
+./gradlew :protomolt-kafka-connect-opensearch:connectPluginZip
+unzip sink/kafka/connect-opensearch/build/distributions/protomolt-kafka-connect-opensearch-plugin-*.zip \
       -d /opt/connect/plugins
 ```
 

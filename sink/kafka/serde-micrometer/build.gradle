@@ -1,7 +1,7 @@
 description = 'Micrometer binding for the serde metrics SPI: validation as a data-quality sensor'
 
 dependencies {
-    api project(':protomolt-serde')
+    api project(':protomolt-kafka-serde')
     implementation libs.micrometer.core
 
     testImplementation libs.kafka.clients

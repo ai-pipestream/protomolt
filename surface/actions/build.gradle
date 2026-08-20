@@ -4,7 +4,7 @@ dependencies {
     api project(':protomolt-descriptors')
     api libs.jackson.databind
     // ActionContext.transcoder() returns ProtobufJsonTranscoder from this module.
-    api project(':protomolt-json')
+    api project(':protomolt-http-json')
 
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-compat')
@@ -13,7 +13,7 @@ dependencies {
     implementation project(':protomolt-protobuf-llm')
     implementation project(':protomolt-protobuf-quality')
     implementation project(':protomolt-protobuf-prompt')
-    implementation project(':protomolt-jsonschema')
+    implementation project(':protomolt-http-jsonschema')
     implementation project(':protomolt-mapper-core')
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-shapes')

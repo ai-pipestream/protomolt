@@ -7,7 +7,7 @@
  * paths, and the facade supplies the status, body, and headers for each call as a
  * {@code QuarkusProtoRestFacade.Result}.
  *
- * <p>Request handling is delegated to {@link ai.pipestream.proto.rest.ProtoRestGateway}, with body
+ * <p>Request handling is delegated to {@link ai.pipestream.proto.http.rest.ProtoRestGateway}, with body
  * size checks, header flattening, and status mapping taken from
  * {@link ai.pipestream.proto.server.ProtoRestHttpSupport}, so responses match the standalone hosts.
  * Quarkus 3.x runs on Vert.x 4; the {@code servers/vertx} module targets Vert.x 5 and is the

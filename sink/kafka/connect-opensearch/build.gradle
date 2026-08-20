@@ -25,8 +25,8 @@ dependencies {
 tasks.register('connectPluginZip', Zip) {
     description = 'Packages the Kafka Connect OpenSearch plugin as a plugin.path-ready zip'
     group = 'distribution'
-    archiveBaseName = 'protomolt-connect-opensearch-plugin'
+    archiveBaseName = 'protomolt-kafka-connect-opensearch-plugin'
     from tasks.named('jar')
     from configurations.runtimeClasspath
-    into 'protomolt-connect-opensearch'
+    into 'protomolt-kafka-connect-opensearch'
 }

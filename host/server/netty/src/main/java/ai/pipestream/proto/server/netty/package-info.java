@@ -5,7 +5,7 @@
  * {@link ai.pipestream.proto.server.ProtoRestServerHost} over a Netty HTTP pipeline. It serves the
  * three routes common to every host — the invoke route under the configured REST prefix, the
  * OpenAPI document, and the health endpoint — and delegates request handling to
- * {@link ai.pipestream.proto.rest.ProtoRestGateway}. Gateway invocations are dispatched to a
+ * {@link ai.pipestream.proto.http.rest.ProtoRestGateway}. Gateway invocations are dispatched to a
  * virtual-thread-per-task executor so a slow backend does not occupy an event loop.
  *
  * <p>Shared status mapping and path parsing come from

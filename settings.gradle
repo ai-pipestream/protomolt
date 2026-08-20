@@ -262,20 +262,20 @@ project(':protomolt-iceberg-s3').projectDir = file('sink/iceberg-s3')
 include 'protomolt-kafka-wire'
 project(':protomolt-kafka-wire').projectDir = file('sink/kafka/wire')
 
-include 'protomolt-connect'
-project(':protomolt-connect').projectDir = file('sink/kafka/connect')
+include 'protomolt-kafka-connect'
+project(':protomolt-kafka-connect').projectDir = file('sink/kafka/connect')
 
-include 'protomolt-connect-iceberg'
-project(':protomolt-connect-iceberg').projectDir = file('sink/kafka/connect-iceberg')
+include 'protomolt-kafka-connect-iceberg'
+project(':protomolt-kafka-connect-iceberg').projectDir = file('sink/kafka/connect-iceberg')
 
-include 'protomolt-connect-opensearch'
-project(':protomolt-connect-opensearch').projectDir = file('sink/kafka/connect-opensearch')
+include 'protomolt-kafka-connect-opensearch'
+project(':protomolt-kafka-connect-opensearch').projectDir = file('sink/kafka/connect-opensearch')
 
-include 'protomolt-serde'
-project(':protomolt-serde').projectDir = file('sink/kafka/serde')
+include 'protomolt-kafka-serde'
+project(':protomolt-kafka-serde').projectDir = file('sink/kafka/serde')
 
-include 'protomolt-serde-micrometer'
-project(':protomolt-serde-micrometer').projectDir = file('sink/kafka/serde-micrometer')
+include 'protomolt-kafka-serde-micrometer'
+project(':protomolt-kafka-serde-micrometer').projectDir = file('sink/kafka/serde-micrometer')
 
 // surface/ — protocol endpoints over the toolkit.
 
@@ -303,17 +303,17 @@ project(':protomolt-grpc-validation').projectDir = file('surface/grpc/validation
 include 'protomolt-grpc-validation-micrometer'
 project(':protomolt-grpc-validation-micrometer').projectDir = file('surface/grpc/validation-micrometer')
 
-include 'protomolt-json'
-project(':protomolt-json').projectDir = file('surface/http/json')
+include 'protomolt-http-json'
+project(':protomolt-http-json').projectDir = file('surface/http/json')
 
-include 'protomolt-rest'
-project(':protomolt-rest').projectDir = file('surface/http/rest')
+include 'protomolt-http-rest'
+project(':protomolt-http-rest').projectDir = file('surface/http/rest')
 
-include 'protomolt-openapi'
-project(':protomolt-openapi').projectDir = file('surface/http/openapi')
+include 'protomolt-http-openapi'
+project(':protomolt-http-openapi').projectDir = file('surface/http/openapi')
 
-include 'protomolt-jsonschema'
-project(':protomolt-jsonschema').projectDir = file('surface/http/jsonschema')
+include 'protomolt-http-jsonschema'
+project(':protomolt-http-jsonschema').projectDir = file('surface/http/jsonschema')
 
 include 'protomolt-mcp'
 project(':protomolt-mcp').projectDir = file('surface/mcp')

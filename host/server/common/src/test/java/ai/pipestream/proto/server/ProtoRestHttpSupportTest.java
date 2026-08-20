@@ -1,14 +1,14 @@
 package ai.pipestream.proto.server;
 
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
-import ai.pipestream.proto.json.ProtobufJsonException;
-import ai.pipestream.proto.rest.ForbiddenProtoRestException;
-import ai.pipestream.proto.rest.HttpMethodNotAllowedException;
-import ai.pipestream.proto.rest.MalformedRequestException;
-import ai.pipestream.proto.rest.MethodNotFoundException;
-import ai.pipestream.proto.rest.RequestTooLargeException;
-import ai.pipestream.proto.rest.ServiceNotFoundException;
-import ai.pipestream.proto.rest.UnauthorizedProtoRestException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.ProtobufJsonException;
+import ai.pipestream.proto.http.rest.ForbiddenProtoRestException;
+import ai.pipestream.proto.http.rest.HttpMethodNotAllowedException;
+import ai.pipestream.proto.http.rest.MalformedRequestException;
+import ai.pipestream.proto.http.rest.MethodNotFoundException;
+import ai.pipestream.proto.http.rest.RequestTooLargeException;
+import ai.pipestream.proto.http.rest.ServiceNotFoundException;
+import ai.pipestream.proto.http.rest.UnauthorizedProtoRestException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

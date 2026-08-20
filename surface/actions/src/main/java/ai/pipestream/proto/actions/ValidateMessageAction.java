@@ -1,6 +1,6 @@
 package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.node.ArrayNode;

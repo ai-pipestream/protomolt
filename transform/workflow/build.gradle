@@ -15,7 +15,7 @@ dependencies {
     // Run evidence projects into canonical signed work records.
     api project(':protomolt-receipt')
 
-    implementation project(':protomolt-json')
+    implementation project(':protomolt-http-json')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
     // Prompt/schema fingerprints of a structured step are recomputed with the

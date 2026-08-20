@@ -8,7 +8,7 @@ import ai.pipestream.proto.workflow.WorkflowVerifier;
 import ai.pipestream.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 

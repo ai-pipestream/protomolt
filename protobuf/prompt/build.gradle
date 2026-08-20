@@ -13,7 +13,7 @@ dependencies {
     implementation project(':protomolt-protobuf-llm')
     implementation project(':protomolt-protobuf-metadata')
     implementation project(':protomolt-protobuf-quality')
-    implementation project(':protomolt-jsonschema')
+    implementation project(':protomolt-http-jsonschema')
     implementation libs.protobuf.java.util
     implementation libs.jackson.databind
 }

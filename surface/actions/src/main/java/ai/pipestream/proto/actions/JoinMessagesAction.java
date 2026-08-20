@@ -3,7 +3,7 @@ package ai.pipestream.proto.actions;
 import ai.pipestream.proto.cel.CelCompilationException;
 import ai.pipestream.proto.cel.CelEvaluationException;
 import ai.pipestream.proto.cel.CelMappingRule;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.shapes.MessageJoiner;
 import ai.pipestream.proto.shapes.MessageScope;

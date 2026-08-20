@@ -55,7 +55,7 @@ data path down. Dimensions are compiled once per message type and cached.
 
 The serde measures automatically: `protomolt.quality.on.write` is on by
 default and costs nothing for types that declare no dimensions. Scores flow
-to the [metrics listeners](../sink/kafka-serde.md): with `protomolt-serde-micrometer`
+to the [metrics listeners](../sink/kafka-serde.md): with `protomolt-kafka-serde-micrometer`
 on the classpath that means `protomolt.serde.quality.score` and
 `protomolt.serde.quality.dimension` distributions per topic and type, which
 is a quality dashboard of every stream that flows through the serde.

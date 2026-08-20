@@ -1,6 +1,6 @@
 package ai.pipestream.proto.prompt;
 
-import ai.pipestream.proto.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import ai.pipestream.proto.validate.spi.ValidationRuleSource;

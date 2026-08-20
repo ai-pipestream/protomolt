@@ -1,10 +1,10 @@
 package ai.pipestream.proto.server.quarkus;
 
-import ai.pipestream.proto.json.ProtobufJsonTranscoder;
-import ai.pipestream.proto.rest.ProtoApiTokenValidator;
-import ai.pipestream.proto.rest.ProtoRestGateway;
-import ai.pipestream.proto.rest.ProtoRestMethod;
-import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
+import ai.pipestream.proto.http.json.ProtobufJsonTranscoder;
+import ai.pipestream.proto.http.rest.ProtoApiTokenValidator;
+import ai.pipestream.proto.http.rest.ProtoRestGateway;
+import ai.pipestream.proto.http.rest.ProtoRestMethod;
+import ai.pipestream.proto.http.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
@@ -55,7 +55,7 @@ class QuarkusProtoRestFacadeTest {
                                 .putFields("ok", Value.newBuilder().setBoolValue(true).build())
                                 .build())
                 .requestType(Struct.class)
-                .apiToken(ai.pipestream.proto.rest.ApiTokenRequirement.apiKeyHeader("api_token"))
+                .apiToken(ai.pipestream.proto.http.rest.ApiTokenRequirement.apiKeyHeader("api_token"))
                 .build());
         return registry;
     }
@@ -89,7 +89,7 @@ class QuarkusProtoRestFacadeTest {
 
         // CDI must wire the config, not hardcode defaults.
         assertThat(QuarkusProtoRestFacade.class
-                .getConstructor(ai.pipestream.proto.rest.ProtoRestGateway.class, ProtoToolsServerConfig.class)
+                .getConstructor(ai.pipestream.proto.http.rest.ProtoRestGateway.class, ProtoToolsServerConfig.class)
                 .isAnnotationPresent(jakarta.inject.Inject.class)).isTrue();
     }
 

@@ -6,7 +6,7 @@ import ai.pipestream.proto.cel.CelEvaluationException;
 import ai.pipestream.proto.cel.CelEvaluator;
 import ai.pipestream.proto.cel.CelMappingRule;
 import ai.pipestream.proto.cel.CelProtoMapper;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import com.fasterxml.jackson.databind.JsonNode;

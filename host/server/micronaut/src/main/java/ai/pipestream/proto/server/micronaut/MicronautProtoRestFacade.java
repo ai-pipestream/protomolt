@@ -1,7 +1,7 @@
 package ai.pipestream.proto.server.micronaut;
 
-import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
-import ai.pipestream.proto.rest.ProtoRestGateway;
+import ai.pipestream.proto.http.openapi.ProtoOpenApiGenerator;
+import ai.pipestream.proto.http.rest.ProtoRestGateway;
 import ai.pipestream.proto.server.ProtoRestHttpSupport;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import org.slf4j.Logger;

@@ -1,9 +1,9 @@
 package ai.pipestream.proto.server;
 
-import ai.pipestream.proto.json.ProtobufJsonException;
-import ai.pipestream.proto.rest.MalformedRequestException;
-import ai.pipestream.proto.rest.ProtoRestException;
-import ai.pipestream.proto.rest.ProtoRestInvocationException;
+import ai.pipestream.proto.http.json.ProtobufJsonException;
+import ai.pipestream.proto.http.rest.MalformedRequestException;
+import ai.pipestream.proto.http.rest.ProtoRestException;
+import ai.pipestream.proto.http.rest.ProtoRestInvocationException;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 

@@ -1,14 +1,14 @@
 package ai.pipestream.proto.samples;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.json.ProtobufJsonTranscoder;
-import ai.pipestream.proto.openapi.ProtoOpenApiGenerator;
-import ai.pipestream.proto.rest.ProtoApiToken;
-import ai.pipestream.proto.rest.ProtoApiTokenValidator;
-import ai.pipestream.proto.rest.ProtoRestAnnotationRegistrar;
-import ai.pipestream.proto.rest.ProtoRestExposed;
-import ai.pipestream.proto.rest.ProtoRestGateway;
-import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
+import ai.pipestream.proto.http.json.ProtobufJsonTranscoder;
+import ai.pipestream.proto.http.openapi.ProtoOpenApiGenerator;
+import ai.pipestream.proto.http.rest.ProtoApiToken;
+import ai.pipestream.proto.http.rest.ProtoApiTokenValidator;
+import ai.pipestream.proto.http.rest.ProtoRestAnnotationRegistrar;
+import ai.pipestream.proto.http.rest.ProtoRestExposed;
+import ai.pipestream.proto.http.rest.ProtoRestGateway;
+import ai.pipestream.proto.http.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
 import com.google.protobuf.Struct;

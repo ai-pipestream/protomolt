@@ -28,7 +28,7 @@ dependencies {
     // Kafka eventing: the outbox relay publishes and the request-topic
     // consumer reads through the protomolt serde (Confluent wire format over
     // the packaged jobs.proto contract).
-    implementation project(':protomolt-serde')
+    implementation project(':protomolt-kafka-serde')
     implementation libs.kafka.clients
 
     runtimeOnly libs.slf4j.simple

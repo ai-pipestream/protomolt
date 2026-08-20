@@ -1,6 +1,6 @@
 package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.prompt.Persona;
 import ai.pipestream.proto.prompt.PromptPacket;
 import ai.pipestream.proto.prompt.PromptRenderException;

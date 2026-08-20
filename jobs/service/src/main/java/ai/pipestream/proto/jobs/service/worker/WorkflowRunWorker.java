@@ -13,7 +13,7 @@ import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreException;
 import ai.pipestream.proto.jobs.v1.WorkflowRunRequest;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.kafka.serde.ProtoMoltProtobufDeserializer;
 import ai.pipestream.proto.kafka.serde.ProtoMoltSerdeConfig;
 import com.fasterxml.jackson.databind.JsonNode;

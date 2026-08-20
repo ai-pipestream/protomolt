@@ -5,7 +5,7 @@
  * {@link ai.pipestream.proto.server.ProtoRestServerHost} on a Vert.x
  * {@link io.vertx.core.http.HttpServer}, serving the invoke, OpenAPI, and health routes and
  * delegating request handling to
- * {@link ai.pipestream.proto.rest.ProtoRestGateway}. It either creates its own
+ * {@link ai.pipestream.proto.http.rest.ProtoRestGateway}. It either creates its own
  * {@link io.vertx.core.Vertx} instance or accepts one supplied by the application; only an instance
  * it created is closed with the server.
  *

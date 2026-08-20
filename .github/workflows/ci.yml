@@ -139,7 +139,7 @@ jobs:
         run: >
           ./gradlew :protomolt-schema-apicurio:test :protomolt-schema-confluent:test
           :protomolt-index-solr:test :protomolt-index-opensearch:test
-          :protomolt-iceberg:test :protomolt-iceberg-s3:test :protomolt-connect-iceberg:test :protomolt-serde:test
+          :protomolt-iceberg:test :protomolt-iceberg-s3:test :protomolt-kafka-connect-iceberg:test :protomolt-kafka-serde:test
           --rerun-tasks --console=plain
 
       - name: Fail if any integration suite skipped

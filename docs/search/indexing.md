@@ -17,7 +17,7 @@ and does not interpret hints at all.
 | `protomolt-index-solr` | Solr document-map mapping |
 | `protomolt-index-qdrant` | Qdrant point mapping (repo Document semantic chunks → named vectors), a gRPC sink, and collection-schema generation; validates declared rules on write |
 | `protomolt-protobuf-indexing` | Facade chaining optional validation → mapping → NDJSON; registers the declared-rules gate for unpacked Any payloads |
-| `protomolt-connect-opensearch` | Kafka Connect sink over this write path ([guide](../sink/kafka-connect-opensearch.md)) |
+| `protomolt-kafka-connect-opensearch` | Kafka Connect sink over this write path ([guide](../sink/kafka-connect-opensearch.md)) |
 
 ## Indexing hints
 

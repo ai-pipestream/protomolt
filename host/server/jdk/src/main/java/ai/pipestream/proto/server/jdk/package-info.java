@@ -5,7 +5,7 @@
  * {@link ai.pipestream.proto.server.ProtoRestServerHost} on
  * {@link com.sun.net.httpserver.HttpServer} with a virtual-thread executor, and adds no
  * dependencies beyond the JDK itself. Request handling is delegated to
- * {@link ai.pipestream.proto.rest.ProtoRestGateway}; the class binds the invoke, OpenAPI, and
+ * {@link ai.pipestream.proto.http.rest.ProtoRestGateway}; the class binds the invoke, OpenAPI, and
  * health routes and applies the shared status mapping from
  * {@link ai.pipestream.proto.server.ProtoRestHttpSupport}.
  *
