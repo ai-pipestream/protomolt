@@ -1001,7 +1001,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             TaskConsoleSessions taskSessions = options.taskConsole() == null
                     ? TaskConsoleSessions.open()
                     : TaskConsoleSessions.secured(options.taskConsole().loginToken(),
-                            options.taskConsole().sessionTtl());
+                            options.taskConsole().sessionTtl(), callers);
             if (options.apiToken() == null || options.taskConsole() != null) {
                 http.withContext("/console", new ConsoleHandler())
                         .withContext("/api/task-session",
