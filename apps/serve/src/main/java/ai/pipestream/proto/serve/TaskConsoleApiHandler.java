@@ -1,5 +1,7 @@
 package ai.pipestream.proto.serve;
 
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.delegation.DelegationBridge;
 import ai.pipestream.proto.delegation.DelegationReducer;
 import ai.pipestream.proto.delegation.InProcessDelegationCoordinator;
@@ -49,8 +51,14 @@ final class TaskConsoleApiHandler implements HttpHandler {
     public void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             exchange.getResponseHeaders().set("Cache-Control", "no-store");
-            if (!sessions.authorized(exchange)) {
+            Caller caller = sessions.caller(exchange).orElse(null);
+            if (caller == null) {
                 respondError(exchange, 401, "authentication required");
+                return;
+            }
+            if (!caller.holds(Scopes.WORKER_COORDINATE)) {
+                respondError(exchange, 403, "caller '" + caller.name() + "' does not hold '"
+                        + Scopes.WORKER_COORDINATE + "', which the task console requires");
                 return;
             }
             String path = exchange.getRequestURI().getPath();

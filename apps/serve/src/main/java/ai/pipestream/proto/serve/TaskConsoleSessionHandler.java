@@ -1,5 +1,6 @@
 package ai.pipestream.proto.serve;
 
+import ai.pipestream.proto.actions.Caller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
@@ -62,11 +63,12 @@ final class TaskConsoleSessionHandler implements HttpHandler {
             return;
         }
         String token = parsed == null ? "" : parsed.path("token").asText("");
-        if (!sessions.acceptsLogin(token)) {
+        Caller caller = sessions.loginCaller(token);
+        if (caller == null) {
             respondJson(exchange, 401, "{\"error\":\"invalid credentials\"}");
             return;
         }
-        String session = sessions.issue();
+        String session = sessions.issue(caller);
         exchange.getResponseHeaders().add("Set-Cookie", TaskConsoleSessions.COOKIE + "="
                 + session + "; Path=/; Max-Age=" + sessions.maxAgeSeconds()
                 + "; HttpOnly; Secure; SameSite=Strict");
