@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.protobuf)
+    id 'java-test-fixtures'
 }
 
 description = 'The receipt layer: canonical signed work records, the trust snapshot, and the strict offline verifier'

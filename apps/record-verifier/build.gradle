@@ -1,0 +1,9 @@
+description = 'The external verifier for signed work records: pure JDK, zero dependencies, shares no runtime with the platform'
+
+// No main-source dependencies, deliberately: the module's whole value is
+// verifying records without the platform's runtime. The tests cross-check
+// against the runtime verifier and its conformance corpus.
+dependencies {
+    testImplementation project(':protomolt-receipt')
+    testImplementation testFixtures(project(':protomolt-receipt'))
+}
