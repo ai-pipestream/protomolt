@@ -3,6 +3,7 @@ package ai.pipestream.proto.inference.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.spi.UnknownModelException;
 import ai.pipestream.proto.inference.v1.DescribeModelRequest;
@@ -30,6 +31,11 @@ public final class DescribeModelAction implements ProtoAction {
     @Override
     public String name() {
         return "inference-describe-model";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

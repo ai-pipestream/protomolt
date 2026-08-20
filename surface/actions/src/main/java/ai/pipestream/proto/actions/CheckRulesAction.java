@@ -38,6 +38,11 @@ final class CheckRulesAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Statically validates mapping rules and CEL expressions against descriptors: "
                 + "every path must resolve, shapes must line up (repeated vs singular, "

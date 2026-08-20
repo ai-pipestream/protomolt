@@ -21,6 +21,11 @@ final class RenderIndexMappingsAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Renders the search-index artifact for a protobuf message type — OpenSearch index "
                 + "mappings JSON, Solr managed-schema pieces, Lucene field specs, or a Qdrant "

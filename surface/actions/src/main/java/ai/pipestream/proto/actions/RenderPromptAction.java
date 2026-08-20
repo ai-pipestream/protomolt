@@ -22,6 +22,11 @@ final class RenderPromptAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Renders a prompt packet for a protobuf message type: instruction prose built "
                 + "from the schema's metadata, validation, quality and llm.v1 annotations, plus "

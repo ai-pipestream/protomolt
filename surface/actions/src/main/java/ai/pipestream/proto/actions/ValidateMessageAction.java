@@ -18,6 +18,11 @@ final class ValidateMessageAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Validates a JSON message against the validation rules declared on its protobuf "
                 + "schema (ai.pipestream.proto.validate.v1 options); returns valid:true/false plus "

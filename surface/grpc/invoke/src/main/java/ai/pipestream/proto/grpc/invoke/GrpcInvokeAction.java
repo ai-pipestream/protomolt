@@ -3,6 +3,7 @@ package ai.pipestream.proto.grpc.invoke;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.SchemaResolver;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -59,6 +60,11 @@ public final class GrpcInvokeAction implements StreamingAction {
     @Override
     public String name() {
         return "grpc-invoke";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

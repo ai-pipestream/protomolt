@@ -75,6 +75,7 @@ public final class CatalogBridge {
         io.grpc.Status status = switch (e.code().toLowerCase(Locale.ROOT)) {
             case "internal-error" -> io.grpc.Status.INTERNAL;
             case "unknown-action" -> io.grpc.Status.UNIMPLEMENTED;
+            case "permission-denied" -> io.grpc.Status.PERMISSION_DENIED;
             default -> io.grpc.Status.INVALID_ARGUMENT;
         };
         io.grpc.Metadata trailers = new io.grpc.Metadata();

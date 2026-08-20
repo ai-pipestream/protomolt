@@ -3,6 +3,7 @@ package ai.pipestream.proto.inference.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.v1.ListModelsRequest;
 import ai.pipestream.proto.inference.v1.ListModelsResponse;
@@ -33,6 +34,11 @@ public final class ListModelsAction implements ProtoAction {
     @Override
     public String name() {
         return "inference-list-models";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

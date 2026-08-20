@@ -52,10 +52,11 @@ policy is a loud failure, not a silently dead grant.
 | `service-invoke` | Calling other services through the platform: reflection-driven invocation, chain execution and submission, job inspection and completion, model inference |
 | `workflow-run` | Workflow and pipeline execution and their evidence verbs: recording, replay, promotion, work-record export and evaluation |
 | `artifact-access` | Reading and writing the artifact repository outside a workflow run's own recording |
-| `worker-coordinate` | The delegation coordinator surface: offering tasks, accepting checkpoints, steering workers |
+| `worker-coordinate` | The delegation and mesh coordination surfaces: offering tasks, accepting checkpoints, steering workers, node registration and capacity |
 | `search-query` | Querying a search door |
 | `search-index` | The door's workflow-driven indexing, deletion, and replay verbs |
-| `metrics-query` | Querying a metrics door |
+| `metrics-query` | Querying a metrics door: describing mappings and running aggregate queries |
+| `metrics-rebuild` | Rebuilding a metrics door's rollup tables |
 
 Every scope in the vocabulary guards at least one live operation, and
 every guarded operation names exactly one required scope. Operations
@@ -72,7 +73,7 @@ the action:
 ```java
 public interface ProtoAction {
     /** The scope this action requires, from the closed vocabulary. */
-    String requiredScope();
+    default String requiredScope() { return ""; }
     // name(), description(), inputSchema(), execute(...)
 }
 ```

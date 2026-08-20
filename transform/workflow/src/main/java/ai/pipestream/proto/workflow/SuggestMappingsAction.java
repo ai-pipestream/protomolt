@@ -4,6 +4,7 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.shapes.MappingSuggester;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -22,6 +23,11 @@ final class SuggestMappingsAction implements ProtoAction {
     @Override
     public String name() {
         return "suggest-mappings";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
     }
 
     @Override

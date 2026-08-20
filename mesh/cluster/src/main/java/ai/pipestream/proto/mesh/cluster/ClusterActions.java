@@ -4,6 +4,7 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.mesh.cluster.v1.CapacityAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
@@ -139,6 +140,8 @@ public final class ClusterActions {
 
         @Override public String name() { return "mesh-node-register"; }
 
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
+
         @Override public String description() {
             return "Registers or refreshes one fenced mesh node advertisement after durable validation.";
         }
@@ -165,6 +168,8 @@ public final class ClusterActions {
         }
 
         @Override public String name() { return "mesh-node-heartbeat"; }
+
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
 
         @Override public String description() {
             return "Extends one registered node's liveness window with a fenced heartbeat.";
@@ -193,6 +198,8 @@ public final class ClusterActions {
 
         @Override public String name() { return "mesh-processor-register"; }
 
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
+
         @Override public String description() {
             return "Registers or renews one health-gated processor lease on a registered node.";
         }
@@ -219,6 +226,8 @@ public final class ClusterActions {
         }
 
         @Override public String name() { return "mesh-capacity-update"; }
+
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
 
         @Override public String description() {
             return "Publishes a fenced point-in-time node or processor capacity snapshot.";
@@ -247,6 +256,8 @@ public final class ClusterActions {
 
         @Override public String name() { return "mesh-snapshot"; }
 
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
+
         @Override public String description() {
             return "Returns the deterministic cluster directory snapshot and eligibility state.";
         }
@@ -268,6 +279,8 @@ public final class ClusterActions {
         }
 
         @Override public String name() { return "mesh-sweep"; }
+
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
 
         @Override public String description() {
             return "Expires elapsed processor leases and node presence windows, cascading node loss.";

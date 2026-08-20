@@ -3,6 +3,7 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.receipt.RecordVerifier;
 import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.receipt.Verification;
@@ -17,6 +18,11 @@ final class VerifyWorkRecordAction implements ProtoAction {
     @Override
     public String name() {
         return "verify-work-record";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.WORKFLOW_RUN;
     }
 
     @Override

@@ -3,6 +3,7 @@ package ai.pipestream.proto.grpc.workspace;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.ReflectionException;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
@@ -28,6 +29,11 @@ public final class ServiceRegisterAction implements ProtoAction {
     @Override
     public String name() {
         return "service-register";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

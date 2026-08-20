@@ -109,8 +109,23 @@ public final class ActionCatalog {
 
     /** The tool manifest: {@code [{name, description, inputSchema}, ...]}. */
     public synchronized ArrayNode list() {
+        return list(Caller.operator());
+    }
+
+    /**
+     * The tool manifest as {@code caller} sees it: only actions whose required scope the
+     * caller holds. An action with no declared scope is invisible to a scoped caller for
+     * the same reason {@link #execute(String, ObjectNode, Caller)} refuses it.
+     */
+    public synchronized ArrayNode list(Caller caller) {
         ArrayNode manifest = context.objectMapper().createArrayNode();
         for (ProtoAction action : actions.values()) {
+            if (!caller.unrestricted()) {
+                String scope = action.requiredScope();
+                if (scope.isBlank() || !caller.holds(scope)) {
+                    continue;
+                }
+            }
             ObjectNode entry = manifest.addObject();
             entry.put("name", action.name());
             entry.put("description", action.description());
@@ -119,10 +134,20 @@ public final class ActionCatalog {
         return manifest;
     }
 
-    /** Dispatches {@code input} to the named action with this catalog's context. */
+    /** Dispatches {@code input} to the named action with process authority. */
     public ObjectNode execute(String name, ObjectNode input) throws ActionException {
+        return execute(name, input, Caller.operator());
+    }
+
+    /**
+     * Dispatches {@code input} to the named action as {@code caller}, refusing before
+     * dispatch when the caller does not hold the action's required scope.
+     */
+    public ObjectNode execute(String name, ObjectNode input, Caller caller)
+            throws ActionException {
         // get() takes the catalog monitor only long enough to resolve a stable action reference.
         ProtoAction action = get(name);
+        requireScope(action, caller);
         return action.execute(Inputs.requireEnvelope(input), context);
     }
 
@@ -133,12 +158,40 @@ public final class ActionCatalog {
      */
     public void executeStreaming(String name, ObjectNode input, StreamEmitter emitter)
             throws ActionException {
+        executeStreaming(name, input, Caller.operator(), emitter);
+    }
+
+    /** Dispatches like {@link #executeStreaming}, refusing first when {@code caller} lacks the scope. */
+    public void executeStreaming(String name, ObjectNode input, Caller caller,
+            StreamEmitter emitter) throws ActionException {
         ProtoAction action = get(name);
+        requireScope(action, caller);
         ObjectNode envelope = Inputs.requireEnvelope(input);
         if (action instanceof StreamingAction streaming) {
             streaming.executeStreaming(envelope, context, emitter);
         } else {
             emitter.emit(action.execute(envelope, context));
+        }
+    }
+
+    private static void requireScope(ProtoAction action, Caller caller) throws ActionException {
+        if (caller.unrestricted()) {
+            return;
+        }
+        ObjectNode details = JsonNodeFactory.instance.objectNode();
+        details.put("action", action.name());
+        details.put("caller", caller.name());
+        String scope = action.requiredScope();
+        if (scope.isBlank()) {
+            throw new ActionException("permission-denied",
+                    "Action '" + action.name() + "' declares no required scope; "
+                            + "a scoped caller cannot execute it", details);
+        }
+        details.put("requiredScope", scope);
+        if (!caller.holds(scope)) {
+            throw new ActionException("permission-denied",
+                    "caller '" + caller.name() + "' does not hold '" + scope + "', which "
+                            + action.name() + " requires", details);
         }
     }
 }

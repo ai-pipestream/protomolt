@@ -3,6 +3,7 @@ package ai.pipestream.proto.inference.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.spi.InferenceException;
 import ai.pipestream.proto.inference.v1.ChatTurn;
@@ -39,6 +40,11 @@ public final class GenerateAction implements ProtoAction {
     @Override
     public String name() {
         return "inference-generate";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

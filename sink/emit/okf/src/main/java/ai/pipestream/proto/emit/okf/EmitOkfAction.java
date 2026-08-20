@@ -4,6 +4,7 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.emit.Bundle;
 import ai.pipestream.proto.emit.Bundles;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -26,6 +27,11 @@ public final class EmitOkfAction implements ProtoAction {
     @Override
     public String name() {
         return "emit-okf";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.ARTIFACT_ACCESS;
     }
 
     @Override

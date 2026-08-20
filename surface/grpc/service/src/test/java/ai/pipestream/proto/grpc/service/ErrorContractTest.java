@@ -57,6 +57,16 @@ class ErrorContractTest {
     }
 
     @Test
+    void permissionDeniedMapsToPermissionDenied() {
+        StatusRuntimeException e = CatalogBridge.toStatus(
+                new ActionException("permission-denied",
+                        "caller 'x' does not hold 'schema-write', which publish-config requires"));
+        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        assertThat(e.getTrailers().get(CatalogBridge.ERROR_CODE_KEY))
+                .isEqualTo("permission-denied");
+    }
+
+    @Test
     void everyOtherCodeIsAClientRepairableInvalidArgument() {
         for (String code : new String[]{"invalid-input", "no-such-type", "unresolved-reference"}) {
             StatusRuntimeException e = CatalogBridge.toStatus(new ActionException(code, "x"));

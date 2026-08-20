@@ -3,6 +3,7 @@ package ai.pipestream.proto.metric.door;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.metric.DescribeMappingResponse;
 import ai.pipestream.proto.metric.QueryMetricsRequest;
 import ai.pipestream.proto.metric.QueryMetricsResponse;
@@ -109,6 +110,11 @@ public final class MetricActions {
         }
 
         @Override
+        public String requiredScope() {
+            return Scopes.METRICS_QUERY;
+        }
+
+        @Override
         public String description() {
             return "Describe one metric mapping subject: its members with roles, aggregates, "
                     + "descriptions and sensitivity, and the backends this mount can run.";
@@ -158,6 +164,11 @@ public final class MetricActions {
         @Override
         public String name() {
             return "query-metrics";
+        }
+
+        @Override
+        public String requiredScope() {
+            return Scopes.METRICS_QUERY;
         }
 
         @Override
@@ -229,6 +240,11 @@ public final class MetricActions {
         @Override
         public String name() {
             return "rebuild-rollup";
+        }
+
+        @Override
+        public String requiredScope() {
+            return Scopes.METRICS_REBUILD;
         }
 
         @Override

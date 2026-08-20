@@ -21,6 +21,11 @@ final class CompileAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Compiles inline .proto source files into a base64-encoded "
                 + "google.protobuf.FileDescriptorSet that other actions accept as "

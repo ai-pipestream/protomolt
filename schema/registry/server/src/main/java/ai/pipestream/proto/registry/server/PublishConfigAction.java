@@ -3,6 +3,7 @@ package ai.pipestream.proto.registry.server;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.registry.ConfigSupport;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.InvalidConfigException;
@@ -40,6 +41,11 @@ public final class PublishConfigAction implements ProtoAction {
     @Override
     public String name() {
         return NAME;
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_WRITE;
     }
 
     @Override

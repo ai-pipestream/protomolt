@@ -3,6 +3,7 @@ package ai.pipestream.proto.registry.server;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.registry.RegistryFederation;
 import ai.pipestream.proto.registry.RegistryStoreException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,6 +40,11 @@ public final class RegistrySyncAction implements ProtoAction {
     @Override
     public String name() {
         return NAME;
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_WRITE;
     }
 
     @Override

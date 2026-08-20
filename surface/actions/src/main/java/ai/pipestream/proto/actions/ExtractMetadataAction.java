@@ -16,6 +16,11 @@ final class ExtractMetadataAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Extracts the descriptive metadata (ai.pipestream.proto.meta.v1 options: "
                 + "description, owner, sensitivity, display name, labels) declared on a protobuf "

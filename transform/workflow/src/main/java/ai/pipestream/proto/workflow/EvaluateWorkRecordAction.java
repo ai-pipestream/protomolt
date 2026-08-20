@@ -4,6 +4,7 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
@@ -80,6 +81,11 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     @Override
     public String name() {
         return "evaluate-work-record";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.WORKFLOW_RUN;
     }
 
     @Override

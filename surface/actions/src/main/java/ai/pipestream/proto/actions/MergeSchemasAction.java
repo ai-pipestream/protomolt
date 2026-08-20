@@ -24,6 +24,11 @@ final class MergeSchemasAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Merges the top-level fields of two or more message types into one new type. "
                 + "Clash analysis is pure descriptor work: same name + same type coalesces "
