@@ -5,7 +5,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * A catalog handed to gates before the config lane exists: doors are wired
+ * A catalog handed to gates before the config lane exists: services are wired
  * inside the composer boot, while {@code TaxonomyMounts} needs the booted
  * node's {@code DistributedConfig}. Until the mounts swap in, the delegate
  * is the empty catalog, so declared taxonomies refuse fail-closed rather

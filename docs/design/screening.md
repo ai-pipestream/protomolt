@@ -12,7 +12,7 @@ follows from it.
 
 Deterministic checks are **schema truth**: same input, same verdict,
 forever. That is what makes them safe to federate, compat-gate, and
-enforce at every door — the whole validate.v1 stance. Model-driven
+enforce at every gate — the whole validate.v1 stance. Model-driven
 detection is **probabilistic and model-versioned**: the same input can
 change verdicts on a model update with no schema change anywhere. A
 screening verdict must therefore never masquerade as schema validity.
@@ -41,7 +41,7 @@ rules it runs.
 
 Screening's default posture is **mask-or-tag, not refuse**. The
 platform already owns the masking machinery (`mask-message`,
-part-masked documents), so "PII-aware doors" is a policy on existing
+part-masked documents), so "PII-aware gates" is a policy on existing
 verbs: a screened field's detected spans mask on the way through, or
 the document tags what was found, and only an explicit policy refuses.
 Refusal-by-default would make a probabilistic false positive into an
@@ -106,7 +106,7 @@ cleaning uses:
   from config). Its own `validate.v1` rules are the lane's verify
   hook.
 
-The door mount completes the slice end to end:
+The service mount completes the slice end to end:
 
 - The declaration: `SearchMetadata.body` declares sensitivity
   `screened` — the first screened class in the schema. The
@@ -116,11 +116,11 @@ The door mount completes the slice end to end:
   subject `screening:<name>` on the lane (requires the config-refresh
   interval, the taxonomy rule); the platform builds the screener from
   each applied document (`model_ref` resolves as `file:<path>` in
-  this slice — operator-mounted data) and swaps it into the door. A
-  reference that fails to resolve is logged and not applied, so the
-  previous mount, or the fail-closed absence, stays live.
-- The door: a screening-configured door refuses indexing fail-closed
-  until a mount is live (the taxonomy gate's boot stance), masks
+  this slice — operator-mounted data) and swaps it into the search
+  service. A reference that fails to resolve is logged and not applied,
+  so the previous mount, or the fail-closed absence, stays live.
+- The service: a screening-configured search service refuses indexing
+  fail-closed until a mount is live (the taxonomy gate's boot stance), masks
   detected spans in screened fields on the way in, and the
   IndexDocumentResponse carries the screened field paths, the model
   version, and the threshold as evidence — never the detected text.
@@ -140,5 +140,5 @@ Screening lands after the search-first product surface is proven; the
 chapter exists so that when it lands, it lands on these rails instead
 of inventing new ones. The first implementation slice: one screened
 sensitivity class, one mounted model config document, the mask policy
-on one door, and the model version in the mask evidence. The core of
-that slice is implemented (above); the door mount completes it.
+on one service, and the model version in the mask evidence. The core of
+that slice is implemented (above); the service mount completes it.

@@ -20,7 +20,7 @@ import java.util.UUID;
  * deterministic name-based UUID over {@code connector NUL datasource NUL sourceKey}, so the
  * same source item always lands on the same document: an updated object or row re-saves its
  * own doc id instead of accumulating a duplicate, and downstream replace-by-identity (repo
- * save, search-door indexing) keeps exactly one live document per source item.
+ * save, search-service indexing) keeps exactly one live document per source item.
  */
 public final class PullDocuments {
 
@@ -31,7 +31,7 @@ public final class PullDocuments {
      * Wraps one source item into the intake-ready document: stable doc id, one inline blob with
      * its SHA-256 stamped, source mime type on the search metadata, the connector identity on
      * the ownership context, and a caller-provided doc-id derivation naming the source key.
-     * Account and datasource ownership are deliberately left blank — the intake door stamps
+     * Account and datasource ownership are deliberately left blank — the intake service stamps
      * them from the API key's scope, and whatever a caller supplies loses anyway.
      *
      * @param connectorId the pulling connector's identity, e.g. {@code s3-pull}

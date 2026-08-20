@@ -6,7 +6,7 @@ import java.util.Optional;
 /**
  * The credential-to-caller seam: resolves a presented credential to the principal it was
  * minted for. This is where external stores plug in later — OIDC introspection, a JDBC
- * table — mirroring the intake door's key-store seam.
+ * table — mirroring the intake service's key-store seam.
  *
  * <p>Contract: {@link Optional#empty()} means the credential is unknown or no longer valid;
  * the transport maps that to its unauthenticated refusal. Resolvers must not throw for a

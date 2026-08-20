@@ -9,7 +9,7 @@ A node subscribes a subject as a message type and refreshes on its own
 cadence (the host owns the timer, the reader-refresh idiom). Each
 refresh fetches the subject's current versioned payload, parses it
 strictly as the declared type, enforces the type's own declared
-validate.v1 rules — the same enforcement the wire doors mount, applied
+validate.v1 rules — the same enforcement the serving roles mount, applied
 before anything applies — and only then swaps the current config
 atomically and notifies listeners. A document that fails any step is
 refused with the reason, and the node keeps serving the config it
@@ -32,8 +32,9 @@ registry over its native HTTP surface (`GET/PUT
 envelope — `{"messageType": "...", "config": {...}}` — whose config is
 proto3 JSON of a type the registry already serves: reviewable in git
 the way GitOps expects, typed the way protomolt expects. The registry
-is the writer's door: a put resolves the type against the registered
-schemas (an unregistered type refuses naming it), parses strictly, and
+is the writer's side of the config gate: a put resolves the type against
+the registered schemas (an unregistered type refuses naming it), parses
+strictly, and
 runs the type's own declared rules, so an invalid document never
 reaches Git — and the read side re-gates, so even a hand-edited
 repository or a bad federation merge serves a refusal an operator can

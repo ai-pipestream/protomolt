@@ -9,7 +9,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The Copilot connectors (external connections) API — the same door Microsoft's
+ * The Copilot connectors (external connections) API — the same API Microsoft's
  * closed-source, Windows-only Graph Connector Agent walks through, spoken directly. This is
  * the roll-your-own-agent lane: create a connection, register its schema (rendered from
  * indexing hints by {@link GraphSchemas}), and PUT external items; Microsoft 365 Search and

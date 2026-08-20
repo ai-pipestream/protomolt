@@ -6,7 +6,7 @@ The guides below follow the repository's module layout.
 ## Acquire
 
 - [Stream connectors](acquire/connector.md): bounded, flow-controlled inputs
-- [Pull connectors](acquire/pull-connectors.md): S3 and JDBC pulls through the intake door, watermark in and out
+- [Pull connectors](acquire/pull-connectors.md): S3 and JDBC pulls through the intake service, watermark in and out
 - [Gathering proto sources](acquire/gathering.md): filesystem, jar, Git, and Maven sources
 - [Microsoft Graph](acquire/msgraph.md): OneDrive, SharePoint, and Copilot connectors
 
@@ -39,7 +39,7 @@ The guides below follow the repository's module layout.
 - [Search indexing](search/indexing.md): index mappings and Lucene, OpenSearch, and Solr output
 - [Chunking](search/chunking.md): deterministic chunking policies executed by the sentence-packed chunker
 - [Text embeddings](search/embeddings.md): Model2Vec, TEI, and OVMS providers
-- [The search door](search/door.md): the query surface, its workflow-driven indexing RPC, and the console page
+- [The search service](search/service.md): the query surface, its workflow-driven indexing RPC, and the console page
 - [Metrics](search/metrics.md): descriptor-declared measures and dimensions, the query compiler and its refusals, and the Lucene engine
 - [Reranking](search/rerank.md): TEI and OVMS rerank providers
 - [Emitting bundles](sink/emitting.md): directory, Git, zip, OKF, and Parquet sinks

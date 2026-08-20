@@ -168,7 +168,7 @@ include 'protomolt-chunker'
 project(':protomolt-chunker').projectDir = file('search/chunk')
 
 include 'protomolt-search-proto'
-project(':protomolt-search-proto').projectDir = file('search/door/proto')
+project(':protomolt-search-proto').projectDir = file('search/proto')
 
 include 'protomolt-metric-proto'
 project(':protomolt-metric-proto').projectDir = file('search/metrics/proto')
@@ -179,17 +179,17 @@ project(':protomolt-metric-spi').projectDir = file('search/metrics/spi')
 include 'protomolt-metric-lucene'
 project(':protomolt-metric-lucene').projectDir = file('search/metrics/lucene')
 
-include 'protomolt-metric-door'
-project(':protomolt-metric-door').projectDir = file('search/metrics/door')
+include 'protomolt-metric-service'
+project(':protomolt-metric-service').projectDir = file('search/metrics/service')
 
 include 'protomolt-metric-iceberg'
 project(':protomolt-metric-iceberg').projectDir = file('search/metrics/iceberg')
 
-include 'protomolt-search-door'
-project(':protomolt-search-door').projectDir = file('search/door/service')
+include 'protomolt-search-service'
+project(':protomolt-search-service').projectDir = file('search/service')
 
 include 'protomolt-search-snapshot-s3'
-project(':protomolt-search-snapshot-s3').projectDir = file('search/door/snapshot-s3')
+project(':protomolt-search-snapshot-s3').projectDir = file('search/snapshot-s3')
 
 include 'protomolt-search-console'
 project(':protomolt-search-console').projectDir = file('search/console')
@@ -377,7 +377,7 @@ project(':protomolt-inference-openai').projectDir = file('inference/openai')
 include 'protomolt-inference-structured'
 project(':protomolt-inference-structured').projectDir = file('inference/structured')
 
-// intake/ — the platform front door: authenticated ingest lanes in front of
+// intake/ — authenticated ingest lanes in front of
 // repo-service.
 
 include 'protomolt-intake-proto'

@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 /**
  * The platform's screening mount plumbing: the strict env read and the
  * model-reference resolution. A reference the host cannot resolve throws,
- * which the config lane logs without applying, so the door stays on the
+ * which the config lane logs without applying, so the service stays on the
  * previous mount or the fail-closed absence.
  */
 class ScreeningMountTest {

@@ -47,7 +47,7 @@ public final class JdbcPullAction implements ProtoAction {
     @Override
     public String description() {
         return "Runs a watermark query against the configured source database and feeds each"
-                + " row through the intake door as a stable-identity JSON document (an updated"
+                + " row through the intake service as a stable-identity JSON document (an updated"
                 + " row replaces its own document); incremental queries bind the watermark to"
                 + " their single ? placeholder and must order by the watermark column"
                 + " ascending.";

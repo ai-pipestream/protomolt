@@ -2,7 +2,7 @@
 
 `protomolt-acquire-pull`, `protomolt-acquire-s3` and `protomolt-acquire-jdbc`
 are the pull side of acquisition: a connector reads a source of record (a
-bucket, a database) and feeds what changed through the **intake door** — never
+bucket, a database) and feeds what changed through the **intake service** — never
 into repo-service directly. Account identity keeps riding the API key, and
 every intake rule (scope narrowing, payload caps, the save shape) applies to
 pulled documents exactly as to pushed ones.
@@ -14,7 +14,7 @@ name-based UUID over `connector : datasource : source key`
 (`PullDocuments.docId`). The same S3 object or database row always lands on
 the same document: an updated item **re-saves its own doc id** instead of
 accumulating a duplicate, unchanged content dedupes at the repository, and
-the search door's replace-by-identity keeps exactly one live document per
+the search service's replace-by-identity keeps exactly one live document per
 source item. The ownership context carries the connector id (`s3-pull`,
 `jdbc-pull`) as provenance; account and datasource are stamped by intake
 from the key's scope, never by the connector.

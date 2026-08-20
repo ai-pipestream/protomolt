@@ -43,7 +43,7 @@ import org.testcontainers.utility.DockerImageName;
  * code that composes the one-container platform also runs as two
  * specialized nodes wired over real TCP. Node A mounts only {@code repo};
  * node B mounts only {@code intake} and reaches A through
- * {@code PROTOMOLT_REPO_TARGET}. A document ingested through B's door is
+ * {@code PROTOMOLT_REPO_TARGET}. A document ingested through B's intake service is
  * read back from A's store.
  */
 @Testcontainers(disabledWithoutDocker = true)

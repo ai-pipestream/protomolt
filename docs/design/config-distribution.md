@@ -14,7 +14,7 @@ reader**. So the architecture is a pluggable seam, not a system:
   document is a protobuf message of a declared type. Before anything
   applies, the document parses strictly as that type and passes the
   type's own declared validate.v1 rules — the same enforcement every
-  wire door mounts. Exact or refused: an invalid document never
+  serving role mounts. Exact or refused: an invalid document never
   applies, the node keeps serving the config it already runs, and the
   refusal names the violations.
 - **`ConfigSource` is the plug** (`protomolt-config`): one subject
@@ -41,7 +41,7 @@ Two ship; others can exist without touching the consumer:
    the machinery that already exists, air-gap friendly. This is the
    GitOps idiom with typed protobuf instead of YAML. The write side is
    the `publish-config` verb on the registry's action catalog: the same
-   gate as the HTTP config door (strict parse as the declared type, its
+   config gate as the HTTP route (strict parse as the declared type, its
    declared rules enforced), the commit id back as the version.
 2. **Kafka (the signal plug).** A compacted topic: key = subject,
    value = the typed config message through the **house serde**

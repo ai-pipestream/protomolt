@@ -42,7 +42,7 @@ class IntakeServiceMainTest {
                 IntakeServiceMain.selectResolver(
                         java.util.Map.of(
                                 IntakeServiceMain.ENV_OIDC_URL, "http://idp/introspect",
-                                IntakeServiceMain.ENV_OIDC_CLIENT_ID, "door",
+                                IntakeServiceMain.ENV_OIDC_CLIENT_ID, "intake",
                                 IntakeServiceMain.ENV_OIDC_CLIENT_SECRET, "s3cret"));
         assertThat(oidc)
                 .isInstanceOf(

@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The JDBC connector against the real stack: a Postgres source table pulled through the real
- * intake door into a real repo-service. Proves row-as-JSON documents with stable identity (an
+ * intake service into a real repo-service. Proves row-as-JSON documents with stable identity (an
  * updated row replaces its own document), placeholder-bound incremental pulls, the
  * contradiction and ordering refusals, and repository dedupe on re-pull.
  */
@@ -108,7 +108,7 @@ class JdbcPullIT {
                         IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES),
                 new InMemoryApiKeyIdentityResolver()
                         .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
-        intake.startInProcess("jdbc-pull-it-door");
+        intake.startInProcess("jdbc-pull-it-intake");
 
         try (Connection connection = sourceConnection();
                 Statement ddl = connection.createStatement()) {
@@ -122,7 +122,7 @@ class JdbcPullIT {
         }
 
         feed = new RecordingFeed(new GrpcIntakeFeed(
-                GrpcIntakeFeed.INPROCESS_TARGET_PREFIX + "jdbc-pull-it-door", API_KEY));
+                GrpcIntakeFeed.INPROCESS_TARGET_PREFIX + "jdbc-pull-it-intake", API_KEY));
         pull = new JdbcPull(JdbcPullIT::sourceConnection, feed);
     }
 

@@ -76,7 +76,7 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
         hikari.setPassword(config.password());
         hikari.setMaximumPoolSize(config.maxPoolSize());
         // Fail fast when the pool is exhausted: a wedged database should
-        // surface as an error quickly, not as a silent hang on the door.
+        // surface as an error quickly, not as a silent hang on the service.
         hikari.setConnectionTimeout(10_000);
         // Retire connections well under the database's own idle/connection
         // lifetime so the server never kills a connection the pool still

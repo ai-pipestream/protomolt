@@ -48,7 +48,7 @@ public final class S3PullAction implements ProtoAction {
     @Override
     public String description() {
         return "Pulls new and changed objects from an S3 bucket past a watermark and feeds"
-                + " them through the intake door with stable identity (a changed object"
+                + " them through the intake service with stable identity (a changed object"
                 + " replaces its own document); returns counts, per-object errors, and the"
                 + " watermark for the next pull.";
     }

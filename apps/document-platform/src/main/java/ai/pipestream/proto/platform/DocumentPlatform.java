@@ -28,7 +28,7 @@ import ai.pipestream.proto.metric.MetricBackend;
 import ai.pipestream.proto.metric.iceberg.IcebergMetricExecutor;
 import ai.pipestream.proto.metric.iceberg.IcebergRollupSink;
 import ai.pipestream.proto.metric.iceberg.IcebergRollupSubjects;
-import ai.pipestream.proto.metric.lucene.MetricDoorModule;
+import ai.pipestream.proto.metric.lucene.MetricServiceModule;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
 import ai.pipestream.proto.metric.spi.RollupSink;
 import ai.pipestream.proto.lake.iceberg.LocalFileIO;
@@ -40,9 +40,9 @@ import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.apache.iceberg.rest.RESTCatalog;
 import ai.pipestream.proto.schema.confluent.ConfluentSchemaPublisher;
 import ai.pipestream.proto.search.console.SearchConsoleModule;
-import ai.pipestream.proto.search.door.IndexSnapshots;
-import ai.pipestream.proto.search.door.RepoDocumentMapping;
-import ai.pipestream.proto.search.door.SearchDoorModule;
+import ai.pipestream.proto.search.service.IndexSnapshots;
+import ai.pipestream.proto.search.service.RepoDocumentMapping;
+import ai.pipestream.proto.search.service.SearchServiceModule;
 import ai.pipestream.proto.search.snapshot.s3.S3SnapshotStore;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -100,8 +100,8 @@ public final class DocumentPlatform implements AutoCloseable {
     private final RegistryModule registry;
     private final IntakeModule intake;
     private final PlaygroundModule playground;
-    private final SearchDoorModule search;
-    private final MetricDoorModule metrics;
+    private final SearchServiceModule search;
+    private final MetricServiceModule metrics;
     private final SearchConsoleModule searchConsole;
     private final S3Client snapshotClient;
     private final Catalog metricsCatalog;
@@ -117,7 +117,7 @@ public final class DocumentPlatform implements AutoCloseable {
             throws IOException {
         if (config.mounts(IntakeModule.ROLE) && resolver == null) {
             throw new IllegalArgumentException(
-                    "resolver is required: this node mounts the intake door");
+                    "resolver is required: this node mounts the intake service");
         }
         Composer.Builder composer = Composer.emptyBuilder()
                 .environment(config.environment())
@@ -172,12 +172,12 @@ public final class DocumentPlatform implements AutoCloseable {
                 ? new PlaygroundModule(
                         config.playgroundPort(), PlaygroundModule.DEFAULT_PARSER_ROLE)
                 : null;
-        SearchSnapshotConfig snapshotConfig = config.mounts(SearchDoorModule.ROLE)
+        SearchSnapshotConfig snapshotConfig = config.mounts(SearchServiceModule.ROLE)
                 ? SearchSnapshotConfig.fromEnvironment(config.environment())
                 : null;
-        boolean searchReadOnly = config.mounts(SearchDoorModule.ROLE)
+        boolean searchReadOnly = config.mounts(SearchServiceModule.ROLE)
                 && searchReadOnly(config.environment());
-        long searchRefreshSeconds = config.mounts(SearchDoorModule.ROLE)
+        long searchRefreshSeconds = config.mounts(SearchServiceModule.ROLE)
                 ? searchRefreshSeconds(config.environment())
                 : 0L;
         if (searchRefreshSeconds > 0 && !searchReadOnly) {
@@ -190,7 +190,7 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         this.snapshotClient = snapshotConfig == null ? null : snapshotClient(snapshotConfig);
         // The taxonomy follow: names parsed up front, the swappable catalog
-        // handed to the door before boot, the mounts swapped in once the
+        // handed to the service before boot, the mounts swapped in once the
         // config lane exists. Fail-closed until then.
         List<String> taxonomyNames = taxonomiesFromEnvironment(config.environment());
         this.taxonomies = taxonomyNames.isEmpty() ? null : new SwappableTaxonomyCatalog();
@@ -198,8 +198,8 @@ public final class DocumentPlatform implements AutoCloseable {
         this.screening = screeningMountName == null ? null : new SwappableScreening();
         this.postalCodes = postalCodesFromEnvironment(config.environment())
                 ? new SwappablePostalCodes() : null;
-        this.search = config.mounts(SearchDoorModule.ROLE)
-                ? new SearchDoorModule(new SearchDoorModule.Config(
+        this.search = config.mounts(SearchServiceModule.ROLE)
+                ? new SearchServiceModule(new SearchServiceModule.Config(
                         config.searchGrpcPort(),
                         config.searchIndexDir(),
                         Map.of(RepoDocumentMapping.SUBJECT,
@@ -217,7 +217,7 @@ public final class DocumentPlatform implements AutoCloseable {
                         screening,
                         postalCodes))
                 : null;
-        MetricsIcebergConfig lakeConfig = config.mounts(MetricDoorModule.ROLE)
+        MetricsIcebergConfig lakeConfig = config.mounts(MetricServiceModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
                 : null;
         this.metricsCatalog = lakeConfig == null ? null : metricsCatalog(lakeConfig);
@@ -226,7 +226,7 @@ public final class DocumentPlatform implements AutoCloseable {
         // default mounts the SINK only, never the Iceberg query backend,
         // so a plain single-engine mount keeps answering unset-backend
         // queries with Lucene.
-        this.defaultRollupLake = config.mounts(MetricDoorModule.ROLE) && lakeConfig == null
+        this.defaultRollupLake = config.mounts(MetricServiceModule.ROLE) && lakeConfig == null
                 ? new LocalLakeRollupSink(Path.of(metricsLakeDir(config.environment())))
                 : null;
         RollupSink rollupSink = lakeConfig != null
@@ -236,10 +236,10 @@ public final class DocumentPlatform implements AutoCloseable {
                 lakeConfig != null
                         ? new IcebergRollupSubjects(metricsCatalog, lakeConfig.namespace())
                         : defaultRollupLake == null ? null : defaultRollupLake.resolver();
-        this.metrics = config.mounts(MetricDoorModule.ROLE)
-                ? new MetricDoorModule(new MetricDoorModule.Config(
+        this.metrics = config.mounts(MetricServiceModule.ROLE)
+                ? new MetricServiceModule(new MetricServiceModule.Config(
                         config.metricsGrpcPort(),
-                        Map.of(RepoDocumentMapping.SUBJECT, new MetricDoorModule.Subject(
+                        Map.of(RepoDocumentMapping.SUBJECT, new MetricServiceModule.Subject(
                                 RepoDocumentMetrics.mapping(),
                                 RepoDocumentMapping.mapping(),
                                 lakeConfig == null
@@ -380,7 +380,7 @@ public final class DocumentPlatform implements AutoCloseable {
                             ai.pipestream.proto.config.PostalCodeMounts.SUBJECT);
                 }
                 if (screening != null) {
-                    // The door was already handed the swappable mount; it
+                    // The service was already handed the swappable mount; it
                     // refuses fail-closed until the first document applies.
                     String subject = "screening:" + screeningMountName;
                     distributedConfig.subscribe(subject,
@@ -478,7 +478,7 @@ public final class DocumentPlatform implements AutoCloseable {
      *
      * @param config the platform configuration
      * @param resolver the intake key store; required exactly when the role
-     *        list mounts the intake door, ignored otherwise
+     *        list mounts the intake service, ignored otherwise
      * @return the running platform
      * @throws IOException when a server fails to bind
      */
@@ -520,14 +520,14 @@ public final class DocumentPlatform implements AutoCloseable {
         return mounted(playground, PlaygroundModule.ROLE).port();
     }
 
-    /** The bound search door gRPC port. */
+    /** The bound search service gRPC port. */
     public int searchPort() {
-        return mounted(search, SearchDoorModule.ROLE).grpcPort();
+        return mounted(search, SearchServiceModule.ROLE).grpcPort();
     }
 
-    /** The bound metric door gRPC port. */
+    /** The bound metric service gRPC port. */
     public int metricsPort() {
-        return mounted(metrics, MetricDoorModule.ROLE).grpcPort();
+        return mounted(metrics, MetricServiceModule.ROLE).grpcPort();
     }
 
     /** The bound search console HTTP port. */
@@ -553,7 +553,7 @@ public final class DocumentPlatform implements AutoCloseable {
     public void close() {
         // The node closes first: the search module's close runs the final
         // commit-and-snapshot, which needs the client still open, and the
-        // metric door stops serving before its catalog goes away.
+        // metric service stops serving before its catalog goes away.
         node.close();
         if (snapshotClient != null) {
             snapshotClient.close();
@@ -957,7 +957,7 @@ public final class DocumentPlatform implements AutoCloseable {
      */
     private void publishDocumentModel() throws IOException {
         // The routing contract publishes beside the document model, so the
-        // registry's config door can gate parse-routing documents against
+        // registry's config gate can gate parse-routing documents against
         // it (an unregistered type refuses).
         ProtoSourceSet sources = ProtoSourceSet.builder()
                 .add(DOCUMENT_SUBJECT, classpathProto(DOCUMENT_SUBJECT), "platform")

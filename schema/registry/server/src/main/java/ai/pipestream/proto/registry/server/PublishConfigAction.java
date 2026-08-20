@@ -14,7 +14,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * The config lane's write verb: publishes one typed config document
- * through exactly the gate the registry's HTTP config door mounts (strict
+ * through exactly the gate the registry's HTTP config gate mounts (strict
  * parse as the declared type, the type's own declared validate.v1 rules
  * enforced), then commits it. The commit id is the version every consumer
  * reports. Exact or refused: an invalid document never lands.
@@ -50,7 +50,7 @@ public final class PublishConfigAction implements ProtoAction {
 
     @Override
     public String description() {
-        return "Publish one typed config document to the registry's config door: the "
+        return "Publish one typed config document to the registry's config gate: the "
                 + "document parses strictly as the declared messageType and its type's "
                 + "own validate.v1 rules are enforced before anything commits; the "
                 + "commit id is the version consumers report.";

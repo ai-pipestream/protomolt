@@ -22,7 +22,7 @@ import java.util.Set;
  * @param jobs the workflow-runs store configuration
  * @param registryGit path of the git-backed registry repository
  * @param registryPort HTTP port of the registry server; {@code 0} picks free
- * @param intakeGrpcPort intake door gRPC port; {@code 0} picks free
+ * @param intakeGrpcPort intake service gRPC port; {@code 0} picks free
  * @param parseGrpcPort parsing coordinator gRPC port; {@code 0} picks free
  * @param playgroundPort parser playground HTTP port; {@code 0} picks free
  * @param rulesJson routing rules as a proto3-JSON array, or null for the
@@ -34,10 +34,10 @@ import java.util.Set;
  *        required exactly when {@code profilesDir} is set
  * @param parseDeadlineSeconds per-parse deadline for coordinator fan-out
  * @param workerCount jobs worker claim loops
- * @param searchGrpcPort search door gRPC port; {@code 0} picks free
- * @param searchIndexDir directory of the search door's Lucene index
+ * @param searchGrpcPort search service gRPC port; {@code 0} picks free
+ * @param searchIndexDir directory of the search service's Lucene index
  * @param searchConsolePort search console HTTP port; {@code 0} picks free
- * @param metricsGrpcPort metric door gRPC port; {@code 0} picks free
+ * @param metricsGrpcPort metric service gRPC port; {@code 0} picks free
  * @param roles the roles this node mounts ({@code PROTOMOLT_ROLES}); the
  *        default is the full one-container preset, and configuration is
  *        only required for what is actually selected (a repo-only node
@@ -135,13 +135,13 @@ public record DocumentPlatformConfig(
     /** The default playground HTTP port. */
     public static final int DEFAULT_PLAYGROUND_PORT = 8095;
 
-    /** Env var for the search door gRPC port. */
+    /** Env var for the search service gRPC port. */
     public static final String ENV_SEARCH_GRPC_PORT = "DOCUMENT_PLATFORM_SEARCH_GRPC_PORT";
 
     /** Env var for the search index directory. */
     public static final String ENV_SEARCH_INDEX_DIR = "DOCUMENT_PLATFORM_SEARCH_INDEX_DIR";
 
-    /** The default search door gRPC port. */
+    /** The default search service gRPC port. */
     public static final int DEFAULT_SEARCH_GRPC_PORT = 9094;
 
     /** The default search index directory. */
@@ -153,7 +153,7 @@ public record DocumentPlatformConfig(
     /** The default search console HTTP port. */
     public static final int DEFAULT_SEARCH_CONSOLE_PORT = 8096;
 
-    /** Env var for the metric door gRPC port. */
+    /** Env var for the metric service gRPC port. */
     public static final String ENV_METRICS_GRPC_PORT = "DOCUMENT_PLATFORM_METRICS_GRPC_PORT";
 
     /**
@@ -240,38 +240,38 @@ public record DocumentPlatformConfig(
     /**
      * Env var naming the taxonomies this node follows off the config lane,
      * as a comma-separated list of names (subjects {@code taxonomy:<name>}).
-     * Set, the search door turns on its document gate: fetched documents
+     * Set, the search service turns on its document gate: fetched documents
      * validate against their declared rules over the live mounts before
      * anything indexes, fail-closed while a declared taxonomy is unmounted.
      * Requires the config lane ({@link #ENV_CONFIG_REFRESH_SECONDS}); absent
-     * keeps the door's historical behavior exactly.
+     * keeps the service's historical behavior exactly.
      */
     public static final String ENV_TAXONOMIES = "DOCUMENT_PLATFORM_TAXONOMIES";
 
     /**
-     * The screening mount name. Set, the search door screens fetched
+     * The screening mount name. Set, the search service screens fetched
      * documents over the mount published at config subject
      * {@code screening:<name>}: fields declaring the mount's sensitivity
      * class run through the mounted model, detected spans act by the
      * mount's policy, and the response carries the model version and
      * threshold as evidence. Fail-closed while no mount is live. Requires
      * the config lane ({@link #ENV_CONFIG_REFRESH_SECONDS}); absent keeps
-     * the door's behavior exactly.
+     * the service's behavior exactly.
      */
     public static final String ENV_SCREENING = "DOCUMENT_PLATFORM_SCREENING";
 
     /**
-     * Set to {@code true}, the search door's gate validates postal codes
+     * Set to {@code true}, the search service's gate validates postal codes
      * against the pack published at config subject {@code postal-codes}: a
      * mounted region's non-empty {@code google.type.PostalAddress.postal_code}
      * must match one of the region's masks, an unmounted region stays
      * unchecked — the pack's per-region opt-in stance. Requires the config
-     * lane ({@link #ENV_CONFIG_REFRESH_SECONDS}); absent keeps the door's
+     * lane ({@link #ENV_CONFIG_REFRESH_SECONDS}); absent keeps the service's
      * behavior exactly.
      */
     public static final String ENV_POSTAL_CODES = "DOCUMENT_PLATFORM_POSTAL_CODES";
 
-    /** The default metric door gRPC port. */
+    /** The default metric service gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 
     public DocumentPlatformConfig {

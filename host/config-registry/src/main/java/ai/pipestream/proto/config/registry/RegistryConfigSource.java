@@ -15,7 +15,7 @@ import java.util.Optional;
 
 /**
  * The registry plug: config documents read from the git-backed registry
- * over its native HTTP surface. The registry is the writer's door — it
+ * over its native HTTP surface. The registry is the writer's entry point — it
  * gates every put (and every get) against the registered type's declared
  * rules — and this source just reads: the served payload is the typed
  * message's bytes, the version is the git commit that last touched the

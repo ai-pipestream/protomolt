@@ -28,16 +28,16 @@ public final class Scopes {
     /** The delegation and mesh coordination surfaces. */
     public static final String WORKER_COORDINATE = "worker-coordinate";
 
-    /** Querying a search door. */
+    /** Querying a search service. */
     public static final String SEARCH_QUERY = "search-query";
 
-    /** A search door's workflow-driven indexing, deletion, and replay verbs. */
+    /** A search service's workflow-driven indexing, deletion, and replay verbs. */
     public static final String SEARCH_INDEX = "search-index";
 
-    /** Querying a metrics door: describing mappings and running aggregate queries. */
+    /** Querying a metrics service: describing mappings and running aggregate queries. */
     public static final String METRICS_QUERY = "metrics-query";
 
-    /** Rebuilding a metrics door's rollup tables. */
+    /** Rebuilding a metrics service's rollup tables. */
     public static final String METRICS_REBUILD = "metrics-rebuild";
 
     /** The whole vocabulary; membership here is what "a known scope" means. */

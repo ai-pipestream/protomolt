@@ -21,8 +21,8 @@ import ai.pipestream.proto.metric.spi.MetricMapping;
 import ai.pipestream.proto.metric.spi.MetricMappings;
 import ai.pipestream.proto.metric.spi.MetricQueries;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
-import ai.pipestream.proto.search.door.LuceneSearchStore;
-import ai.pipestream.proto.search.door.ServedMapping;
+import ai.pipestream.proto.search.service.LuceneSearchStore;
+import ai.pipestream.proto.search.service.ServedMapping;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
@@ -44,8 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The Lucene backend end to end over the real door store: documents index
- * through the door's mapper, and SUM / COUNT / group-by / a filtered
+ * The Lucene backend end to end over the real service store: documents index
+ * through the service's mapper, and SUM / COUNT / group-by / a filtered
  * measure / date grains answer exactly the hand-checked numbers. A field
  * without the doc values a query needs fails loudly naming the indexing
  * hint, never answering zero.

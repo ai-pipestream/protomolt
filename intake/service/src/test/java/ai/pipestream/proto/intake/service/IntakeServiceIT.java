@@ -35,7 +35,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * End-to-end integration test of the intake door against a REAL repo-service:
+ * End-to-end integration test of the intake service against a REAL repo-service:
  * testcontainers PostgreSQL 17 + LocalStack S3 behind {@link RepoServices},
  * intake mounted in front over the in-process transport — the all-in-one
  * embedding path, no fakes anywhere. Proves the receipt is honest: what
@@ -93,8 +93,8 @@ class IntakeServiceIT {
                                 IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES),
                         new InMemoryApiKeyIdentityResolver()
                                 .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
-        intake.startInProcess("intake-it-door");
-        intakeChannel = InProcessChannelBuilder.forName("intake-it-door").build();
+        intake.startInProcess("intake-it-service");
+        intakeChannel = InProcessChannelBuilder.forName("intake-it-service").build();
         Metadata metadata = new Metadata();
         metadata.put(ApiKeyServerInterceptor.API_KEY, API_KEY);
         intakeStub =

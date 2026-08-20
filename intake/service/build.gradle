@@ -21,7 +21,7 @@ dependencies {
     runtimeOnly libs.slf4j.simple
 
     // The full-stack IT boots a real repo-service (Postgres + S3) behind the
-    // intake door; the contract tests use an in-package fake DocumentService.
+    // intake service; the contract tests use an in-package fake DocumentService.
     testImplementation project(':protomolt-repo-service')
     // LedgerConfig for the IT's RepoServiceConfig — config surface only.
     testImplementation project(':protomolt-repo-container')

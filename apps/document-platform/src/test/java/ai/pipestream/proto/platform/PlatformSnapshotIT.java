@@ -17,7 +17,7 @@ import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.OwnershipContext;
 import ai.pipestream.proto.repo.v1.SaveDocumentRequest;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
-import ai.pipestream.proto.search.door.RepoDocumentMapping;
+import ai.pipestream.proto.search.service.RepoDocumentMapping;
 import ai.pipestream.proto.search.v1.IndexDocumentRequest;
 import ai.pipestream.proto.search.v1.SearchIndexServiceGrpc;
 import ai.pipestream.proto.search.v1.SearchLane;

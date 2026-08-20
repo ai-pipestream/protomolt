@@ -33,7 +33,7 @@ enum MetricBackend {
   // (configuration, not a guess); refused with the mounted set on a
   // multi-engine mount. Never a silent pick.
   METRIC_BACKEND_UNSPECIFIED = 0;
-  // Interactive, document-native: collectors over the search door's index.
+  // Interactive, document-native: collectors over the search service's index.
   METRIC_BACKEND_LUCENE = 1;
   // Lake-native: a single SELECT over an Iceberg table the sink wrote.
   METRIC_BACKEND_ICEBERG = 2;
@@ -283,7 +283,7 @@ message RebuildRollupResponse {
 }
 
 // Aggregate queries over descriptor-declared metric mappings. A sibling of
-// the search door's SearchService, never a new RPC on it: retrieval and
+// the search service's SearchService, never a new RPC on it: retrieval and
 // aggregation stay independently mountable.
 service MetricService {
   // One subject's queryable surface: members, roles, backends.

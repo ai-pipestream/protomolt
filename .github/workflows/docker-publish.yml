@@ -138,7 +138,7 @@ jobs:
           tags: ${{ steps.tags.outputs.platform-tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=ProtoMolt document platform: repo, intake, parse, durable jobs, registry, search door and console in one container
+            org.opencontainers.image.description=ProtoMolt document platform: repo, intake, parse, durable jobs, registry, search service and console in one container
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}

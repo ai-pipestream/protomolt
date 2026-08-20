@@ -7,7 +7,7 @@ import ai.pipestream.proto.validate.ValidationResult;
 import org.junit.jupiter.api.Test;
 
 /**
- * Taxonomy's own declared rules: the structural gate the config door and the
+ * Taxonomy's own declared rules: the structural gate the config gate and the
  * config consumer both mount, so a malformed taxonomy document can never
  * reach a mount. The document is just entries — its subject is the identity
  * and the config source's version is the version, so there is nothing else

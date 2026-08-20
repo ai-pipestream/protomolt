@@ -6,10 +6,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
- * A screening mount handed to the door before the config lane exists: the
- * door is wired inside the composer boot, while the mount arrives as a
+ * A screening mount handed to the service before the config lane exists: the
+ * service is wired inside the composer boot, while the mount arrives as a
  * config document. Until the mount swaps in, the supplier yields null and
- * the door refuses indexing fail-closed rather than indexing unscreened —
+ * the service refuses indexing fail-closed rather than indexing unscreened —
  * exactly the stance the taxonomy gate holds while its data is not yet
  * mounted.
  */

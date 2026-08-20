@@ -46,7 +46,7 @@ import org.apache.lucene.util.NumericUtils;
 
 /**
  * The shipped default metric engine: single-pass collectors over the doc
- * values the search door already writes, so aggregation is a read path over
+ * values the search service already writes, so aggregation is a read path over
  * existing storage with no extra infrastructure. Group-by members read
  * sorted-set (keyword, bool) and sorted-numeric (date, numeric) doc values;
  * FLOAT and DOUBLE doc values are sortable-encoded by the mapper and are

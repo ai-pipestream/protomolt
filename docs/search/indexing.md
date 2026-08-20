@@ -10,7 +10,7 @@ and does not interpret hints at all.
 |---|---|
 | `protomolt-index-spi` | Mapping model, hint sources, engine SPI, the hints `.proto` |
 | `protomolt-chunker` | Deterministic chunking-policy execution ([chunking](chunking.md)) |
-| `protomolt-search-door` | The mapping-subject-gated query and indexing gRPC service ([door](door.md)) |
+| `protomolt-search-service` | The mapping-subject-gated query and indexing gRPC service ([search service](service.md)) |
 | `protomolt-index-ndjson` | Message → NDJSON lines (including bulk-index pairs) |
 | `protomolt-index-lucene` | Lucene `Document` mapping |
 | `protomolt-index-opensearch` | OpenSearch document-map mapping |

@@ -49,8 +49,12 @@ Renovate detects the updated dependencies on its next run either way.
 | LLM field and message guidance | instruction |
 | Index field and analyzer definitions | mapping |
 | Chunking configuration on a shape | chunking policy |
+| Externally served component over a store or pipeline | service |
+| A node's mounted capability family (PROTOMOLT_ROLES) | role |
+| A check that admits or refuses at a boundary | gate |
 
-One word per domain: recipe, chain, directive, and index plan are retired.
+One word per domain: recipe, chain, directive, index plan, and door are
+retired.
 A new noun comes from its domain's anchor vocabulary or is a genuinely new
 word, never a synonym of a term above.
 

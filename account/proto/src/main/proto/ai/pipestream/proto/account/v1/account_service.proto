@@ -8,7 +8,7 @@ option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.account.v1";
 
 // ============================================================================
-// AccountService — account CRUD + activation, the provisioning front door.
+// AccountService — account CRUD + activation, the provisioning entry point.
 //
 // Creating an account also provisions its two platform drives (intake and
 // pipeline) on repo-service: the account is where tenancy begins, so drive

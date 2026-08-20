@@ -120,9 +120,9 @@ class ParseCoordinatorContractTest {
                         0, ParseCoordinatorConfig.INPROCESS_TARGET_PREFIX + repoName, "intake", 30),
                 rules,
                 parsers);
-        String doorName = InProcessServerBuilder.generateName();
-        coordinator.startInProcess(doorName);
-        channel = InProcessChannelBuilder.forName(doorName).build();
+        String coordinatorName = InProcessServerBuilder.generateName();
+        coordinator.startInProcess(coordinatorName);
+        channel = InProcessChannelBuilder.forName(coordinatorName).build();
         stub = ParseCoordinatorServiceGrpc.newBlockingStub(channel);
     }
 

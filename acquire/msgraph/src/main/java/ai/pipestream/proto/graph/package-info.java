@@ -2,7 +2,7 @@
  * Microsoft Graph integration spoken directly over the REST API, with no Microsoft SDK and no
  * Windows agent.
  *
- * <p>{@link GraphClient} is the entry point: an authorized JSON-in, JSON-out door to Graph
+ * <p>{@link GraphClient} is the entry point: an authorized JSON-in, JSON-out client for Graph
  * that honors the service's throttling contract. It takes its bearer token from a supplier,
  * so token acquisition stays in {@link GraphAuth}, which implements the two flows a headless
  * toolkit needs — client credentials for service work and device code for an operator signing

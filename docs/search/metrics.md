@@ -12,8 +12,8 @@ model. Design record: [metric mappings](../design/metric-mapping.md).
 | `protomolt-protobuf-metric` | The option dialect: `FieldMetric` (role, aggregate, name, filter_cel, cel, default_grain) and `MessageMetric` (subject, identity_field, synthetic members) |
 | `protomolt-metric-proto` | The query contract: `MetricService` with `DescribeMapping` and `QueryMetrics`, validate.v1 rules on every request |
 | `protomolt-metric-spi` | Mapping build, the query compiler and its refusals, the `MetricExecutor` seam |
-| `protomolt-metric-lucene` | The shipped default engine: collectors over the search door's doc values |
-| `protomolt-metric-door` | The gRPC service over served subjects, plus the `describe-mapping` and `query-metrics` verbs |
+| `protomolt-metric-lucene` | The shipped default engine: collectors over the search service's doc values |
+| `protomolt-metric-service` | The gRPC service over served subjects, plus the `describe-mapping` and `query-metrics` verbs |
 
 Each stands alone per the platform rule: option reading needs no index,
 the SPI needs no engine, and describing a mapping works in a unit test
@@ -49,7 +49,7 @@ value already exists.
 
 ## Querying and refusing
 
-Started with the operator token and a caller resolver, the door checks
+Started with the operator token and a caller resolver, the service checks
 [authorization scopes](../design/authorization-scopes.md) before
 validation: `DescribeMapping` and `QueryMetrics` require
 `metrics-query`, `RebuildRollup` requires `metrics-rebuild`, and
@@ -81,7 +81,7 @@ equality set on a DATE dimension points at the range form. Joins are
 deliberately absent from the query surface — see
 [metric joins](../design/metric-joins.md) for the design of record.
 
-The door mounts the validating interceptor from day one: the request
+The service mounts the validating interceptor from day one: the request
 protos' validate.v1 rules enforce the shape rules (required subject,
 bounded limit, non-empty measures), and handlers add only what a schema
 cannot express. `describe-mapping` and `query-metrics` are catalog
@@ -91,7 +91,7 @@ surface at once.
 ## The Lucene engine
 
 `LuceneMetricExecutor` is a single-pass collector over the doc values
-the search door already writes: aggregation is a read path over existing
+the search service already writes: aggregation is a read path over existing
 storage. Group-by members need `facetable` (or `sortable`) on their
 indexing hint; a field present without the needed doc values fails
 loudly naming the hint to declare. FLOAT and DOUBLE doc values decode
@@ -102,7 +102,7 @@ bound (100000 tracked values by default; the sets live in memory for
 the query's duration): a query that passes the bound is refused with
 `distinct-bound` naming the Iceberg backend as the engine that spills,
 never an estimate, never a silently truncated count. The executor
-reads through the door store's `withSearcher` borrow seam, so acquire
+reads through the search store's `withSearcher` borrow seam, so acquire
 and release never leave the store.
 
 ## The Iceberg engine
@@ -162,7 +162,7 @@ evidence of what the rollup holds. Nothing runs until submitted:
 optional, as designed. The same rebuild is also a catalog verb
 (`rebuild-rollup`, beside `describe-mapping` and `query-metrics`), so
 an agent surface can refresh a rollup directly without the jobs role —
-one shared code path behind both doors, refusing identically.
+one shared code path behind both entry points, refusing identically.
 
 A rebuilt rollup is itself a queryable subject: the sink stamps the
 declaration (source subject, dimension columns, measure columns with
@@ -173,14 +173,14 @@ side-channel configuration. Re-aggregation is honest or absent: COUNT
 and SUM columns re-serve as SUM (summing counts is counting), MIN as
 MIN and MAX as MAX, while AVG and COUNT_DISTINCT columns are not
 members at all — an average of averages is a wrong answer, so those
-columns stay scan-only outside the door. Date dimensions arrive as
+columns stay scan-only outside the metric service. Date dimensions arrive as
 their rendered bucket labels and serve as keyword dimensions: a rollup
 cannot re-bucket time below the grain it was built at. A lake table
 the sink did not write refuses instead of guessing a shape.
 
 ## The platform mount
 
-`MetricDoorModule` (in `protomolt-metric-lucene`) is the composer role:
+`MetricServiceModule` (in `protomolt-metric-lucene`) is the composer role:
 `metrics` in `PROTOMOLT_ROLES`. Wiring borrows the `LuceneSearchStore`
 the co-mounted `search` role contributes, so the two roles must share a
 node; a `metrics` role without `search` refuses to wire instead of

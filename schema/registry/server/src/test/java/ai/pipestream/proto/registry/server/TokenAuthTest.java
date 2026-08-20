@@ -70,7 +70,7 @@ class TokenAuthTest {
     }
 
     @Test
-    void theTokenOpensTheDoorAsHeaderOrBearer() throws Exception {
+    void theTokenAdmitsAsHeaderOrBearer() throws Exception {
         assertThat(get("/subjects", "api_token", TOKEN).statusCode()).isEqualTo(200);
         assertThat(get("/subjects", "authorization", "Bearer " + TOKEN).statusCode())
                 .isEqualTo(200);

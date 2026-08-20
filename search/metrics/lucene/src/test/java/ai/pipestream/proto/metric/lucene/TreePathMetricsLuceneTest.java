@@ -19,8 +19,8 @@ import ai.pipestream.proto.metric.spi.MetricExecutor;
 import ai.pipestream.proto.metric.spi.MetricMapping;
 import ai.pipestream.proto.metric.spi.MetricMappings;
 import ai.pipestream.proto.metric.spi.MetricQueries;
-import ai.pipestream.proto.search.door.LuceneSearchStore;
-import ai.pipestream.proto.search.door.ServedMapping;
+import ai.pipestream.proto.search.service.LuceneSearchStore;
+import ai.pipestream.proto.search.service.ServedMapping;
 import ai.pipestream.proto.types.TreePath;
 import ai.pipestream.proto.types.TreePathProto;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
@@ -39,7 +39,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * TreePath on the Lucene metric backend, end to end through the door
+ * TreePath on the Lucene metric backend, end to end through the service
  * store: a TREE_PATH dimension buckets by the whole leaf path even though
  * the doc values hold the full ancestor chain, and a prefix filter is one
  * exact term match selecting the subtree. The corpus carries a pathless

@@ -28,7 +28,7 @@ import org.apache.iceberg.exceptions.NoSuchTableException;
  * as SUM (summing counts is counting), MIN as MIN and MAX as MAX, while
  * AVG and COUNT_DISTINCT columns are not declared as members — an average
  * of averages and a sum of distinct-counts are wrong answers, so those
- * columns stay scan-only outside the door. Date dimensions arrive as
+ * columns stay scan-only outside the service. Date dimensions arrive as
  * their rendered bucket labels and serve as keyword dimensions: a rollup
  * cannot re-bucket time below the grain it was built at.</p>
  */

@@ -17,7 +17,7 @@ import java.util.Set;
 
 /**
  * The S3 pull connector as a mountable role: wiring builds the source-side client from the
- * module config, opens the intake feed over the node's channels (in-process when the door is
+ * module config, opens the intake feed over the node's channels (in-process when the service is
  * co-mounted), and contributes the {@code pull-s3} verb for the registry's actions route.
  * Nothing runs on a schedule — a pull happens when the verb is called, and the caller owns
  * the watermark.

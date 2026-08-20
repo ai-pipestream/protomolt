@@ -21,7 +21,7 @@ import java.util.Map;
 /**
  * One JDBC pull pass: run the caller's query against the source database, wrap each row as a
  * JSON document with stable identity {@code <idColumn>=<id>}, and feed it through the intake
- * door — an updated row re-saves its own document, an unchanged one dedupes at the repository.
+ * service — an updated row re-saves its own document, an unchanged one dedupes at the repository.
  *
  * <p><b>The query owns its SQL and its types.</b> An incremental query carries exactly one
  * {@code ?} placeholder, bound with the watermark string (cast it in SQL as the column needs,

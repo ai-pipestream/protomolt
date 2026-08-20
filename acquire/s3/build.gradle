@@ -1,4 +1,4 @@
-description = 'S3 pull connector: lists a bucket, pulls new and changed objects past a watermark, and feeds them through the intake door as stable-identity documents'
+description = 'S3 pull connector: lists a bucket, pulls new and changed objects past a watermark, and feeds them through the intake service as stable-identity documents'
 
 dependencies {
     api project(':protomolt-acquire-pull')
@@ -11,7 +11,7 @@ dependencies {
     implementation libs.slf4j.api
 
     // The full-stack IT boots a real repo-service (Postgres + LocalStack S3)
-    // behind the real intake door and pulls from a LocalStack source bucket.
+    // behind the real intake service and pulls from a LocalStack source bucket.
     testImplementation project(':protomolt-intake-service')
     testImplementation project(':protomolt-repo-service')
     testImplementation project(':protomolt-repo-container')

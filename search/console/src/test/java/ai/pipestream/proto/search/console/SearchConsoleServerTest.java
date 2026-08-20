@@ -32,23 +32,23 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The console's HTTP-to-gRPC bridge against a fake door and a fake actions route: page and
- * subjects serving, the search round trip, verbatim refusal pass-through with honest status
- * codes, the operations proxy, and the disabled-panel answer.
+ * The console's HTTP-to-gRPC bridge against a fake search service and a fake actions route:
+ * page and subjects serving, the search round trip, verbatim refusal pass-through with honest
+ * status codes, the operations proxy, and the disabled-panel answer.
  */
 class SearchConsoleServerTest {
 
     static final AtomicReference<SearchRequest> lastSearch = new AtomicReference<>();
 
-    static Server door;
+    static Server service;
     static HttpServer actions;
     static SearchConsoleServer console;
     static SearchConsoleServer consoleWithoutOps;
     static HttpClient client;
     static ObjectMapper json;
 
-    /** A door that refuses like the real one and answers one canned hit otherwise. */
-    static final class FakeDoor extends SearchServiceGrpc.SearchServiceImplBase {
+    /** A service that refuses like the real one and answers one canned hit otherwise. */
+    static final class FakeSearchService extends SearchServiceGrpc.SearchServiceImplBase {
 
         @Override
         public void search(SearchRequest request, StreamObserver<SearchResponse> observer) {
@@ -89,8 +89,8 @@ class SearchConsoleServerTest {
 
     @BeforeAll
     static void boot() throws Exception {
-        door = InProcessServerBuilder.forName("console-test-door")
-                .addService(new FakeDoor()).build().start();
+        service = InProcessServerBuilder.forName("console-test-service")
+                .addService(new FakeSearchService()).build().start();
 
         actions = HttpServer.create(new InetSocketAddress(0), 0);
         actions.createContext("/protomolt/actions", exchange -> {
@@ -114,11 +114,11 @@ class SearchConsoleServerTest {
         });
         actions.start();
 
-        console = new SearchConsoleServer(0, "inprocess:console-test-door",
+        console = new SearchConsoleServer(0, "inprocess:console-test-service",
                 () -> "http://127.0.0.1:" + actions.getAddress().getPort()
                         + "/protomolt/actions");
         console.start();
-        consoleWithoutOps = new SearchConsoleServer(0, "inprocess:console-test-door", () -> "");
+        consoleWithoutOps = new SearchConsoleServer(0, "inprocess:console-test-service", () -> "");
         consoleWithoutOps.start();
         client = HttpClient.newHttpClient();
         json = new ObjectMapper();
@@ -129,7 +129,7 @@ class SearchConsoleServerTest {
         console.close();
         consoleWithoutOps.close();
         actions.stop(0);
-        door.shutdownNow();
+        service.shutdownNow();
     }
 
     static HttpResponse<String> get(SearchConsoleServer server, String path) throws Exception {
@@ -157,7 +157,7 @@ class SearchConsoleServerTest {
     }
 
     @Test
-    void subjectsBridgeTheDoorsSurfaceAsJson() throws Exception {
+    void subjectsBridgeTheServiceSurfaceAsJson() throws Exception {
         HttpResponse<String> response = get(console, "/subjects");
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode subjects = json.readTree(response.body()).get("subjects");
@@ -185,7 +185,7 @@ class SearchConsoleServerTest {
     }
 
     @Test
-    void doorRefusalsPassThroughVerbatimWithHonestStatusCodes() throws Exception {
+    void serviceRefusalsPassThroughVerbatimWithHonestStatusCodes() throws Exception {
         HttpResponse<String> unknown = post(console, "/search",
                 "{\"mappingSubject\":\"nope\",\"query\":\"x\",\"k\":1,"
                         + "\"lane\":\"SEARCH_LANE_LEXICAL\"}");

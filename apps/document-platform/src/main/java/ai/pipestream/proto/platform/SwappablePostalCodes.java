@@ -5,7 +5,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * A postal-code catalog handed to gates before the config lane exists: doors are wired
+ * A postal-code catalog handed to gates before the config lane exists: services are wired
  * inside the composer boot, while {@code PostalCodeMounts} needs the booted node's
  * {@code DistributedConfig}. Until the mounts swap in, the delegate is the empty catalog —
  * for postal grammar that means every region is unmounted and therefore unchecked, the

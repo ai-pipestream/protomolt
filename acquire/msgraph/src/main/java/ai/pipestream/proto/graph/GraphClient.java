@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
- * A thin authorized door to the Microsoft Graph REST API: JSON in, JSON out, bearer token
+ * A thin authorized client for the Microsoft Graph REST API: JSON in, JSON out, bearer token
  * from a supplier (so token refresh lives with {@link GraphAuth}, not here), and Graph's
  * throttling contract honored — 429/503 responses are retried after the server-directed
  * {@code Retry-After}. No Microsoft SDK: the surface this toolkit needs is a handful of

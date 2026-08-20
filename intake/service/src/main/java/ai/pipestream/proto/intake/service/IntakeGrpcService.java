@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The platform front door: authenticated ingest into repo-service.
+ * The only authenticated way in: ingest into repo-service.
  *
  * <p>Both gRPC lanes land here. The handler narrows every request within the
  * call's {@link IntakeScope} (established by

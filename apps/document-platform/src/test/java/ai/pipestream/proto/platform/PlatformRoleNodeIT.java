@@ -42,7 +42,7 @@ import org.testcontainers.utility.DockerImageName;
  * {@code PROTOMOLT_ROLES=repo} (no jobs database, no registry, no search
  * config demanded); node B is {@code PROTOMOLT_ROLES=intake} reaching A
  * through {@code PROTOMOLT_REPO_TARGET}. A document ingested through B's
- * door is read back from A's store, and surfaces outside a node's role
+ * intake service is read back from A's store, and surfaces outside a node's role
  * list refuse by role name.
  */
 @Testcontainers(disabledWithoutDocker = true)

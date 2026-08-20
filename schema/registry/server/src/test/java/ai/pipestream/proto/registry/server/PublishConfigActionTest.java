@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The config lane's write verb: a valid document publishes through the
- * same gate the HTTP config door mounts and the commit id comes back as
+ * same gate the HTTP config gate mounts and the commit id comes back as
  * the version; an unresolvable type refuses and nothing lands; missing
  * inputs refuse by name.
  */

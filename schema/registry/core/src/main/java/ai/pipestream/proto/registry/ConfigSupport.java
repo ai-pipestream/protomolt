@@ -14,14 +14,14 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * The registry door's gate for config documents. A document is an
+ * The registry gate's gate for config documents. A document is an
  * envelope — {@code {"messageType": "...", "config": {...}}} — whose
  * config is proto3 JSON of a type the registry already serves: the type
  * resolves against the registered schemas (a config whose schema is not
  * registered refuses naming the type), the JSON parses strictly, and the
  * type's declared rules run against the parsed message, so an invalid
  * document never reaches Git. The consumer re-validates on apply with
- * the same rules; the door is the first belt, never the only one.
+ * the same rules; the service is the first belt, never the only one.
  */
 public final class ConfigSupport {
 

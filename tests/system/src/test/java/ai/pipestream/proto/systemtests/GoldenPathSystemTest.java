@@ -118,7 +118,7 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * THE golden path, end to end in one JVM (the all-in-one embedding path every
  * platform service supports): a court-corpus document enters the
- * authenticated intake door, a durable workflow run routes it through the
+ * authenticated intake service, a durable workflow run routes it through the
  * parsing coordinator to the reference text parser, the parsed result and
  * folded metadata persist in the repository, the document indexes into
  * Lucene under mappings carrying the search standard, and search — lexical and
@@ -223,7 +223,7 @@ class GoldenPathSystemTest {
         coordinatorName = InProcessServerBuilder.generateName();
         coordinator.startInProcess(coordinatorName);
 
-        // The intake door, API-key authenticated.
+        // The intake service, API-key authenticated.
         intake = IntakeServices.build(
                 new IntakeServiceConfig(
                         0,
@@ -335,7 +335,7 @@ class GoldenPathSystemTest {
 
     @Test
     @Order(2)
-    void theCourtDocumentEntersThroughTheAuthenticatedDoor() {
+    void theCourtDocumentEntersThroughTheAuthenticatedIntakeService() {
         Metadata metadata = new Metadata();
         metadata.put(ApiKeyServerInterceptor.API_KEY, API_KEY);
         String payload = caseName + "\n\n" + plainText;

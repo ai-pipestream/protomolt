@@ -8,11 +8,11 @@ import io.grpc.Server;
 import java.util.Set;
 
 /**
- * The authenticated intake door as a mountable role. The repo target comes
+ * The authenticated intake service as a mountable role. The repo target comes
  * from the node's channels (in-process when co-mounted, remote otherwise);
  * the key store either arrives explicitly or is selected from the
  * environment with the standing precedence (OIDC over JDBC over seeded).
- * Wiring also publishes the door's in-process endpoint, so co-mounted
+ * Wiring also publishes the service's in-process endpoint, so co-mounted
  * modules (the pull connectors) feed it without a socket — authenticated
  * exactly like remote callers, the interceptor wraps every transport.
  */

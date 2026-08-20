@@ -12,7 +12,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * The per-service scope table for a hand-built gRPC surface (the doors): every mounted
+ * The per-service scope table for a hand-built gRPC surface (the serving roles): every mounted
  * service declares the scope its methods require, method entries override their service, and
  * openly-served plumbing (health, reflection) is named explicitly. A scoped caller reaching a
  * service the table does not name is refused by name — a newly mounted service is never
