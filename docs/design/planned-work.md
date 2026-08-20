@@ -170,15 +170,22 @@ in-flight count as the complete device load.
 
 ### Authorization scopes
 
-Separate authentication from authorization. Define scopes for schema reads and
-writes, service invocation, workflow and pipeline execution, artifact access, and
-worker coordination. Test every route and action against its required scope.
+The scopes layer is implemented — the closed vocabulary and caller model,
+per-action declarations enforced at the catalog, the access-policy document
+(startup file and config-lane mount), scoped serving on gRPC, REST, MCP,
+the registry's route split, door identity with the service scope table,
+and console sessions bound to principals. Design of record:
+[authorization scopes](authorization-scopes.md). Still open:
 
-### Console sessions
-
-Add a server-side browser session or backend-for-frontend flow so the console
-can operate in token mode without storing the process credential in the
-browser.
+- **Platform role wiring.** The document platform's roles mount doors and
+  the registry without a resolver; adopting `AccessPolicyMounts` there
+  makes fleet re-scoping live, the same consumer step the trust mount
+  still awaits.
+- **External resolvers at the serve layer.** OIDC introspection and JDBC
+  stores behind `CallerResolver`, mirroring the intake door's key stores.
+- **Per-scope budgets**, following the intake scope's per-key caps.
+- **Row-level rewrite** stays sequenced in the
+  [metric mapping](metric-mapping.md) as its v1.1, now unblocked.
 
 ### Transactional registry writes
 

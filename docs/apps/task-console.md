@@ -28,7 +28,13 @@ random `__Host-` scoped, HttpOnly, Secure, SameSite=Strict cookie. The token is
 not placed in a URL, command-line option, browser storage, or task transcript.
 Serve the login through HTTPS so browsers accept the Secure cookie.
 
-The console login is separate from `PROTOMOLT_API_TOKEN`. When the process API
+The console login is separate from `PROTOMOLT_API_TOKEN`, and every session
+is bound to a caller: the console login token binds to the `task-console`
+identity holding `worker-coordinate`, and with an
+[access policy](../design/authorization-scopes.md) mounted a credential the
+policy names logs in as its principal — the task API refuses a session whose
+principal does not hold `worker-coordinate`, naming both. The operator API
+token is never a browser login. When the process API
 token is configured, the browser receives access only to these routes:
 
 - `/console/` for static console assets;

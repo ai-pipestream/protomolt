@@ -49,6 +49,13 @@ value already exists.
 
 ## Querying and refusing
 
+Started with the operator token and a caller resolver, the door checks
+[authorization scopes](../design/authorization-scopes.md) before
+validation: `DescribeMapping` and `QueryMetrics` require
+`metrics-query`, `RebuildRollup` requires `metrics-rebuild`, and
+health and reflection stay open. Started without a token it remains
+an open, trusted-network surface.
+
 `MetricQueries.query` compiles a request against the mapping, refuses
 everything refusable with a stable kebab-case code and the legal set
 (`unknown-subject`, `unknown-member`, `unknown-backend`,

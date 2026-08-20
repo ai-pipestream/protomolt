@@ -56,6 +56,12 @@ without an explicitly supplied validator, tokens are rejected. Use
 `ProtoApiTokenValidator.sharedSecret(...)` or provide your own
 implementation.
 
+An invoker that implements `ProtoRestContextInvoker` receives the request's
+normalized headers, which is how the serve mount resolves a caller under an
+[access policy](../design/authorization-scopes.md) and scope-checks every
+dispatch: a missing scope is 403 (`ForbiddenProtoRestException`) with the
+named refusal, while 401 keeps meaning not authenticated.
+
 ### Annotation-driven registration
 
 For services defined as plain classes, annotate the methods and register the

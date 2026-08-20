@@ -201,7 +201,7 @@ of overlap rather than product-versus-product.
 | Code-first governed model | Descriptor + Git registry + compatibility gates | Ahead |
 | Views / consumer facades | Mapping subjects, projections, synthesized shapes | Match |
 | Member metadata / `ai_context` | `meta.v1` + `extract-metadata` + `render-prompt` | Match |
-| Masking / member security | `mask-message` on sensitivity classes | Match (policy rewrite pending scopes) |
+| Masking / member security | `mask-message` on sensitivity classes | Match (authorization scopes landed; the caller-derived policy rewrite is not built) |
 | Row-level derived values | CEL mapping, quality CEL, projection CEL | Match, not aggregate-aware |
 | Measures / dimensions / group-by compiler | Nothing computes a measure | **Gap** |
 | Time grain queries | `DATE` hints exist; no grain execution | **Gap** |
@@ -212,7 +212,7 @@ of overlap rather than product-versus-product.
 | Analytics Chat / certified queries / evals | Workbench: check, record, replay, promote with proto-validated requests and replies | Ahead on rigor; no aggregate answers until the gap closes |
 | Agent memories, rules, BYO-LLM product | Inference module has provider config; no memory/rules product | Behind (low priority) |
 | Workbooks, dashboards, charts, embeds | Search console (8096) and registry console only | Behind, out of scope |
-| Row-level security with JWT query rewrite | Sensitivity labels exist; compile-time rewrite pending authorization scopes | Behind (planned, v1.1 here) |
+| Row-level security with JWT query rewrite | Authorization scopes landed with a caller model; the compile-time rewrite is not built | Behind (planned, v1.1 here) |
 | Ingest / parse / RAG / lake write | The whole acquire-to-sink platform | Ours alone |
 
 One asterisk on our own column: the door's `validate.v1` annotations on
