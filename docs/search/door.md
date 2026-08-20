@@ -63,7 +63,7 @@ forever.
 ## Querying
 
 Queries name a subject, a lane, a query text, and `k` — all required, and
-`k` is bounded (1000): one query cannot ask for the whole index.
+`k` is bounded (10000): one query cannot ask for the whole index.
 
 `SearchService/Search` runs one of three lanes against a subject:
 
