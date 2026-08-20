@@ -6,6 +6,7 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.Caller;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;

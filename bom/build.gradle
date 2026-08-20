@@ -59,6 +59,7 @@ def supportedModules = [
         'protomolt-screening',
         'protomolt-receipt',
         'protomolt-authz',
+        'protomolt-authz-grpc',
         'protomolt-mesh-proto',
         'protomolt-mesh-contracts',
         'protomolt-mesh-cluster',

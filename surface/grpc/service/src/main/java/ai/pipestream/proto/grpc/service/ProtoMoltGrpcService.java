@@ -2,6 +2,7 @@ package ai.pipestream.proto.grpc.service;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.authz.grpc.CallerContexts;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;

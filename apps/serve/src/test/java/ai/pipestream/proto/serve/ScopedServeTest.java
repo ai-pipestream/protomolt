@@ -25,6 +25,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -61,7 +62,7 @@ class ScopedServeTest {
         Files.writeString(policyFile, JsonFormat.printer().print(policy));
         serve = ProtoMoltServe.start(new ProtoMoltServe.Options(
                 "127.0.0.1", 0, 0, null, 0, TOKEN, false, null, null,
-                java.util.List.of(), null, null, null, null, null, null, policyFile));
+                List.of(), null, null, null, null, null, null, policyFile));
         http = HttpClient.newHttpClient();
         base = "http://127.0.0.1:" + serve.httpPort();
     }
@@ -99,7 +100,7 @@ class ScopedServeTest {
             assertThat(e.getStatus().getDescription())
                     .contains("ci-reader").contains(Scopes.SERVICE_INVOKE);
         });
-        assertThat(grpcCall("ListTypes", READER)).isInstanceOf(java.util.List.class);
+        assertThat(grpcCall("ListTypes", READER)).isInstanceOf(List.class);
     }
 
     @Test
@@ -191,7 +192,7 @@ class ScopedServeTest {
     void anAccessPolicyWithoutTheOperatorTokenRefusesAtConstruction() {
         assertThatThrownBy(() -> new ProtoMoltServe.Options(
                 "127.0.0.1", 0, 0, null, 0, null, false, null, null,
-                java.util.List.of(), null, null, null, null, null, null, policyFile))
+                List.of(), null, null, null, null, null, null, policyFile))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("--api-token");
     }
@@ -200,7 +201,7 @@ class ScopedServeTest {
     void aMissingPolicyFileFailsStartupLoudly() {
         ProtoMoltServe.Options options = new ProtoMoltServe.Options(
                 "127.0.0.1", 0, 0, null, 0, TOKEN, false, null, null,
-                java.util.List.of(), null, null, null, null, null, null,
+                List.of(), null, null, null, null, null, null,
                 policyFile.resolveSibling("absent.json"));
         assertThatThrownBy(() -> ProtoMoltServe.start(options))
                 .isInstanceOf(IllegalStateException.class)

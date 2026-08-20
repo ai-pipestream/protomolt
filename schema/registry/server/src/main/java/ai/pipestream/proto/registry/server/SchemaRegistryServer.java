@@ -3,6 +3,7 @@ package ai.pipestream.proto.registry.server;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.Caller;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.registry.ConfigSupport;
 import ai.pipestream.proto.registry.InvalidConfigException;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
@@ -92,7 +93,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private final SchemaRegistryServerConfig config;
     private final SchemaRegistryStore store;
     private final ActionCatalog actions;
-    private final ai.pipestream.proto.authz.CallerResolver resolver;
+    private final CallerResolver resolver;
     private final ObjectMapper json = new ObjectMapper();
     private final ProtoSourceCompiler compiler = new ProtoSourceCompiler();
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
@@ -126,7 +127,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
      */
     public SchemaRegistryServer(SchemaRegistryServerConfig config, SchemaRegistryStore store,
                                 ActionCatalog actions,
-                                ai.pipestream.proto.authz.CallerResolver resolver) {
+                                CallerResolver resolver) {
         this.config = Objects.requireNonNull(config, "config");
         this.store = Objects.requireNonNull(store, "store");
         this.actions = actions;

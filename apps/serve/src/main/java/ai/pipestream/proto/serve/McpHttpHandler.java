@@ -1,5 +1,7 @@
 package ai.pipestream.proto.serve;
 
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.mcp.McpServer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,7 +41,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
 
     private final McpServer server;
     private final byte[] apiToken;
-    private final ai.pipestream.proto.authz.CallerResolver resolver;
+    private final CallerResolver resolver;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Object sessionLock = new Object();
     private final LinkedHashMap<String, McpServer.Session> sessions =
@@ -59,7 +61,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
      * requires the operator token.
      */
     public McpHttpHandler(McpServer server, String apiToken,
-                          ai.pipestream.proto.authz.CallerResolver resolver) {
+                          CallerResolver resolver) {
         this.server = java.util.Objects.requireNonNull(server, "server");
         this.apiToken = apiToken == null ? null : apiToken.getBytes(StandardCharsets.UTF_8);
         if (resolver != null && apiToken == null) {
@@ -75,7 +77,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             write(exchange, 403, error(null, -32000, "Origin not allowed"), null);
             return;
         }
-        ai.pipestream.proto.actions.Caller caller = null;
+        Caller caller = null;
         if (apiToken != null) {
             caller = callerFor(exchange);
             if (caller == null) {
@@ -134,7 +136,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         String methodName = message.path("method").asText();
         if ("initialize".equals(methodName)) {
             initialize(exchange, message,
-                    caller == null ? ai.pipestream.proto.actions.Caller.operator() : caller);
+                    caller == null ? Caller.operator() : caller);
             return;
         }
 
@@ -247,7 +249,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     }
 
     private void initialize(HttpExchange exchange, JsonNode message,
-                            ai.pipestream.proto.actions.Caller caller) throws IOException {
+                            Caller caller) throws IOException {
         if (message.has(SESSION_HEADER) || exchange.getRequestHeaders().getFirst(SESSION_HEADER) != null) {
             write(exchange, 400, error(message.get("id"), -32600,
                     "initialize must not include an MCP session"), null);
@@ -355,7 +357,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         closing.values().forEach(McpServer.Session::close);
     }
 
-    private ai.pipestream.proto.actions.Caller callerFor(HttpExchange exchange) {
+    private Caller callerFor(HttpExchange exchange) {
         String presented = exchange.getRequestHeaders().getFirst("api_token");
         if (presented == null) {
             String authorization = exchange.getRequestHeaders().getFirst("authorization");
@@ -368,7 +370,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         }
         if (java.security.MessageDigest.isEqual(
                 apiToken, presented.getBytes(StandardCharsets.UTF_8))) {
-            return ai.pipestream.proto.actions.Caller.operator();
+            return Caller.operator();
         }
         return resolver == null ? null : resolver.resolve(presented).orElse(null);
     }

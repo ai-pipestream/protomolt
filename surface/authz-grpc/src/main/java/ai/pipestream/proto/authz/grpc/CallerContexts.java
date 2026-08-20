@@ -1,4 +1,4 @@
-package ai.pipestream.proto.grpc.service;
+package ai.pipestream.proto.authz.grpc;
 
 import ai.pipestream.proto.actions.Caller;
 import io.grpc.Context;

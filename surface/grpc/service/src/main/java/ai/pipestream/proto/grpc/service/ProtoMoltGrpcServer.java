@@ -1,6 +1,8 @@
 package ai.pipestream.proto.grpc.service;
 
 import ai.pipestream.proto.actions.ActionCatalog;
+import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.grpc.ApiTokenServerInterceptor;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
@@ -61,8 +63,7 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
      * operator credential is what corrects a bad policy.
      */
     public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
-                                            String apiToken,
-                                            ai.pipestream.proto.authz.CallerResolver resolver) {
+                                            String apiToken, CallerResolver resolver) {
         Objects.requireNonNull(catalog, "catalog");
         if (resolver != null && apiToken == null) {
             throw new IllegalArgumentException(
