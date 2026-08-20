@@ -58,6 +58,108 @@ retired.
 A new noun comes from its domain's anchor vocabulary or is a genuinely new
 word, never a synonym of a term above.
 
+## Naming and structure (ADR-002)
+
+A module's name is `protomolt-` plus its directory path segments joined with
+dashes. Its Java package is `ai.pipestream.proto.` plus those same segments,
+dots for dashes. The published Maven artifactId is the module name. One
+module, one package; a package is never split across two modules.
+
+The top-level tree word is kept or dropped by the tree's kind. Every
+remaining segment is kept, in order.
+
+| Kind | Top word | Trees |
+|---|---|---|
+| Domain | kept | protobuf, mesh, repo, account, jobs, inference, intake, parse, search, schema, acquire |
+| Capability | dropped | core, transform, sink, surface, host, apps |
+
+| Path | Module | Package |
+|---|---|---|
+| intake/service | protomolt-intake-service | ai.pipestream.proto.intake.service |
+| host/config-registry | protomolt-config-registry | ai.pipestream.proto.config.registry |
+
+Proto packages are `ai.pipestream.proto.<domain>[.<sub>].v1` and always carry
+the `proto` segment.
+
+A directory matches its module and package stem exactly; where singular and
+plural forms of a stem have both been in use, the singular wins
+(`search/metric`, `host/server`). A stem that is plural everywhere it
+appears (`formats`, `sources`, `types`) is one stem, not a violation.
+
+### Layer words
+
+| Word | Names |
+|---|---|
+| service | the served component (ADR-001) |
+| server | a framework host adapter under `host/server`, and nothing else |
+| proto | the wire-contract module |
+| spi | the extension seam |
+| core | the shared-implementation leaf inside a capability subtree |
+| console | a browser-facing page server, deliberately a variant of service |
+
+`server` never names a served component's directory or module.
+
+### Technical terms
+
+| Term | Meaning |
+|---|---|
+| module | a Gradle subproject; capitalized in code, Composer's `ServiceModule`, the unit a role mounts |
+| mount | the act, and the holder classes, of following a config-lane document into a live catalog |
+
+Neither is a synonym for service or role.
+
+### Named exceptions
+
+These are correct as they stand. Do not "fix" them.
+
+| Site | Exception | Reason |
+|---|---|---|
+| apps/record-verifier | package `ai.pipestream.receipt.verify` | zero runtime coupling to the platform is the point |
+| protobuf/validation-protovalidate | `buf.validate` proto package | vendored upstream vocabulary |
+| protobuf/seo | schema.org words such as Recipe | external vocabulary, exempt from ADR-001 retirement |
+| bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |
+
+### Grandfathered names
+
+The names below predate this rule. They are grandfathered, not license, and
+carry their targets into the single pre-1.0 breaking batch.
+
+| Current | Path | Target |
+|---|---|---|
+| protomolt-index-spi, protomolt-index-{ndjson,lucene,opensearch,solr,qdrant} | search/index/* | protomolt-search-index-* |
+| protomolt-chunker | search/chunk | protomolt-search-chunk |
+| protomolt-embeddings{,-model2vec,-tei,-ovms,-harness} | search/embeddings/** | protomolt-search-embedding-* |
+| protomolt-rerank{,-tei,-ovms,-harness} | search/rerank/** | protomolt-search-rerank-* |
+| protomolt-metric-{proto,spi,lucene,service,iceberg} | search/metrics/* | protomolt-search-metric-*, unless metric is lifted out as its own domain tree |
+| protomolt-connect{,-iceberg,-opensearch}, protomolt-serde{,-micrometer} | sink/kafka/* | protomolt-kafka-connect-*, protomolt-kafka-serde-* |
+| protomolt-json, protomolt-rest, protomolt-openapi, protomolt-jsonschema | surface/http/* | protomolt-http-* |
+| protomolt-quarkus, protomolt-quarkus-deployment, protomolt-spring | host/integrations/** | protomolt-integration-* |
+| protomolt-proto-sources | core/sources | protomolt-source; `proto-` is not a path segment |
+| protomolt-gather{,-git,-maven}, protomolt-msgraph, protomolt-connector | acquire/** | protomolt-acquire-*; acquire is a domain tree |
+| protomolt-registry-server | schema/registry/server | protomolt-registry-service, in flight; it is a served component, not a host adapter |
+| protomolt-metadata | transform/mapper/metadata | protomolt-mapper-metadata, in flight |
+| system-tests | tests/system | protomolt-system-tests, in flight |
+
+`search/metrics` and `host/servers` lose their plurals in the same batch.
+`protomolt-search-service` conforms; search is a domain tree, so its name is
+not a candidate for renaming.
+
+Packages drift separately from module names:
+
+| Module | Current | Target |
+|---|---|---|
+| protomolt-msgraph | ai.pipestream.proto.graph | ai.pipestream.proto.acquire.msgraph |
+| protomolt-iceberg, protomolt-iceberg-s3 | ai.pipestream.proto.lake.iceberg[.s3] | ai.pipestream.proto.iceberg[.s3] |
+| protomolt-formats | ai.pipestream.format | ai.pipestream.proto.formats |
+| protomolt-parse-document | ai.pipestream.document.v1 | ai.pipestream.proto.parse.document.v1 |
+| protomolt-parse-grparse | ai.pipestream.parse.v1 | ai.pipestream.proto.parse.grparse.v1 |
+
+`protomolt_service.proto` under surface/grpc/service declares
+`ai.pipestream.protomolt.v1`: no `proto` segment, and `protomolt` is not a
+domain. Its domain is chosen in the breaking batch.
+
+A new module conforms on creation. This table only shrinks.
+
 ## Agent collaboration and coding workers
 
 Read these before changing the multi-agent runtime:
