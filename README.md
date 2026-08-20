@@ -226,8 +226,11 @@ entirely in memory.
 `ProtoMolt` is the project and artifact name; the code namespace is
 `ai.pipestream`. In practice: dependencies are `ai.pipestream:protomolt-*`,
 imports are `ai.pipestream.proto.*`, configuration properties use the
-`pipestream.*` prefix, and the descriptor-option extensions live under
-`ai.pipestream.proto.{meta,validate,index.hints}.v1`.
+`protomolt.*` prefix (framework-integration glue exposes a handful of
+`pipestream.*` properties), and the descriptor-option dialects live under
+`ai.pipestream.proto.{meta,validate,llm,quality,metric,index.hints,projection,mesh}.v1`,
+beside the vendored `buf.validate` compatibility dialect. Module and
+package derivation is ADR-002 in [AGENTS.md](AGENTS.md).
 
 ## License
 
