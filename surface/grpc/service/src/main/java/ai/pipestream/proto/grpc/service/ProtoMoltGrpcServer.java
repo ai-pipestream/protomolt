@@ -51,7 +51,23 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
      */
     public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
                                             String apiToken) {
+        return start(host, port, catalog, apiToken, null);
+    }
+
+    /**
+     * Starts the service with an access-policy resolver beside the operator token: a
+     * credential the policy names authenticates as its principal and is scope-checked per
+     * method. A non-null {@code resolver} requires a non-null {@code apiToken} — the
+     * operator credential is what corrects a bad policy.
+     */
+    public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
+                                            String apiToken,
+                                            ai.pipestream.proto.authz.CallerResolver resolver) {
         Objects.requireNonNull(catalog, "catalog");
+        if (resolver != null && apiToken == null) {
+            throw new IllegalArgumentException(
+                    "an access-policy resolver requires the operator api token");
+        }
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         try {
             boolean wildcard = host == null || host.isBlank() || "0.0.0.0".equals(host);
@@ -63,7 +79,7 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
                     .addService(ProtoMoltGrpcService.definition(catalog))
                     .addService(ProtoReflectionServiceV1.newInstance());
             if (apiToken != null) {
-                builder.intercept(new ApiTokenServerInterceptor(apiToken));
+                builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
             }
             Server server = builder.build().start();
             LOG.info("ProtoMoltService listening on port {} (reflection enabled{})",

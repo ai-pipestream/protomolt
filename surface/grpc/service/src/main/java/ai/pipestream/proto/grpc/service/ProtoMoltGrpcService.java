@@ -60,7 +60,8 @@ public final class ProtoMoltGrpcService {
             ActionCatalog catalog, MethodDescriptor method) {
         return (request, responseObserver) -> {
             try {
-                DynamicMessage response = CatalogBridge.execute(catalog, method, request);
+                DynamicMessage response = CatalogBridge.execute(catalog, method, request,
+                        CallerContexts.current());
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
             } catch (ActionException e) {

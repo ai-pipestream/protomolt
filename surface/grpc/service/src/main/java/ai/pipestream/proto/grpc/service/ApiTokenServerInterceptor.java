@@ -1,5 +1,9 @@
 package ai.pipestream.proto.grpc.service;
 
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.authz.CallerResolver;
+import io.grpc.Context;
+import io.grpc.Contexts;
 import io.grpc.Metadata;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
@@ -11,10 +15,12 @@ import java.security.MessageDigest;
 import java.util.Objects;
 
 /**
- * Shared-secret call credential check for the gRPC surface: every call must carry the token
- * in {@code api_token} metadata (or {@code authorization: Bearer <token>}), compared in
- * constant time. Applied server-wide, reflection included — grpcurl passes it with
- * {@code -H 'api_token: ...'}.
+ * Call credential check for the gRPC surface: every call must carry a credential in
+ * {@code api_token} metadata (or {@code authorization: Bearer <token>}). The operator token
+ * is compared in constant time and runs with process authority; with a {@link CallerResolver},
+ * a credential a mounted access policy names runs as its principal, placed on the call
+ * context for the per-method scope check. Applied server-wide, reflection included — grpcurl
+ * passes it with {@code -H 'api_token: ...'}.
  */
 public final class ApiTokenServerInterceptor implements ServerInterceptor {
 
@@ -24,10 +30,16 @@ public final class ApiTokenServerInterceptor implements ServerInterceptor {
             Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER);
 
     private final byte[] expected;
+    private final CallerResolver resolver;
 
     public ApiTokenServerInterceptor(String expectedToken) {
+        this(expectedToken, null);
+    }
+
+    public ApiTokenServerInterceptor(String expectedToken, CallerResolver resolver) {
         this.expected = Objects.requireNonNull(expectedToken, "expectedToken")
                 .getBytes(StandardCharsets.UTF_8);
+        this.resolver = resolver;
     }
 
     @Override
@@ -45,10 +57,20 @@ public final class ApiTokenServerInterceptor implements ServerInterceptor {
                     new Metadata());
             return new ServerCall.Listener<>() { };
         }
-        if (!MessageDigest.isEqual(expected, presented.getBytes(StandardCharsets.UTF_8))) {
+        Caller caller;
+        if (MessageDigest.isEqual(expected, presented.getBytes(StandardCharsets.UTF_8))) {
+            caller = Caller.operator();
+        } else if (resolver != null) {
+            caller = resolver.resolve(presented).orElse(null);
+        } else {
+            caller = null;
+        }
+        if (caller == null) {
+            // The refusal carries nothing an attacker could use to recover a credential.
             call.close(Status.UNAUTHENTICATED.withDescription("Invalid API token"), new Metadata());
             return new ServerCall.Listener<>() { };
         }
-        return next.startCall(call, headers);
+        return Contexts.interceptCall(Context.current().withValue(CallerContexts.CALLER, caller),
+                call, headers, next);
     }
 }

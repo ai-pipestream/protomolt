@@ -91,12 +91,28 @@ public final class ProtoMoltServe implements AutoCloseable {
                           java.util.List<String> inferenceModels, Path serviceWorkspace,
                           OutboundChannelPolicy outboundPolicy, Path workflowWorkspace,
                           DelegationOptions delegation, TaskConsoleOptions taskConsole,
-                          MeshClusterOptions meshCluster) {
+                          MeshClusterOptions meshCluster, Path accessPolicy) {
 
         public Options {
             if (outboundPolicy == null) {
                 outboundPolicy = OutboundChannelPolicy.defaults();
             }
+            if (accessPolicy != null && apiToken == null) {
+                throw new IllegalArgumentException("an access policy requires the operator "
+                        + "api token; set --api-token alongside --access-policy");
+            }
+        }
+
+        /** Binary/source-compatible constructor retaining the pre-authorization options surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
+                       Path workflowWorkspace, DelegationOptions delegation,
+                       TaskConsoleOptions taskConsole, MeshClusterOptions meshCluster) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    workflowWorkspace, delegation, taskConsole, meshCluster, null);
         }
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
@@ -196,6 +212,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             Path registryGit = null;
             int registryPort = 8081;
             String apiToken = System.getenv("PROTOMOLT_API_TOKEN");
+            String accessPolicyEnv = System.getenv("PROTOMOLT_ACCESS_POLICY");
+            Path accessPolicy = accessPolicyEnv == null || accessPolicyEnv.isBlank()
+                    ? null : Path.of(accessPolicyEnv);
             boolean demo = false;
             String gatherCacheEnv = System.getenv("PROTOMOLT_GATHER_CACHE");
             Path gatherCache = gatherCacheEnv == null || gatherCacheEnv.isBlank()
@@ -252,6 +271,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--registry-git" -> registryGit = Path.of(requireValue(args, ++i));
                     case "--registry-port" -> registryPort = Integer.parseInt(requireValue(args, ++i));
                     case "--api-token" -> apiToken = requireValue(args, ++i);
+                    case "--access-policy" -> accessPolicy = Path.of(requireValue(args, ++i));
                     case "--gather-cache" -> gatherCache = Path.of(requireValue(args, ++i));
                     case "--jobs-jdbc" -> jobsJdbc = requireValue(args, ++i);
                     case "--jobs-user" -> jobsUser = requireValue(args, ++i);
@@ -411,7 +431,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
                     serviceWorkspace, outboundPolicy, workflowWorkspace, delegation, taskConsole,
-                    meshCluster);
+                    meshCluster, accessPolicy);
         }
 
         private static int envInt(String name, int fallback) {
@@ -878,8 +898,21 @@ public final class ProtoMoltServe implements AutoCloseable {
                 ClusterActions.register(catalog, meshCluster.directory());
             }
 
+            // The access policy narrows named principals; the operator token keeps every
+            // scope. A policy that fails to load or verify refuses startup loudly.
+            ai.pipestream.proto.authz.CallerResolver callers = null;
+            if (options.accessPolicy() != null) {
+                try {
+                    callers = new ai.pipestream.proto.authz.AccessPolicyCallers(
+                            ai.pipestream.proto.authz.AccessPolicies.load(options.accessPolicy()));
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException("failed to read the access policy at "
+                            + options.accessPolicy() + ": " + e.getMessage(), e);
+                }
+            }
+
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
-                    options.apiToken());
+                    options.apiToken(), callers);
             if (options.demo() && store != null) {
                 // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
@@ -931,7 +964,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     "protomolt", version != null ? version : "dev");
             int boundRegistryPort = registryPort;
             int[] selfPort = {-1};
-            mcpHandler = new McpHttpHandler(mcp, options.apiToken());
+            mcpHandler = new McpHttpHandler(mcp, options.apiToken(), callers);
             http = new JdkProtoRestServer(config, gateway,
                     new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
                             "/", config.restPathPrefix()))
@@ -1100,6 +1133,11 @@ public final class ProtoMoltServe implements AutoCloseable {
             } else {
                 LOG.info("  UI    task console uses a scoped browser session; "
                         + "registry and serve proxies stay disabled");
+            }
+            if (options.accessPolicy() != null) {
+                LOG.info("  Auth  access policy mounted from {}; named principals are "
+                        + "scope-checked, the operator token keeps every scope",
+                        options.accessPolicy());
             }
         }
         if (options.demo()) {

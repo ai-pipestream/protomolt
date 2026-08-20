@@ -2,6 +2,7 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.Caller;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -159,14 +160,27 @@ public final class McpServer {
 
     /** Opens an isolated MCP lifecycle for a stdio connection. HTTP mounts should not retain it. */
     public Session openSession() {
-        return new Session();
+        return new Session(Caller.operator());
     }
 
     /**
-     * Dispatches one JSON-RPC message. Requests produce a response; notifications and
-     * client-side responses produce none.
+     * Opens a lifecycle whose every dispatch runs as {@code caller}: the transport resolves
+     * the credential once, at initialization, and the caller rides the session from then on.
+     */
+    public Session openSession(Caller caller) {
+        return new Session(Objects.requireNonNull(caller, "caller"));
+    }
+
+    /**
+     * Dispatches one JSON-RPC message with process authority. Requests produce a response;
+     * notifications and client-side responses produce none.
      */
     public Optional<ObjectNode> handle(JsonNode message) {
+        return handle(message, Caller.operator());
+    }
+
+    /** Dispatches one JSON-RPC message as {@code caller}. */
+    public Optional<ObjectNode> handle(JsonNode message, Caller caller) {
         if (!message.isObject()) {
             return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST, "Invalid request"));
         }
@@ -186,10 +200,12 @@ public final class McpServer {
         JsonNode params = message.has("params") ? message.get("params") : mapper.createObjectNode();
         try {
             return switch (method) {
-                case "initialize" -> Optional.of(JsonRpc.result(mapper, id, initialize(params)));
+                case "initialize" -> Optional.of(JsonRpc.result(mapper, id,
+                        initialize(params, caller)));
                 case "ping" -> Optional.of(JsonRpc.result(mapper, id, mapper.createObjectNode()));
-                case "tools/list" -> Optional.of(JsonRpc.result(mapper, id, listTools()));
-                case "tools/call" -> Optional.of(JsonRpc.result(mapper, id, callTool(params)));
+                case "tools/list" -> Optional.of(JsonRpc.result(mapper, id, listTools(caller)));
+                case "tools/call" -> Optional.of(JsonRpc.result(mapper, id,
+                        callTool(params, caller)));
                 case "resources/list" -> Optional.of(JsonRpc.result(mapper, id, listResources(params)));
                 case "resources/templates/list" -> Optional.of(JsonRpc.result(mapper, id,
                         listResourceTemplates(params)));
@@ -212,7 +228,7 @@ public final class McpServer {
         }
     }
 
-    private ObjectNode initialize(JsonNode params) {
+    private ObjectNode initialize(JsonNode params, Caller caller) {
         if (params == null || !params.isObject()) {
             throw new IllegalArgumentException("initialize params must be an object");
         }
@@ -228,25 +244,22 @@ public final class McpServer {
         ObjectNode serverInfo = result.putObject("serverInfo");
         serverInfo.put("name", serverName);
         serverInfo.put("version", serverVersion);
-        addToolCatalogMetadata(result);
+        addToolCatalogMetadata(result, catalog.list(caller));
         if (!instructions.isEmpty()) {
             result.put("instructions", instructions);
         }
         return result;
     }
 
-    private ObjectNode listTools() {
+    private ObjectNode listTools(Caller caller) {
         ObjectNode result = mapper.createObjectNode();
         // The catalog manifest entries ({name, description, inputSchema}) are already the
-        // MCP tool shape; inputSchema is JSON Schema in both worlds.
-        ArrayNode manifest = catalog.list();
+        // MCP tool shape; inputSchema is JSON Schema in both worlds. The manifest is the
+        // caller's view: only tools whose scope the caller holds.
+        ArrayNode manifest = catalog.list(caller);
         result.set("tools", manifest);
         addToolCatalogMetadata(result, manifest);
         return result;
-    }
-
-    private void addToolCatalogMetadata(ObjectNode result) {
-        addToolCatalogMetadata(result, catalog.list());
     }
 
     private void addToolCatalogMetadata(ObjectNode result, ArrayNode manifest) {
@@ -258,7 +271,7 @@ public final class McpServer {
         metadata.put("ai.pipestream.protomolt/workspace", WorkspaceResources.URI);
     }
 
-    private ObjectNode callTool(JsonNode params) {
+    private ObjectNode callTool(JsonNode params, Caller caller) {
         String name = params.path("name").asText(null);
         if (name == null) {
             throw new IllegalArgumentException("tools/call requires params.name");
@@ -271,7 +284,7 @@ public final class McpServer {
             throw new IllegalArgumentException("tools/call arguments must be an object");
         }
         try {
-            ObjectNode output = catalog.execute(name, (ObjectNode) arguments);
+            ObjectNode output = catalog.execute(name, (ObjectNode) arguments, caller);
             return toolResult(output, false);
         } catch (ActionException e) {
             // Tool execution failures are results with isError, not protocol errors, so the
@@ -364,8 +377,13 @@ public final class McpServer {
             NEW, INITIALIZED, READY, CLOSED
         }
 
+        private final Caller caller;
         private volatile State state = State.NEW;
         private volatile String negotiatedProtocolVersion;
+
+        private Session(Caller caller) {
+            this.caller = caller;
+        }
         private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         private final ConcurrentMap<String, FutureTask<Optional<ObjectNode>>> inFlight =
                 new ConcurrentHashMap<>();
@@ -386,7 +404,7 @@ public final class McpServer {
                         "Invalid request"));
             }
             if (!message.has("method")) {
-                return McpServer.this.handle(message);
+                return McpServer.this.handle(message, caller);
             }
             String method = message.get("method").asText();
             if (JsonRpc.isNotification(message)) {
@@ -402,7 +420,7 @@ public final class McpServer {
                 ObjectNode result;
                 try {
                     result = initialize(message.has("params")
-                            ? message.get("params") : mapper.createObjectNode());
+                            ? message.get("params") : mapper.createObjectNode(), caller);
                 } catch (IllegalArgumentException e) {
                     return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_PARAMS,
                             e.getMessage()));
@@ -421,7 +439,7 @@ public final class McpServer {
             if (state == State.CLOSED) {
                 return Optional.of(lifecycleError(id, "MCP session is closed"));
             }
-            return McpServer.this.handle(message);
+            return McpServer.this.handle(message, caller);
         }
 
         private void handleNotification(String method, JsonNode params) {
@@ -473,7 +491,7 @@ public final class McpServer {
             }
             String key = idKey(message.get("id"));
             FutureTask<Optional<ObjectNode>> task = new FutureTask<>(() -> {
-                Optional<ObjectNode> response = McpServer.this.handle(message);
+                Optional<ObjectNode> response = McpServer.this.handle(message, caller);
                 if (completion != null && inFlight.containsKey(key)
                         && !Thread.currentThread().isInterrupted()) {
                     completion.accept(response);
