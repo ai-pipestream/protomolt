@@ -146,9 +146,7 @@ class WorkflowWorkbenchMcpTest {
             record.put("runId", "run-1");
             JsonNode evidence = mcp.tool("record-workflow-run", record);
             assertThat(evidence.path("ok").asBoolean())
-                    .as("record failed at step %s (%s)",
-                            evidence.path("failedStep").asText(),
-                            evidence.path("failureKind").asText())
+                    .as("record response: %s", evidence.toString())
                     .isTrue();
             assertThat(evidence.path("evidence").path("steps")).hasSize(2);
             assertThat(evidence.path("evidence").path("workflowFingerprint").asText())
@@ -195,7 +193,9 @@ class WorkflowWorkbenchMcpTest {
         workflow.put("name", "workbench");
         workflow.set("schema", schema());
         workflow.put("inputType", "workbench.test.Text");
-        workflow.put("deadlineMs", 10_000);
+        // A generous budget: the two-step run is the subject, not its latency,
+        // and a loaded runner has blown smaller budgets on first-call JIT.
+        workflow.put("deadlineMs", 55_000);
         var steps = workflow.putArray("steps");
         ObjectNode tokenize = steps.addObject();
         tokenize.put("name", "tokenize");
