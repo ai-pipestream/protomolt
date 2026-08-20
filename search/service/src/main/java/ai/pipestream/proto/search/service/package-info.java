@@ -6,7 +6,7 @@
  * ({@link ai.pipestream.proto.search.service.ServedMapping}): each names an
  * index mapping (the queryable surface), the document identity, and
  * optionally a chunk lane whose
- * {@link ai.pipestream.proto.index.spi.ChunkingPolicy} derives per-chunk
+ * {@link ai.pipestream.proto.search.index.spi.ChunkingPolicy} derives per-chunk
  * vectors at index time through the embedding lane. Every request is gated
  * by membership — unknown subjects, fields outside the mapping, and vector
  * queries against subjects without a policy are refused loudly by name.

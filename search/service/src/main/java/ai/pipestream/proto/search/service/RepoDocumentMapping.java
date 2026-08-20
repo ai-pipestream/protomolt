@@ -1,11 +1,11 @@
 package ai.pipestream.proto.search.service;
 
-import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
-import ai.pipestream.proto.index.spi.ChunkingPolicy;
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.IndexMappingFactory;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.index.spi.CatalogIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.ChunkingPolicy;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.repo.v1.Document;
 
 /**

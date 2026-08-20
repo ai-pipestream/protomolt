@@ -14,10 +14,10 @@ dependencies {
 
     // Court Document -> NDJSON -> Lucene sample.
     implementation project(':protomolt-repo-proto')
-    implementation project(':protomolt-index-spi')
-    implementation project(':protomolt-index-ndjson')
-    implementation project(':protomolt-index-lucene')
-    implementation project(':protomolt-embeddings-model2vec')
+    implementation project(':protomolt-search-index-spi')
+    implementation project(':protomolt-search-index-ndjson')
+    implementation project(':protomolt-search-index-lucene')
+    implementation project(':protomolt-search-embedding-model2vec')
     implementation libs.jackson.databind
 
     // The shared test-dependencies block in the root build skips samples.

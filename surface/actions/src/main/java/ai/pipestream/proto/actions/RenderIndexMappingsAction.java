@@ -1,13 +1,13 @@
 package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.index.lucene.LuceneFieldSpecs;
-import ai.pipestream.proto.index.opensearch.OpenSearchMappingGenerator;
-import ai.pipestream.proto.index.qdrant.QdrantSchemaGenerator;
-import ai.pipestream.proto.index.qdrant.QdrantVectorSpec;
-import ai.pipestream.proto.index.solr.SolrSchemaGenerator;
-import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.search.index.lucene.LuceneFieldSpecs;
+import ai.pipestream.proto.search.index.opensearch.OpenSearchMappingGenerator;
+import ai.pipestream.proto.search.index.qdrant.QdrantSchemaGenerator;
+import ai.pipestream.proto.search.index.qdrant.QdrantVectorSpec;
+import ai.pipestream.proto.search.index.solr.SolrSchemaGenerator;
+import ai.pipestream.proto.search.index.spi.CatalogIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;

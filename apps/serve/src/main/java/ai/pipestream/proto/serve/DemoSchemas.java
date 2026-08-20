@@ -1,7 +1,7 @@
 package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.index.spi.ProtoOptionsIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.ProtoOptionsIndexingHintSource;
 import ai.pipestream.proto.meta.DescriptorMetadata;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.SchemaReference;

@@ -1,10 +1,10 @@
 package ai.pipestream.proto.kafka.connect.opensearch;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.index.opensearch.OpenSearchDocumentMapper;
-import ai.pipestream.proto.index.opensearch.OpenSearchSink;
-import ai.pipestream.proto.index.spi.IndexerContext;
-import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.opensearch.OpenSearchDocumentMapper;
+import ai.pipestream.proto.search.index.opensearch.OpenSearchSink;
+import ai.pipestream.proto.search.index.spi.IndexerContext;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
 import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;

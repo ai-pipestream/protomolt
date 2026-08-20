@@ -16,9 +16,9 @@ Bundled at: search/index/qdrant/src/main/proto/
 Text Embeddings Inference gRPC API definition
 Copyright 2022 Hugging Face
 https://github.com/huggingface/text-embeddings-inference
-Bundled at: search/embeddings/providers/tei/src/main/proto/
+Bundled at: search/embedding/tei/src/main/proto/
 
 KServe Open Inference Protocol (Predict Protocol v2) definition
 Copyright the KServe authors; Copyright 2020 kubeflow.org
 https://github.com/kserve/kserve
-Bundled at: search/embeddings/providers/ovms/src/main/proto/
+Bundled at: search/embedding/ovms/src/main/proto/

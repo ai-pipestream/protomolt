@@ -2,7 +2,7 @@ description = 'Lucene metric executor — aggregate collectors over the doc valu
 
 dependencies {
     api project(':protomolt-metric-spi')
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
     api libs.lucene.core
     // The metrics role module: composer types in its signature, the metric
     // services behind it, and the search service's store it aggregates over.
@@ -26,7 +26,7 @@ dependencies {
 
 // The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an
 // older JVM: the test launcher stays on the toolchain JDK and -PtestJdk is ignored
-// here (same pin as :protomolt-index-lucene).
+// here (same pin as :protomolt-search-index-lucene).
 tasks.withType(Test).configureEach {
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(25)

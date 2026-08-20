@@ -1,10 +1,10 @@
 package ai.pipestream.proto.metric.lucene;
 
-import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.IndexMappingFactory;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.index.spi.CatalogIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.FieldMetric;
 import ai.pipestream.proto.metric.MemberRef;

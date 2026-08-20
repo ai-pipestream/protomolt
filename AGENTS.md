@@ -124,6 +124,7 @@ These are correct as they stand. Do not "fix" them.
 | protobuf/seo | schema.org words such as Recipe | external vocabulary, exempt from ADR-001 retirement |
 | bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |
 | host/integration/quarkus | runtime module named protomolt-integration-quarkus | the Quarkus extension convention pairs artifact with artifact-deployment |
+| search/index/spi | proto package ai.pipestream.proto.index.hints.v1 | wire-frozen dialect; schemas in the wild reference the extension |
 
 ### Grandfathered names
 
@@ -132,11 +133,7 @@ carry their targets into the single pre-1.0 breaking batch.
 
 | Current | Path | Target |
 |---|---|---|
-| protomolt-index-spi, protomolt-index-{ndjson,lucene,opensearch,solr,qdrant} | search/index/* | protomolt-search-index-* |
 | protomolt-mapper-core | transform/mapper/core | protomolt-mapper, the namesake-core rule |
-| protomolt-chunker | search/chunk | protomolt-search-chunk |
-| protomolt-embeddings{,-model2vec,-tei,-ovms,-harness} | search/embeddings/** | protomolt-search-embedding-* |
-| protomolt-rerank{,-tei,-ovms,-harness} | search/rerank/** | protomolt-search-rerank-* |
 
 `protomolt-search-service` conforms; search is a domain tree, so its name is
 not a candidate for renaming.

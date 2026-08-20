@@ -1,15 +1,15 @@
 package ai.pipestream.proto.search.service;
 
-import ai.pipestream.proto.chunk.PolicyDerivation;
+import ai.pipestream.proto.search.chunk.PolicyDerivation;
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.embeddings.EmbeddingProvider;
-import ai.pipestream.proto.embeddings.EmbeddingProviders;
-import ai.pipestream.proto.index.lucene.LuceneFieldSpecs;
-import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
-import ai.pipestream.proto.index.spi.DateResolution;
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.embedding.EmbeddingProvider;
+import ai.pipestream.proto.search.embedding.EmbeddingProviders;
+import ai.pipestream.proto.search.index.lucene.LuceneFieldSpecs;
+import ai.pipestream.proto.search.index.lucene.ProtoLuceneMapper;
+import ai.pipestream.proto.search.index.spi.DateResolution;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.search.v1.SearchHit;
 import ai.pipestream.proto.search.v1.SearchLane;

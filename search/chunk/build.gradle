@@ -1,8 +1,8 @@
 description = 'The deterministic chunker: executes a chunking policy (sentence-packed over pinned boundary rules) so two corpora agree on chunk boundaries exactly when their policy digests agree'
 
 dependencies {
-    api project(':protomolt-index-spi')
-    api project(':protomolt-embeddings')
+    api project(':protomolt-search-index-spi')
+    api project(':protomolt-search-embedding')
 
     // The opennlp-v1 boundary rule set: OpenNLP sentence detection over the
     // pinned English UD-EWT model, loaded from the classpath (never downloaded).

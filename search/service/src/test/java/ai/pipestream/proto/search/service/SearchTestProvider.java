@@ -1,6 +1,6 @@
 package ai.pipestream.proto.search.service;
 
-import ai.pipestream.proto.embeddings.EmbeddingProvider;
+import ai.pipestream.proto.search.embedding.EmbeddingProvider;
 
 /**
  * Deterministic token-hashing embeddings registered in this module's test

@@ -138,7 +138,7 @@ jobs:
       - name: Run integration tests
         run: >
           ./gradlew :protomolt-schema-apicurio:test :protomolt-schema-confluent:test
-          :protomolt-index-solr:test :protomolt-index-opensearch:test
+          :protomolt-search-index-solr:test :protomolt-search-index-opensearch:test
           :protomolt-iceberg:test :protomolt-iceberg-s3:test :protomolt-kafka-connect-iceberg:test :protomolt-kafka-serde:test
           --rerun-tasks --console=plain
 

@@ -71,7 +71,7 @@ the `:protomolt-kafka-serde` registry suite) provision their own registry: a
 Testcontainers Redpanda, which serves the Confluent Schema Registry API.
 They run wherever Docker is available and skip otherwise.
 
-The OpenSearch index lane (`:protomolt-index-opensearch`) also provisions
+The OpenSearch index lane (`:protomolt-search-index-opensearch`) also provisions
 its own engine: a Testcontainers container running
 `opensearchproject/opensearch:3.7.0` (the same image the compose stack
 pins), started through the OpenSearch project's `opensearch-testcontainers`
@@ -171,7 +171,7 @@ to `main` and on pull requests:
   Confluent Schema Registry backed by Redpanda, Solr, OpenSearch, the Iceberg
   REST and Gravitino catalogs, and rustfs) and runs the integration suites
   against it: `:protomolt-schema-apicurio`, `:protomolt-schema-confluent`,
-  `:protomolt-index-solr`, `:protomolt-index-opensearch`,
+  `:protomolt-search-index-solr`, `:protomolt-search-index-opensearch`,
   `:protomolt-iceberg`, `:protomolt-iceberg-s3`,
   `:protomolt-kafka-connect-iceberg`, and `:protomolt-kafka-serde`.
 

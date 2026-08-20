@@ -1,7 +1,7 @@
 package ai.pipestream.proto.metric.lucene;
 
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.MetricBackend;
 import ai.pipestream.proto.metric.MetricRow;

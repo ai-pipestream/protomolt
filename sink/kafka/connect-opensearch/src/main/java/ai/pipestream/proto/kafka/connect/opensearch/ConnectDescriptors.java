@@ -1,6 +1,6 @@
 package ai.pipestream.proto.kafka.connect.opensearch;
 
-import ai.pipestream.proto.indexing.ProtobufIndexer;
+import ai.pipestream.proto.search.index.protobuf.ProtobufIndexer;
 import ai.pipestream.proto.meta.DescriptorMetadata;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;

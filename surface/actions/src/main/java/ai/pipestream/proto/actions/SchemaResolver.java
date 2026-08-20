@@ -1,6 +1,6 @@
 package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.index.spi.ProtoOptionsIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.ProtoOptionsIndexingHintSource;
 import ai.pipestream.proto.llm.DescriptorLlm;
 import ai.pipestream.proto.meta.DescriptorMetadata;
 import ai.pipestream.proto.quality.QualityScorer;
@@ -335,7 +335,7 @@ public final class SchemaResolver {
                 com.google.protobuf.DescriptorProtos.getDescriptor(),
                 ai.pipestream.proto.validate.ValidateProto.getDescriptor(),
                 ai.pipestream.proto.meta.MetadataProto.getDescriptor(),
-                ai.pipestream.proto.index.hints.IndexingHintsProto.getDescriptor())) {
+                ai.pipestream.proto.search.index.hints.IndexingHintsProto.getDescriptor())) {
             map.put(file.getName(), file);
         }
         return Map.copyOf(map);

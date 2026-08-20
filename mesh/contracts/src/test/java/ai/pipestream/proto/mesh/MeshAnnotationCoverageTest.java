@@ -1,6 +1,6 @@
 package ai.pipestream.proto.mesh;
 
-import ai.pipestream.proto.index.hints.IndexingHintsProto;
+import ai.pipestream.proto.search.index.hints.IndexingHintsProto;
 import ai.pipestream.proto.meta.MetadataProto;
 import ai.pipestream.proto.mesh.v1.EntityEnvelope;
 import com.google.protobuf.Descriptors.Descriptor;

@@ -22,7 +22,7 @@ dependencies {
     implementation project(':protomolt-sources')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
-    implementation project(':protomolt-index-spi')
+    implementation project(':protomolt-search-index-spi')
     implementation project(':protomolt-http-rest')
     implementation project(':protomolt-http-openapi')
     implementation project(':protomolt-server-jdk')

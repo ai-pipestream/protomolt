@@ -1,6 +1,6 @@
 # Chunking
 
-`protomolt-chunker` executes a chunking policy deterministically. The
+`protomolt-search-chunk` executes a chunking policy deterministically. The
 policy lives on the shape: a `ChunkingPolicy` (`chunking_policy` in
 `indexing_hints.proto`) attaches to a text field through the indexing
 hints, is served from the registry with the shape, and its digest pins the
