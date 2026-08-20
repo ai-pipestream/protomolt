@@ -10,7 +10,7 @@
  * so tests drive the agent over in-memory pipes while {@code main} only wires the process
  * streams. The protocol transport ({@link ai.pipestream.proto.acp.AcpAgent},
  * {@link ai.pipestream.proto.acp.AcpClient}, and the package-private connection engine) is the
- * {@code protomolt-acp-core} library: newline-delimited JSON-RPC 2.0 on virtual threads, no
+ * {@code protomolt-acp} library: newline-delimited JSON-RPC 2.0 on virtual threads, no
  * reactive runtime. {@link CatalogLineRunner} is the piece this module adds: it maps one prompt
  * line to one catalog verb run.</p>
  *
@@ -21,4 +21,4 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/acp.md">ACP
  * agent guide</a>.</p>
  */
-package ai.pipestream.proto.acp;
+package ai.pipestream.proto.acp.agent;

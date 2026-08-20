@@ -1,5 +1,6 @@
-package ai.pipestream.proto.acp;
+package ai.pipestream.proto.acp.agent;
 
+import ai.pipestream.proto.acp.AcpAgent;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
@@ -17,7 +18,7 @@ import java.io.OutputStream;
  * {@link #buildAgent} takes the streams and catalog as arguments so tests drive the agent over
  * in-memory pipes.
  *
- * <p>The transport is the first-party {@code protomolt-acp-core} library: virtual threads,
+ * <p>The transport is the first-party {@code protomolt-acp} library: virtual threads,
  * Jackson, no reactive runtime.</p>
  */
 public final class ProtoMoltAcpAgent {

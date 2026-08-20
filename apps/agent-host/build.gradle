@@ -5,7 +5,7 @@ plugins {
 description = 'Persistent Codex and Kimi process host for ProtoMolt delegation over MCP'
 
 dependencies {
-    implementation project(':protomolt-acp-core')
+    implementation project(':protomolt-acp')
     implementation libs.jackson.databind
 
     testImplementation project(':protomolt-serve')

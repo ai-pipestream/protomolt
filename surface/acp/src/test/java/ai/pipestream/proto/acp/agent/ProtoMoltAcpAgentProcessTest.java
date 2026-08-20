@@ -1,5 +1,6 @@
-package ai.pipestream.proto.acp;
+package ai.pipestream.proto.acp.agent;
 
+import ai.pipestream.proto.acp.AcpClient;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
@@ -38,7 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Timeout(value = 4, unit = TimeUnit.MINUTES)
 // Excluded from the default build because it forks a JVM per test and shells out to protoc,
 // which is slower than anything the default test task runs. Run with
-// ./gradlew :protomolt-acp:acpProtocolTest.
+// ./gradlew :protomolt-acp-agent:acpProtocolTest.
 @Tag("acp-protocol")
 class ProtoMoltAcpAgentProcessTest {
 

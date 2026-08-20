@@ -1,5 +1,6 @@
-package ai.pipestream.proto.acp;
+package ai.pipestream.proto.acp.agent;
 
+import ai.pipestream.proto.acp.AcpClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -16,7 +17,7 @@ import java.util.List;
  * descriptor set over gRPC server reflection, and {@code grpc-invoke} calls a method with that
  * descriptor set as its schema.</p>
  *
- * <p>Arguments (via the {@code :protomolt-acp:acpGrpcLive} task's {@code -P} properties):
+ * <p>Arguments (via the {@code :protomolt-acp-agent:acpGrpcLive} task's {@code -P} properties):
  * {@code -Pagent} the command that launches the agent (default the container on the compose
  * network), {@code -Ptarget} the gRPC target (default {@code serve:9090}), {@code -Pmethod}
  * the fully qualified {@code Service/Method} (default {@code ProtoMoltService/ListTypes}).</p>
@@ -31,7 +32,7 @@ public final class AcpGrpcLive {
     public static void main(String[] args) throws Exception {
         String agentCommand = args.length > 0 && !args[0].isBlank()
                 ? args[0]
-                : "docker run -i --rm --network protomolt_default protomolt-acp:local";
+                : "docker run -i --rm --network protomolt_default protomolt-acp-agent:local";
         String target = args.length > 1 && !args[1].isBlank() ? args[1] : "serve:9090";
         String method = args.length > 2 && !args[2].isBlank()
                 ? args[2]

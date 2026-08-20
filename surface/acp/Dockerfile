@@ -3,12 +3,12 @@
 # the container and drives it over the container's stdin/stdout.
 #
 # The distribution is built by Gradle before the image
-# (./gradlew :protomolt-acp:installDist), keeping the image a thin JRE layer.
+# (./gradlew :protomolt-acp-agent:installDist), keeping the image a thin JRE layer.
 #
-#   docker run -i --rm ghcr.io/ai-pipestream/protomolt-acp
+#   docker run -i --rm ghcr.io/ai-pipestream/protomolt-acp-agent
 FROM eclipse-temurin:21-jre
 
-COPY build/install/protomolt-acp /opt/protomolt-acp
+COPY build/install/protomolt-acp-agent /opt/protomolt-acp-agent
 
 # A compromise of the agent should not own the container: run as a dedicated
 # non-root user whose home is the only writable directory (gather caches default
@@ -16,11 +16,11 @@ COPY build/install/protomolt-acp /opt/protomolt-acp
 RUN useradd --system --uid 10001 --create-home --home-dir /home/protomolt protomolt \
     # Jars inherit the build host's cache permissions (some are 600); the app dir is
     # root-owned read-only for the app user, so normalize read bits explicitly.
-    && chmod -R a+rX /opt/protomolt-acp
+    && chmod -R a+rX /opt/protomolt-acp-agent
 USER 10001
 ENV HOME=/home/protomolt
 WORKDIR /home/protomolt
 
 # The protocol is on stdout; the launcher's logs go to stderr, so they never
 # corrupt the stream. Nothing here writes to stdout but the agent.
-ENTRYPOINT ["/opt/protomolt-acp/bin/protomolt-acp"]
+ENTRYPOINT ["/opt/protomolt-acp-agent/bin/protomolt-acp-agent"]

@@ -19,7 +19,7 @@ cleanup() { say "Tearing down"; docker compose down >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 say "Building images"
-./gradlew :protomolt-serve:installDist :protomolt-acp:installDist --console=plain -q
+./gradlew :protomolt-serve:installDist :protomolt-acp-agent:installDist --console=plain -q
 docker compose build serve acp
 
 say "Starting the serve container (gRPC reflection on)"
@@ -35,8 +35,8 @@ NET="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{en
 say "serve is on Compose network ${NET}; the agent will reach it as serve:9090"
 
 say "ACP agent → reflect → grpc-invoke, against our own gRPC"
-./gradlew :protomolt-acp:acpGrpcLive --console=plain -q \
-  -Pagent="docker run -i --rm --network ${NET} protomolt-acp:local" \
+./gradlew :protomolt-acp-agent:acpGrpcLive --console=plain -q \
+  -Pagent="docker run -i --rm --network ${NET} protomolt-acp-agent:local" \
   -Ptarget="serve:9090" \
   -Pmethod="ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes" \
   || fail "the agent could not reflect or invoke our gRPC service"
