@@ -2,7 +2,7 @@ description = 'OpenSearch document mapper plugin (ServiceLoader) and a thin HTTP
 
 dependencies {
     api project(':protomolt-search-index-spi')
-    api project(':protomolt-mapper-core')
+    api project(':protomolt-mapper')
 
     // OpenSearchSink builds request bodies and parses bulk responses with Jackson.
     implementation libs.jackson.databind

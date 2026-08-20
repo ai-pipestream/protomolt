@@ -116,8 +116,8 @@ project(':protomolt-protobuf-types').projectDir = file('protobuf/types')
 
 // transform/ — mapping, shaping, and composition between messages.
 
-include 'protomolt-mapper-core'
-project(':protomolt-mapper-core').projectDir = file('transform/mapper/core')
+include 'protomolt-mapper'
+project(':protomolt-mapper').projectDir = file('transform/mapper/core')
 
 include 'protomolt-mapper-cel'
 project(':protomolt-mapper-cel').projectDir = file('transform/mapper/cel')

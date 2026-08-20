@@ -12,7 +12,7 @@ dependencies {
     // Screener supplier; OpenNLP stays behind the screening module.
     api project(':protomolt-screening')
     implementation project(':protomolt-search-index-lucene')
-    implementation project(':protomolt-mapper-core')
+    implementation project(':protomolt-mapper')
     implementation project(':protomolt-descriptors')
     implementation project(':protomolt-search-chunk')
     implementation project(':protomolt-search-embedding')

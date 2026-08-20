@@ -31,7 +31,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `schema/` | `schema-apicurio`, `schema-apicurio-deployment`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries; the Apicurio loader's Quarkus build-time half |
 | `protobuf/` | `protobuf-metadata`, `protobuf-quality`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance` | Descriptor-option standards for metadata and validation; CEL-scored quality dimensions declared as message options; protovalidate dialect and conformance harness |
 | `mesh/cluster/` | `mesh-cluster` | In-memory cluster discovery with fenced presence and capacity, encrypted repository-service event persistence, and restart replay |
-| `transform/mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
+| `transform/mapper/` | `mapper`, `mapper-cel`, `mapper-metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
 | `transform/shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
 | `transform/projection/` | `projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals) carried as descriptor options on the target message, so one target can join differently-shaped sources |
 | `transform/pipeline/` | `pipeline` | Checked pipeline execution across every gRPC streaming shape, with typed edges, structured generation, unnest, collect, and bounded fan-out |

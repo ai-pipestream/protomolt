@@ -30,7 +30,7 @@ dependencies {
     testImplementation project(':protomolt-workflow')
     testImplementation project(':protomolt-actions')
     testImplementation project(':protomolt-search-index-lucene')
-    testImplementation project(':protomolt-mapper-core')
+    testImplementation project(':protomolt-mapper')
     testImplementation project(':protomolt-search-embedding')
     testImplementation project(':protomolt-search-embedding-model2vec')
     testImplementation project(':protomolt-search-chunk')
