@@ -12,6 +12,9 @@ dependencies {
     // The mounted trust snapshot is the receipt layer's document, exposed
     // through Mounted.
     api project(':protomolt-receipt')
+    // The mounted access policy is the authorization layer's document; its
+    // validator refuses duplicates and unknown scopes at the mount.
+    api project(':protomolt-authz')
     implementation libs.slf4j.api
 
     // The proof's document type is a house wire message with declared
