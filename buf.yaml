@@ -114,16 +114,6 @@ lint:
 breaking:
   use:
     - FILE
-  # TEMPORARY (drop after the GitHub mirror sync lands): the mirror's CI
-  # compares one jump from a main that predates the ADR-002 moves of
-  # protomolt_service.proto and the jsonschema testdata fixture, so it
-  # sees those relocations as deletions, and the indexing_hints
-  # java_package move (wire package frozen) as a java_package change.
-  # Test-only fixture, a descriptor-native service with no released
-  # consumers, and generated-class relocation with no wire impact.
-  except:
-    - FILE_NO_DELETE
-    - FILE_SAME_JAVA_PACKAGE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore
