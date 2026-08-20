@@ -130,7 +130,7 @@ evidence in the log line.
 
 ## Lake metrics
 
-The metrics role can mount the [Iceberg engine](../search/metrics.md#the-iceberg-engine)
+The metrics role can mount the [Iceberg engine](../metric/metrics.md#the-iceberg-engine)
 beside its Lucene executor. The `DOCUMENT_PLATFORM_METRICS_ICEBERG_*`
 family turns it on:
 
@@ -166,7 +166,7 @@ nothing changes: the single-engine mount keeps answering unset-backend
 queries with Lucene, which is configuration, not a guess.
 
 Rollups always have somewhere to land (see
-[Rollups](../search/metrics.md#rollups)): with the family set,
+[Rollups](../metric/metrics.md#rollups)): with the family set,
 `RebuildRollup` replaces tables in that lake; without it, rollups land
 in a default local lake — a sqlite catalog plus Parquet under
 `DOCUMENT_PLATFORM_METRICS_LAKE_DIR` (default `/data/metrics-lake`),
