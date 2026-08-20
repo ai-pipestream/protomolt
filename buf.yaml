@@ -114,12 +114,6 @@ lint:
 breaking:
   use:
     - FILE
-  # TEMPORARY (drop in the next PR): protomolt_service.proto moved to
-  # ai/pipestream/proto/grpc/service/v1 with its package; buf sees the old
-  # path as a deletion. The service is descriptor-native with no generated
-  # stubs and no released consumers.
-  except:
-    - FILE_NO_DELETE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

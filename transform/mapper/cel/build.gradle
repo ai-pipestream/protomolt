@@ -1,7 +1,7 @@
 description = 'CEL-powered protobuf mapping'
 
 dependencies {
-    api project(':protomolt-mapper-core')
+    api project(':protomolt-mapper')
     api libs.cel
     implementation libs.slf4j.api
 

@@ -5,7 +5,7 @@ plugins {
 description = 'Search-index SPI, indexing plans, and descriptor indexing hints'
 
 dependencies {
-    api project(':protomolt-mapper-core')
+    api project(':protomolt-mapper')
     api libs.protobuf.java
     api libs.slf4j.api
     // Canonical range types for the range-resolution tests.

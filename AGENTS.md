@@ -101,8 +101,8 @@ appears (`formats`, `sources`, `types`) is one stem, not a violation.
 
 A subtree's `core` directory holds its namesake module, named and packaged
 without the core segment: `acquire/gather/core` is `protomolt-acquire-gather`
-at `ai.pipestream.proto.acquire.gather`. `transform/mapper/core` predates
-this and keeps `protomolt-mapper-core` in the grandfather table.
+at `ai.pipestream.proto.acquire.gather`, and `transform/mapper/core` is
+`protomolt-mapper` at `ai.pipestream.proto.mapper`.
 
 ### Technical terms
 
@@ -130,17 +130,11 @@ These are correct as they stand. Do not "fix" them.
 
 ### Grandfathered names
 
-The names below predate this rule. They are grandfathered, not license, and
-carry their targets into the single pre-1.0 breaking batch.
-
-| Current | Path | Target |
-|---|---|---|
-| protomolt-mapper-core | transform/mapper/core | protomolt-mapper, the namesake-core rule |
+The table is empty: the pre-1.0 breaking batch is done. A name that does
+not conform is a defect, not a candidate for a new grandfather row.
 
 `protomolt-search-service` conforms; search is a domain tree, so its name is
 not a candidate for renaming.
-
-A new module conforms on creation. This table only shrinks.
 
 ## Agent collaboration and coding workers
 

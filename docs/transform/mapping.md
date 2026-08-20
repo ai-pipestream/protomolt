@@ -6,7 +6,7 @@ conditions and computed values. Mapping
 is deliberately separate from [validation](validation.md): reshaping a
 message and judging it are different concerns.
 
-Two layers are involved. `protomolt-mapper-core` provides path-based field
+Two layers are involved. `protomolt-mapper` provides path-based field
 access and a small text rule language; `protomolt-mapper-cel` wraps it with
 CEL filters and selectors.
 

@@ -6,7 +6,7 @@ description = 'Qdrant point mapper plugin (ServiceLoader) and a thin gRPC sink'
 
 dependencies {
     api project(':protomolt-search-index-spi')
-    api project(':protomolt-mapper-core')
+    api project(':protomolt-mapper')
     // The mapper reads vectors and chunk text out of the repo Document's
     // search_metadata.semantic_results.
     api project(':protomolt-repo-proto')

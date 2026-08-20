@@ -14,7 +14,7 @@ dependencies {
     implementation project(':protomolt-protobuf-quality')
     implementation project(':protomolt-protobuf-prompt')
     implementation project(':protomolt-http-jsonschema')
-    implementation project(':protomolt-mapper-core')
+    implementation project(':protomolt-mapper')
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-shapes')
     implementation project(':protomolt-search-index-spi')

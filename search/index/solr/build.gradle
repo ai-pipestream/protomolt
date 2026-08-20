@@ -2,7 +2,7 @@ description = 'Solr document mapper plugin (ServiceLoader)'
 
 dependencies {
     api project(':protomolt-search-index-spi')
-    api project(':protomolt-mapper-core')
+    api project(':protomolt-mapper')
 
     testImplementation libs.jackson.databind
     testImplementation libs.testcontainers.solr

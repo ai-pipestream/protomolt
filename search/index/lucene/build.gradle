@@ -2,7 +2,7 @@ description = 'Lucene document mapper plugin (ServiceLoader)'
 
 dependencies {
     api project(':protomolt-search-index-spi')
-    api project(':protomolt-mapper-core')
+    api project(':protomolt-mapper')
     api libs.lucene.core
     // LuceneIndexWriter opens indexes with a StandardAnalyzer.
     api libs.lucene.analysis.common
