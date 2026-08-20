@@ -173,6 +173,36 @@ the missing scope, and the operation —
 requires`. The credential itself never appears in a refusal, a log
 line, or an error detail; principals are named, credentials are not.
 
+## The platform's roles
+
+The document platform wires this layer through role selection, so a
+node's security posture is one environment decision, not per-service
+assembly:
+
+- `PROTOMOLT_API_TOKEN` set makes the node guarded: the registry's
+  HTTP surface and the search and metric gRPC servers all demand a
+  credential, and the node's own outbound calls — remote-role
+  channels, the boot publish of the platform contracts, the config
+  lane's registry pulls — present the same token, so a split-role
+  fleet stays whole when every node is guarded. Unset, the node is the
+  open, trusted-network surface it always was.
+- `PROTOMOLT_ACCESS_POLICY` names a policy file read at boot; the
+  config-lane subject `access-policy` re-scopes a running node without
+  a restart, behind the same verify-then-swap gate as every other
+  mount, so a malformed document keeps the previous policy live. A
+  guarded registry node publishes the `AccessPolicy` contract at boot
+  beside the document model, which is what lets the config gate
+  validate policy documents. A policy without the operator token
+  refuses at boot, naming both variables.
+- The intake role keeps its own account-bound resolver: tenancy and
+  operator scoping stay separate layers, as below. The in-process
+  channels between co-mounted roles stay inside the process trust
+  boundary; the guard sits on the network edges.
+- A guarded node refuses to mount the search console, which has no
+  principal sessions yet: serving it would put an unauthenticated
+  browser surface in front of guarded services. Unmount the role or
+  run the node open.
+
 ## What this layer does not do
 
 - **It is not row-level security.** A scope gates operations, not
