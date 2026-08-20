@@ -29,6 +29,11 @@ final class MapMessageAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Transforms a JSON message with field-mapping rules — text rules like "
                 + "'target.path = source.path' (or '-field' to clear) and/or CEL rules "

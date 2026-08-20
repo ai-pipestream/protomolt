@@ -3,6 +3,7 @@ package ai.pipestream.proto.jobs.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -33,6 +34,11 @@ public final class GetJobAction implements ProtoAction {
     @Override
     public String name() {
         return "get-job";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

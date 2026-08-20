@@ -99,6 +99,21 @@ registry), inline `{"sources": {...}, "root": ...}` (compiled per call), or
 with the toolkit's option extensions registered, so validation rules,
 metadata, and indexing hints behave identically however the schema arrived.
 
+## Required scopes
+
+Every action declares the authorization scope it requires (`requiredScope()`)
+from the closed vocabulary in the
+[authorization scopes design](../design/authorization-scopes.md). Dispatching
+as a scoped caller (`ActionCatalog.execute(name, input, caller)`) refuses
+before the action runs when the caller does not hold that scope, with the
+stable error code `permission-denied` naming the caller, the scope, and the
+action; `list(caller)` serves only the actions the caller may execute. The
+caller-less forms dispatch with process authority (`Caller.operator()`),
+which is what the CLI and the stdio MCP server run as. An action that keeps
+the blank default declaration is served under process authority and refused
+by name for every scoped caller, so an undeclared plugin never grants
+silently.
+
 ## Streaming actions
 
 An action that produces results incrementally implements `StreamingAction`:

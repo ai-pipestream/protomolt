@@ -3,6 +3,7 @@ package ai.pipestream.proto.grpc.workspace;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
@@ -24,6 +25,11 @@ public final class ServiceInspectAction implements ProtoAction {
     @Override
     public String name() {
         return "service-inspect";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

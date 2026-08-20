@@ -31,6 +31,11 @@ final class JoinMessagesAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Joins named source messages into one output. Rules are the map-message "
                 + "surface with scoped source paths ('total = order.qty', CEL rules see each "

@@ -3,6 +3,7 @@ package ai.pipestream.proto.delegation;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -18,6 +19,11 @@ abstract class DelegationAction implements ProtoAction {
 
     DelegationAction(DelegationBridge bridge) {
         this.bridge = Objects.requireNonNull(bridge, "bridge");
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.WORKER_COORDINATE;
     }
 
     /** Renders one cursor-addressable transcript event. */

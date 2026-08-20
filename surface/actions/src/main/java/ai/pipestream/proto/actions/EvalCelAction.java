@@ -21,6 +21,11 @@ final class EvalCelAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Evaluates a CEL expression against a JSON message typed by its protobuf schema; "
                 + "the message is bound as the variable 'input' (e.g. \"input.name + '!'\"), and "

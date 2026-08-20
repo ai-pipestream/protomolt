@@ -3,6 +3,7 @@ package ai.pipestream.proto.jobs.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.jobs.service.WorkflowRunSubmitter;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
@@ -43,6 +44,11 @@ public final class SubmitWorkflowAction implements ProtoAction {
     @Override
     public String name() {
         return "submit-workflow";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.WORKFLOW_RUN;
     }
 
     @Override

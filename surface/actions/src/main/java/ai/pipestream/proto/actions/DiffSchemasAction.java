@@ -16,6 +16,11 @@ final class DiffSchemasAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Diffs two protobuf schema versions and reports every change (fields, enums, "
                 + "services, oneofs, reserved ranges) with a stable ruleId, the protobuf path, "

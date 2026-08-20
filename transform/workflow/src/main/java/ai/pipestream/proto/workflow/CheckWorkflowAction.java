@@ -2,6 +2,7 @@ package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -20,6 +21,11 @@ public final class CheckWorkflowAction implements ProtoAction {
     @Override
     public String name() {
         return "check-workflow";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.WORKFLOW_RUN;
     }
 
     @Override

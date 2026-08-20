@@ -23,6 +23,11 @@ final class MaskMessageAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Masks fields whose declared sensitivity class "
                 + "(ai.pipestream.proto.meta.v1.field.sensitivity) is in 'classes' — e.g. "

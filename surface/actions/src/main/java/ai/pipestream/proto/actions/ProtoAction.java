@@ -19,6 +19,15 @@ public interface ProtoAction {
     /** One sentence describing the action, written for a tool-using LLM. */
     String description();
 
+    /**
+     * The scope this action requires, from {@link Scopes#VOCABULARY}. An action that keeps
+     * the blank default is served normally by an unrestricted caller and refused by name for
+     * a scoped one — a plugin that has not declared authorization never grants silently.
+     */
+    default String requiredScope() {
+        return "";
+    }
+
     /** JSON Schema (draft 2020-12) for the input envelope accepted by {@link #execute}. */
     ObjectNode inputSchema();
 

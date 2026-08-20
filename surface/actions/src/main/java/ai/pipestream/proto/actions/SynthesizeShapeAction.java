@@ -23,6 +23,11 @@ final class SynthesizeShapeAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Synthesizes a message type from named source types: an 'envelope' (one field "
                 + "per source, each intact), a 'projection' (a flat message whose field types "

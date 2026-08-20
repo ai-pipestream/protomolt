@@ -3,6 +3,7 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
 import ai.pipestream.proto.meta.SensitivityMasker;
@@ -42,6 +43,11 @@ final class ExportWorkRecordAction implements ProtoAction {
     @Override
     public String name() {
         return "export-work-record";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.WORKFLOW_RUN;
     }
 
     @Override

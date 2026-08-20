@@ -3,6 +3,7 @@ package ai.pipestream.proto.grpc.workspace;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -20,6 +21,11 @@ public final class ServiceListAction implements ProtoAction {
     @Override
     public String name() {
         return "service-list";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

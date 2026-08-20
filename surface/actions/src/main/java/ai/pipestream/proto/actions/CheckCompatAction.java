@@ -18,6 +18,11 @@ final class CheckCompatAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Checks whether the new schema version is compatible with the old one under a "
                 + "Confluent-style compatibility mode (default BACKWARD, binary wire rules only); "

@@ -21,6 +21,11 @@ final class ListTypesAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Lists the protobuf types available in a schema — or, with no schema, in the shared "
                 + "descriptor registry — as {fullName, file, kind} entries with field shapes for "

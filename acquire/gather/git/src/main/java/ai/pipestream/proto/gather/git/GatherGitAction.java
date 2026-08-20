@@ -2,6 +2,7 @@ package ai.pipestream.proto.gather.git;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSource;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
@@ -44,6 +45,11 @@ public final class GatherGitAction implements ProtoAction {
     @Override
     public String name() {
         return "gather-git";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
     }
 
     @Override

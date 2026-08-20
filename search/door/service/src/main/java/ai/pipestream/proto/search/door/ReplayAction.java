@@ -3,6 +3,7 @@ package ai.pipestream.proto.search.door;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
@@ -75,6 +76,11 @@ public final class ReplayAction implements ProtoAction {
     @Override
     public String name() {
         return NAME;
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SEARCH_INDEX;
     }
 
     @Override

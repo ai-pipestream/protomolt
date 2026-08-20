@@ -15,6 +15,11 @@ final class RenderJsonSchemaAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Renders a JSON Schema document describing the canonical proto3 JSON shape of a "
                 + "protobuf message type, folding declared validation rules into JSON Schema "

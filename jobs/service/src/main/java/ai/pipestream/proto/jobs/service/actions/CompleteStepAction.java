@@ -3,6 +3,7 @@ package ai.pipestream.proto.jobs.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.workflow.CompiledWorkflow;
 import ai.pipestream.proto.workflow.WorkflowJson;
 import ai.pipestream.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -49,6 +50,11 @@ public final class CompleteStepAction implements ProtoAction {
     @Override
     public String name() {
         return "complete-step";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override

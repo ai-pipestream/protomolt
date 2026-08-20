@@ -3,6 +3,7 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
 import ai.pipestream.proto.grpc.workflow.v1.Workflow;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -16,6 +17,11 @@ final class CompileWorkflowAction implements ProtoAction {
     @Override
     public String name() {
         return "compile-workflow";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
     }
 
     @Override

@@ -25,6 +25,11 @@ final class InferSchemaAction implements ProtoAction {
     }
 
     @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
     public String description() {
         return "Infers a proto definition from one or more JSON sample documents: objects "
                 + "become nested messages, arrays become repeated fields with element "

@@ -2,6 +2,7 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
@@ -40,6 +41,11 @@ public final class ServiceInvokeAction implements StreamingAction {
     @Override
     public String name() {
         return "service-invoke";
+    }
+
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
     }
 
     @Override
