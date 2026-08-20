@@ -96,7 +96,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
     private static final int RRF_K = 60;
 
     /** The most hits one query may ask for; larger k is refused by name. */
-    public static final int MAX_K = 1000;
+    public static final int MAX_K = 10_000;
 
     /** Writes accumulated before a durability commit forces. */
     private static final int COMMIT_MAX_PENDING = 64;

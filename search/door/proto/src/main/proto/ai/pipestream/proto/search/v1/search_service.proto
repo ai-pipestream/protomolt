@@ -163,12 +163,12 @@ message SearchRequest {
     }
   ];
   // Maximum hits to return. Required; must be positive and no more than
-  // the door's per-query cap — over-cap requests are refused by name, not
-  // clamped, so one query cannot ask for the whole index.
+  // the door's per-query cap (10000) — over-cap requests are refused by
+  // name, not clamped, so one query cannot ask for the whole index.
   int32 k = 3 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      int32: {gt: 0, lte: 1000}
+      int32: {gt: 0, lte: 10000}
     }
   ];
   // The lane to run. Required.
