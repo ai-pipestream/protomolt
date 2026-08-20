@@ -1,0 +1,13 @@
+description = 'Authorization for gRPC surfaces: credential interceptor, caller context, and the service scope table'
+
+dependencies {
+    // Caller resolution against the access policy; exports Caller and the vocabulary.
+    api project(':protomolt-authz')
+    api libs.grpc.api
+    implementation libs.slf4j.api
+
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.stub
+    testImplementation libs.grpc.services
+    testImplementation libs.grpc.protobuf
+}

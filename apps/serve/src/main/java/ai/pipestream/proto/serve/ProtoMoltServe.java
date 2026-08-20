@@ -2,6 +2,10 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.authz.AccessPolicies;
+import ai.pipestream.proto.authz.AccessPolicyCallers;
+import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.delegation.DelegationActions;
@@ -47,13 +51,19 @@ import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
 
+import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -769,7 +779,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                 // Demo mode always has a registry; an unnamed one lives in a temp directory.
                 try {
                     registryGit = java.nio.file.Files.createTempDirectory("protomolt-demo-registry");
-                } catch (java.io.IOException e) {
+                } catch (IOException e) {
                     throw new IllegalStateException("Failed to create the demo registry directory", e);
                 }
             }
@@ -785,7 +795,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                 try {
                     serviceProfiles = new FileSystemServiceProfileRepository(
                             options.serviceWorkspace());
-                } catch (java.io.IOException e) {
+                } catch (IOException e) {
                     throw new IllegalStateException("Failed to open service workspace at "
                             + options.serviceWorkspace(), e);
                 }
@@ -795,7 +805,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                 try {
                     workflowWorkspace = java.nio.file.Files
                             .createTempDirectory("protomolt-demo-workflows");
-                } catch (java.io.IOException e) {
+                } catch (IOException e) {
                     throw new IllegalStateException("Failed to create the demo workflow workspace", e);
                 }
             }
@@ -805,7 +815,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                             workflowWorkspace.resolve("artifacts"));
                     runEvidence = new FileSystemRunEvidenceRepository(
                             workflowWorkspace.resolve("runs"));
-                } catch (java.io.IOException e) {
+                } catch (IOException e) {
                     throw new IllegalStateException("Failed to open workflow workspace at "
                             + workflowWorkspace, e);
                 }
@@ -900,12 +910,12 @@ public final class ProtoMoltServe implements AutoCloseable {
 
             // The access policy narrows named principals; the operator token keeps every
             // scope. A policy that fails to load or verify refuses startup loudly.
-            ai.pipestream.proto.authz.CallerResolver callers = null;
+            CallerResolver callers = null;
             if (options.accessPolicy() != null) {
                 try {
-                    callers = new ai.pipestream.proto.authz.AccessPolicyCallers(
-                            ai.pipestream.proto.authz.AccessPolicies.load(options.accessPolicy()));
-                } catch (java.io.IOException e) {
+                    callers = new AccessPolicyCallers(
+                            AccessPolicies.load(options.accessPolicy()));
+                } catch (IOException e) {
                     throw new IllegalStateException("failed to read the access policy at "
                             + options.accessPolicy() + ": " + e.getMessage(), e);
                 }
@@ -944,8 +954,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
 
             ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
-            java.util.function.Function<java.util.Map<String, String>,
-                    ai.pipestream.proto.actions.Caller> restCallers = callers == null
+            Function<Map<String, String>, Caller> restCallers = callers == null
                     ? null : restCallers(options.apiToken(), callers);
             ProtoMoltRestMount.register(methods, catalog, options.apiToken() == null
                     ? null
@@ -960,18 +969,17 @@ public final class ProtoMoltServe implements AutoCloseable {
                 gateway = new ProtoRestGateway(methods, context.transcoder(),
                         ProtoApiTokenValidator.sharedSecret(options.apiToken()));
             } else {
-                java.util.function.Function<java.util.Map<String, String>,
-                        ai.pipestream.proto.actions.Caller> resolved = restCallers;
+                Function<Map<String, String>, Caller> resolved = restCallers;
                 gateway = new ProtoRestGateway(methods, context.transcoder(),
                         (tokenConfig, headers, query) -> {
                             String presented = presentedCredential(headers);
                             if (presented == null || presented.isBlank()) {
-                                return java.util.Optional.of(
+                                return Optional.of(
                                         "Missing API token '" + tokenConfig.name() + "'");
                             }
                             return resolved.apply(headers) != null
-                                    ? java.util.Optional.empty()
-                                    : java.util.Optional.of("Invalid API token");
+                                    ? Optional.empty()
+                                    : Optional.of("Invalid API token");
                         });
             }
             String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
@@ -1066,7 +1074,7 @@ public final class ProtoMoltServe implements AutoCloseable {
     }
 
     /** The credential a REST request presents: {@code api_token} or a bearer authorization. */
-    private static String presentedCredential(java.util.Map<String, String> headers) {
+    private static String presentedCredential(Map<String, String> headers) {
         String presented = headers.get("api_token");
         if (presented == null) {
             String authorization = headers.get("authorization");
@@ -1078,18 +1086,17 @@ public final class ProtoMoltServe implements AutoCloseable {
     }
 
     /** Header-to-caller resolution for the REST mount: operator token, else the policy. */
-    private static java.util.function.Function<java.util.Map<String, String>,
-            ai.pipestream.proto.actions.Caller> restCallers(
-            String apiToken, ai.pipestream.proto.authz.CallerResolver resolver) {
-        byte[] operator = apiToken.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    private static Function<Map<String, String>, Caller> restCallers(
+            String apiToken, CallerResolver resolver) {
+        byte[] operator = apiToken.getBytes(StandardCharsets.UTF_8);
         return headers -> {
             String presented = presentedCredential(headers);
             if (presented == null || presented.isBlank()) {
                 return null;
             }
-            if (java.security.MessageDigest.isEqual(operator,
-                    presented.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
-                return ai.pipestream.proto.actions.Caller.operator();
+            if (MessageDigest.isEqual(operator,
+                    presented.getBytes(StandardCharsets.UTF_8))) {
+                return Caller.operator();
             }
             return resolver.resolve(presented).orElse(null);
         };

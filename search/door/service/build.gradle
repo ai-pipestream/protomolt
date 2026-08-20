@@ -7,6 +7,7 @@ dependencies {
     // The document gate's validator and the TaxonomyCatalog seam are API:
     // hosts hand the module a catalog and the builder a validator.
     api project(':protomolt-protobuf-validation')
+    api project(':protomolt-authz-grpc')
     // The screening mount seam is API too: hosts hand the module a live
     // Screener supplier; OpenNLP stays behind the screening module.
     api project(':protomolt-screening')

@@ -2,6 +2,7 @@ package ai.pipestream.proto.server;
 
 import ai.pipestream.proto.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.json.ProtobufJsonException;
+import ai.pipestream.proto.rest.ForbiddenProtoRestException;
 import ai.pipestream.proto.rest.HttpMethodNotAllowedException;
 import ai.pipestream.proto.rest.MalformedRequestException;
 import ai.pipestream.proto.rest.MethodNotFoundException;
@@ -119,7 +120,7 @@ public final class ProtoRestHttpSupport {
         if (cause instanceof UnauthorizedProtoRestException) {
             return 401;
         }
-        if (cause instanceof ai.pipestream.proto.rest.ForbiddenProtoRestException) {
+        if (cause instanceof ForbiddenProtoRestException) {
             return 403;
         }
         if (cause instanceof ServiceNotFoundException || cause instanceof MethodNotFoundException) {

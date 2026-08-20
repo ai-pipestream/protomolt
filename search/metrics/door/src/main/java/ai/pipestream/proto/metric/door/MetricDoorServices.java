@@ -1,14 +1,21 @@
 package ai.pipestream.proto.metric.door;
 
+import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.grpc.ApiTokenServerInterceptor;
+import ai.pipestream.proto.authz.grpc.ScopeServerInterceptor;
 import ai.pipestream.proto.grpc.validate.ValidatingServerInterceptor;
 import io.grpc.Server;
+import io.grpc.ServerInterceptor;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 /**
  * One factory wires the metric door: the MetricService over its served
@@ -89,10 +96,22 @@ public final class MetricDoorServices implements AutoCloseable {
      * @throws IOException when the server fails to bind
      */
     public Server startInProcess(String name) throws IOException {
-        server = InProcessServerBuilder.forName(name)
+        return startInProcess(name, null, null);
+    }
+
+    /**
+     * Starts in-process with door identity: the operator token holds every scope, a
+     * credential the resolver names is scope-checked — describing and querying need
+     * {@code metrics-query}, rebuilding rollups needs {@code metrics-rebuild}. Without a
+     * token the door stays the open, trusted-network surface it is today.
+     */
+    public Server startInProcess(String name, String apiToken, CallerResolver resolver)
+            throws IOException {
+        InProcessServerBuilder builder = InProcessServerBuilder.forName(name)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
-                .intercept(ValidatingServerInterceptor.create())
-                .addService(service)
+                .intercept(ValidatingServerInterceptor.create());
+        identity(builder::intercept, apiToken, resolver);
+        server = builder.addService(service)
                 .build()
                 .start();
         return server;
@@ -106,16 +125,46 @@ public final class MetricDoorServices implements AutoCloseable {
      * @throws IOException when the server fails to bind
      */
     public Server startNetty(int port) throws IOException {
+        return startNetty(port, null, null);
+    }
+
+    /** Starts on Netty with door identity; see
+     * {@link #startInProcess(String, String, CallerResolver)}. */
+    public Server startNetty(int port, String apiToken, CallerResolver resolver)
+            throws IOException {
         HealthStatusManager health = new HealthStatusManager();
-        server = NettyServerBuilder.forPort(port)
+        NettyServerBuilder builder = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
-                .intercept(ValidatingServerInterceptor.create())
-                .addService(service)
+                .intercept(ValidatingServerInterceptor.create());
+        identity(builder::intercept, apiToken, resolver);
+        server = builder.addService(service)
                 .addService(health.getHealthService())
                 .addService(ProtoReflectionServiceV1.newInstance())
                 .build()
                 .start();
         return server;
+    }
+
+    /**
+     * Installs the credential and scope interceptors: added after the validating one so the
+     * credential check runs first on the wire, the scope table second, validation third.
+     */
+    private void identity(Consumer<ServerInterceptor> intercept, String apiToken,
+                          CallerResolver resolver) {
+        if (apiToken == null) {
+            if (resolver != null) {
+                throw new IllegalArgumentException(
+                        "an access-policy resolver requires the operator api token");
+            }
+            return;
+        }
+        String serviceName = service.bindService().getServiceDescriptor().getName();
+        intercept.accept(new ScopeServerInterceptor(
+                Map.of(serviceName, Scopes.METRICS_QUERY),
+                Map.of(serviceName + "/RebuildRollup", Scopes.METRICS_REBUILD),
+                Set.of("grpc.health.v1.Health",
+                        "grpc.reflection.v1.ServerReflection")));
+        intercept.accept(new ApiTokenServerInterceptor(apiToken, resolver));
     }
 
     /** The bound server, once one of the start methods has run. */

@@ -2,16 +2,23 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.Caller;
 import ai.pipestream.proto.grpc.service.CatalogBridge;
 import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
 import ai.pipestream.proto.rest.ApiTokenRequirement;
+import ai.pipestream.proto.rest.ForbiddenProtoRestException;
 import ai.pipestream.proto.rest.MalformedRequestException;
+import ai.pipestream.proto.rest.ProtoRestContextInvoker;
 import ai.pipestream.proto.rest.ProtoRestInvocationException;
 import ai.pipestream.proto.rest.ProtoRestMethodRegistry;
+import ai.pipestream.proto.rest.UnauthorizedProtoRestException;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
+import com.google.protobuf.Message;
 
 import java.util.Locale;
+import java.util.Map;
+import java.util.function.Function;
 
 /**
  * Registers every {@code ProtoMoltService} RPC as a JSON/REST method:
@@ -46,14 +53,12 @@ public final class ProtoMoltRestMount {
      */
     public static void register(ProtoRestMethodRegistry registry, ActionCatalog catalog,
                                 ApiTokenRequirement apiToken,
-                                java.util.function.Function<java.util.Map<String, String>,
-                                        ai.pipestream.proto.actions.Caller> callers) {
+                                Function<Map<String, String>, Caller> callers) {
         ServiceDescriptor service = ProtoMoltServiceSchema.service();
         for (MethodDescriptor method : service.getMethods()) {
             registry.register(service, method,
                     callers == null
-                            ? request -> dispatch(catalog, method, request,
-                                    ai.pipestream.proto.actions.Caller.operator())
+                            ? request -> dispatch(catalog, method, request, Caller.operator())
                             : new ScopedInvoker(catalog, method, callers),
                     apiToken);
         }
@@ -61,33 +66,28 @@ public final class ProtoMoltRestMount {
 
     /** A header-aware invoker; the plain path refuses rather than silently widening. */
     private record ScopedInvoker(ActionCatalog catalog, MethodDescriptor method,
-                                 java.util.function.Function<java.util.Map<String, String>,
-                                         ai.pipestream.proto.actions.Caller> callers)
-            implements java.util.function.Function<com.google.protobuf.Message,
-                    com.google.protobuf.Message>,
-            ai.pipestream.proto.rest.ProtoRestContextInvoker {
+                                 Function<Map<String, String>, Caller> callers)
+            implements Function<Message, Message>, ProtoRestContextInvoker {
 
         @Override
-        public com.google.protobuf.Message apply(com.google.protobuf.Message request) {
+        public Message apply(Message request) {
             throw new ProtoRestInvocationException(
                     "caller resolution requires the header-aware invocation path");
         }
 
         @Override
-        public com.google.protobuf.Message invoke(com.google.protobuf.Message request,
-                java.util.Map<String, String> headers, java.util.Map<String, String> query) {
-            ai.pipestream.proto.actions.Caller caller = callers.apply(headers);
+        public Message invoke(Message request,
+                Map<String, String> headers, Map<String, String> query) {
+            Caller caller = callers.apply(headers);
             if (caller == null) {
-                throw new ai.pipestream.proto.rest.UnauthorizedProtoRestException(
-                        "Invalid API token");
+                throw new UnauthorizedProtoRestException("Invalid API token");
             }
             return dispatch(catalog, method, request, caller);
         }
     }
 
-    private static com.google.protobuf.Message dispatch(ActionCatalog catalog,
-            MethodDescriptor method, com.google.protobuf.Message request,
-            ai.pipestream.proto.actions.Caller caller) {
+    private static Message dispatch(ActionCatalog catalog,
+            MethodDescriptor method, Message request, Caller caller) {
         try {
             return CatalogBridge.execute(catalog, method, request, caller);
         } catch (ActionException e) {
@@ -96,8 +96,7 @@ public final class ProtoMoltRestMount {
                 throw new ProtoRestInvocationException(e.code() + ": " + e.getMessage(), e);
             }
             if ("permission-denied".equals(code)) {
-                throw new ai.pipestream.proto.rest.ForbiddenProtoRestException(
-                        e.code() + ": " + e.getMessage(), e);
+                throw new ForbiddenProtoRestException(e.code() + ": " + e.getMessage(), e);
             }
             // Client-repairable action failures map to 400 with the stable code.
             throw new MalformedRequestException(e.code() + ": " + e.getMessage(), e);

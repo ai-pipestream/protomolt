@@ -2,6 +2,7 @@ package ai.pipestream.proto.server;
 
 import ai.pipestream.proto.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.json.ProtobufJsonException;
+import ai.pipestream.proto.rest.ForbiddenProtoRestException;
 import ai.pipestream.proto.rest.HttpMethodNotAllowedException;
 import ai.pipestream.proto.rest.MalformedRequestException;
 import ai.pipestream.proto.rest.MethodNotFoundException;
@@ -102,7 +103,7 @@ class ProtoRestHttpSupportTest {
     void mapsExceptionsToStatusCodes() {
         assertThat(ProtoRestHttpSupport.statusFor(new UnauthorizedProtoRestException("nope"))).isEqualTo(401);
         assertThat(ProtoRestHttpSupport.statusFor(
-                new ai.pipestream.proto.rest.ForbiddenProtoRestException("denied"))).isEqualTo(403);
+                new ForbiddenProtoRestException("denied"))).isEqualTo(403);
         assertThat(ProtoRestHttpSupport.statusFor(new ServiceNotFoundException("s"))).isEqualTo(404);
         assertThat(ProtoRestHttpSupport.statusFor(new MethodNotFoundException("Echo", "m"))).isEqualTo(404);
         assertThat(ProtoRestHttpSupport.statusFor(new MalformedProtobufJsonException("bad", "{}"))).isEqualTo(400);

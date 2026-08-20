@@ -16,8 +16,8 @@
  * {@code protomolt_service.proto} at class load and the compiled file descriptor is attached to
  * the binding, so server reflection lists the service as it would a stub-generated one.
  * {@link ProtoMoltGrpcServer} is a ready-to-run server with reflection enabled, and
- * {@link ApiTokenServerInterceptor} applies a shared-secret credential check server-wide when
- * one is configured.
+ * {@link ai.pipestream.proto.authz.grpc.ApiTokenServerInterceptor} applies the credential
+ * check server-wide when one is configured.
  *
  * <p>{@code ai.pipestream.proto.serve} mounts this service alongside the REST, OpenAPI, and MCP
  * surfaces in one process. See the
