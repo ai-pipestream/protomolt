@@ -3,7 +3,7 @@
 The gather modules acquire `.proto` source files from local directories,
 jars, Git repositories, and Maven artifacts. They stage them
 as a `ProtoSourceSet`: an import-path-keyed set of sources that the shared
-compiler (`protomolt-proto-sources`) turns into runtime descriptors, and
+compiler (`protomolt-sources`) turns into runtime descriptors, and
 that the [schema publishers](../schema/publishing.md) can register with a registry.
 
 The semantics deliberately match the
@@ -13,9 +13,9 @@ generation. These modules are the runtime, framework-free equivalent.
 
 | Artifact | Provides |
 |---|---|
-| `protomolt-gather` | The `ProtoGatherer` SPI; filesystem and jar gatherers; composition; the `DescriptorLoader` adapter |
-| `protomolt-gather-git` | Git repositories via JGit, with persistent clone caching |
-| `protomolt-gather-maven` | Maven artifacts by coordinate, via Maven Resolver |
+| `protomolt-acquire-gather` | The `ProtoGatherer` SPI; filesystem and jar gatherers; composition; the `DescriptorLoader` adapter |
+| `protomolt-acquire-gather-git` | Git repositories via JGit, with persistent clone caching |
+| `protomolt-acquire-gather-maven` | Maven artifacts by coordinate, via Maven Resolver |
 
 ## The SPI
 

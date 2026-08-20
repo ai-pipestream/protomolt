@@ -14,7 +14,7 @@ dependencies {
     compileOnly libs.hadoop.client.api
 
     // Reading back what the sink wrote, to prove round trips - test-only weight.
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.protobuf.java.util
     testImplementation libs.iceberg.data
     // The live suites boot their own Iceberg REST catalog fixture container.

@@ -17,7 +17,7 @@ dependencies {
     runtimeOnly libs.slf4j.simple
 
     // Process round-trip fixtures: compile protos and stand up a dynamic gRPC server at test time.
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation project(':protomolt-grpc-invoke')
     testImplementation testFixtures(project(':protomolt-acp'))
     testImplementation libs.grpc.stub

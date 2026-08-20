@@ -8,7 +8,7 @@
  * validation environment built by
  * {@link ai.pipestream.proto.cel.CelEnvironmentFactory}.
  *
- * <p>The semantics come from the dependency-free {@link ai.pipestream.format.Formats} validators,
+ * <p>The semantics come from the dependency-free {@link ai.pipestream.proto.formats.Formats} validators,
  * so the same RFC logic backs these functions and the well-known formats declared through
  * {@link ai.pipestream.proto.validate.model.StringFormat}. Custom CEL rules reach this package
  * indirectly: {@link ai.pipestream.proto.validate.ProtoValidator} installs the functions before

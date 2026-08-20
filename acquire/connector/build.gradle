@@ -5,7 +5,7 @@ dependencies {
 
     implementation libs.kafka.clients
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.protobuf
     testImplementation libs.grpc.stub

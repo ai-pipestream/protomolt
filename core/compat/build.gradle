@@ -2,5 +2,5 @@ description = 'Protobuf schema compatibility checking: typed diffs and policy ev
 
 dependencies {
     api project(':protomolt-descriptors')
-    api project(':protomolt-proto-sources')
+    api project(':protomolt-sources')
 }

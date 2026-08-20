@@ -15,7 +15,7 @@ dependencies {
     implementation libs.protobuf.java.util
 
     testImplementation libs.kafka.connect.api
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.iceberg.data
     testImplementation libs.iceberg.parquet
     // The live suite boots its own Iceberg REST catalog fixture container.

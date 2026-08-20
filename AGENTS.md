@@ -99,6 +99,11 @@ appears (`formats`, `sources`, `types`) is one stem, not a violation.
 
 `server` never names a served component's directory or module.
 
+A subtree's `core` directory holds its namesake module, named and packaged
+without the core segment: `acquire/gather/core` is `protomolt-acquire-gather`
+at `ai.pipestream.proto.acquire.gather`. `transform/mapper/core` predates
+this and keeps `protomolt-mapper-core` in the grandfather table.
+
 ### Technical terms
 
 | Term | Meaning |
@@ -118,6 +123,7 @@ These are correct as they stand. Do not "fix" them.
 | protobuf/validation-protovalidate | `buf.validate` proto package | vendored upstream vocabulary |
 | protobuf/seo | schema.org words such as Recipe | external vocabulary, exempt from ADR-001 retirement |
 | bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |
+| host/integration/quarkus | runtime module named protomolt-integration-quarkus | the Quarkus extension convention pairs artifact with artifact-deployment |
 
 ### Grandfathered names
 
@@ -127,12 +133,10 @@ carry their targets into the single pre-1.0 breaking batch.
 | Current | Path | Target |
 |---|---|---|
 | protomolt-index-spi, protomolt-index-{ndjson,lucene,opensearch,solr,qdrant} | search/index/* | protomolt-search-index-* |
+| protomolt-mapper-core | transform/mapper/core | protomolt-mapper, the namesake-core rule |
 | protomolt-chunker | search/chunk | protomolt-search-chunk |
 | protomolt-embeddings{,-model2vec,-tei,-ovms,-harness} | search/embeddings/** | protomolt-search-embedding-* |
 | protomolt-rerank{,-tei,-ovms,-harness} | search/rerank/** | protomolt-search-rerank-* |
-| protomolt-quarkus, protomolt-quarkus-deployment, protomolt-spring | host/integrations/** | protomolt-integration-* |
-| protomolt-proto-sources | core/sources | protomolt-source; `proto-` is not a path segment |
-| protomolt-gather{,-git,-maven}, protomolt-msgraph, protomolt-connector | acquire/** | protomolt-acquire-*; acquire is a domain tree |
 
 `protomolt-search-service` conforms; search is a domain tree, so its name is
 not a candidate for renaming.
@@ -141,9 +145,6 @@ Packages drift separately from module names:
 
 | Module | Current | Target |
 |---|---|---|
-| protomolt-msgraph | ai.pipestream.proto.graph | ai.pipestream.proto.acquire.msgraph |
-| protomolt-iceberg, protomolt-iceberg-s3 | ai.pipestream.proto.lake.iceberg[.s3] | ai.pipestream.proto.iceberg[.s3] |
-| protomolt-formats | ai.pipestream.format | ai.pipestream.proto.formats |
 | protomolt-parse-document | ai.pipestream.document.v1 | ai.pipestream.proto.parse.document.v1 |
 | protomolt-parse-grparse | ai.pipestream.parse.v1 | ai.pipestream.proto.parse.grparse.v1 |
 

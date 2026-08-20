@@ -31,7 +31,7 @@ import ai.pipestream.proto.metric.iceberg.IcebergRollupSubjects;
 import ai.pipestream.proto.metric.lucene.MetricServiceModule;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
 import ai.pipestream.proto.metric.spi.RollupSink;
-import ai.pipestream.proto.lake.iceberg.LocalFileIO;
+import ai.pipestream.proto.iceberg.LocalFileIO;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -693,7 +693,7 @@ public final class DocumentPlatform implements AutoCloseable {
             // The lake's file plane on an S3-compatible store, through
             // Iceberg's own S3FileIO: one credential path shared by the
             // catalog, the sink, and the metric reader.
-            properties.putAll(ai.pipestream.proto.lake.iceberg.s3.S3Catalogs
+            properties.putAll(ai.pipestream.proto.iceberg.s3.S3Catalogs
                     .awsRegion(config.s3Region()));
             if (!config.s3Endpoint().isEmpty()) {
                 properties.put(org.apache.iceberg.aws.s3.S3FileIOProperties.ENDPOINT,

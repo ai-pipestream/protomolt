@@ -2,7 +2,7 @@ description = 'Quarkus (Vert.x 4) JAX-RS-oriented facade for protobuf JSON/REST'
 
 dependencies {
     api project(':protomolt-server-common')
-    api project(':protomolt-quarkus')
+    api project(':protomolt-integration-quarkus')
     compileOnly platform(libs.quarkus.bom)
     compileOnly libs.quarkus.arc
 

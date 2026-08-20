@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
  * Wires {@link ApicurioDescriptorLoader} into any available {@link DescriptorRegistry}
  * and optionally bulk-loads descriptors at startup.
  *
- * <p>When the protomolt-quarkus extension supplies the {@link DescriptorRegistry}, that registry
+ * <p>When the protomolt-integration-quarkus extension supplies the {@link DescriptorRegistry}, that registry
  * has already collected every available {@link DescriptorLoader} bean (including this
  * extension's loader) and its {@code addLoader} is idempotent per loader instance, so the
  * {@code addLoader} call below is a harmless no-op there; against app-provided registries it

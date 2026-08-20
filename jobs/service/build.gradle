@@ -33,7 +33,7 @@ dependencies {
 
     runtimeOnly libs.slf4j.simple
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.stub
     testImplementation libs.grpc.protobuf

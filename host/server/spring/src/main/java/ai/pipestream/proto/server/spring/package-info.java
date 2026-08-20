@@ -9,7 +9,7 @@
  * without recompiling.
  *
  * <p>Register the controller as a bean alongside a configured gateway; the beans it needs are
- * supplied by the {@code protomolt-spring} auto-configuration. Body size checks and the mapping
+ * supplied by the {@code protomolt-integration-spring} auto-configuration. Body size checks and the mapping
  * from gateway exceptions to HTTP status codes come from
  * {@link ai.pipestream.proto.server.ProtoRestHttpSupport}, matching the standalone hosts.
  *

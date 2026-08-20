@@ -6,7 +6,7 @@ dependencies {
     // GraphClient, GraphConnections and GraphSchemas return JsonNode/ObjectNode.
     api libs.jackson.databind
 
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     // The read -> infer-schema demo: SharePoint list-item JSON becomes a typed proto.
     testImplementation project(':protomolt-shapes')
     testImplementation libs.protobuf.java.util
@@ -16,7 +16,7 @@ tasks.register('graphProbe', JavaExec) {
     group = 'protomolt'
     description = 'Probe what a Graph tenant allows: -Ptenant=... -Pclient=... [-Psecret=...] (see docs/acquire/msgraph.md)'
     classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'ai.pipestream.proto.graph.GraphProbe'
+    mainClass = 'ai.pipestream.proto.acquire.msgraph.GraphProbe'
     doFirst {
         def probeArgs = []
         ['tenant', 'client', 'secret'].each { name ->

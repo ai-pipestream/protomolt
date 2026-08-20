@@ -32,7 +32,7 @@ dependencies {
     implementation project(':protomolt-protobuf-quality')
 
     testImplementation libs.kafka.clients
-    testImplementation project(':protomolt-proto-sources')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.slf4j.simple
     testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter

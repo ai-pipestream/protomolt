@@ -1332,7 +1332,7 @@ public final class ProtoValidator {
             return;
         }
         for (String mask : mounted.masks()) {
-            if (ai.pipestream.format.PostalMasks.matches(code, mask)) {
+            if (ai.pipestream.proto.formats.PostalMasks.matches(code, mask)) {
                 return;
             }
         }

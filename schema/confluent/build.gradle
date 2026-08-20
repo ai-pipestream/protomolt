@@ -4,7 +4,7 @@ dependencies {
     api project(':protomolt-descriptors')
 
     // Confluent Schema Registry subjects API support: JSON responses + shared .proto compilation.
-    implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-sources')
     implementation libs.jackson.databind
 
     testImplementation libs.testcontainers.redpanda

@@ -7,8 +7,8 @@ dependencies {
     api libs.grpc.api
     api libs.protobuf.java
 
-    implementation project(':protomolt-proto-sources')
-    implementation project(':protomolt-gather-git')
+    implementation project(':protomolt-sources')
+    implementation project(':protomolt-acquire-gather-git')
     implementation project(':protomolt-emit-okf')
     implementation project(':protomolt-workflow')
     implementation project(':protomolt-grpc-invoke')

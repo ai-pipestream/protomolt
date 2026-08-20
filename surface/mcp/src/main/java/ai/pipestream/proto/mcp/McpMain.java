@@ -5,7 +5,7 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.codegen.GenerateStubsAction;
 import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.workflow.WorkflowWorkbenchActions;
-import ai.pipestream.proto.gather.git.GatherGitAction;
+import ai.pipestream.proto.acquire.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;

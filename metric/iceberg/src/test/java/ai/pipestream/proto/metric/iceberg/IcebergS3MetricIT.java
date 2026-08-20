@@ -2,8 +2,8 @@ package ai.pipestream.proto.metric.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import ai.pipestream.proto.lake.iceberg.IcebergSink;
-import ai.pipestream.proto.lake.iceberg.s3.S3Catalogs;
+import ai.pipestream.proto.iceberg.IcebergSink;
+import ai.pipestream.proto.iceberg.s3.S3Catalogs;
 import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.FieldMetric;
 import ai.pipestream.proto.metric.MemberRef;

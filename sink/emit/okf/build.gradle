@@ -7,5 +7,5 @@ dependencies {
     api project(':protomolt-registry')
 
     implementation project(':protomolt-protobuf-metadata')
-    implementation project(':protomolt-proto-sources')
+    implementation project(':protomolt-sources')
 }

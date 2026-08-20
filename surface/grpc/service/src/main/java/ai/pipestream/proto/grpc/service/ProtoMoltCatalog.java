@@ -9,7 +9,7 @@ import ai.pipestream.proto.workflow.RunWorkflowAction;
 import ai.pipestream.proto.workflow.WorkflowWorkbenchActions;
 import ai.pipestream.proto.codegen.GenerateStubsAction;
 import ai.pipestream.proto.emit.okf.EmitOkfAction;
-import ai.pipestream.proto.gather.git.GatherGitAction;
+import ai.pipestream.proto.acquire.gather.git.GatherGitAction;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.ReflectAction;

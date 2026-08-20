@@ -1,6 +1,6 @@
 # Microsoft Graph
 
-`protomolt-msgraph` speaks Microsoft Graph directly: no Microsoft SDK, no
+`protomolt-acquire-msgraph` speaks Microsoft Graph directly: no Microsoft SDK, no
 Windows agent. Two lanes:
 
 - **Files and metadata** (input *and* output): OneDrive and SharePoint Online
@@ -15,7 +15,7 @@ Windows agent. Two lanes:
   index them. This is the roll-your-own-agent lane: cross-platform, no MSI,
   no agent enrollment.
 
-The classes live in `ai.pipestream.proto.graph`: `GraphAuth` (OAuth2),
+The classes live in `ai.pipestream.proto.acquire.msgraph`: `GraphAuth` (OAuth2),
 `GraphClient` (authorized JSON with Graph's `Retry-After` throttling contract
 honored), `GraphFiles`, `GraphConnections`, and `GraphSchemas`.
 
@@ -39,9 +39,9 @@ connectors: each as OK, permission-denied, or absent:
 
 ```shell
 # device code, delegated
-./gradlew -q :protomolt-msgraph:graphProbe -Ptenant=<tenant-id> -Pclient=<app-id>
+./gradlew -q :protomolt-acquire-msgraph:graphProbe -Ptenant=<tenant-id> -Pclient=<app-id>
 # app-only, client credentials
-./gradlew -q :protomolt-msgraph:graphProbe -Ptenant=<tenant-id> -Pclient=<app-id> -Psecret=<secret>
+./gradlew -q :protomolt-acquire-msgraph:graphProbe -Ptenant=<tenant-id> -Pclient=<app-id> -Psecret=<secret>
 ```
 
 A OneDrive-only license reports SharePoint as reachable with zero visible

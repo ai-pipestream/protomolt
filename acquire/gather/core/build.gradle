@@ -1,5 +1,5 @@
 description = 'Proto gatherer SPI: filesystem and jar sources, staging, and the descriptor-loader adapter'
 
 dependencies {
-    api project(':protomolt-proto-sources')
+    api project(':protomolt-sources')
 }

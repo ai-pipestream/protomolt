@@ -33,7 +33,7 @@ import com.google.protobuf.Timestamp;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
-import ai.pipestream.format.Formats;
+import ai.pipestream.proto.formats.Formats;
 
 /**
  * Structural and safety validation shared by workflow repositories, actions, and compilers,

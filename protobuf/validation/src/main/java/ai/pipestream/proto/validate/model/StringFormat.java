@@ -1,12 +1,12 @@
 package ai.pipestream.proto.validate.model;
 
-import ai.pipestream.format.Formats;
+import ai.pipestream.proto.formats.Formats;
 
 import java.util.function.Predicate;
 
 /**
  * Well-known string formats a {@link StringConstraints} can demand. Each format carries its stable
- * violation rule id and delegates the actual test to the RFC-accurate {@code ai.pipestream.format}
+ * violation rule id and delegates the actual test to the RFC-accurate {@code ai.pipestream.proto.formats}
  * validators. Checks are purely syntactic (no DNS lookups or network access).
  *
  * <p>Matching protovalidate, an empty string satisfies the format check itself — an empty value is

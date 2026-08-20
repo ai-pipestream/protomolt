@@ -1,7 +1,7 @@
 package ai.pipestream.proto.metric.iceberg;
 
-import ai.pipestream.proto.lake.iceberg.IcebergSink;
-import ai.pipestream.proto.lake.iceberg.IcebergSchemas;
+import ai.pipestream.proto.iceberg.IcebergSink;
+import ai.pipestream.proto.iceberg.IcebergSchemas;
 import ai.pipestream.proto.metric.MetricRow;
 import ai.pipestream.proto.metric.spi.RollupSink;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
