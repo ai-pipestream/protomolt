@@ -106,14 +106,20 @@ lint:
       # ProtoMoltService returns google.protobuf.Struct from its render/invoke
       # verbs by design: the service is descriptor-native and the canonical
       # proto3 JSON form of each action envelope IS the response payload.
-      - surface/grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto
+      - surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto
     RPC_RESPONSE_STANDARD_NAME:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
       # Same deliberate Struct responses as RPC_REQUEST_RESPONSE_UNIQUE above.
-      - surface/grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto
+      - surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto
 breaking:
   use:
     - FILE
+  # TEMPORARY (drop in the next PR): protomolt_service.proto moved to
+  # ai/pipestream/proto/grpc/service/v1 with its package; buf sees the old
+  # path as a deletion. The service is descriptor-native with no generated
+  # stubs and no released consumers.
+  except:
+    - FILE_NO_DELETE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

@@ -44,7 +44,7 @@ class ServiceWorkspaceMcpTest {
                 assertThat(registered.has("descriptorSetBase64")).isFalse();
                 assertThat(registered.path("profile").has("descriptorSetBase64")).isFalse();
                 assertThat(registered.path("services").findValuesAsText("name"))
-                        .contains("ai.pipestream.protomolt.v1.ProtoMoltService", "ServiceInspect");
+                        .contains("ai.pipestream.proto.grpc.service.v1.ProtoMoltService", "ServiceInspect");
 
                 JsonNode resources = rpc(http, first.httpPort(), "resources/list",
                         MAPPER.createObjectNode()).path("result").path("resources");
@@ -65,7 +65,7 @@ class ServiceWorkspaceMcpTest {
                 assertThat(persisted.path("profile").path("endpoints").get(0)
                         .path("port").asInt()).isEqualTo(firstGrpcPort);
                 assertThat(persisted.path("services").findValuesAsText("fullName"))
-                        .contains("ai.pipestream.protomolt.v1.ProtoMoltService/ServiceRegister");
+                        .contains("ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ServiceRegister");
                 assertThat(persisted.has("descriptorSetBase64")).isFalse();
                 assertThat(persisted.path("profile").has("descriptorSetBase64")).isFalse();
             }

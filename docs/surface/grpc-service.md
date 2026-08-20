@@ -8,9 +8,9 @@ every surface. The generated [action inventory](../generated/action-inventory.js
 is the source of truth for the assembled name set.
 
 The service is defined in protobuf, of course:
-`ai.pipestream.protomolt.v1.ProtoMoltService`, one typed RPC per full-catalog
+`ai.pipestream.proto.grpc.service.v1.ProtoMoltService`, one typed RPC per full-catalog
 action in
-[`protomolt_service.proto`](../../surface/grpc/service/src/main/resources/ai/pipestream/protomolt/v1/protomolt_service.proto).
+[`protomolt_service.proto`](../../surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto).
 Each request and response message is designed so its canonical proto3 JSON
 form is exactly the action's JSON envelope. That one decision makes every
 surface identical: a `CheckCompatRequest` over gRPC, the JSON body of
@@ -144,7 +144,7 @@ with zero setup.
 
 ```
 ProtoMolt serving:
-  gRPC  0.0.0.0:9090   ai.pipestream.protomolt.v1.ProtoMoltService (reflection on)
+  gRPC  0.0.0.0:9090   ai.pipestream.proto.grpc.service.v1.ProtoMoltService (reflection on)
   REST  http://0.0.0.0:8080/grpc-json/ProtoMoltService/{Method}
   API   http://0.0.0.0:8080/openapi.json
   Docs  http://0.0.0.0:8080/docs
@@ -209,12 +209,12 @@ Reflection is on, so any gRPC client works with no schema in hand:
 
 ```shell
 $ grpcurl -plaintext localhost:9090 list
-ai.pipestream.protomolt.v1.ProtoMoltService
+ai.pipestream.proto.grpc.service.v1.ProtoMoltService
 grpc.reflection.v1.ServerReflection
 
 $ grpcurl -plaintext -d '{"sources": {"shop/v1/order.proto":
     "syntax = \"proto3\";\npackage shop.v1;\nmessage Order { string id = 1; }"}}' \
-    localhost:9090 ai.pipestream.protomolt.v1.ProtoMoltService/Compile
+    localhost:9090 ai.pipestream.proto.grpc.service.v1.ProtoMoltService/Compile
 {
   "ok": true,
   "files": ["shop/v1/order.proto"],

@@ -125,6 +125,8 @@ These are correct as they stand. Do not "fix" them.
 | bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |
 | host/integration/quarkus | runtime module named protomolt-integration-quarkus | the Quarkus extension convention pairs artifact with artifact-deployment |
 | search/index/spi | proto package ai.pipestream.proto.index.hints.v1 | wire-frozen dialect; schemas in the wild reference the extension |
+| parse/document | proto package ai.pipestream.document.v1 | vendored byte-identical across the parser fleet; the fleet owns the contract |
+| parse/grparse | proto packages ai.pipestream.parse.v1 | vendored gRParse streaming surface, same byte-identity reason |
 
 ### Grandfathered names
 
@@ -137,17 +139,6 @@ carry their targets into the single pre-1.0 breaking batch.
 
 `protomolt-search-service` conforms; search is a domain tree, so its name is
 not a candidate for renaming.
-
-Packages drift separately from module names:
-
-| Module | Current | Target |
-|---|---|---|
-| protomolt-parse-document | ai.pipestream.document.v1 | ai.pipestream.proto.parse.document.v1 |
-| protomolt-parse-grparse | ai.pipestream.parse.v1 | ai.pipestream.proto.parse.grparse.v1 |
-
-`protomolt_service.proto` under surface/grpc/service declares
-`ai.pipestream.protomolt.v1`: no `proto` segment, and `protomolt` is not a
-domain. Its domain is chosen in the breaking batch.
 
 A new module conforms on creation. This table only shrinks.
 

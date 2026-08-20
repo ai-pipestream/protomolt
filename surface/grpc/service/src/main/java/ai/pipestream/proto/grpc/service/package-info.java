@@ -1,5 +1,5 @@
 /**
- * The action catalog served as the {@code ai.pipestream.protomolt.v1.ProtoMoltService} gRPC
+ * The action catalog served as the {@code ai.pipestream.proto.grpc.service.v1.ProtoMoltService} gRPC
  * service.
  *
  * <p>Every verb is one typed RPC. {@link ProtoMoltCatalog} assembles the full catalog — the

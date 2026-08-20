@@ -17,10 +17,10 @@ import java.nio.charset.StandardCharsets;
 public final class ProtoMoltServiceSchema {
 
     /** Import path of the service definition on the classpath. */
-    public static final String RESOURCE_PATH = "ai/pipestream/protomolt/v1/protomolt_service.proto";
+    public static final String RESOURCE_PATH = "ai/pipestream/proto/grpc/service/v1/protomolt_service.proto";
 
     /** Fully qualified service name. */
-    public static final String SERVICE_FULL_NAME = "ai.pipestream.protomolt.v1.ProtoMoltService";
+    public static final String SERVICE_FULL_NAME = "ai.pipestream.proto.grpc.service.v1.ProtoMoltService";
 
     private static final class Holder {
         static final String SOURCE = readSource();
