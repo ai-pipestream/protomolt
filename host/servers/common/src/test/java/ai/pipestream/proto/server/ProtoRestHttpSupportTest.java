@@ -101,6 +101,8 @@ class ProtoRestHttpSupportTest {
     @Test
     void mapsExceptionsToStatusCodes() {
         assertThat(ProtoRestHttpSupport.statusFor(new UnauthorizedProtoRestException("nope"))).isEqualTo(401);
+        assertThat(ProtoRestHttpSupport.statusFor(
+                new ai.pipestream.proto.rest.ForbiddenProtoRestException("denied"))).isEqualTo(403);
         assertThat(ProtoRestHttpSupport.statusFor(new ServiceNotFoundException("s"))).isEqualTo(404);
         assertThat(ProtoRestHttpSupport.statusFor(new MethodNotFoundException("Echo", "m"))).isEqualTo(404);
         assertThat(ProtoRestHttpSupport.statusFor(new MalformedProtobufJsonException("bad", "{}"))).isEqualTo(400);
