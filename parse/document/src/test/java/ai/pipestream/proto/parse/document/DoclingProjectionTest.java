@@ -3,15 +3,15 @@ package ai.pipestream.proto.parse.document;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import ai.pipestream.document.v1.BaseTextItem;
-import ai.pipestream.document.v1.CodeItem;
-import ai.pipestream.document.v1.Document;
-import ai.pipestream.document.v1.DocumentOrigin;
-import ai.pipestream.document.v1.PageItem;
-import ai.pipestream.document.v1.SectionHeaderItem;
-import ai.pipestream.document.v1.TextItem;
-import ai.pipestream.document.v1.TextItemBase;
-import ai.pipestream.document.v1.TitleItem;
+import ai.pipestream.proto.parse.document.v1.BaseTextItem;
+import ai.pipestream.proto.parse.document.v1.CodeItem;
+import ai.pipestream.proto.parse.document.v1.Document;
+import ai.pipestream.proto.parse.document.v1.DocumentOrigin;
+import ai.pipestream.proto.parse.document.v1.PageItem;
+import ai.pipestream.proto.parse.document.v1.SectionHeaderItem;
+import ai.pipestream.proto.parse.document.v1.TextItem;
+import ai.pipestream.proto.parse.document.v1.TextItemBase;
+import ai.pipestream.proto.parse.document.v1.TitleItem;
 import ai.pipestream.proto.repo.v1.ParserDocument;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
 import com.google.protobuf.Any;
@@ -128,7 +128,7 @@ class DoclingProjectionTest {
                 ParserDocument.newBuilder()
                         .setShape(
                                 Any.newBuilder()
-                                        .setTypeUrl("type.googleapis.com/ai.pipestream.document.v1.Document")
+                                        .setTypeUrl("type.googleapis.com/ai.pipestream.proto.parse.document.v1.Document")
                                         .setValue(com.google.protobuf.ByteString.copyFromUtf8("garbage-not-a-messageÿ")))
                         .build();
         assertThatThrownBy(() -> DoclingProjection.fromParserDocument(corrupt))

@@ -125,8 +125,9 @@ These are correct as they stand. Do not "fix" them.
 | bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |
 | host/integration/quarkus | runtime module named protomolt-integration-quarkus | the Quarkus extension convention pairs artifact with artifact-deployment |
 | search/index/spi | proto package ai.pipestream.proto.index.hints.v1 | wire-frozen dialect; schemas in the wild reference the extension |
-| parse/document | proto package ai.pipestream.document.v1 | vendored byte-identical across the parser fleet; the fleet owns the contract |
-| parse/grparse | proto packages ai.pipestream.parse.v1 | vendored gRParse streaming surface, same byte-identity reason |
+
+The parse/document and parse/grparse protos are canonical here and conform;
+fleet repos re-vendor them from this repo, byte-identical.
 
 ### Grandfathered names
 

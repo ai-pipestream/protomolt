@@ -43,7 +43,7 @@ public final class ParsePlaygroundMain {
         String portEnv = System.getenv(ENV_HTTP_PORT);
         int port = portEnv == null || portEnv.isBlank() ? 8095 : Integer.parseInt(portEnv);
         JsonFormat.TypeRegistry registry = JsonFormat.TypeRegistry.newBuilder()
-                .add(ai.pipestream.document.v1.Document.getDescriptor())
+                .add(ai.pipestream.proto.parse.document.v1.Document.getDescriptor())
                 .build();
         ParsePlaygroundServer server = new ParsePlaygroundServer(port, target, registry);
         LOG.info("parser playground on http://localhost:{}/ (parser {})", server.port(), target);

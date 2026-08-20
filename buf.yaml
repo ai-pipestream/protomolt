@@ -52,20 +52,19 @@ modules:
     name: buf.build/ai-pipestream/metric
   - path: search/proto/src/main/proto
     name: buf.build/ai-pipestream/search
-  # The canonical parser-fleet document model. Vendored byte-identical across
-  # the fleet repos (gRParse owns the reference copy today); local lint fixes
-  # would break byte-identity, so this file is exempted from lint (in the
-  # TOP-LEVEL lint.ignore below: a module-level lint block silently breaks
-  # the workspace image that `buf breaking` compares, making every later
-  # branch report all files deleted) until the registry serves it as THE
-  # published artifact.
+  # The canonical parser-fleet document model; fleet repos re-vendor it from
+  # here, byte-identical. It keeps the fleet's docling-parity lint bar, so it
+  # is exempted from lint (in the TOP-LEVEL lint.ignore below: a
+  # module-level lint block silently breaks the workspace image that
+  # `buf breaking` compares, making every later branch report all files
+  # deleted).
   - path: parse/document/src/main/proto
     name: buf.build/ai-pipestream/document
-  # gRParse's streaming wire surface, vendored byte-identical from the
-  # gRParse repo so the parse/grparse adapter can bridge it onto the parser
-  # plugin contract. Same regime as the fleet document model above: lint
-  # exemption lives in the TOP-LEVEL lint.ignore, never a module-level lint
-  # block.
+  # The gRParse streaming wire surface, canonical here; the gRParse repo
+  # re-vendors it byte-identical so the parse/grparse adapter can bridge it
+  # onto the parser plugin contract. Same regime as the fleet document model
+  # above: lint exemption lives in the TOP-LEVEL lint.ignore, never a
+  # module-level lint block.
   - path: parse/grparse/src/main/proto
     name: buf.build/ai-pipestream/parse-grparse
   - path: acquire/confluence/src/main/proto
@@ -93,11 +92,11 @@ lint:
     # bar; see the module comment above. Top-level ignore ONLY: a
     # module-level lint block breaks the workspace image `buf breaking`
     # compares.
-    - parse/document/src/main/proto/ai/pipestream/document/v1/document.proto
+    - parse/document/src/main/proto/ai/pipestream/proto/parse/document/v1/document.proto
     # The vendored gRParse streaming surface keeps gRParse's own lint bar for
     # the same byte-identity reason.
-    - parse/grparse/src/main/proto/ai/pipestream/parse/v1/parse_stream.proto
-    - parse/grparse/src/main/proto/ai/pipestream/parse/v1/parse_types.proto
+    - parse/grparse/src/main/proto/ai/pipestream/proto/parse/grparse/v1/parse_stream.proto
+    - parse/grparse/src/main/proto/ai/pipestream/proto/parse/grparse/v1/parse_types.proto
   ignore_only:
     # GetDocument and GetDocumentByReference deliberately share
     # GetDocumentResponse: same payload, two coordinate systems.
@@ -114,6 +113,11 @@ lint:
 breaking:
   use:
     - FILE
+  # TEMPORARY (drop after the GitHub mirror sync lands): the parse protos
+  # moved to their ADR-002 packages; buf sees the old paths as deletions.
+  # No released consumers; fleet repos re-vendor from here.
+  except:
+    - FILE_NO_DELETE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

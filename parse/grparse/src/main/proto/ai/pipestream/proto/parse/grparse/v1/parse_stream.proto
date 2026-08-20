@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-package ai.pipestream.parse.v1;
+package ai.pipestream.proto.parse.grparse.v1;
 
-import "ai/pipestream/document/v1/document.proto";
-import "ai/pipestream/parse/v1/parse_types.proto";
+import "ai/pipestream/proto/parse/document/v1/document.proto";
+import "ai/pipestream/proto/parse/grparse/v1/parse_types.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "ParseStreamProto";
-option java_package = "ai.pipestream.parse.v1";
+option java_package = "ai.pipestream.proto.parse.grparse.v1";
 
 // ============================================================================
 // Document streaming contract (fork-owned)
@@ -19,7 +19,7 @@ option java_package = "ai.pipestream.parse.v1";
 // parts.
 //
 // Sync story: every document payload type is imported from
-// ai/pipestream/document/v1/document.proto. When the upstream document model
+// ai/pipestream/proto/parse/document/v1/document.proto. When the upstream document model
 // gains a field, regenerate the core proto and this file stays valid: the
 // envelope only wraps core messages, it does not duplicate them.
 //
@@ -80,7 +80,7 @@ message DocumentStreamEvent {
 // the collector itself.
 message CollectorDocument {
   Collector collector = 1;
-  ai.pipestream.document.v1.Document document = 2;
+  ai.pipestream.proto.parse.document.v1.Document document = 2;
   // The collector's own extraction warnings, verbatim.
   repeated string warnings = 3;
 }
@@ -95,10 +95,10 @@ message CollectorFailure {
 // PageData contains a page's complete extracted payload.
 message PageData {
   int32 page_number = 1;
-  ai.pipestream.document.v1.PageItem page_meta = 2;
-  repeated ai.pipestream.document.v1.BaseTextItem texts = 3;
-  repeated ai.pipestream.document.v1.TableItem tables = 4;
-  repeated ai.pipestream.document.v1.PictureItem pictures = 5;
+  ai.pipestream.proto.parse.document.v1.PageItem page_meta = 2;
+  repeated ai.pipestream.proto.parse.document.v1.BaseTextItem texts = 3;
+  repeated ai.pipestream.proto.parse.document.v1.TableItem tables = 4;
+  repeated ai.pipestream.proto.parse.document.v1.PictureItem pictures = 5;
   // Append-only offsets into the document text stream. The core document item
   // shape remains unchanged; this transport metadata lets downstream clients
   // index pages without renumbering or overloading ProvenanceItem.charspan.
@@ -123,7 +123,7 @@ enum TextSource {
 
 // DocumentComplete contains document-wide metadata emitted after the last page.
 message DocumentComplete {
-  ai.pipestream.document.v1.DocumentOrigin origin = 1;
+  ai.pipestream.proto.parse.document.v1.DocumentOrigin origin = 1;
   // Collectors that failed during this parse; empty when every selected
   // collector contributed.
   repeated CollectorFailure collector_failures = 2;
@@ -169,7 +169,7 @@ message StreamDocumentResponse {
 
     // Full converted document for a source (or the sole result). Stream may
     // emit multiple finals for multi-source requests, then close.
-    ai.pipestream.document.v1.Document final_document = 13;
+    ai.pipestream.proto.parse.document.v1.Document final_document = 13;
 
     // Terminal or recoverable error associated with the stream / source.
     StreamError error = 14;
@@ -210,7 +210,7 @@ message StreamStatus {
 // core automatic when new text kinds appear on BaseTextItem.
 message DocumentNode {
   // Convenience copy of the item's DocItemLabel when known.
-  ai.pipestream.document.v1.DocItemLabel label = 1;
+  ai.pipestream.proto.parse.document.v1.DocItemLabel label = 1;
 
   // Page number from provenance when available (Studio bbox overlay).
   optional int32 page_no = 2;
@@ -219,12 +219,12 @@ message DocumentNode {
   optional string self_ref = 3;
 
   oneof node {
-    ai.pipestream.document.v1.BaseTextItem text = 10;
-    ai.pipestream.document.v1.TableItem table = 11;
-    ai.pipestream.document.v1.PictureItem picture = 12;
-    ai.pipestream.document.v1.KeyValueItem key_value = 13;
-    ai.pipestream.document.v1.GroupItem group = 14;
-    ai.pipestream.document.v1.FormItem form = 15;
+    ai.pipestream.proto.parse.document.v1.BaseTextItem text = 10;
+    ai.pipestream.proto.parse.document.v1.TableItem table = 11;
+    ai.pipestream.proto.parse.document.v1.PictureItem picture = 12;
+    ai.pipestream.proto.parse.document.v1.KeyValueItem key_value = 13;
+    ai.pipestream.proto.parse.document.v1.GroupItem group = 14;
+    ai.pipestream.proto.parse.document.v1.FormItem form = 15;
   }
 }
 

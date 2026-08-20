@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-package ai.pipestream.parse.v1;
+package ai.pipestream.proto.parse.grparse.v1;
 
-import "ai/pipestream/document/v1/document.proto";
+import "ai/pipestream/proto/parse/document/v1/document.proto";
 import "google/protobuf/struct.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "ParseTypesProto";
-option java_package = "ai.pipestream.parse.v1";
+option java_package = "ai.pipestream.proto.parse.grparse.v1";
 
 // ============================================================================
 // Enumerations - 1:1 mapping of the REST API enum types
@@ -505,7 +505,7 @@ message DocumentResponse {
   // Filename of the source document
   string filename = 1;
   // Native protobuf Document (always present)
-  ai.pipestream.document.v1.Document doc = 2;
+  ai.pipestream.proto.parse.document.v1.Document doc = 2;
   // Optional serialized outputs (markdown/html/text/doctags/json)
   optional DocumentExports exports = 3;
 }
@@ -513,7 +513,7 @@ message DocumentResponse {
 // ExportDocumentResponse is the document format used within chunk responses.
 message ExportDocumentResponse {
   string filename = 1;
-  ai.pipestream.document.v1.Document doc = 2;
+  ai.pipestream.proto.parse.document.v1.Document doc = 2;
   optional DocumentExports exports = 3;
 }
 

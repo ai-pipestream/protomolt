@@ -128,7 +128,7 @@ public final class ParseModule implements ServiceModule {
                             .toString());
         }
         context.contributions().contribute(Descriptors.FileDescriptor.class,
-                ai.pipestream.document.v1.DocumentProto.getDescriptor());
+                ai.pipestream.proto.parse.document.v1.DocumentProto.getDescriptor());
         return new ServiceMount() {
             @Override
             public void start() throws Exception {

@@ -2,8 +2,8 @@ package ai.pipestream.proto.parse.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import ai.pipestream.document.v1.BaseTextItem;
-import ai.pipestream.document.v1.Document;
+import ai.pipestream.proto.parse.document.v1.BaseTextItem;
+import ai.pipestream.proto.parse.document.v1.Document;
 import ai.pipestream.proto.parse.document.DoclingProjection;
 import ai.pipestream.proto.parse.plugin.v1.DocumentClaims;
 import ai.pipestream.proto.parse.plugin.v1.GetParserInfoRequest;

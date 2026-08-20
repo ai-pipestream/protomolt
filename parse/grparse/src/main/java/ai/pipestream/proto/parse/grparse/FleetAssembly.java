@@ -1,10 +1,10 @@
 package ai.pipestream.proto.parse.grparse;
 
-import ai.pipestream.document.v1.Document;
-import ai.pipestream.parse.v1.CollectorDocument;
-import ai.pipestream.parse.v1.CollectorFailure;
-import ai.pipestream.parse.v1.DocumentComplete;
-import ai.pipestream.parse.v1.PageData;
+import ai.pipestream.proto.parse.document.v1.Document;
+import ai.pipestream.proto.parse.grparse.v1.CollectorDocument;
+import ai.pipestream.proto.parse.grparse.v1.CollectorFailure;
+import ai.pipestream.proto.parse.grparse.v1.DocumentComplete;
+import ai.pipestream.proto.parse.grparse.v1.PageData;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.SortedMap;

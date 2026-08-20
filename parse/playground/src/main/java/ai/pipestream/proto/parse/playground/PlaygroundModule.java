@@ -50,7 +50,7 @@ public final class PlaygroundModule implements ServiceModule {
                         port,
                         context.channels().targetOf(parserRole),
                         JsonFormat.TypeRegistry.newBuilder()
-                                .add(ai.pipestream.document.v1.Document.getDescriptor())
+                                .add(ai.pipestream.proto.parse.document.v1.Document.getDescriptor())
                                 .build());
             }
 

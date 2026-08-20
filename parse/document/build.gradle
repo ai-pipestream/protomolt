@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-description = 'The parser-fleet document model: the canonical copy of the docling-core v2 parity document.proto (vendored byte-identical across the fleet), plus projections between it and the repo document'
+description = 'The parser-fleet document model: the canonical docling-core v2 parity document.proto (fleet repos re-vendor it from here, byte-identical), plus projections between it and the repo document'
 
 dependencies {
     api libs.protobuf.java
