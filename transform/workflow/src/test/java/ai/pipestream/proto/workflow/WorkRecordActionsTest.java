@@ -160,6 +160,93 @@ class WorkRecordActionsTest {
     }
 
     @Test
+    void aDisclosureMasksBeforeProjectingAndSignsItsOwnRecord() throws Exception {
+        String source = WorkRecords.sha256Hex("original-manifest".getBytes());
+        ObjectNode input = MAPPER.createObjectNode()
+                .put("runId", "run-1")
+                .put("recordId", "record-disclosed")
+                .put("discloseOf", source);
+        input.putArray("maskClasses").add("internal");
+        ObjectNode output = new ExportWorkRecordAction(runs, signing, clock)
+                .execute(input, CONTEXT);
+
+        assertThat(output.path("maskedPaths").toString()).contains("structured");
+        byte[] record = Base64.getDecoder().decode(output.path("recordBase64").asText());
+        Verification verification = RecordVerifier.verify(record, trust());
+        assertThat(verification.verified())
+                .as("refusal: %s", verification.refusal())
+                .isTrue();
+
+        WorkRecord manifest = verification.manifest();
+        assertThat(manifest.getDisclosure().getSourceManifestSha256()).isEqualTo(source);
+        assertThat(manifest.getDisclosure().getPolicy()).isEqualTo("remove internal");
+        assertThat(manifest.getSteps(1).getModel())
+                .as("model identity rides the masked structured evidence")
+                .isEmpty();
+        assertThat(manifest.getSteps(1).getPromptTokens()).isZero();
+    }
+
+    @Test
+    void aDisclosureNamesItsClassesAndSourceTogether() {
+        ObjectNode missingSource = MAPPER.createObjectNode().put("runId", "run-1");
+        missingSource.putArray("maskClasses").add("internal");
+        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
+                .execute(missingSource, CONTEXT))
+                .isInstanceOf(ActionException.class)
+                .hasMessageContaining("discloseOf");
+
+        ObjectNode missingClasses = MAPPER.createObjectNode()
+                .put("runId", "run-1")
+                .put("discloseOf", WorkRecords.sha256Hex("original".getBytes()));
+        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
+                .execute(missingClasses, CONTEXT))
+                .isInstanceOf(ActionException.class)
+                .hasMessageContaining("maskClasses");
+
+        ObjectNode emptyClasses = MAPPER.createObjectNode()
+                .put("runId", "run-1")
+                .put("discloseOf", WorkRecords.sha256Hex("original".getBytes()));
+        emptyClasses.putArray("maskClasses");
+        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
+                .execute(emptyClasses, CONTEXT))
+                .isInstanceOf(ActionException.class)
+                .hasMessageContaining("non-empty");
+    }
+
+    @Test
+    void verifyRehashesWhenArtifactBytesAreSupplied() throws Exception {
+        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
+                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode input = MAPPER.createObjectNode()
+                .put("recordBase64", exported.path("recordBase64").asText());
+        input.set("trust", (ObjectNode) MAPPER.readTree(
+                JsonFormat.printer().print(trust())));
+        ObjectNode artifacts = input.putObject("artifacts");
+        for (String content : new String[] {"input", "output", "request", "response"}) {
+            artifacts.put(WorkRecords.sha256Hex(content.getBytes()),
+                    Base64.getEncoder().encodeToString(content.getBytes()));
+        }
+
+        ObjectNode output = new VerifyWorkRecordAction().execute(input, CONTEXT);
+        assertThat(output.path("verified").asBoolean()).isTrue();
+        JsonNode last = output.path("checks").get(output.path("checks").size() - 1);
+        assertThat(last.path("id").asText())
+                .isEqualTo(RecordVerifier.CHECK_ARTIFACT_REHASH);
+        assertThat(last.path("status").asText()).isEqualTo("PASSED");
+        assertThat(output.path("nonClaims").toString())
+                .doesNotContain(Verification.NON_CLAIM_ARTIFACT_CUSTODY);
+
+        artifacts.put(WorkRecords.sha256Hex("output".getBytes()),
+                Base64.getEncoder().encodeToString("outpud".getBytes()));
+        ObjectNode refused = new VerifyWorkRecordAction().execute(input, CONTEXT);
+        assertThat(refused.path("verified").asBoolean()).isFalse();
+        JsonNode failed = refused.path("checks").get(refused.path("checks").size() - 1);
+        assertThat(failed.path("id").asText())
+                .isEqualTo(RecordVerifier.CHECK_ARTIFACT_REHASH);
+        assertThat(failed.path("status").asText()).isEqualTo("FAILED");
+    }
+
+    @Test
     void verifyRefusesATamperedRecordByName() throws Exception {
         ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
                 .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);

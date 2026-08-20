@@ -5,15 +5,22 @@ import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
+import ai.pipestream.proto.meta.SensitivityMasker;
+import ai.pipestream.proto.receipt.Disclosure;
 import ai.pipestream.proto.receipt.SignedWorkRecord;
 import ai.pipestream.proto.receipt.WorkRecord;
 import ai.pipestream.proto.receipt.WorkRecords;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Timestamp;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
+import java.util.Set;
 
 /** Projects a stored run's evidence into a canonical signed work record. */
 final class ExportWorkRecordAction implements ProtoAction {
@@ -41,7 +48,10 @@ final class ExportWorkRecordAction implements ProtoAction {
     public String description() {
         return "Projects a recorded run's evidence into a canonical signed work record that "
                 + "verifies offline: deterministic manifest bytes, a detached Ed25519 issuer "
-                + "signature, artifacts by digest, and a signed completeness claim.";
+                + "signature, artifacts by digest, and a signed completeness claim. With "
+                + "maskClasses and discloseOf it emits a disclosure projection instead: the "
+                + "masker runs over the evidence first and the projection is signed as its "
+                + "own whole record carrying the original's digest and the policy.";
     }
 
     @Override
@@ -55,6 +65,17 @@ final class ExportWorkRecordAction implements ProtoAction {
         properties.putObject("priorManifestSha256").put("type", "string")
                 .put("pattern", "^[0-9a-f]{64}$")
                 .put("description", "Manifest digest of the record this one re-issues.");
+        ObjectNode maskClasses = properties.putObject("maskClasses");
+        maskClasses.put("type", "array");
+        maskClasses.putObject("items").put("type", "string");
+        maskClasses.put("description",
+                "Sensitivity classes removed from the evidence before projection; "
+                        + "requires discloseOf.");
+        properties.putObject("discloseOf").put("type", "string")
+                .put("pattern", "^[0-9a-f]{64}$")
+                .put("description",
+                        "Manifest digest of the record this disclosure projects; "
+                                + "requires maskClasses.");
         schema.putArray("required").add("runId");
         schema.put("additionalProperties", false);
         return schema;
@@ -82,6 +103,17 @@ final class ExportWorkRecordAction implements ProtoAction {
                     "'priorManifestSha256' must be a lowercase SHA-256 digest",
                     "/priorManifestSha256");
         }
+        List<String> maskClasses = maskClasses(input);
+        String discloseOf = WorkflowActionJson.optionalText(input, "discloseOf");
+        if ((maskClasses == null) != (discloseOf == null)) {
+            throw WorkflowActionJson.invalid(
+                    "a disclosure names both 'maskClasses' and 'discloseOf'",
+                    maskClasses == null ? "/maskClasses" : "/discloseOf");
+        }
+        if (discloseOf != null && !discloseOf.matches("[0-9a-f]{64}")) {
+            throw WorkflowActionJson.invalid(
+                    "'discloseOf' must be a lowercase SHA-256 digest", "/discloseOf");
+        }
         RunEvidence evidence;
         try {
             evidence = runs.find(runId).orElseThrow(() ->
@@ -92,6 +124,18 @@ final class ExportWorkRecordAction implements ProtoAction {
         } catch (IOException e) {
             throw new ActionException("repository-failed",
                     "Run evidence read failed: " + e.getMessage());
+        }
+        List<String> maskedPaths = List.of();
+        if (maskClasses != null) {
+            SensitivityMasker.MaskResult masked = SensitivityMasker.mask(evidence,
+                    Set.copyOf(maskClasses), SensitivityMasker.Strategy.REMOVE);
+            if (!masked.unresolvedPaths().isEmpty()) {
+                throw WorkflowActionJson.invalid(
+                        "cannot disclose evidence with unresolved payload paths: "
+                                + masked.unresolvedPaths(), "/maskClasses");
+            }
+            evidence = (RunEvidence) masked.message();
+            maskedPaths = masked.maskedPaths();
         }
         Instant now = clock.instant();
         WorkRecord manifest;
@@ -104,6 +148,13 @@ final class ExportWorkRecordAction implements ProtoAction {
         } catch (IllegalArgumentException e) {
             throw WorkflowActionJson.invalid(e.getMessage(), "/runId");
         }
+        if (discloseOf != null) {
+            manifest = manifest.toBuilder()
+                    .setDisclosure(Disclosure.newBuilder()
+                            .setSourceManifestSha256(discloseOf)
+                            .setPolicy("remove " + String.join(", ", maskClasses)))
+                    .build();
+        }
         SignedWorkRecord record = signing.signer().sign(manifest);
         ObjectNode output = context.objectMapper().createObjectNode();
         output.put("recordBase64",
@@ -111,6 +162,31 @@ final class ExportWorkRecordAction implements ProtoAction {
         output.put("manifestDigest",
                 WorkRecords.sha256Hex(record.getManifest().toByteArray()));
         output.put("recordId", recordId);
+        if (!maskedPaths.isEmpty()) {
+            ArrayNode paths = output.putArray("maskedPaths");
+            maskedPaths.forEach(paths::add);
+        }
         return output;
+    }
+
+    private static List<String> maskClasses(ObjectNode input) throws ActionException {
+        JsonNode node = input.get("maskClasses");
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (!node.isArray() || node.isEmpty()) {
+            throw WorkflowActionJson.invalid(
+                    "'maskClasses' must be a non-empty array of sensitivity classes",
+                    "/maskClasses");
+        }
+        List<String> classes = new ArrayList<>();
+        for (JsonNode entry : node) {
+            if (!entry.isTextual() || entry.asText().isBlank()) {
+                throw WorkflowActionJson.invalid(
+                        "'maskClasses' entries must be non-empty strings", "/maskClasses");
+            }
+            classes.add(entry.asText());
+        }
+        return classes;
     }
 }

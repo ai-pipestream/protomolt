@@ -1179,6 +1179,11 @@ message ExportWorkRecordRequest {
   string record_id = 2;
   // Manifest digest of the record this one re-issues, or empty.
   string prior_manifest_sha256 = 3;
+  // Sensitivity classes removed from the evidence before projection; a
+  // disclosure names these and disclose_of together.
+  repeated string mask_classes = 4;
+  // Manifest digest of the record this disclosure projects, or empty.
+  string disclose_of = 5;
 }
 
 // The signed record and its identity.
@@ -1189,6 +1194,8 @@ message ExportWorkRecordResponse {
   string manifest_digest = 2;
   // The record identity the manifest carries.
   string record_id = 3;
+  // Evidence paths the disclosure policy removed, when disclosing.
+  repeated string masked_paths = 4;
 }
 
 // A signed record and the trust snapshot to verify it against.
@@ -1197,6 +1204,9 @@ message VerifyWorkRecordRequest {
   string record_base64 = 1;
   // TrustSnapshot encoded as protobuf JSON.
   google.protobuf.Struct trust = 2;
+  // Referenced artifact bytes by SHA-256, base64-encoded; when present the
+  // rehash check runs all-or-nothing instead of being skipped.
+  google.protobuf.Struct artifacts = 3;
 }
 
 // One named verification check's outcome.
