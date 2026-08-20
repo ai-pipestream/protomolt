@@ -84,7 +84,7 @@ services:
       repo-node:
         condition: service_started
     environment:
-      PROTOMOLT_ROLES: parser-text,registry,parse,jobs,intake,playground,search,metrics,search-console
+      PROTOMOLT_ROLES: parse-text,registry,parse,jobs,intake,playground,search,metric,search-console
       PROTOMOLT_REPO_TARGET: repo-node:9090
       DOCUMENT_PLATFORM_JOBS_JDBC_URL: jdbc:postgresql://postgres:5432/jobs
       DOCUMENT_PLATFORM_JOBS_USERNAME: protomolt

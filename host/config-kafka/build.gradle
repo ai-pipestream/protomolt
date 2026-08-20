@@ -12,7 +12,7 @@ dependencies {
     // The proof runs Redpanda as the broker and the protomolt registry
     // server as the schema registry: the whole house stack.
     testImplementation project(':protomolt-registry')
-    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-registry-service')
     testImplementation project(':protomolt-schema-confluent')
     testImplementation project(':protomolt-proto-sources')
     testImplementation libs.testcontainers.junit.jupiter

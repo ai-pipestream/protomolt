@@ -16,7 +16,7 @@ import java.io.IOException;
 public final class TextParserModule implements ServiceModule {
 
     /** The role name; the parser registers under {@link TextParserService#PARSER_NAME}. */
-    public static final String ROLE = "parser-text";
+    public static final String ROLE = "parse-text";
 
     /** Creates the module. */
     public TextParserModule() {

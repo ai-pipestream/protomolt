@@ -152,7 +152,7 @@ subprojects {
         }
     }
 
-    if (!['samples', 'system-tests'].contains(project.name)) {
+    if (!['samples', 'protomolt-system-tests'].contains(project.name)) {
         apply plugin: 'maven-publish'
         apply plugin: 'signing'
 

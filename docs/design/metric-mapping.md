@@ -448,7 +448,7 @@ you cannot annotate still serve.
 ### Query contract
 
 New package `ai.pipestream.proto.metric.v1` (service file, may live in
-`search/metrics/proto` the way `search.v1` lives in `search/proto`).
+`search/metric/proto` the way `search.v1` lives in `search/proto`).
 
 ```protobuf
 enum MetricBackend {
@@ -578,8 +578,8 @@ Because everything is gRPC, the SPI seam can be crossed by a wire: an
 executor implementation that is a gRPC client pointed at a remote
 metric node is indistinguishable from the in-process one, the same move
 parse made with `ParserPluginService` and embeddings made with TEI. A
-`metrics` role node then slots into the existing role pattern
-(`PROTOMOLT_ROLES`, `PROTOMOLT_METRICS_TARGET`). Swapping or scaling
+`metric` role node then slots into the existing role pattern
+(`PROTOMOLT_ROLES`, `PROTOMOLT_METRIC_TARGET`). Swapping or scaling
 the analytics engine never touches the contract.
 
 ### Execution
@@ -615,7 +615,7 @@ Follow the search service: a host lists metric subjects at boot
 (`ServedMetricMapping`: subject, message type, backends, optional
 Iceberg table identifier). Unknown configuration fails the mount, not
 the first query. The document platform is the first host that should
-grow a `metrics` role; `apps/serve` does not need it for v1.
+grow a `metric` role; `apps/serve` does not need it for v1.
 
 No durable refresh workflow in v1. Lucene is already NRT from
 `IndexDocument`. Iceberg is already snapshot-append. A later workflow
@@ -687,11 +687,11 @@ alone per the platform rule; none requires the others at runtime.
 
 | Path | Artifact | Role |
 |---|---|---|
-| `protobuf/metric/` or `search/metrics/options/` | `protomolt-protobuf-metric` | Option proto + reader, sibling to `protobuf-metadata` |
-| `search/metrics/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` SPI |
-| `search/metrics/lucene/` | `protomolt-metric-lucene` | Collector backend |
-| `search/metrics/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend |
-| `search/metrics/service/`, beside `search/service/` | `protomolt-metric-service` | `MetricService`, subject mount, refusals |
+| `protobuf/metric/` or `search/metric/options/` | `protomolt-protobuf-metric` | Option proto + reader, sibling to `protobuf-metadata` |
+| `search/metric/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` SPI |
+| `search/metric/lucene/` | `protomolt-metric-lucene` | Collector backend |
+| `search/metric/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend |
+| `search/metric/service/`, beside `search/service/` | `protomolt-metric-service` | `MetricService`, subject mount, refusals |
 | actions registered by the metric service module | `describe-mapping`, `query-metrics` | Catalog + MCP |
 
 Keep option reading independent of any backend so `describe-mapping`

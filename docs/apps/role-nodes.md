@@ -25,17 +25,22 @@ The roles the platform binary knows
 | Role | Serves | Notes |
 | --- | --- | --- |
 | `repo` | document store gRPC | needs the ledger + object store config |
-| `parser-text` | reference parser (in-process) | |
+| `parse-text` | reference parser (in-process) | |
 | `registry` | schema registry HTTP + the actions route | hosts every contributed verb |
 | `parse` | parsing coordinator gRPC | |
 | `jobs` | durable workflow runs | needs the jobs database |
 | `intake` | authenticated ingest gRPC | needs a key store |
 | `playground` | parser playground page | |
 | `search` | search service gRPC | needs the index directory |
-| `metrics` | metric service gRPC (`MetricService`) | needs `search` on the same node: it aggregates over the search index in process |
+| `metric` | metric service gRPC (`MetricService`) | needs `search` on the same node: it aggregates over the search index in process |
 | `search-console` | the search page + operations panel | panel needs a local registry or `DOCUMENT_PLATFORM_ACTIONS_URL` |
 | `acquire-s3` | the `pull-s3` verb | opt-in; `PROTOMOLT_ACQUIRE_*` config |
 | `acquire-jdbc` | the `pull-jdbc` verb | opt-in; `PROTOMOLT_ACQUIRE_*` config |
+
+`metrics` and `parser-text` are accepted as aliases of `metric` and
+`parse-text` — in the role list and in their `PROTOMOLT_<ROLE>_TARGET`
+variables, where the canonical name wins when both are set; naming one
+role under both spellings is a contradiction refused by both.
 
 ## What must stay together
 
@@ -44,9 +49,9 @@ actions catalog and workflow store from what co-mounted modules contribute
 at wire time. So `registry`, `jobs` and `parse` belong on one node (the
 jobs verbs, the parse-and-index workflow and the replay action all ride the
 registry's route), and the acquire roles belong with `intake` (they feed
-the intake service in-process). `metrics` belongs with `search`: the
+the intake service in-process). `metric` belongs with `search`: the
 metric executor borrows the search service's live store, so a node claiming
-`metrics` without `search` refuses to boot; its `describe-mapping` and
+`metric` without `search` refuses to boot; its `describe-mapping` and
 `query-metrics` verbs additionally need a co-mounted `registry` to be
 served. `repo` splits off cleanly today — that is the proven topology —
 and the same target mechanism carries further splits as the
@@ -54,7 +59,7 @@ contribution surfaces grow wire equivalents.
 
 ## The remote metrics node
 
-`PROTOMOLT_ROLES=search,metrics` with
+`PROTOMOLT_ROLES=search,metric` with
 `DOCUMENT_PLATFORM_SEARCH_READ_ONLY=true` and the snapshot family
 (`DOCUMENT_PLATFORM_SEARCH_SNAPSHOT_S3_*`) pointing at the writer's
 bucket is a self-contained analytics node: it restores the index from

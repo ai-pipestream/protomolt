@@ -9,7 +9,7 @@ dependencies {
     // registers a schema with declared rules, and reads documents back
     // through the source into the consumer.
     testImplementation project(':protomolt-registry')
-    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-registry-service')
     testImplementation project(':protomolt-metric-proto')
     testRuntimeOnly libs.slf4j.simple
 }

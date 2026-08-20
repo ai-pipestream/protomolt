@@ -1,7 +1,10 @@
 package ai.pipestream.proto.composer;
 
 import io.grpc.ManagedChannel;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * The monolith/distributed pivot. A module reaches another role with
@@ -21,6 +24,16 @@ public interface Channels {
      * every service config that accepts {@code inprocess:<name>} targets.
      */
     String IN_PROCESS_PREFIX = "inprocess:";
+
+    /**
+     * Role spellings accepted as aliases, mapped to the canonical id.
+     * Canonical ids are singular and share the stem of the module's own
+     * tree; an operator naming an alias reaches the same role, in a role
+     * list or in a {@code PROTOMOLT_<ROLE>_TARGET} variable.
+     */
+    Map<String, String> ROLE_ALIASES = Map.of(
+            "metrics", "metric",
+            "parser-text", "parse-text");
 
     /**
      * Publishes this node's in-process endpoint for a role. Called by the
@@ -56,5 +69,22 @@ public interface Channels {
     /** The environment variable naming a role's remote target. */
     static String targetVariable(String role) {
         return "PROTOMOLT_" + role.toUpperCase(Locale.ROOT).replace('-', '_') + "_TARGET";
+    }
+
+    /**
+     * The environment variables a role's remote target is read from, in
+     * read order: the canonical {@link #targetVariable(String)} first,
+     * then the variable of every {@linkplain #ROLE_ALIASES alias} of the
+     * same role. Naming both, the canonical value wins.
+     */
+    static List<String> targetVariables(String role) {
+        List<String> variables = new ArrayList<>();
+        variables.add(targetVariable(role));
+        for (Map.Entry<String, String> alias : ROLE_ALIASES.entrySet()) {
+            if (alias.getValue().equals(role)) {
+                variables.add(targetVariable(alias.getKey()));
+            }
+        }
+        return List.copyOf(variables);
     }
 }

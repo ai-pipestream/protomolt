@@ -1,6 +1,6 @@
 # The registry
 
-`protomolt-registry` and `protomolt-registry-server` are a protobuf schema
+`protomolt-registry` and `protomolt-registry-service` are a protobuf schema
 registry whose storage is a Git repository: every registration is a commit,
 history is `git log`, review and replication are whatever your Git hosting
 already does. The server fronts that storage with the Confluent subjects

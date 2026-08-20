@@ -71,8 +71,8 @@ project(':protomolt-acquire-jdbc').projectDir = file('acquire/jdbc')
 include 'protomolt-registry'
 project(':protomolt-registry').projectDir = file('schema/registry/core')
 
-include 'protomolt-registry-server'
-project(':protomolt-registry-server').projectDir = file('schema/registry/server')
+include 'protomolt-registry-service'
+project(':protomolt-registry-service').projectDir = file('schema/registry/service')
 
 include 'protomolt-schema-apicurio'
 project(':protomolt-schema-apicurio').projectDir = file('schema/apicurio/runtime')
@@ -125,8 +125,8 @@ project(':protomolt-mapper-core').projectDir = file('transform/mapper/core')
 include 'protomolt-mapper-cel'
 project(':protomolt-mapper-cel').projectDir = file('transform/mapper/cel')
 
-include 'protomolt-metadata'
-project(':protomolt-metadata').projectDir = file('transform/mapper/metadata')
+include 'protomolt-mapper-metadata'
+project(':protomolt-mapper-metadata').projectDir = file('transform/mapper/metadata')
 
 include 'protomolt-shapes'
 project(':protomolt-shapes').projectDir = file('transform/shapes')
@@ -171,19 +171,19 @@ include 'protomolt-search-proto'
 project(':protomolt-search-proto').projectDir = file('search/proto')
 
 include 'protomolt-metric-proto'
-project(':protomolt-metric-proto').projectDir = file('search/metrics/proto')
+project(':protomolt-metric-proto').projectDir = file('search/metric/proto')
 
 include 'protomolt-metric-spi'
-project(':protomolt-metric-spi').projectDir = file('search/metrics/spi')
+project(':protomolt-metric-spi').projectDir = file('search/metric/spi')
 
 include 'protomolt-metric-lucene'
-project(':protomolt-metric-lucene').projectDir = file('search/metrics/lucene')
+project(':protomolt-metric-lucene').projectDir = file('search/metric/lucene')
 
 include 'protomolt-metric-service'
-project(':protomolt-metric-service').projectDir = file('search/metrics/service')
+project(':protomolt-metric-service').projectDir = file('search/metric/service')
 
 include 'protomolt-metric-iceberg'
-project(':protomolt-metric-iceberg').projectDir = file('search/metrics/iceberg')
+project(':protomolt-metric-iceberg').projectDir = file('search/metric/iceberg')
 
 include 'protomolt-search-service'
 project(':protomolt-search-service').projectDir = file('search/service')
@@ -419,25 +419,25 @@ include 'protomolt-config-kafka'
 project(':protomolt-config-kafka').projectDir = file('host/config-kafka')
 
 include 'protomolt-server-common'
-project(':protomolt-server-common').projectDir = file('host/servers/common')
+project(':protomolt-server-common').projectDir = file('host/server/common')
 
 include 'protomolt-server-jdk'
-project(':protomolt-server-jdk').projectDir = file('host/servers/jdk')
+project(':protomolt-server-jdk').projectDir = file('host/server/jdk')
 
 include 'protomolt-server-vertx'
-project(':protomolt-server-vertx').projectDir = file('host/servers/vertx')
+project(':protomolt-server-vertx').projectDir = file('host/server/vertx')
 
 include 'protomolt-server-netty'
-project(':protomolt-server-netty').projectDir = file('host/servers/netty')
+project(':protomolt-server-netty').projectDir = file('host/server/netty')
 
 include 'protomolt-server-spring'
-project(':protomolt-server-spring').projectDir = file('host/servers/spring')
+project(':protomolt-server-spring').projectDir = file('host/server/spring')
 
 include 'protomolt-server-micronaut'
-project(':protomolt-server-micronaut').projectDir = file('host/servers/micronaut')
+project(':protomolt-server-micronaut').projectDir = file('host/server/micronaut')
 
 include 'protomolt-server-quarkus'
-project(':protomolt-server-quarkus').projectDir = file('host/servers/quarkus')
+project(':protomolt-server-quarkus').projectDir = file('host/server/quarkus')
 
 include 'protomolt-quarkus'
 project(':protomolt-quarkus').projectDir = file('host/integrations/quarkus/runtime')
@@ -467,5 +467,5 @@ project(':protomolt-agent-host').projectDir = file('apps/agent-host')
 
 include 'samples'
 
-include 'system-tests'
-project(':system-tests').projectDir = file('tests/system')
+include 'protomolt-system-tests'
+project(':protomolt-system-tests').projectDir = file('tests/system')

@@ -320,12 +320,7 @@ public final class Composer {
                 if (local != null) {
                     return Channels.IN_PROCESS_PREFIX + local;
                 }
-                String variable = Channels.targetVariable(role);
-                String target = environment.get(variable);
-                if (target == null || target.isBlank()) {
-                    throw new ComposerException("role " + role
-                            + " is not mounted on this node and " + variable + " is not set");
-                }
+                String target = remoteTarget(role);
                 policy.validateTarget(target, false);
                 return target;
             }
@@ -335,17 +330,29 @@ public final class Composer {
                 if (local != null) {
                     return InProcessChannelBuilder.forName(local).build();
                 }
-                String variable = Channels.targetVariable(role);
-                String target = environment.get(variable);
-                if (target == null || target.isBlank()) {
-                    throw new ComposerException("role " + role
-                            + " is not mounted on this node and " + variable + " is not set");
-                }
+                String target = remoteTarget(role);
                 if (remoteOpener == null) {
                     throw new ComposerException("role " + role + " resolves to remote target " + target
                             + " but this node has no remote transport configured");
                 }
                 return policy.open(target, false, remoteOpener);
+            }
+
+            /**
+             * The configured remote target for a role: the canonical
+             * variable, then the variables of the role's aliases. The
+             * refusal names the canonical variable, the one to set.
+             */
+            private String remoteTarget(String role) {
+                for (String variable : Channels.targetVariables(role)) {
+                    String target = environment.get(variable);
+                    if (target != null && !target.isBlank()) {
+                        return target;
+                    }
+                }
+                throw new ComposerException("role " + role
+                        + " is not mounted on this node and "
+                        + Channels.targetVariable(role) + " is not set");
             }
 
             private synchronized void close() {

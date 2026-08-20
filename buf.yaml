@@ -48,7 +48,7 @@ modules:
     name: buf.build/ai-pipestream/inference-structured-testdata
   - path: parse/proto/src/main/proto
     name: buf.build/ai-pipestream/parse
-  - path: search/metrics/proto/src/main/proto
+  - path: search/metric/proto/src/main/proto
     name: buf.build/ai-pipestream/metric
   - path: search/proto/src/main/proto
     name: buf.build/ai-pipestream/search

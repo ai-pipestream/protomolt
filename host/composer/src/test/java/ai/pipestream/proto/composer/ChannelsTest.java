@@ -194,7 +194,42 @@ class ChannelsTest {
     @Test
     void targetVariableUppercasesAndUnderscoresTheRoleName() {
         assertThat(Channels.targetVariable("repo")).isEqualTo("PROTOMOLT_REPO_TARGET");
-        assertThat(Channels.targetVariable("parser-text")).isEqualTo("PROTOMOLT_PARSER_TEXT_TARGET");
+        assertThat(Channels.targetVariable("parse-text")).isEqualTo("PROTOMOLT_PARSE_TEXT_TARGET");
+    }
+
+    @Test
+    void aliasedRolesReadTheirDeprecatedTargetVariableSecond() {
+        assertThat(Channels.targetVariables("repo"))
+                .containsExactly("PROTOMOLT_REPO_TARGET");
+        assertThat(Channels.targetVariables("metric"))
+                .containsExactly("PROTOMOLT_METRIC_TARGET", "PROTOMOLT_METRICS_TARGET");
+        assertThat(Channels.targetVariables("parse-text"))
+                .containsExactly("PROTOMOLT_PARSE_TEXT_TARGET", "PROTOMOLT_PARSER_TEXT_TARGET");
+    }
+
+    @Test
+    void theAliasTargetVariableResolvesAndTheCanonicalOneWins() {
+        Composer aliasOnly = Composer.emptyBuilder()
+                .module(new PublishingModule("repo"))
+                .environment(Map.of("PROTOMOLT_METRICS_TARGET", "metric.example.internal:9095"))
+                .build();
+
+        try (Composer.Node node = aliasOnly.boot(List.of("repo"))) {
+            assertThat(node.context().channels().targetOf("metric"))
+                    .isEqualTo("metric.example.internal:9095");
+        }
+
+        Composer both = Composer.emptyBuilder()
+                .module(new PublishingModule("repo"))
+                .environment(Map.of(
+                        "PROTOMOLT_METRIC_TARGET", "canonical.example.internal:9095",
+                        "PROTOMOLT_METRICS_TARGET", "metric.example.internal:9095"))
+                .build();
+
+        try (Composer.Node node = both.boot(List.of("repo"))) {
+            assertThat(node.context().channels().targetOf("metric"))
+                    .isEqualTo("canonical.example.internal:9095");
+        }
     }
 
     @Test

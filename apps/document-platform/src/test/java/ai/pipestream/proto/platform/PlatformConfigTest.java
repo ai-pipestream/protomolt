@@ -39,7 +39,7 @@ class PlatformConfigTest {
                 null, null, registryGit, 0, 0, 0, 0,
                 null, null, null,
                 60L, 1, 0, null, 0, 0,
-                List.of("registry", "parser-text", "parse"), environment);
+                List.of("registry", "parse-text", "parse"), environment);
     }
 
     private static HttpResponse<String> putConfig(int registryPort, String envelope)

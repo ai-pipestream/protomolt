@@ -9,7 +9,7 @@ dependencies {
     testImplementation project(':protomolt-gather-git')
     testImplementation project(':protomolt-compat')
     testImplementation project(':protomolt-registry')
-    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-registry-service')
     testImplementation project(':protomolt-schema-confluent')
     testImplementation project(':protomolt-protobuf-validation')
     testImplementation project(':protomolt-json')

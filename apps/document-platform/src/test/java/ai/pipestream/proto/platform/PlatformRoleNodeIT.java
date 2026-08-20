@@ -161,7 +161,7 @@ class PlatformRoleNodeIT {
                 .hasMessageContaining("'search-console' is not mounted");
         assertThatThrownBy(repoNode::metricsPort)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("'metrics' is not mounted");
+                .hasMessageContaining("'metric' is not mounted");
     }
 
     @Test
@@ -177,9 +177,9 @@ class PlatformRoleNodeIT {
                 config(List.of("intake"), null, Map.of()), null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("resolver is required");
-        assertThatThrownBy(() -> config(List.of("metrics"), null, Map.of()))
+        assertThatThrownBy(() -> config(List.of("metric"), null, Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("the metrics role reads the search index in process");
+                .hasMessageContaining("the metric role reads the search index in process");
 
         assertThat(DocumentPlatformConfig.rolesFromEnvironment(" repo, Search-Console "))
                 .containsExactly("repo", "search-console");

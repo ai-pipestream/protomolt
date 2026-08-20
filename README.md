@@ -56,7 +56,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `surface/mcp/` | `mcp` | Model Context Protocol server over the action catalog and registry: plain-Java stdio, no framework |
 | `surface/acp/` | `acp-agent` | The action catalog as an Agent Client Protocol agent: run verbs from ACP-capable IDEs (JetBrains AI chat, Zed) over stdio, on the `acp` transport |
 | `surface/actions/` | `actions` | Self-describing verb catalog (compile, validate, diff, check-compat, render, evaluate) for consoles and LLM tooling |
-| `host/servers/` | `server-common`, `server-jdk`, `server-vertx`, `server-netty`, `server-spring`, `server-micronaut`, `server-quarkus` | HTTP hosts for the REST gateway, over shared config and helpers |
+| `host/server/` | `server-common`, `server-jdk`, `server-vertx`, `server-netty`, `server-spring`, `server-micronaut`, `server-quarkus` | HTTP hosts for the REST gateway, over shared config and helpers |
 | `host/integrations/` | `spring`, `quarkus`, `quarkus-deployment` | Dependency-injection wiring (beans and producers, not HTTP hosts); the Quarkus extension's build-time half |
 | `apps/serve/` | `serve` | One-process server: the gRPC service with reflection, the verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, optional registry |
 | `apps/cli/` | `cli` | The command line: run any catalog verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console over the same catalog |
