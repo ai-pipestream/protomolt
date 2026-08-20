@@ -113,11 +113,6 @@ lint:
 breaking:
   use:
     - FILE
-  # TEMPORARY (drop after the GitHub mirror sync lands): the parse protos
-  # moved to their ADR-002 packages; buf sees the old paths as deletions.
-  # No released consumers; fleet repos re-vendor from here.
-  except:
-    - FILE_NO_DELETE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore
