@@ -6,11 +6,9 @@ import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.receipt.RecordVerifier;
 import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.receipt.Verification;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Base64;
-import java.util.HashMap;
 import java.util.Map;
 
 /** Verifies a signed work record offline against a caller-supplied trust snapshot. */
@@ -60,7 +58,7 @@ final class VerifyWorkRecordAction implements ProtoAction {
         TrustSnapshot trust = (TrustSnapshot) WorkflowActionJson.parse(
                 WorkflowActionJson.object(input, "trust"), TrustSnapshot.newBuilder(),
                 "/trust");
-        Map<String, byte[]> artifacts = artifacts(input);
+        Map<String, byte[]> artifacts = WorkflowActionJson.base64Map(input, "artifacts");
         Verification verification;
         try {
             verification = RecordVerifier.verify(record, trust, artifacts);
@@ -82,35 +80,5 @@ final class VerifyWorkRecordAction implements ProtoAction {
         ArrayNode nonClaims = output.putArray("nonClaims");
         verification.nonClaims().forEach(nonClaims::add);
         return output;
-    }
-
-    private static Map<String, byte[]> artifacts(ObjectNode input) throws ActionException {
-        JsonNode node = input.get("artifacts");
-        if (node == null || node.isNull()) {
-            return null;
-        }
-        if (!(node instanceof ObjectNode object)) {
-            throw WorkflowActionJson.invalid(
-                    "'artifacts' must be an object of base64 bytes by SHA-256",
-                    "/artifacts");
-        }
-        Map<String, byte[]> artifacts = new HashMap<>();
-        var fields = object.fields();
-        while (fields.hasNext()) {
-            var entry = fields.next();
-            if (!entry.getValue().isTextual()) {
-                throw WorkflowActionJson.invalid(
-                        "'artifacts' values must be base64 strings",
-                        "/artifacts/" + entry.getKey());
-            }
-            try {
-                artifacts.put(entry.getKey(),
-                        Base64.getDecoder().decode(entry.getValue().asText()));
-            } catch (IllegalArgumentException e) {
-                throw WorkflowActionJson.invalid("'artifacts' value is not valid base64",
-                        "/artifacts/" + entry.getKey());
-            }
-        }
-        return artifacts;
     }
 }

@@ -68,6 +68,7 @@ that only needs the built-ins does not pull them in. Each implements the same
 | `promote-workflow` | `protomolt-workflow` | Store validated workflow content as an immutable version in the mounted git registry |
 | `export-work-record` | `protomolt-workflow` | Project a recorded run's evidence into a canonical signed work record that verifies offline |
 | `verify-work-record` | `protomolt-workflow` | Verify a signed work record against a caller-supplied trust snapshot with zero network calls |
+| `evaluate-work-record` | `protomolt-workflow` | Evaluate a signed record beside its stored evidence: verification, reprojection match, and offline replay under the predeclared policy |
 | `emit-okf` | `protomolt-emit-okf` | Render a schema as an Open Knowledge Format (OKF v0.1) bundle: linked markdown concept documents for every message, enum, and service, inline plus zipped |
 | `submit-workflow` | `protomolt-jobs-service` | Submit a workflow for durable asynchronous execution |
 | `get-job` | `protomolt-jobs-service` | Read one workflow run and its step checkpoints |

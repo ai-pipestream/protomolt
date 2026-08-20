@@ -127,6 +127,7 @@ REST, and MCP:
 | `promote-workflow` | Store an immutable workflow version in the registry |
 | `export-work-record` | Project run evidence into a canonical signed work record |
 | `verify-work-record` | Verify a signed record offline against a trust snapshot |
+| `evaluate-work-record` | Verify, match against stored evidence, and replay under one policy |
 
 The MCP initialize response describes this workflow, and MCP resources expose
 service profiles, method contracts, workflows, runs, and artifacts without
