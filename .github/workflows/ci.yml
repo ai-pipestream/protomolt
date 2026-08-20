@@ -42,7 +42,7 @@ jobs:
       # the coverage (the agent driven exactly as an IDE drives it) without slowing the
       # main build; a single run is enough.
       - name: ACP protocol round trips
-        run: ./gradlew :protomolt-acp:acpProtocolTest --rerun-tasks --console=plain -PtestJdk=${{ matrix.test-jdk }}
+        run: ./gradlew :protomolt-acp-agent:acpProtocolTest --rerun-tasks --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
       - name: Buf lint
         run: buf lint

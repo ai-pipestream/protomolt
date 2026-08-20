@@ -1,6 +1,6 @@
 # ProtoMolt in one command. Build the distributions first, then bring it up:
 #
-#   ./gradlew :protomolt-serve:installDist :protomolt-acp:installDist
+#   ./gradlew :protomolt-serve:installDist :protomolt-acp-agent:installDist
 #   docker compose build
 #   docker compose up
 #
@@ -40,13 +40,13 @@ services:
     build:
       context: surface/acp
       dockerfile: Dockerfile
-    image: protomolt-acp:local
+    image: protomolt-acp-agent:local
     # The Agent Client Protocol is spoken over stdio; there is no server to keep running.
     # `up` therefore skips this service (it is in a profile). An IDE, or the smoke driver,
     # launches it on demand:
     #
     #   docker compose run --rm -T acp        # raw stdio, drive it yourself or from an IDE
-    #   ./gradlew :protomolt-acp:acpSmoke     # drives the container and prints a transcript
+    #   ./gradlew :protomolt-acp-agent:acpSmoke     # drives the container and prints a transcript
     profiles: ["acp"]
     stdin_open: true
     tty: false

@@ -122,23 +122,23 @@ containers.
 
 ## ACP protocol round trips
 
-The `acp-protocol`-tagged tests in `protomolt-acp` drive the catalog agent
+The `acp-protocol`-tagged tests in `protomolt-acp-agent` drive the catalog agent
 through a full ACP exchange: two over in-memory pipes, two across a real child
 process over stdio. They are excluded from the default `test` task and run as
 their own lane:
 
 ```bash
-./gradlew :protomolt-acp:acpProtocolTest
+./gradlew :protomolt-acp-agent:acpProtocolTest
 ```
 
 The exclusion is about cost, not flakiness: the process suite forks an agent
 JVM per test and both suites shell out to protoc, which is slower than
 anything the default test task runs. The agent speaks newline-delimited
 JSON-RPC over the first-party, virtual-thread transport in
-`protomolt-acp-core`; there is no SDK and no reactive runtime involved, so the
+`protomolt-acp`; there is no SDK and no reactive runtime involved, so the
 tests have no timing machinery to trip over. The transport's own tests
 (connection behavior and the golden wire-transcript replay) live in
-`protomolt-acp-core` and run in its default `test` task because nothing in
+`protomolt-acp` and run in its default `test` task because nothing in
 them is slow. CI runs the lane once, serially
 (`maxParallelForks = 1`), after the main build. They are kept as a separate
 lane rather than deleted because the coverage is real: they are the only

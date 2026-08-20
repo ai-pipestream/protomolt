@@ -39,7 +39,7 @@ def supportedModules = [
         'protomolt-cli',
         'protomolt-agent-host',
         'protomolt-acp',
-        'protomolt-acp-core',
+        'protomolt-acp-agent',
         'protomolt-connector',
         'protomolt-connect',
         'protomolt-connect-iceberg',

@@ -6,13 +6,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 /**
  * Drives the protomolt ACP agent against the demo streaming search and prints each
  * session chunk with its arrival time, so streaming is visible in the terminal.
- * Expects the agent installed ({@code ./gradlew :protomolt-acp:installDist}) and the
+ * Expects the agent installed ({@code ./gradlew :protomolt-acp-agent:installDist}) and the
  * demo server running ({@code ./gradlew :samples:runDemoSearch}).
  * Run with {@code ./gradlew :samples:runAcpStreamingDemo}.
  */
 public final class AcpStreamingDemo {
 
-    private static final String AGENT = "acp/build/install/protomolt-acp/bin/protomolt-acp";
+    private static final String AGENT = "surface/acp/build/install/protomolt-acp-agent/bin/protomolt-acp-agent";
 
     private static final String SCHEMA_TEXT = """
             syntax = "proto3";

@@ -1,5 +1,8 @@
-package ai.pipestream.proto.acp;
+package ai.pipestream.proto.acp.agent;
 
+import ai.pipestream.proto.acp.AcpAgent;
+import ai.pipestream.proto.acp.AcpClient;
+import ai.pipestream.proto.acp.TestPipes;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.StreamEmitter;
@@ -19,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Drives the catalog agent through the ACP protocol over in-memory pipes: initialize, open a
  * session, prompt with console lines, and collect the streamed session/update chunks, the same
  * exchange an IDE runs over stdio. The client and agent are the first-party virtual-thread
- * implementation in {@code protomolt-acp-core}; no SDK, no reactive runtime.
+ * implementation in {@code protomolt-acp}; no SDK, no reactive runtime.
  */
 class ProtoMoltAcpAgentTest {
 
@@ -62,7 +65,7 @@ class ProtoMoltAcpAgentTest {
      * prompts share one session deliberately: a session that dies after one prompt is exactly
      * the failure this lane exists to catch.
      *
-     * <p>Run with {@code ./gradlew :protomolt-acp:acpProtocolTest}.</p>
+     * <p>Run with {@code ./gradlew :protomolt-acp-agent:acpProtocolTest}.</p>
      */
     @Tag("acp-protocol")
     @Test

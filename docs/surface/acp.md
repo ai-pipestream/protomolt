@@ -1,13 +1,13 @@
 # ACP agent
 
-The `protomolt-acp` module exposes the action catalog as an Agent Client
+The `protomolt-acp-agent` module exposes the action catalog as an Agent Client
 Protocol agent, so an ACP-capable IDE can run ProtoMolt verbs without leaving
-the editor. The protocol transport is the first-party `protomolt-acp-core`
+the editor. The protocol transport is the first-party `protomolt-acp`
 library (`core/acp`): newline-delimited JSON-RPC 2.0 over stdio (one message
 per line, no Content-Length headers) on virtual threads, with Jackson for the
-JSON and no reactive runtime. `protomolt-acp` (`surface/acp`) adds only the
+JSON and no reactive runtime. `protomolt-acp-agent` (`surface/acp`) adds only the
 catalog mapping (`ProtoMoltAcpAgent` plus its line runner); build your own
-agent or client on `protomolt-acp-core` alone if you do not need the catalog.
+agent or client on `protomolt-acp` alone if you do not need the catalog.
 The same catalog serves gRPC/REST, MCP, the CLI, and now ACP.
 
 Each session is a console: a prompt of the form `<verb> <json>` runs the verb
@@ -30,8 +30,8 @@ so the console contract is the same either way.
 ## Run it
 
 ```shell
-./gradlew :protomolt-acp:installDist
-acp/build/install/protomolt-acp/bin/protomolt-acp
+./gradlew :protomolt-acp-agent:installDist
+surface/acp/build/install/protomolt-acp-agent/bin/protomolt-acp-agent
 ```
 
 The process speaks JSON-RPC on stdio; logs go to stderr.

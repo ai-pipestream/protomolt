@@ -6,7 +6,7 @@ while the call is still running. Three moving parts, one command each.
 
 - `DemoSearch` (`samples`): a server-streaming search on `localhost:9777` that
   emits five hits, best first, 400 ms apart: slow enough to watch.
-- `protomolt-acp`: the action catalog as an ACP agent; `grpc-invoke` streams
+- `protomolt-acp-agent`: the action catalog as an ACP agent; `grpc-invoke` streams
   per response through it.
 - `AcpStreamingDemo` (`samples`): a driver that launches the agent, prompts
   it, and prints every chunk with its arrival time.
@@ -16,7 +16,7 @@ while the call is still running. Three moving parts, one command each.
 Terminal 1: install the agent and start the demo server:
 
 ```shell
-./gradlew :protomolt-acp:installDist :samples:runDemoSearch
+./gradlew :protomolt-acp-agent:installDist :samples:runDemoSearch
 ```
 
 Terminal 2: drive the agent:
@@ -44,7 +44,7 @@ of the run.
 ## The same thing in an IDE
 
 Point a custom ACP agent (JetBrains AI chat, or Zed) at
-`acp/build/install/protomolt-acp/bin/protomolt-acp`, then prompt:
+`surface/acp/build/install/protomolt-acp-agent/bin/protomolt-acp-agent`, then prompt:
 
 ```
 grpc-invoke {"target":"localhost:9777","method":"demo.search.v1.DemoSearch/Search","schema":{"sources":{"demo.proto":"syntax = \"proto3\"; package demo.search.v1; service DemoSearch { rpc Search(SearchRequest) returns (stream SearchHit); } message SearchRequest { string query = 1; int32 hits = 2; int32 delay_ms = 3; } message SearchHit { string doc_id = 1; float score = 2; string text = 3; }"}},"request":{"query":"nearest neighbor search","hits":5,"delayMs":400}}

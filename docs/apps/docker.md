@@ -2,7 +2,7 @@
 
 ProtoMolt ships two runtime images built from this repository for Compose: the server
 (`protomolt-serve`), which exposes the whole API over the network, and the ACP agent
-(`protomolt-acp`), which an IDE drives over stdio. `docker-compose.yml` at the
+(`protomolt-acp-agent`), which an IDE drives over stdio. `docker-compose.yml` at the
 repository root builds and runs both. (The release pipeline additionally publishes a
 third image, the native `protomolt-cli`: see [The published images](#the-published-images).)
 
@@ -12,7 +12,7 @@ The images are thin JRE layers over a Gradle distribution, so build the distribu
 then the images:
 
 ```shell
-./gradlew :protomolt-serve:installDist :protomolt-acp:installDist
+./gradlew :protomolt-serve:installDist :protomolt-acp-agent:installDist
 docker compose build
 docker compose up
 ```
@@ -65,7 +65,7 @@ The Agent Client Protocol is spoken over stdin/stdout: there is no port to open.
 ACP-capable IDE (Zed, JetBrains AI chat) is configured to launch the container as its agent:
 
 ```shell
-docker run -i --rm protomolt-acp:local
+docker run -i --rm protomolt-acp-agent:local
 ```
 
 To drive it from this repository and read back a transcript: the same exchange an IDE runs,
@@ -73,14 +73,14 @@ build the images (above) and run the smoke driver, which launches the container,
 opens a session, sends one `list` prompt, and prints the verb catalog:
 
 ```shell
-./gradlew :protomolt-acp:acpSmoke
+./gradlew :protomolt-acp-agent:acpSmoke
 ```
 
 Point the driver at something other than the container with `-Pagent`, e.g. to drive the agent
 in-process without Docker:
 
 ```shell
-./gradlew :protomolt-acp:acpSmoke -Pagent="$(pwd)/acp/build/install/protomolt-acp/bin/protomolt-acp"
+./gradlew :protomolt-acp-agent:acpSmoke -Pagent="$(pwd)/surface/acp/build/install/protomolt-acp-agent/bin/protomolt-acp-agent"
 ```
 
 ## Live self-test: the agent calling our own gRPC
@@ -99,8 +99,8 @@ The same driver runs against any gRPC target and method, and against an agent la
 you like:
 
 ```shell
-./gradlew :protomolt-acp:acpGrpcLive \
-  -Pagent="docker run -i --rm --network protomolt_default protomolt-acp:local" \
+./gradlew :protomolt-acp-agent:acpGrpcLive \
+  -Pagent="docker run -i --rm --network protomolt_default protomolt-acp-agent:local" \
   -Ptarget="serve:9090" \
   -Pmethod="ai.pipestream.protomolt.v1.ProtoMoltService/ListTypes"
 ```

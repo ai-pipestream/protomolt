@@ -34,8 +34,8 @@ project(':protomolt-codegen').projectDir = file('core/codegen')
 include 'protomolt-compat'
 project(':protomolt-compat').projectDir = file('core/compat')
 
-include 'protomolt-acp-core'
-project(':protomolt-acp-core').projectDir = file('core/acp')
+include 'protomolt-acp'
+project(':protomolt-acp').projectDir = file('core/acp')
 
 // acquire/ — how protos and documents get in.
 
@@ -315,8 +315,8 @@ project(':protomolt-jsonschema').projectDir = file('surface/http/jsonschema')
 include 'protomolt-mcp'
 project(':protomolt-mcp').projectDir = file('surface/mcp')
 
-include 'protomolt-acp'
-project(':protomolt-acp').projectDir = file('surface/acp')
+include 'protomolt-acp-agent'
+project(':protomolt-acp-agent').projectDir = file('surface/acp')
 
 include 'protomolt-actions'
 project(':protomolt-actions').projectDir = file('surface/actions')

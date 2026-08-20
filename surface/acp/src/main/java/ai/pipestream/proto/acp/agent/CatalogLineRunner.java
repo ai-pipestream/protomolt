@@ -1,5 +1,6 @@
-package ai.pipestream.proto.acp;
+package ai.pipestream.proto.acp.agent;
 
+import ai.pipestream.proto.acp.PromptContext;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
 import com.fasterxml.jackson.core.JsonProcessingException;

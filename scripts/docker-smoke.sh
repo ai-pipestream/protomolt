@@ -26,7 +26,7 @@ cleanup() { say "Tearing down"; docker compose down >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 say "Building distributions"
-./gradlew :protomolt-serve:installDist :protomolt-acp:installDist --console=plain -q
+./gradlew :protomolt-serve:installDist :protomolt-acp-agent:installDist --console=plain -q
 
 say "Building images"
 docker compose build serve acp
@@ -67,7 +67,7 @@ curl -fsS -H 'content-type: application/json' \
   || fail "MCP tools/list failed"
 
 say "ACP — driving the acp container over stdio"
-./gradlew :protomolt-acp:acpSmoke --console=plain -q \
+./gradlew :protomolt-acp-agent:acpSmoke --console=plain -q \
   || fail "the acp container did not answer the protocol"
 
 say "PASS — MCP and ACP both answered from Docker"
