@@ -448,7 +448,7 @@ you cannot annotate still serve.
 ### Query contract
 
 New package `ai.pipestream.proto.metric.v1` (service file, may live in
-`search/metric/proto` the way `search.v1` lives in `search/proto`).
+`metric/proto` the way `search.v1` lives in `search/proto`).
 
 ```protobuf
 enum MetricBackend {
@@ -687,11 +687,11 @@ alone per the platform rule; none requires the others at runtime.
 
 | Path | Artifact | Role |
 |---|---|---|
-| `protobuf/metric/` or `search/metric/options/` | `protomolt-protobuf-metric` | Option proto + reader, sibling to `protobuf-metadata` |
-| `search/metric/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` SPI |
-| `search/metric/lucene/` | `protomolt-metric-lucene` | Collector backend |
-| `search/metric/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend |
-| `search/metric/service/`, beside `search/service/` | `protomolt-metric-service` | `MetricService`, subject mount, refusals |
+| `protobuf/metric/` or `metric/options/` | `protomolt-protobuf-metric` | Option proto + reader, sibling to `protobuf-metadata` |
+| `metric/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` SPI |
+| `metric/lucene/` | `protomolt-metric-lucene` | Collector backend |
+| `metric/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend |
+| `metric/service/` | `protomolt-metric-service` | `MetricService`, subject mount, refusals |
 | actions registered by the metric service module | `describe-mapping`, `query-metrics` | Catalog + MCP |
 
 Keep option reading independent of any backend so `describe-mapping`

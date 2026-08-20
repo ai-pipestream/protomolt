@@ -170,21 +170,6 @@ project(':protomolt-chunker').projectDir = file('search/chunk')
 include 'protomolt-search-proto'
 project(':protomolt-search-proto').projectDir = file('search/proto')
 
-include 'protomolt-metric-proto'
-project(':protomolt-metric-proto').projectDir = file('search/metric/proto')
-
-include 'protomolt-metric-spi'
-project(':protomolt-metric-spi').projectDir = file('search/metric/spi')
-
-include 'protomolt-metric-lucene'
-project(':protomolt-metric-lucene').projectDir = file('search/metric/lucene')
-
-include 'protomolt-metric-service'
-project(':protomolt-metric-service').projectDir = file('search/metric/service')
-
-include 'protomolt-metric-iceberg'
-project(':protomolt-metric-iceberg').projectDir = file('search/metric/iceberg')
-
 include 'protomolt-search-service'
 project(':protomolt-search-service').projectDir = file('search/service')
 
@@ -235,6 +220,24 @@ project(':protomolt-rerank-ovms').projectDir = file('search/rerank/providers/ovm
 
 include 'protomolt-rerank-harness'
 project(':protomolt-rerank-harness').projectDir = file('search/rerank/harness')
+
+// metric/ — descriptor-declared measures and dimensions, the query compiler,
+// and its execution backends.
+
+include 'protomolt-metric-proto'
+project(':protomolt-metric-proto').projectDir = file('metric/proto')
+
+include 'protomolt-metric-spi'
+project(':protomolt-metric-spi').projectDir = file('metric/spi')
+
+include 'protomolt-metric-lucene'
+project(':protomolt-metric-lucene').projectDir = file('metric/lucene')
+
+include 'protomolt-metric-service'
+project(':protomolt-metric-service').projectDir = file('metric/service')
+
+include 'protomolt-metric-iceberg'
+project(':protomolt-metric-iceberg').projectDir = file('metric/iceberg')
 
 // sink/ — where rendered output goes: bundles, the lake, Kafka.
 

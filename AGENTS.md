@@ -70,7 +70,7 @@ remaining segment is kept, in order.
 
 | Kind | Top word | Trees |
 |---|---|---|
-| Domain | kept | protobuf, mesh, repo, account, jobs, inference, intake, parse, search, schema, acquire |
+| Domain | kept | protobuf, mesh, repo, account, jobs, inference, intake, parse, search, schema, acquire, metric |
 | Capability | dropped | core, transform, sink, surface, host, apps |
 
 | Path | Module | Package |
@@ -83,7 +83,7 @@ the `proto` segment.
 
 A directory matches its module and package stem exactly; where singular and
 plural forms of a stem have both been in use, the singular wins
-(`search/metric`, `host/server`). A stem that is plural everywhere it
+(`metric`, `host/server`). A stem that is plural everywhere it
 appears (`formats`, `sources`, `types`) is one stem, not a violation.
 
 ### Layer words
@@ -130,17 +130,12 @@ carry their targets into the single pre-1.0 breaking batch.
 | protomolt-chunker | search/chunk | protomolt-search-chunk |
 | protomolt-embeddings{,-model2vec,-tei,-ovms,-harness} | search/embeddings/** | protomolt-search-embedding-* |
 | protomolt-rerank{,-tei,-ovms,-harness} | search/rerank/** | protomolt-search-rerank-* |
-| protomolt-metric-{proto,spi,lucene,service,iceberg} | search/metrics/* | protomolt-search-metric-*, unless metric is lifted out as its own domain tree |
 | protomolt-connect{,-iceberg,-opensearch}, protomolt-serde{,-micrometer} | sink/kafka/* | protomolt-kafka-connect-*, protomolt-kafka-serde-* |
 | protomolt-json, protomolt-rest, protomolt-openapi, protomolt-jsonschema | surface/http/* | protomolt-http-* |
 | protomolt-quarkus, protomolt-quarkus-deployment, protomolt-spring | host/integrations/** | protomolt-integration-* |
 | protomolt-proto-sources | core/sources | protomolt-source; `proto-` is not a path segment |
 | protomolt-gather{,-git,-maven}, protomolt-msgraph, protomolt-connector | acquire/** | protomolt-acquire-*; acquire is a domain tree |
-| protomolt-registry-server | schema/registry/server | protomolt-registry-service, in flight; it is a served component, not a host adapter |
-| protomolt-metadata | transform/mapper/metadata | protomolt-mapper-metadata, in flight |
-| system-tests | tests/system | protomolt-system-tests, in flight |
 
-`search/metrics` and `host/servers` lose their plurals in the same batch.
 `protomolt-search-service` conforms; search is a domain tree, so its name is
 not a candidate for renaming.
 
