@@ -129,6 +129,12 @@ REST, and MCP:
 | `verify-work-record` | Verify a signed record offline against a trust snapshot |
 | `evaluate-work-record` | Verify, match against stored evidence, and replay under one policy |
 
+`verify-work-record` and `evaluate-work-record` take the trust snapshot in the
+request, or default to the server's pinned snapshot file when
+`PROTOMOLT_TRUST_SNAPSHOT` names one (`.json`, `.binpb`, or `.pb`, verified at
+startup); a request's own snapshot always wins, and with neither the verb
+refuses naming both paths.
+
 The MCP initialize response describes this workflow, and MCP resources expose
 service profiles, method contracts, workflows, runs, and artifacts without
 loading the full workspace into model context.
