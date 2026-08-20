@@ -188,6 +188,16 @@ constant time:
   HttpOnly, Secure, SameSite=Strict cookie and never exposes the process API
   token to browser JavaScript. See [Task console](../apps/task-console.md).
 
+`--access-policy <file>` (or `PROTOMOLT_ACCESS_POLICY`) mounts an
+[access policy](../design/authorization-scopes.md) beside the operator
+token: a credential the policy names authenticates as its principal
+and every surface scope-checks it — gRPC and REST refuse a missing
+scope by name (`PERMISSION_DENIED` / 403, while 401 keeps meaning not
+authenticated), MCP sessions pin the caller at initialize and serve
+the filtered tool manifest, and the registry splits reads from
+writes. The operator token keeps every scope, and a policy requires
+it — the credential that can correct a bad policy must exist.
+
 `--host` constrains every listener: HTTP, gRPC, and the registry alike.
 Documentation surfaces (`/health`, `/openapi.json`, `/docs`) stay open.
 Without the flag every surface is open: fine on a trusted network, not

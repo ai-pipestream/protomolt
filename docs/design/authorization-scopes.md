@@ -86,8 +86,10 @@ attributable refusal — never a silent grant — on a scoped one.
 
 Surfaces that are not catalog verbs carry their own declarations in
 the same vocabulary: the registry server's routes split into
-`schema-read`, `schema-write`, and `service-invoke` at the route
-table; the search and metrics doors declare their scopes per RPC.
+`schema-read` and `schema-write` at the route table, with its action
+endpoint dispatching through the scoped catalog so each verb's own
+declaration applies; the search and metrics doors declare their
+scopes per service, with method overrides where one verb differs.
 
 ## The access policy document
 

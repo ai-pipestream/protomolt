@@ -7,6 +7,12 @@ Lucene index per served subject, and is the first consumer of the
 [embedding lane](embeddings.md): indexing a document runs chunk-and-embed
 under the subject's [chunking policy](chunking.md).
 
+Started with the operator token and a caller resolver, the door checks
+[authorization scopes](../design/authorization-scopes.md) before
+validation: queries require `search-query`, the indexing service
+requires `search-index`, and health and reflection stay open. Started
+without a token it remains an open, trusted-network surface.
+
 ## Mapping subjects
 
 The door serves a fixed set of *mapping subjects* (`ServedMapping`): each

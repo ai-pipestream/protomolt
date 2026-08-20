@@ -76,6 +76,12 @@ claude mcp add --transport http protomolt http://host:8080/mcp \
   --header "api_token: <secret>"
 ```
 
+With an [access policy](../design/authorization-scopes.md) mounted, a
+credential the policy names also authenticates; the session is pinned to that
+principal at `initialize`, `tools/list` serves only the tools whose scope the
+caller holds, and a call outside the scope is an `isError` result naming the
+missing scope.
+
 Each HTTP `initialize` request creates a bounded server-side session and returns
 an `Mcp-Session-Id` response header. Send that header and the negotiated
 `MCP-Protocol-Version` header on every subsequent request. Send
