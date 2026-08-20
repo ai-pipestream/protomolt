@@ -25,7 +25,7 @@ class McpMainTest {
             "generate-stubs", "gather-git", "service-register", "service-list",
             "service-inspect", "service-refresh", "service-invoke", "compile-workflow", "suggest-mappings",
             "record-workflow-run", "replay-workflow", "promote-workflow",
-            "export-work-record", "verify-work-record");
+            "export-work-record", "verify-work-record", "evaluate-work-record");
 
     @Test
     void helpPrintsUsageToStderrAndReturns() throws Exception {

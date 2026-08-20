@@ -104,6 +104,35 @@ final class WorkflowActionJson {
         }
     }
 
+    static java.util.Map<String, byte[]> base64Map(ObjectNode input, String field)
+            throws ActionException {
+        JsonNode node = input.get(field);
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (!(node instanceof ObjectNode object)) {
+            throw invalid("'" + field + "' must be an object of base64 strings",
+                    "/" + field);
+        }
+        java.util.Map<String, byte[]> values = new java.util.HashMap<>();
+        var fields = object.fields();
+        while (fields.hasNext()) {
+            var entry = fields.next();
+            if (!entry.getValue().isTextual()) {
+                throw invalid("'" + field + "' values must be base64 strings",
+                        "/" + field + "/" + entry.getKey());
+            }
+            try {
+                values.put(entry.getKey(), java.util.Base64.getDecoder()
+                        .decode(entry.getValue().asText()));
+            } catch (IllegalArgumentException e) {
+                throw invalid("'" + field + "' value is not valid base64",
+                        "/" + field + "/" + entry.getKey());
+            }
+        }
+        return values;
+    }
+
     static ActionException invalid(String message, String pointer) {
         ObjectNode details = JsonNodeFactory.instance.objectNode();
         details.put("pointer", pointer);

@@ -115,6 +115,10 @@ service ProtoMoltService {
   // snapshot.
   rpc VerifyWorkRecord(VerifyWorkRecordRequest) returns (VerifyWorkRecordResponse);
 
+  // Evaluates a signed work record beside its stored evidence: verification,
+  // the evidence match, and offline replay under the predeclared policy.
+  rpc EvaluateWorkRecord(EvaluateWorkRecordRequest) returns (EvaluateWorkRecordResponse);
+
   // Fetches a live gRPC server's schema over server reflection, given only
   // its address. Servers without reflection return ok=false.
   rpc Reflect(ReflectRequest) returns (ReflectResponse);
@@ -1229,6 +1233,43 @@ message VerifyWorkRecordResponse {
   repeated WorkRecordCheck checks = 3;
   // What verification does not establish, as stable identifiers.
   repeated string non_claims = 4;
+}
+
+// A signed record, its trust snapshot, and the replay inputs to evaluate it
+// beside its stored evidence.
+message EvaluateWorkRecordRequest {
+  // Serialized SignedWorkRecord, base64.
+  string record_base64 = 1;
+  // TrustSnapshot encoded as protobuf JSON.
+  google.protobuf.Struct trust = 2;
+  // The workflow the run executed, encoded as protobuf JSON, for replay.
+  google.protobuf.Struct workflow = 3;
+  // Exact descriptor set used by the recorded run.
+  SchemaSource schema = 4;
+  // Referenced artifact bytes by SHA-256, base64; runs the rehash check.
+  google.protobuf.Struct artifacts = 5;
+}
+
+// The versioned evaluation record, written beside the signed record.
+message EvaluateWorkRecordResponse {
+  // True exactly when the predeclared policy accepts: no check failed.
+  bool accepted = 1;
+  // SHA-256 of the manifest bytes, empty until the container parsed.
+  string manifest_digest = 2;
+  // The predeclared evaluation policy's identity.
+  string policy_id = 3;
+  // The policy's version.
+  string policy_version = 4;
+  // The policy text's digest.
+  string policy_sha256 = 5;
+  // When the evaluation ran (RFC 3339).
+  string evaluated_at = 6;
+  // Verification checks followed by the evaluation's own, in order.
+  repeated WorkRecordCheck checks = 7;
+  // Ordered per-step offline replay verdicts.
+  repeated WorkflowStepReplay replay_steps = 8;
+  // What the evaluation does not establish, as stable identifiers.
+  repeated string non_claims = 9;
 }
 
 // The input of submit-workflow: an inline workflow or the name of a stored one,

@@ -31,6 +31,7 @@ public final class WorkflowWorkbenchActions {
                 .register(new ReplayWorkflowAction(artifacts, runs))
                 .register(new PromoteWorkflowAction(workflows))
                 .register(new ExportWorkRecordAction(runs, signing))
-                .register(new VerifyWorkRecordAction());
+                .register(new VerifyWorkRecordAction())
+                .register(new EvaluateWorkRecordAction(artifacts, runs));
     }
 }
