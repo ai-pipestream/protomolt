@@ -453,6 +453,9 @@ project(':protomolt-spring').projectDir = file('host/integrations/spring')
 include 'protomolt-serve'
 project(':protomolt-serve').projectDir = file('apps/serve')
 
+include 'protomolt-record-verifier'
+project(':protomolt-record-verifier').projectDir = file('apps/record-verifier')
+
 include 'protomolt-document-platform'
 project(':protomolt-document-platform').projectDir = file('apps/document-platform')
 

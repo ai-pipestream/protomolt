@@ -17,26 +17,26 @@ import java.util.List;
  * their digests. An external verifier claims conformance by passing this
  * corpus against {@link #trust()}.
  */
-final class ConformanceCorpus {
+public final class ConformanceCorpus {
 
     /** RFC 8032 section 7.1 TEST 1 seed; the corpus issuer key. */
-    static final byte[] SEED = HexFormat.of().parseHex(
+    public static final byte[] SEED = HexFormat.of().parseHex(
             "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
     /** RFC 8032 section 7.1 TEST 1 public key. */
-    static final byte[] PUBLIC_KEY = HexFormat.of().parseHex(
+    public static final byte[] PUBLIC_KEY = HexFormat.of().parseHex(
             "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
     /** RFC 8032 section 7.1 TEST 2 seed; the second key. */
-    static final byte[] SECOND_SEED = HexFormat.of().parseHex(
+    public static final byte[] SECOND_SEED = HexFormat.of().parseHex(
             "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
     /** RFC 8032 section 7.1 TEST 2 public key. */
-    static final byte[] SECOND_PUBLIC_KEY = HexFormat.of().parseHex(
+    public static final byte[] SECOND_PUBLIC_KEY = HexFormat.of().parseHex(
             "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
 
-    static final String ISSUER = "records.protomolt.dev";
-    static final String KEY_ID = "key-2026";
-    static final String SECOND_KEY_ID = "key-second";
-    static final String REVOKED_KEY_ID = "key-revoked";
-    static final String EXPIRED_KEY_ID = "key-expired";
+    public static final String ISSUER = "records.protomolt.dev";
+    public static final String KEY_ID = "key-2026";
+    public static final String SECOND_KEY_ID = "key-second";
+    public static final String REVOKED_KEY_ID = "key-revoked";
+    public static final String EXPIRED_KEY_ID = "key-expired";
 
     private static final Timestamp ISSUED_AT = seconds(1750000000);
     private static final PrivateKey PRIVATE_KEY = RecordKeys.privateKey(SEED);
@@ -46,14 +46,14 @@ final class ConformanceCorpus {
     }
 
     /** One corpus record: a name, the record bytes, and the expected refusal. */
-    record Fixture(String name, byte[] record, String failsAt) {
-        boolean valid() {
+    public record Fixture(String name, byte[] record, String failsAt) {
+        public boolean valid() {
             return failsAt == null;
         }
     }
 
     /** The snapshot every corpus fixture verifies against. */
-    static TrustSnapshot trust() {
+    public static TrustSnapshot trust() {
         return TrustSnapshot.newBuilder()
                 .addIssuers(TrustedIssuer.newBuilder()
                         .setIssuer(ISSUER)
@@ -68,7 +68,7 @@ final class ConformanceCorpus {
                 .build();
     }
 
-    static List<Fixture> fixtures() {
+    public static List<Fixture> fixtures() {
         WorkRecord complete = manifest().build();
         byte[] canonical = WorkRecords.canonicalBytes(complete);
         return List.of(
@@ -165,7 +165,7 @@ final class ConformanceCorpus {
     }
 
     /** The baseline complete manifest every fixture derives from. */
-    static WorkRecord.Builder manifest() {
+    public static WorkRecord.Builder manifest() {
         return WorkRecord.newBuilder()
                 .setManifestVersion(WorkRecords.MANIFEST_VERSION)
                 .setRecordId("record-1")
@@ -198,7 +198,7 @@ final class ConformanceCorpus {
                         .setPolicySha256(WorkRecords.sha256Hex("policy".getBytes())));
     }
 
-    static RecordSubject.Builder subject() {
+    public static RecordSubject.Builder subject() {
         return RecordSubject.newBuilder()
                 .setKind(WorkRecords.SUBJECT_KIND_WORKFLOW_RUN)
                 .setWorkflowName("embed-pipeline")
@@ -207,7 +207,7 @@ final class ConformanceCorpus {
                 .setRunId("run-1");
     }
 
-    static RecordArtifact.Builder artifact(byte[] content) {
+    public static RecordArtifact.Builder artifact(byte[] content) {
         return RecordArtifact.newBuilder()
                 .setSha256(WorkRecords.sha256Hex(content))
                 .setMediaType("application/x-protobuf")
@@ -215,11 +215,11 @@ final class ConformanceCorpus {
                 .setRedacted(true);
     }
 
-    static byte[] sign(WorkRecord manifest, String keyId, PrivateKey key) {
+    public static byte[] sign(WorkRecord manifest, String keyId, PrivateKey key) {
         return signBytes(WorkRecords.canonicalBytes(manifest), keyId, key);
     }
 
-    static byte[] signBytes(byte[] manifestBytes, String keyId, PrivateKey key) {
+    public static byte[] signBytes(byte[] manifestBytes, String keyId, PrivateKey key) {
         return SignedWorkRecord.newBuilder()
                 .setManifest(ByteString.copyFrom(manifestBytes))
                 .addSignatures(RecordSignature.newBuilder()

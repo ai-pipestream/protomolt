@@ -126,9 +126,6 @@ verbs, the trust-snapshot mount, the transparency log document, disclosure
 projections, and the evaluation sidecar. Design of record:
 [signed work records](receipts.md). Still open:
 
-- **The zero-dependency external verifier.** A separate small codebase
-  whose whole value is not sharing this runtime; the format and corpus
-  admit it, shipping it is its own decision.
 - **A second projector.** The delegation transcript, once the workflow-run
   corpus has aged.
 - **Platform wiring for the trust mount.** `TrustSnapshotMounts` follows

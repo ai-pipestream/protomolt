@@ -239,14 +239,19 @@ same corpus. Freezing v1 of the manifest is a compatibility promise of
 the same class as the validate.v1 dialect; the corpus is what makes
 the promise testable.
 
+The first external verifier is
+[`protomolt-record-verifier`](../apps/record-verifier.md): pure JDK,
+zero dependencies, sharing nothing with this runtime but the wire
+contract. It restates the format by hand — a strict canonical wire
+reader stands in for reserialization equality — and its cross-check
+suite holds it to the runtime's verdict on every corpus fixture and to
+acceptance agreement on randomly mutated records.
+
 ## Deliberately out of v1
 
 - Trusted timestamps (RFC 3161) — composable later; issuance time
   stays a claimed fact with a non-claim.
 - Transparency receipts (SCITT) — the registry log stands in.
 - Environment attestation (RATS/EAT).
-- The zero-dependency external verifier (a separate small codebase
-  whose whole value is not sharing this runtime) — the format admits
-  it from day one; shipping it is its own decision.
 - Hardware key custody — the key reference seam admits it without a
   format change.

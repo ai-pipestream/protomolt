@@ -66,6 +66,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Command line](apps/cli.md): invoke actions from a shell or interactive console
 - [Agent host](apps/agent-host.md): attach resumable Codex and Kimi processes to delegation
 - [Task console](apps/task-console.md): inspect and guide durable multi-agent tasks in a browser
+- [Record verifier](apps/record-verifier.md): zero-dependency offline verification of signed work records
 - [Docker](apps/docker.md): container images and Compose setup
 - [Document platform](apps/document-platform.md): the one-container document pipeline (repo, intake, parse, jobs, registry, search, console, playground)
 - [Role nodes](apps/role-nodes.md): the same binary as specialized nodes via PROTOMOLT_ROLES and remote role targets
