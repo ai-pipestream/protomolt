@@ -170,7 +170,9 @@ class WorkflowWorkbenchMcpTest {
             promote.set("workflow", compiled.path("workflow"));
             promote.put("version", "v1");
             JsonNode promoted = mcp.tool("promote-workflow", promote);
-            assertThat(promoted.path("promoted").asBoolean()).isTrue();
+            assertThat(promoted.path("promoted").asBoolean())
+                    .as("promotion response: %s", promoted)
+                    .isTrue();
             assertThat(promoted.path("versionedWorkflow").path("workflowFingerprint").asText())
                     .isEqualTo(fingerprint);
         }
