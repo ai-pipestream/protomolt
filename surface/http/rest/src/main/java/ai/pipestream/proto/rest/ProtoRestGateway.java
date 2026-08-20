@@ -120,7 +120,9 @@ public final class ProtoRestGateway {
 
         try {
             Message request = decodeRequest(method, jsonRequest);
-            Message response = method.invoker().apply(request);
+            Message response = method.invoker() instanceof ProtoRestContextInvoker context
+                    ? context.invoke(request, normalizedHeaders, safeQuery)
+                    : method.invoker().apply(request);
             if (response == null) {
                 return "{}";
             }

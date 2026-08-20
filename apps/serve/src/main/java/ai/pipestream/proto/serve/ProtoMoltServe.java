@@ -944,16 +944,36 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
 
             ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
+            java.util.function.Function<java.util.Map<String, String>,
+                    ai.pipestream.proto.actions.Caller> restCallers = callers == null
+                    ? null : restCallers(options.apiToken(), callers);
             ProtoMoltRestMount.register(methods, catalog, options.apiToken() == null
                     ? null
-                    : ApiTokenRequirement.apiKeyHeader("api_token"));
+                    : ApiTokenRequirement.apiKeyHeader("api_token"), restCallers);
             ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
                     .withHost(options.host())
                     .withPort(options.httpPort());
-            ProtoRestGateway gateway = options.apiToken() == null
-                    ? new ProtoRestGateway(methods, context.transcoder())
-                    : new ProtoRestGateway(methods, context.transcoder(),
-                            ProtoApiTokenValidator.sharedSecret(options.apiToken()));
+            ProtoRestGateway gateway;
+            if (options.apiToken() == null) {
+                gateway = new ProtoRestGateway(methods, context.transcoder());
+            } else if (restCallers == null) {
+                gateway = new ProtoRestGateway(methods, context.transcoder(),
+                        ProtoApiTokenValidator.sharedSecret(options.apiToken()));
+            } else {
+                java.util.function.Function<java.util.Map<String, String>,
+                        ai.pipestream.proto.actions.Caller> resolved = restCallers;
+                gateway = new ProtoRestGateway(methods, context.transcoder(),
+                        (tokenConfig, headers, query) -> {
+                            String presented = presentedCredential(headers);
+                            if (presented == null || presented.isBlank()) {
+                                return java.util.Optional.of(
+                                        "Missing API token '" + tokenConfig.name() + "'");
+                            }
+                            return resolved.apply(headers) != null
+                                    ? java.util.Optional.empty()
+                                    : java.util.Optional.of("Invalid API token");
+                        });
+            }
             String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
             McpServer mcp = new McpServer(catalog,
                     CompositeResources.of(
@@ -1043,6 +1063,36 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
             return workflow;
         });
+    }
+
+    /** The credential a REST request presents: {@code api_token} or a bearer authorization. */
+    private static String presentedCredential(java.util.Map<String, String> headers) {
+        String presented = headers.get("api_token");
+        if (presented == null) {
+            String authorization = headers.get("authorization");
+            if (authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                presented = authorization.substring(7).trim();
+            }
+        }
+        return presented;
+    }
+
+    /** Header-to-caller resolution for the REST mount: operator token, else the policy. */
+    private static java.util.function.Function<java.util.Map<String, String>,
+            ai.pipestream.proto.actions.Caller> restCallers(
+            String apiToken, ai.pipestream.proto.authz.CallerResolver resolver) {
+        byte[] operator = apiToken.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return headers -> {
+            String presented = presentedCredential(headers);
+            if (presented == null || presented.isBlank()) {
+                return null;
+            }
+            if (java.security.MessageDigest.isEqual(operator,
+                    presented.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+                return ai.pipestream.proto.actions.Caller.operator();
+            }
+            return resolver.resolve(presented).orElse(null);
+        };
     }
 
     private static void closeQuietly(AutoCloseable closeable) {

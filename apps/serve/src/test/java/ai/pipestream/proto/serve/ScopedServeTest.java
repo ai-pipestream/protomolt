@@ -169,13 +169,22 @@ class ScopedServeTest {
     }
 
     @Test
-    void restStaysOperatorOnlyUntilItsCallerSeamLands() throws Exception {
-        HttpResponse<String> refused = post("/grpc-json/ProtoMoltService/ListTypes",
+    void restResolvesThePrincipalAndRefusesOutsideItsScope() throws Exception {
+        HttpResponse<String> allowed = post("/grpc-json/ProtoMoltService/ListTypes",
                 "{}", "api_token", READER);
-        assertThat(refused.statusCode()).isEqualTo(401);
-        HttpResponse<String> operator = post("/grpc-json/ProtoMoltService/ListTypes",
-                "{}", "api_token", TOKEN);
-        assertThat(operator.statusCode()).isEqualTo(200);
+        assertThat(allowed.statusCode()).isEqualTo(200);
+
+        HttpResponse<String> denied = post("/grpc-json/ProtoMoltService/GetJob",
+                "{}", "api_token", READER);
+        assertThat(denied.statusCode()).isEqualTo(403);
+        assertThat(denied.body())
+                .contains("permission-denied").contains(Scopes.SERVICE_INVOKE)
+                .contains("ci-reader");
+
+        assertThat(post("/grpc-json/ProtoMoltService/ListTypes", "{}",
+                "api_token", "guessed").statusCode()).isEqualTo(401);
+        assertThat(post("/grpc-json/ProtoMoltService/ListTypes", "{}",
+                "api_token", TOKEN).statusCode()).isEqualTo(200);
     }
 
     @Test

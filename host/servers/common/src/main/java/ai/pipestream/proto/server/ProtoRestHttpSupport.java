@@ -119,6 +119,9 @@ public final class ProtoRestHttpSupport {
         if (cause instanceof UnauthorizedProtoRestException) {
             return 401;
         }
+        if (cause instanceof ai.pipestream.proto.rest.ForbiddenProtoRestException) {
+            return 403;
+        }
         if (cause instanceof ServiceNotFoundException || cause instanceof MethodNotFoundException) {
             return 404;
         }
