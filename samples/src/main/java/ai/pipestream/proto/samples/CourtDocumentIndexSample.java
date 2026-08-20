@@ -1,15 +1,15 @@
 package ai.pipestream.proto.samples;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.embeddings.model2vec.Model2VecEmbeddingProvider;
-import ai.pipestream.proto.index.lucene.LuceneIndexWriter;
-import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
-import ai.pipestream.proto.index.ndjson.ProtoNdjsonWriter;
-import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.IndexMappingFactory;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.embedding.model2vec.Model2VecEmbeddingProvider;
+import ai.pipestream.proto.search.index.lucene.LuceneIndexWriter;
+import ai.pipestream.proto.search.index.lucene.ProtoLuceneMapper;
+import ai.pipestream.proto.search.index.ndjson.ProtoNdjsonWriter;
+import ai.pipestream.proto.search.index.spi.CatalogIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.SearchMetadata;

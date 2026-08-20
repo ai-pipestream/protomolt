@@ -12,20 +12,20 @@ harness compares rankings, never raw score values.
 
 | Artifact | Role |
 |---|---|
-| `protomolt-rerank` | The `RerankProvider` SPI and `RerankProviders` discovery |
-| `protomolt-rerank-tei` | A remote provider for Hugging Face Text Embeddings Inference over gRPC |
-| `protomolt-rerank-ovms` | A remote provider for OpenVINO Model Server over the REST rerank endpoint |
-| `protomolt-rerank-harness` | Ranked-list equivalence certification for providers serving the same model |
+| `protomolt-search-rerank` | The `RerankProvider` SPI and `RerankProviders` discovery |
+| `protomolt-search-rerank-tei` | A remote provider for Hugging Face Text Embeddings Inference over gRPC |
+| `protomolt-search-rerank-ovms` | A remote provider for OpenVINO Model Server over the REST rerank endpoint |
+| `protomolt-search-rerank-harness` | Ranked-list equivalence certification for providers serving the same model |
 
-The SPI lives in `search/rerank/core`, the providers under `search/rerank/providers`, and
-the certification harness in `search/rerank/harness`:
+The SPI lives in `search/rerank/core`, the providers beside it, and the
+certification harness in `search/rerank/harness`:
 
 ```
 rerank/
-  core/                  protomolt-rerank
-  providers/tei/         protomolt-rerank-tei
-  providers/ovms/        protomolt-rerank-ovms
-  harness/               protomolt-rerank-harness
+  core/         protomolt-search-rerank
+  tei/          protomolt-search-rerank-tei
+  ovms/         protomolt-search-rerank-ovms
+  harness/      protomolt-search-rerank-harness
 ```
 
 ## The provider SPI
@@ -41,13 +41,13 @@ candidate list.
 on the classpath keyed by id, and `byId(String)` resolves one, failing with
 the list of available ids when the requested provider is not there.
 Registration is the standard
-`META-INF/services/ai.pipestream.proto.rerank.RerankProvider` file.
+`META-INF/services/ai.pipestream.proto.search.rerank.RerankProvider` file.
 
 ## The TEI provider
 
 `TeiRerankProvider` registers under the id `tei` and calls a Hugging Face
 Text Embeddings Inference server over its gRPC Rerank API, reusing the
-generated `tei.v1` stubs from `protomolt-embeddings-tei`. TEI serves one
+generated `tei.v1` stubs from `protomolt-search-embedding-tei`. TEI serves one
 reranker model per process, chosen server side, so the only knob is the gRPC
 target:
 
@@ -92,7 +92,7 @@ a runtime can mix them, for example reranking with a different runtime in a
 fallback path. Because score scales differ across providers, certification
 is on ranking plus top-1 agreement, never on raw score values:
 `RerankEquivalence.compare(a, b, cases, threshold)` in
-`protomolt-rerank-harness` scores every case's documents with both providers
+`protomolt-search-rerank-harness` scores every case's documents with both providers
 and reduces the per-query Kendall tau-b correlations and the argmax agreement
 count to a `RerankEquivalenceReport`. The pair is certified when the worst
 query's tau clears the threshold.

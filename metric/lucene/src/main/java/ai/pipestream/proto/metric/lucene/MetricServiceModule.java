@@ -4,7 +4,7 @@ import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
 import ai.pipestream.proto.composer.ServiceMount;
-import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
 import ai.pipestream.proto.metric.MetricBackend;
 import ai.pipestream.proto.metric.service.MetricActions;
 import ai.pipestream.proto.metric.service.MetricServices;

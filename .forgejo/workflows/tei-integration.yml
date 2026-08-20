@@ -34,4 +34,4 @@ jobs:
       - name: Run the TEI rerank lane
         env:
           PROTOMOLT_TEI_CACHE: /work/tei-model-cache
-        run: ./gradlew :protomolt-index-opensearch:teiIntegrationTest --no-daemon --console=plain
+        run: ./gradlew :protomolt-search-index-opensearch:teiIntegrationTest --no-daemon --console=plain

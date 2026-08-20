@@ -1,0 +1,16 @@
+description = 'Rerank provider for Hugging Face Text Embeddings Inference over gRPC'
+
+dependencies {
+    api project(':protomolt-search-rerank')
+
+    // The generated tei.v1 stubs (RerankGrpc and the RerankRequest/Rank messages) ride along
+    // from the embeddings TEI module; the proto is not vendored again. The gRPC libraries
+    // below only put the stub and message base types on this module's compile classpath; the
+    // netty runtime rides along from the embeddings module.
+    implementation project(':protomolt-search-embedding-tei')
+    implementation libs.grpc.stub
+    implementation libs.grpc.protobuf
+
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.netty.shaded
+}

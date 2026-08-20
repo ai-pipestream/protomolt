@@ -1,7 +1,0 @@
-description = 'Rerank provider for OpenVINO Model Server over the REST rerank endpoint'
-
-dependencies {
-    api project(':protomolt-rerank')
-
-    implementation libs.jackson.databind
-}

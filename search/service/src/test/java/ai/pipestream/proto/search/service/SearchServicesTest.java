@@ -3,9 +3,9 @@ package ai.pipestream.proto.search.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import ai.pipestream.proto.chunk.SentencePackedChunker;
-import ai.pipestream.proto.index.spi.ChunkingPolicy;
-import ai.pipestream.proto.index.spi.VectorSimilarity;
+import ai.pipestream.proto.search.chunk.SentencePackedChunker;
+import ai.pipestream.proto.search.index.spi.ChunkingPolicy;
+import ai.pipestream.proto.search.index.spi.VectorSimilarity;
 import ai.pipestream.proto.repo.v1.Document;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import ai.pipestream.proto.repo.v1.SearchMetadata;

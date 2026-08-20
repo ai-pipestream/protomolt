@@ -8,22 +8,22 @@ produced, locating and validating both fields through the mapping.
 
 | Artifact | Role |
 |---|---|
-| `protomolt-embeddings` | The `EmbeddingProvider` SPI and the mapping-driven `MappingEmbedder` |
-| `protomolt-embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
-| `protomolt-embeddings-tei` | A remote provider for Hugging Face Text Embeddings Inference over gRPC |
-| `protomolt-embeddings-ovms` | A remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
-| `protomolt-embeddings-harness` | Pairwise cosine-equivalence certification for providers serving the same model |
+| `protomolt-search-embedding` | The `EmbeddingProvider` SPI and the mapping-driven `MappingEmbedder` |
+| `protomolt-search-embedding-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
+| `protomolt-search-embedding-tei` | A remote provider for Hugging Face Text Embeddings Inference over gRPC |
+| `protomolt-search-embedding-ovms` | A remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
+| `protomolt-search-embedding-harness` | Pairwise cosine-equivalence certification for providers serving the same model |
 
-The SPI lives in `search/embeddings/core`, the providers under `search/embeddings/providers`,
-and the certification harness in `search/embeddings/harness`:
+The SPI lives in `search/embedding/core`, the providers beside it, and the
+certification harness in `search/embedding/harness`:
 
 ```
-embeddings/
-  core/                  protomolt-embeddings
-  providers/model2vec/   protomolt-embeddings-model2vec
-  providers/tei/         protomolt-embeddings-tei
-  providers/ovms/        protomolt-embeddings-ovms
-  harness/               protomolt-embeddings-harness
+embedding/
+  core/         protomolt-search-embedding
+  model2vec/    protomolt-search-embedding-model2vec
+  tei/          protomolt-search-embedding-tei
+  ovms/         protomolt-search-embedding-ovms
+  harness/      protomolt-search-embedding-harness
 ```
 
 The companion [rerank SPI](rerank.md) mirrors this provider surface for
@@ -46,7 +46,7 @@ checked exception. Whoever obtained a provider closes it.
 provider on the classpath keyed by id, and `byId(String)` resolves one,
 failing with the list of available ids when the requested provider is not
 there. Registration is the standard
-`META-INF/services/ai.pipestream.proto.embeddings.EmbeddingProvider` file.
+`META-INF/services/ai.pipestream.proto.search.embedding.EmbeddingProvider` file.
 
 ## The embedding lane
 
@@ -58,7 +58,7 @@ dimension. Resolution may load the model (a lazily configured provider
 learns its dimension by loading), so a misconfigured provider fails at
 resolution, naming its configuration knobs, not partway through a corpus.
 
-`PolicyDerivation.discover(policy)` in `protomolt-chunker` composes the
+`PolicyDerivation.discover(policy)` in `protomolt-search-chunk` composes the
 whole lane from the policy alone: chunk under the policy's chunking spec,
 embed every chunk with the discovered provider. model2vec is the
 product-default model: the standalone CPU fast path with no inference
@@ -119,7 +119,7 @@ the hint extensions registered (see [Search indexing](indexing.md)), or
 the options arrive as unknown fields and the mapping sees no hints.
 
 The live suite (`SemanticSearchLiveIntegrationTest` in
-`:protomolt-embeddings-model2vec`) proves exactly this flow against a real
+`:protomolt-search-embedding-model2vec`) proves exactly this flow against a real
 OpenSearch: sentences indexed with model-computed vectors, a query
 embedded with the same provider, and kNN ranking the semantically nearest
 sentence first: the query word appears in no indexed sentence, so only
@@ -229,7 +229,7 @@ a single-text call is one request. A failed chunk call still throws
 Two providers serving the same model must produce near-identical vectors
 (per-text cosine ~1) before a runtime can mix them, for example indexing with
 one and querying with the other. `EmbeddingEquivalence.compare(a, b, texts,
-threshold)` in `protomolt-embeddings-harness` embeds a corpus with both
+threshold)` in `protomolt-search-embedding-harness` embeds a corpus with both
 providers and reduces the per-text cosines to an `EquivalenceReport`: the pair
 is certified when the worst text still clears the threshold. `compare` is
 static: call it directly, there is no instance to construct.

@@ -1,10 +1,10 @@
 package ai.pipestream.proto.acquire.msgraph;
 
-import ai.pipestream.proto.index.spi.CatalogIndexingHintSource;
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMappingFactory;
-import ai.pipestream.proto.index.spi.InferringIndexingHintSource;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.index.spi.CatalogIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.search.index.spi.InferringIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;

@@ -14,8 +14,8 @@ dependencies {
     testImplementation project(':protomolt-protobuf-validation')
     testImplementation project(':protomolt-http-json')
     testImplementation project(':protomolt-http-jsonschema')
-    testImplementation project(':protomolt-index-spi')
-    testImplementation project(':protomolt-index-opensearch')
+    testImplementation project(':protomolt-search-index-spi')
+    testImplementation project(':protomolt-search-index-opensearch')
     testImplementation libs.jackson.databind
     testImplementation libs.jgit
 
@@ -29,11 +29,11 @@ dependencies {
     testImplementation project(':protomolt-jobs-service')
     testImplementation project(':protomolt-workflow')
     testImplementation project(':protomolt-actions')
-    testImplementation project(':protomolt-index-lucene')
+    testImplementation project(':protomolt-search-index-lucene')
     testImplementation project(':protomolt-mapper-core')
-    testImplementation project(':protomolt-embeddings')
-    testImplementation project(':protomolt-embeddings-model2vec')
-    testImplementation project(':protomolt-chunker')
+    testImplementation project(':protomolt-search-embedding')
+    testImplementation project(':protomolt-search-embedding-model2vec')
+    testImplementation project(':protomolt-search-chunk')
     testImplementation project(':protomolt-protobuf-seo')
     // The court corpus fixture rides the samples jar's resources.
     testImplementation project(':samples')
@@ -45,7 +45,7 @@ dependencies {
 
 // The Lucene 11 line ships Java 25 bytecode, so the golden-path system test
 // cannot run on an older JVM: the test launcher stays on the toolchain JDK
-// and -PtestJdk is ignored here (same pin as :protomolt-index-lucene).
+// and -PtestJdk is ignored here (same pin as :protomolt-search-index-lucene).
 tasks.withType(Test).configureEach {
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(25)

@@ -1,10 +1,10 @@
 package ai.pipestream.proto.seo;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.index.lucene.LuceneFieldSpecs;
-import ai.pipestream.proto.index.lucene.ProtoLuceneMapper;
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.lucene.LuceneFieldSpecs;
+import ai.pipestream.proto.search.index.lucene.ProtoLuceneMapper;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.seo.v1.Article;
 import ai.pipestream.proto.seo.v1.DublinCore;

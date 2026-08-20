@@ -8,22 +8,22 @@ and does not interpret hints at all.
 
 | Artifact | Role |
 |---|---|
-| `protomolt-index-spi` | Mapping model, hint sources, engine SPI, the hints `.proto` |
-| `protomolt-chunker` | Deterministic chunking-policy execution ([chunking](chunking.md)) |
+| `protomolt-search-index-spi` | Mapping model, hint sources, engine SPI, the hints `.proto` |
+| `protomolt-search-chunk` | Deterministic chunking-policy execution ([chunking](chunking.md)) |
 | `protomolt-search-service` | The mapping-subject-gated query and indexing gRPC service ([search service](service.md)) |
-| `protomolt-index-ndjson` | Message → NDJSON lines (including bulk-index pairs) |
-| `protomolt-index-lucene` | Lucene `Document` mapping |
-| `protomolt-index-opensearch` | OpenSearch document-map mapping |
-| `protomolt-index-solr` | Solr document-map mapping |
-| `protomolt-index-qdrant` | Qdrant point mapping (repo Document semantic chunks → named vectors), a gRPC sink, and collection-schema generation; validates declared rules on write |
-| `protomolt-protobuf-indexing` | Facade chaining optional validation → mapping → NDJSON; registers the declared-rules gate for unpacked Any payloads |
+| `protomolt-search-index-ndjson` | Message → NDJSON lines (including bulk-index pairs) |
+| `protomolt-search-index-lucene` | Lucene `Document` mapping |
+| `protomolt-search-index-opensearch` | OpenSearch document-map mapping |
+| `protomolt-search-index-solr` | Solr document-map mapping |
+| `protomolt-search-index-qdrant` | Qdrant point mapping (repo Document semantic chunks → named vectors), a gRPC sink, and collection-schema generation; validates declared rules on write |
+| `protomolt-search-index-protobuf` | Facade chaining optional validation → mapping → NDJSON; registers the declared-rules gate for unpacked Any payloads |
 | `protomolt-kafka-connect-opensearch` | Kafka Connect sink over this write path ([guide](../sink/kafka-connect-opensearch.md)) |
 
 ## Indexing hints
 
 Hints are protobuf `FieldOptions` extensions that bake into the descriptor,
 so plain `protoc` or the protobuf Gradle plugin is all the code generation
-required. The `.proto` ships inside `protomolt-index-spi` (and is available
+required. The `.proto` ships inside `protomolt-search-index-spi` (and is available
 on the classpath as a resource):
 
 ```protobuf
@@ -161,7 +161,7 @@ inner mappings for Any; those appear only when a concrete packed type is
 seen on the write path.
 
 Unpacked payloads pass through every `AnyPayloadValidator` discovered via
-`ServiceLoader` before their fields are mapped. `protomolt-protobuf-indexing`
+`ServiceLoader` before their fields are mapped. `protomolt-search-index-protobuf`
 registers the declared-rules validation standard, so with that module on the
 classpath a payload carrying `ai.pipestream.proto.validate.v1` (or, with the
 optional reader, `buf.validate`) rules is validated on unpack and a violation
@@ -190,7 +190,7 @@ there.
 
 ## The validate-then-index facade
 
-`ProtobufIndexer` in `protomolt-protobuf-indexing` chains the pieces for the
+`ProtobufIndexer` in `protomolt-search-index-protobuf` chains the pieces for the
 common case: optionally validate, then map, then emit NDJSON:
 
 ```java
@@ -256,7 +256,7 @@ watch the engine refuse a term search on it, decrypt with the key.
 
 ## Semantic search with a rerank head
 
-`protomolt-index-opensearch` also carries the read side of semantic search.
+`protomolt-search-index-opensearch` also carries the read side of semantic search.
 `OpenSearchSearch` is the thin sibling of `OpenSearchSink`: `knn(index,
 vectorField, vector, k)` POSTs `/{index}/_search` with a `knn` query clause
 and parses the hits into `OpenSearchHit` records (id, score, source map).
@@ -285,8 +285,8 @@ List<RankedHit> hits = semantic.search(
         "sentences", "embedding", "sentence", "a young dog", 10, 50);
 ```
 
-The module depends only on the SPI jars (`protomolt-embeddings`,
-`protomolt-rerank`); consumers pick the providers. See
+The module depends only on the SPI jars (`protomolt-search-embedding`,
+`protomolt-search-rerank`); consumers pick the providers. See
 [rerank.md](rerank.md) for the rerank SPI and the available providers.
 
 The live lanes: `RerankedSearchLiveIntegrationTest` runs the pipeline
@@ -300,7 +300,7 @@ The TEI lane is tagged `tei` and excluded from the default test task, so
 GitHub CI never runs it. Run it by hand with:
 
 ```
-./gradlew :protomolt-index-opensearch:teiIntegrationTest
+./gradlew :protomolt-search-index-opensearch:teiIntegrationTest
 ```
 
 In CI it runs on the Forgejo lane `.forgejo/workflows/tei-integration.yml`.

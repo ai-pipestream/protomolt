@@ -30,7 +30,7 @@ modules:
     name: buf.build/ai-pipestream/protobuf-metadata-testdata
   - path: protobuf/validation/src/test/proto
     name: buf.build/ai-pipestream/protobuf-validation-testdata
-  - path: protobuf/indexing/src/test/proto
+  - path: search/index/protobuf/src/test/proto
     name: buf.build/ai-pipestream/protobuf-indexing-testdata
   - path: surface/http/jsonschema/src/test/proto
     name: buf.build/ai-pipestream/jsonschema-testdata

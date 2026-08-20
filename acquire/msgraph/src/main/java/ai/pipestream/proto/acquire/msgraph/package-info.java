@@ -14,7 +14,7 @@
  * message.
  * {@link GraphConnections} drives the Copilot connectors (external connections) API — create a
  * connection, register its schema, and push external items — with {@link GraphSchemas}
- * rendering that schema from an {@link ai.pipestream.proto.index.spi.IndexMapping}, the same
+ * rendering that schema from an {@link ai.pipestream.proto.search.index.spi.IndexMapping}, the same
  * indexing hints the OpenSearch, Solr, and Lucene generators read.</p>
  *
  * <p>{@link GraphProbe} is a standalone command that reports which of these surfaces a given

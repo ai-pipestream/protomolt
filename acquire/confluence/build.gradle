@@ -5,7 +5,7 @@ plugins {
 description = 'Confluence Cloud REST API v2: entity protos for every API group, the ConfluenceEntity wrapper and crawl/live-update envelopes, the crawler core (REST client, JSON-to-proto mapper, ChangeSink SPI), and the ConfluenceService gRPC facade with a reflection-on Netty proxy launcher'
 
 dependencies {
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
     api project(':protomolt-protobuf-validation')
     api libs.protobuf.java
     // ConfluenceClient and ConfluenceMapper read the REST v2 JSON payloads.
@@ -28,7 +28,7 @@ dependencies {
     implementation project(':protomolt-repo-proto')
 
     // ConfluenceLuceneProjector: the Lucene mapper and index writer.
-    implementation project(':protomolt-index-lucene')
+    implementation project(':protomolt-search-index-lucene')
 
     // ParquetChangeSink: batches changes into Parquet part files on S3.
     implementation project(':protomolt-emit-parquet-s3')
@@ -57,7 +57,7 @@ dependencies {
     testImplementation libs.testcontainers.localstack
 
     // Extract the indexing-hints and validation .proto for protoc imports.
-    protobuf project(':protomolt-index-spi')
+    protobuf project(':protomolt-search-index-spi')
     protobuf project(':protomolt-protobuf-validation')
     // content_row.proto imports the projection extension options.
     protobuf project(':protomolt-projection')

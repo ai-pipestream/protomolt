@@ -3,7 +3,7 @@ description = 'The search service: a Lucene-backed query and indexing gRPC servi
 dependencies {
     api project(':protomolt-composer')
     api project(':protomolt-search-proto')
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
     // The document gate's validator and the TaxonomyCatalog seam are API:
     // hosts hand the module a catalog and the builder a validator.
     api project(':protomolt-protobuf-validation')
@@ -11,11 +11,11 @@ dependencies {
     // The screening mount seam is API too: hosts hand the module a live
     // Screener supplier; OpenNLP stays behind the screening module.
     api project(':protomolt-screening')
-    implementation project(':protomolt-index-lucene')
+    implementation project(':protomolt-search-index-lucene')
     implementation project(':protomolt-mapper-core')
     implementation project(':protomolt-descriptors')
-    implementation project(':protomolt-chunker')
-    implementation project(':protomolt-embeddings')
+    implementation project(':protomolt-search-chunk')
+    implementation project(':protomolt-search-embedding')
     // The service rides the repo wire contract only — the DocumentServiceGrpc
     // blocking stub, never repo container/service internals.
     implementation project(':protomolt-repo-proto')
@@ -41,7 +41,7 @@ dependencies {
 
 // The Lucene 11 line ships Java 25 bytecode, so this module's tests cannot run on an
 // older JVM: the test launcher stays on the toolchain JDK and -PtestJdk is ignored
-// here (same pin as :protomolt-index-lucene).
+// here (same pin as :protomolt-search-index-lucene).
 tasks.withType(Test).configureEach {
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(25)

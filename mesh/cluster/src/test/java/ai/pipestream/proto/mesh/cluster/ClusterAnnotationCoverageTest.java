@@ -1,6 +1,6 @@
 package ai.pipestream.proto.mesh.cluster;
 
-import ai.pipestream.proto.index.hints.IndexingHintsProto;
+import ai.pipestream.proto.search.index.hints.IndexingHintsProto;
 import ai.pipestream.proto.meta.MetadataProto;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
 import com.google.protobuf.Descriptors.Descriptor;

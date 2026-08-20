@@ -1,8 +1,8 @@
 package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.index.hints.FieldIndexHint;
-import ai.pipestream.proto.index.hints.IndexFieldType;
-import ai.pipestream.proto.index.hints.IndexingHintsProto;
+import ai.pipestream.proto.search.index.hints.FieldIndexHint;
+import ai.pipestream.proto.search.index.hints.IndexFieldType;
+import ai.pipestream.proto.search.index.hints.IndexingHintsProto;
 import ai.pipestream.proto.meta.FieldMeta;
 import ai.pipestream.proto.meta.MessageMeta;
 import ai.pipestream.proto.meta.MetadataProto;
@@ -106,7 +106,7 @@ final class TestFixtures {
                 .setExtension(IndexingHintsProto.index, FieldIndexHint.newBuilder()
                         .setType(IndexFieldType.INDEX_FIELD_TYPE_TEXT)
                         .setAnalyzer("english")
-                        .addSubFields(ai.pipestream.proto.index.hints.SubFieldHint.newBuilder()
+                        .addSubFields(ai.pipestream.proto.search.index.hints.SubFieldHint.newBuilder()
                                 .setType(IndexFieldType.INDEX_FIELD_TYPE_KEYWORD)
                                 .setName("raw"))
                         .build())
@@ -125,7 +125,7 @@ final class TestFixtures {
                         .setType(IndexFieldType.INDEX_FIELD_TYPE_VECTOR)
                         .setVectorDims(4)
                         .setVectorSimilarity(
-                                ai.pipestream.proto.index.hints.VectorSimilarity.VECTOR_SIMILARITY_L2)
+                                ai.pipestream.proto.search.index.hints.VectorSimilarity.VECTOR_SIMILARITY_L2)
                         .build())
                 .build();
         FileDescriptorProto file = FileDescriptorProto.newBuilder()

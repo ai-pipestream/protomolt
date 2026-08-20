@@ -1,12 +1,12 @@
 package ai.pipestream.proto.kafka.connect.opensearch;
 
-import ai.pipestream.proto.index.opensearch.OpenSearchMappingGenerator;
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.opensearch.OpenSearchMappingGenerator;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
 import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
-import ai.pipestream.proto.index.hints.FieldIndexHint;
-import ai.pipestream.proto.index.hints.IndexFieldType;
-import ai.pipestream.proto.index.hints.IndexingHintsProto;
+import ai.pipestream.proto.search.index.hints.FieldIndexHint;
+import ai.pipestream.proto.search.index.hints.IndexFieldType;
+import ai.pipestream.proto.search.index.hints.IndexingHintsProto;
 import ai.pipestream.proto.validate.FieldRules;
 import ai.pipestream.proto.validate.MessageRules;
 import ai.pipestream.proto.validate.StringRules;

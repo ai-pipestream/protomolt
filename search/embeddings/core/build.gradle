@@ -1,5 +1,0 @@
-description = 'Embedding-provider SPI (ServiceLoader) and the mapping-driven document embedder'
-
-dependencies {
-    api project(':protomolt-index-spi')
-}

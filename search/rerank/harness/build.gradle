@@ -1,8 +1,8 @@
 description = 'Ranked-list equivalence certification for rerank providers serving the same model'
 
 dependencies {
-    api project(':protomolt-rerank')
+    api project(':protomolt-search-rerank')
 
-    testImplementation project(':protomolt-rerank-tei')
-    testImplementation project(':protomolt-rerank-ovms')
+    testImplementation project(':protomolt-search-rerank-tei')
+    testImplementation project(':protomolt-search-rerank-ovms')
 }

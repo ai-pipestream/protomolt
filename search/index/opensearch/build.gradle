@@ -1,22 +1,22 @@
 description = 'OpenSearch document mapper plugin (ServiceLoader) and a thin HTTP sink'
 
 dependencies {
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
     api project(':protomolt-mapper-core')
 
     // OpenSearchSink builds request bodies and parses bulk responses with Jackson.
     implementation libs.jackson.databind
 
     // RerankedSemanticSearch orchestrates the two SPIs; consumers choose the providers.
-    implementation project(':protomolt-embeddings')
-    implementation project(':protomolt-rerank')
+    implementation project(':protomolt-search-embedding')
+    implementation project(':protomolt-search-rerank')
 
     testImplementation libs.opensearch.testcontainers
     testImplementation libs.testcontainers.junit.jupiter
     testImplementation project(':protomolt-protobuf-metadata')
     // The live TEI lane exercises the orchestration against the real providers.
-    testImplementation project(':protomolt-embeddings-tei')
-    testImplementation project(':protomolt-rerank-tei')
+    testImplementation project(':protomolt-search-embedding-tei')
+    testImplementation project(':protomolt-search-rerank-tei')
     // Compile-only need: javac resolves the Tei providers' (String) constructors against
     // their (ManagedChannel) overloads; gRPC itself rides along at runtime from the TEI modules.
     testImplementation libs.grpc.api

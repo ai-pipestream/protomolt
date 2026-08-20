@@ -20,7 +20,7 @@ dependencies {
     // index-hint options.
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-metadata')
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
     // Cluster directory mutations are mounted as bounded JSON actions on the
     // same REST, gRPC catalog, and MCP surfaces as the other ProtoMolt verbs.
     api project(':protomolt-actions')

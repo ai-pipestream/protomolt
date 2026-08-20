@@ -1,12 +1,12 @@
 package ai.pipestream.proto.kafka.connect.opensearch;
 
-import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
 import ai.pipestream.proto.validate.FieldRules;
 import ai.pipestream.proto.validate.StringRules;
 import ai.pipestream.proto.validate.ValidateProto;
-import ai.pipestream.proto.index.hints.FieldIndexHint;
-import ai.pipestream.proto.index.hints.IndexFieldType;
-import ai.pipestream.proto.index.hints.IndexingHintsProto;
+import ai.pipestream.proto.search.index.hints.FieldIndexHint;
+import ai.pipestream.proto.search.index.hints.IndexFieldType;
+import ai.pipestream.proto.search.index.hints.IndexingHintsProto;
 import com.google.protobuf.Any;
 import com.google.protobuf.AnyProto;
 import com.google.protobuf.ByteString;

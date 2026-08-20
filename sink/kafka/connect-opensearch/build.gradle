@@ -1,16 +1,16 @@
 description = 'Kafka Connect OpenSearch sink: descriptor indexing hints drive topic records into OpenSearch through the search-index SPI, google.protobuf.Any expansion and declared-rule payload validation included'
 
 dependencies {
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
 
     // The Connect worker provides the framework at runtime; plugins must not bundle it.
     compileOnly libs.kafka.connect.api
 
-    implementation project(':protomolt-index-opensearch')
+    implementation project(':protomolt-search-index-opensearch')
     implementation project(':protomolt-kafka-wire')
     // Registers the hint + validation extensions for descriptor-set parsing and turns on
     // the declared-rules gate for unpacked Any payloads (ServiceLoader).
-    implementation project(':protomolt-protobuf-indexing')
+    implementation project(':protomolt-search-index-protobuf')
     // Linking a descriptor set with the metadata extensions readable (json_name).
     implementation project(':protomolt-protobuf-metadata')
     implementation libs.protobuf.java.util

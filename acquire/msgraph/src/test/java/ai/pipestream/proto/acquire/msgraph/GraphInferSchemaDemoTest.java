@@ -1,6 +1,6 @@
 package ai.pipestream.proto.acquire.msgraph;
 
-import ai.pipestream.proto.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.shapes.SchemaInferrer;
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
 import com.fasterxml.jackson.databind.node.ObjectNode;

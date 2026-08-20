@@ -54,7 +54,7 @@ reads are `opinion_id`, `cluster_id`, `case_name`, `date_filed`, `judges`,
 ## Embeddings
 
 Each document is embedded as `title + "\n" + first 2000 chars of body` with the
-Model2Vec provider (`:protomolt-embeddings-model2vec`) and attached as one
+Model2Vec provider (`:protomolt-search-embedding-model2vec`) and attached as one
 `SemanticProcessingResult` (`result_id` `court-sample-doc-embedding`) with a single
 `SemanticChunk` carrying a `ChunkEmbedding`.
 

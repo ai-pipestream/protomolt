@@ -1,7 +1,7 @@
 package ai.pipestream.proto.search.service;
 
-import ai.pipestream.proto.index.spi.ChunkingPolicy;
-import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.ChunkingPolicy;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
 import com.google.protobuf.Message;
 import java.util.function.Function;
 

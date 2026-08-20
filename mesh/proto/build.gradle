@@ -14,7 +14,7 @@ dependencies {
     // options, plus index hints on exactly the named discovery-query fields.
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-metadata')
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
 }
 
 // Messages and options only — node services arrive with the transport

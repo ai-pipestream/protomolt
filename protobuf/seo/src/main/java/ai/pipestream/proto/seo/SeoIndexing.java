@@ -1,12 +1,12 @@
 package ai.pipestream.proto.seo;
 
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexingHintSource;
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.IndexMappingFactory;
-import ai.pipestream.proto.index.spi.InferringIndexingHintSource;
-import ai.pipestream.proto.index.spi.ProtoOptionsIndexingHintSource;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexingHintSource;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
+import ai.pipestream.proto.search.index.spi.InferringIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.ProtoOptionsIndexingHintSource;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 

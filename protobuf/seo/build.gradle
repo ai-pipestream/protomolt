@@ -12,10 +12,10 @@ dependencies {
     // rules, meta.v1 descriptions, and the index.hints.v1 field hints.
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-metadata')
-    api project(':protomolt-index-spi')
+    api project(':protomolt-search-index-spi')
 
     // The end-to-end test proves the annotated plan against a real Lucene index.
-    testImplementation project(':protomolt-index-lucene')
+    testImplementation project(':protomolt-search-index-lucene')
 }
 
 // Messages and options only — no gRPC service here.
@@ -27,7 +27,7 @@ protobuf {
 
 // The Lucene 11 line ships Java 25 bytecode, so the Lucene end-to-end test
 // cannot run on an older JVM: the test launcher stays on the toolchain JDK
-// and -PtestJdk is ignored here (same pin as :protomolt-index-lucene).
+// and -PtestJdk is ignored here (same pin as :protomolt-search-index-lucene).
 tasks.withType(Test).configureEach {
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(25)

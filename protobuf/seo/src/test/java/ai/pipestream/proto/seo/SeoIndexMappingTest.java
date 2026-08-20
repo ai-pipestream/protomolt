@@ -1,7 +1,7 @@
 package ai.pipestream.proto.seo;
 
-import ai.pipestream.proto.index.spi.IndexFieldKind;
-import ai.pipestream.proto.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.IndexFieldKind;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
 import ai.pipestream.proto.seo.v1.SearchStandard;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;

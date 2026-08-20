@@ -2,8 +2,8 @@ package ai.pipestream.proto.platform;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import ai.pipestream.proto.index.spi.IndexMapping;
-import ai.pipestream.proto.index.spi.ResolvedFieldHint;
+import ai.pipestream.proto.search.index.spi.IndexMapping;
+import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.MemberRole;
 import ai.pipestream.proto.metric.TimeGrain;

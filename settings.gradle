@@ -109,9 +109,6 @@ project(':protomolt-protobuf-validation-protovalidate').projectDir = file('proto
 include 'protomolt-protobuf-validation-conformance'
 project(':protomolt-protobuf-validation-conformance').projectDir = file('protobuf/validation-conformance')
 
-include 'protomolt-protobuf-indexing'
-project(':protomolt-protobuf-indexing').projectDir = file('protobuf/indexing')
-
 include 'protomolt-protobuf-seo'
 project(':protomolt-protobuf-seo').projectDir = file('protobuf/seo')
 include 'protomolt-protobuf-types'
@@ -161,11 +158,11 @@ project(':protomolt-mesh-cluster').projectDir = file('mesh/cluster')
 
 // search/ — index mappers plus the embedding and rerank model SPIs.
 
-include 'protomolt-index-spi'
-project(':protomolt-index-spi').projectDir = file('search/index/spi')
+include 'protomolt-search-index-spi'
+project(':protomolt-search-index-spi').projectDir = file('search/index/spi')
 
-include 'protomolt-chunker'
-project(':protomolt-chunker').projectDir = file('search/chunk')
+include 'protomolt-search-chunk'
+project(':protomolt-search-chunk').projectDir = file('search/chunk')
 
 include 'protomolt-search-proto'
 project(':protomolt-search-proto').projectDir = file('search/proto')
@@ -179,47 +176,50 @@ project(':protomolt-search-snapshot-s3').projectDir = file('search/snapshot-s3')
 include 'protomolt-search-console'
 project(':protomolt-search-console').projectDir = file('search/console')
 
-include 'protomolt-index-ndjson'
-project(':protomolt-index-ndjson').projectDir = file('search/index/ndjson')
+include 'protomolt-search-index-ndjson'
+project(':protomolt-search-index-ndjson').projectDir = file('search/index/ndjson')
 
-include 'protomolt-index-lucene'
-project(':protomolt-index-lucene').projectDir = file('search/index/lucene')
+include 'protomolt-search-index-lucene'
+project(':protomolt-search-index-lucene').projectDir = file('search/index/lucene')
 
-include 'protomolt-index-opensearch'
-project(':protomolt-index-opensearch').projectDir = file('search/index/opensearch')
+include 'protomolt-search-index-opensearch'
+project(':protomolt-search-index-opensearch').projectDir = file('search/index/opensearch')
 
-include 'protomolt-index-solr'
-project(':protomolt-index-solr').projectDir = file('search/index/solr')
+include 'protomolt-search-index-solr'
+project(':protomolt-search-index-solr').projectDir = file('search/index/solr')
 
-include 'protomolt-index-qdrant'
-project(':protomolt-index-qdrant').projectDir = file('search/index/qdrant')
+include 'protomolt-search-index-qdrant'
+project(':protomolt-search-index-qdrant').projectDir = file('search/index/qdrant')
 
-include 'protomolt-embeddings'
-project(':protomolt-embeddings').projectDir = file('search/embeddings/core')
+include 'protomolt-search-index-protobuf'
+project(':protomolt-search-index-protobuf').projectDir = file('search/index/protobuf')
 
-include 'protomolt-embeddings-model2vec'
-project(':protomolt-embeddings-model2vec').projectDir = file('search/embeddings/providers/model2vec')
+include 'protomolt-search-embedding'
+project(':protomolt-search-embedding').projectDir = file('search/embedding/core')
 
-include 'protomolt-embeddings-tei'
-project(':protomolt-embeddings-tei').projectDir = file('search/embeddings/providers/tei')
+include 'protomolt-search-embedding-model2vec'
+project(':protomolt-search-embedding-model2vec').projectDir = file('search/embedding/model2vec')
 
-include 'protomolt-embeddings-ovms'
-project(':protomolt-embeddings-ovms').projectDir = file('search/embeddings/providers/ovms')
+include 'protomolt-search-embedding-tei'
+project(':protomolt-search-embedding-tei').projectDir = file('search/embedding/tei')
 
-include 'protomolt-embeddings-harness'
-project(':protomolt-embeddings-harness').projectDir = file('search/embeddings/harness')
+include 'protomolt-search-embedding-ovms'
+project(':protomolt-search-embedding-ovms').projectDir = file('search/embedding/ovms')
 
-include 'protomolt-rerank'
-project(':protomolt-rerank').projectDir = file('search/rerank/core')
+include 'protomolt-search-embedding-harness'
+project(':protomolt-search-embedding-harness').projectDir = file('search/embedding/harness')
 
-include 'protomolt-rerank-tei'
-project(':protomolt-rerank-tei').projectDir = file('search/rerank/providers/tei')
+include 'protomolt-search-rerank'
+project(':protomolt-search-rerank').projectDir = file('search/rerank/core')
 
-include 'protomolt-rerank-ovms'
-project(':protomolt-rerank-ovms').projectDir = file('search/rerank/providers/ovms')
+include 'protomolt-search-rerank-tei'
+project(':protomolt-search-rerank-tei').projectDir = file('search/rerank/tei')
 
-include 'protomolt-rerank-harness'
-project(':protomolt-rerank-harness').projectDir = file('search/rerank/harness')
+include 'protomolt-search-rerank-ovms'
+project(':protomolt-search-rerank-ovms').projectDir = file('search/rerank/ovms')
+
+include 'protomolt-search-rerank-harness'
+project(':protomolt-search-rerank-harness').projectDir = file('search/rerank/harness')
 
 // metric/ — descriptor-declared measures and dimensions, the query compiler,
 // and its execution backends.

@@ -29,7 +29,7 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `acquire/connector/` | `acquire-connector` | Push-style streaming inputs behind one bounded, pausable SPI: gRPC server streams and Kafka topics feed a synchronous pipeline through the `SourcePump` bridge |
 | `schema/registry/` | `registry`, `registry-server` | Git-backed schema registry: subject/version store with compatibility-gated writes, served over the Confluent protocol |
 | `schema/` | `schema-apicurio`, `schema-apicurio-deployment`, `schema-confluent` | Descriptor loaders and schema publishers for Apicurio Registry and Confluent-compatible schema registries; the Apicurio loader's Quarkus build-time half |
-| `protobuf/` | `protobuf-metadata`, `protobuf-quality`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance`, `protobuf-indexing` | Descriptor-option standards for metadata, validation, and indexing; CEL-scored quality dimensions declared as message options; protovalidate dialect and conformance harness |
+| `protobuf/` | `protobuf-metadata`, `protobuf-quality`, `protobuf-validation`, `protobuf-validation-protovalidate`, `protobuf-validation-conformance` | Descriptor-option standards for metadata and validation; CEL-scored quality dimensions declared as message options; protovalidate dialect and conformance harness |
 | `mesh/cluster/` | `mesh-cluster` | In-memory cluster discovery with fenced presence and capacity, encrypted repository-service event persistence, and restart replay |
 | `transform/mapper/` | `mapper-core`, `mapper-cel`, `metadata` | Text mapping rules, CEL filters and selectors, CEL-driven metadata extraction |
 | `transform/shapes/` | `shapes` | Joins, unions, and derived shapes: multi-source mapping scopes, runtime message-type synthesis (envelope, projection, tagged union), schema merging with clash resolution, and struct-to-proto inference |
@@ -38,16 +38,16 @@ Maven artifact IDs carry the `protomolt-` prefix; Java packages use the
 | `transform/workflow/` | `workflow` | Checked serial gRPC compositions with gates, deadlines, named registry storage, and keyed or zip joins over two live streams |
 | `transform/delegation/` | `delegation` | Coordinator and worker bidirectional contract, transcript reduction, encrypted repository-service persistence, and restart restoration |
 | `jobs/` | `jobs-proto`, `jobs-service` | Durable workflow runs with step checkpoints, external completion, Kafka request and event topics, typed failures, and retries |
-| `search/index/` | `index-spi`, `index-ndjson`, `index-lucene`, `index-opensearch`, `index-solr`, `index-qdrant` | Index mappings and hints; NDJSON output; engine plugins |
-| `search/embeddings/` | `embeddings` | Embedding-provider SPI and the mapping-driven embedder that fills a document's VECTOR field from its TEXT field |
-| `search/embeddings/providers/` | `embeddings-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
-| `search/embeddings/providers/` | `embeddings-tei` | Remote provider for Hugging Face Text Embeddings Inference over gRPC |
-| `search/embeddings/providers/` | `embeddings-ovms` | Remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
-| `search/embeddings/` | `embeddings-harness` | Pairwise cosine-equivalence certification for two providers serving the same model |
-| `search/rerank/` | `rerank` | Rerank-provider SPI: score a query's candidate texts so pipelines can re-order search hits |
-| `search/rerank/providers/` | `rerank-tei` | Remote rerank provider for Hugging Face Text Embeddings Inference over gRPC |
-| `search/rerank/providers/` | `rerank-ovms` | Remote rerank provider for OpenVINO Model Server over the REST rerank endpoint |
-| `search/rerank/` | `rerank-harness` | Ranked-list equivalence certification (Kendall tau-b plus top-1 agreement) for two providers serving the same model |
+| `search/index/` | `search-index-spi`, `search-index-ndjson`, `search-index-lucene`, `search-index-opensearch`, `search-index-solr`, `search-index-qdrant`, `search-index-protobuf` | Index mappings and hints; NDJSON output; engine plugins; the descriptor-driven indexer and its Any-payload gate |
+| `search/embedding/` | `search-embedding` | Embedding-provider SPI and the mapping-driven embedder that fills a document's VECTOR field from its TEXT field |
+| `search/embedding/` | `search-embedding-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
+| `search/embedding/` | `search-embedding-tei` | Remote provider for Hugging Face Text Embeddings Inference over gRPC |
+| `search/embedding/` | `search-embedding-ovms` | Remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
+| `search/embedding/` | `search-embedding-harness` | Pairwise cosine-equivalence certification for two providers serving the same model |
+| `search/rerank/` | `search-rerank` | Rerank-provider SPI: score a query's candidate texts so pipelines can re-order search hits |
+| `search/rerank/` | `search-rerank-tei` | Remote rerank provider for Hugging Face Text Embeddings Inference over gRPC |
+| `search/rerank/` | `search-rerank-ovms` | Remote rerank provider for OpenVINO Model Server over the REST rerank endpoint |
+| `search/rerank/` | `search-rerank-harness` | Ranked-list equivalence certification (Kendall tau-b plus top-1 agreement) for two providers serving the same model |
 | `sink/emit/` | `emit`, `emit-okf`, `emit-parquet` | Bundles of rendered files and the sinks that deliver them (directory, git, zip); the OKF v0.1 knowledge-bundle renderer; descriptor-driven Parquet with no generated classes and no native Hadoop |
 | `sink/` | `iceberg`, `iceberg-s3` | Apache Iceberg: descriptor-driven table schemas and an append sink writing ProtoMolt Parquet through any catalog; `S3FileIO` wiring so tables live on any S3-compatible store |
 | `sink/kafka/` | `connect`, `connect-iceberg`, `serde`, `serde-micrometer` | Kafka Connect plugin: the sink drives any gRPC method from topics, the source feeds topics from server streams with CEL resume-token offsets, and four protobuf-aware transforms (validate, map, redact, CEL filter) drop into any pipeline; a separate sink lands records as Iceberg snapshots; a protobuf serde speaking the Confluent wire format, enforcing declared rules on write, with a Micrometer metrics binding |
