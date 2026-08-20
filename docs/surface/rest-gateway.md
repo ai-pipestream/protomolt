@@ -7,7 +7,7 @@ framework-agnostic; thin host modules bind it to an HTTP stack.
 
 ## JSON transcoding
 
-`ProtobufJsonTranscoder` (`protomolt-json`) converts between protobuf
+`ProtobufJsonTranscoder` (`protomolt-http-json`) converts between protobuf
 messages and JSON in both directions. It resolves types through a
 `DescriptorRegistry`, so it handles `DynamicMessage`s for types loaded from
 a registry as naturally as generated classes, and its type registry follows
@@ -17,7 +17,7 @@ the descriptor registry as it grows. Malformed input surfaces as
 
 ## The gateway
 
-`ProtoRestGateway` (`protomolt-rest`) dispatches
+`ProtoRestGateway` (`protomolt-http-rest`) dispatches
 `POST /{service}/{method}` calls: it authenticates the request, transcodes
 the JSON body to the request message, invokes the registered handler, and
 transcodes the response back.
@@ -81,7 +81,7 @@ a type-level annotation supplies defaults for the class.
 
 ## OpenAPI
 
-`ProtoOpenApiGenerator` (`protomolt-openapi`) builds an OpenAPI 3.x
+`ProtoOpenApiGenerator` (`protomolt-http-openapi`) builds an OpenAPI 3.x
 document from the method registry and descriptors: schemas, security
 schemes from the token requirements, and summaries from the registrations:
 

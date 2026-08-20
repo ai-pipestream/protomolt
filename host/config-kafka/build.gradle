@@ -4,7 +4,7 @@ dependencies {
     api project(':protomolt-config')
     // The house serde: Confluent wire format against the protomolt
     // registry, validate-on-read forced on for the config lane.
-    implementation project(':protomolt-serde')
+    implementation project(':protomolt-kafka-serde')
     // This plug owns its consumer, so it ships the client it runs.
     implementation libs.kafka.clients
     implementation libs.slf4j.api

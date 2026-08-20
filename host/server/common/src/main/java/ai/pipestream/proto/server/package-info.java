@@ -3,14 +3,14 @@
  *
  * <p>{@link ai.pipestream.proto.server.ProtoRestServerHost} is the contract every
  * {@code servers/*} adapter implements: start, report the bound port, and expose the
- * {@link ai.pipestream.proto.rest.ProtoRestGateway} it fronts. Request handling itself belongs to
+ * {@link ai.pipestream.proto.http.rest.ProtoRestGateway} it fronts. Request handling itself belongs to
  * the gateway; a host binds HTTP and nothing more.
  *
  * <p>{@link ai.pipestream.proto.server.ProtoToolsServerConfig} carries the bind address, the REST
  * path prefix, the OpenAPI and health paths, and the request body cap, normalizing each on
  * construction. {@link ai.pipestream.proto.server.ProtoRestHttpSupport} holds the logic the hosts
  * would otherwise duplicate — path parsing, query and header flattening, body size checks, and the
- * mapping from {@link ai.pipestream.proto.rest.ProtoRestException} subtypes to HTTP status codes —
+ * mapping from {@link ai.pipestream.proto.http.rest.ProtoRestException} subtypes to HTTP status codes —
  * so that all hosts answer identically for the same request.
  *
  * <p>The concrete hosts live in the sibling modules {@code servers/jdk}, {@code servers/netty},

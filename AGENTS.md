@@ -130,8 +130,6 @@ carry their targets into the single pre-1.0 breaking batch.
 | protomolt-chunker | search/chunk | protomolt-search-chunk |
 | protomolt-embeddings{,-model2vec,-tei,-ovms,-harness} | search/embeddings/** | protomolt-search-embedding-* |
 | protomolt-rerank{,-tei,-ovms,-harness} | search/rerank/** | protomolt-search-rerank-* |
-| protomolt-connect{,-iceberg,-opensearch}, protomolt-serde{,-micrometer} | sink/kafka/* | protomolt-kafka-connect-*, protomolt-kafka-serde-* |
-| protomolt-json, protomolt-rest, protomolt-openapi, protomolt-jsonschema | surface/http/* | protomolt-http-* |
 | protomolt-quarkus, protomolt-quarkus-deployment, protomolt-spring | host/integrations/** | protomolt-integration-* |
 | protomolt-proto-sources | core/sources | protomolt-source; `proto-` is not a path segment |
 | protomolt-gather{,-git,-maven}, protomolt-msgraph, protomolt-connector | acquire/** | protomolt-acquire-*; acquire is a domain tree |

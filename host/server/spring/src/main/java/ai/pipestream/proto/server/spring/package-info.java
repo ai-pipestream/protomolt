@@ -3,7 +3,7 @@
  *
  * <p>{@link ai.pipestream.proto.server.spring.SpringProtoRestController} is a
  * {@code @RestController} that maps the invoke, OpenAPI, and health routes onto an injected
- * {@link ai.pipestream.proto.rest.ProtoRestGateway}. Route paths are read from the
+ * {@link ai.pipestream.proto.http.rest.ProtoRestGateway}. Route paths are read from the
  * {@code pipestream.proto.rest.*} properties, defaulting to the same values as
  * {@link ai.pipestream.proto.server.ProtoToolsServerConfig}, so the mount point can be changed
  * without recompiling.

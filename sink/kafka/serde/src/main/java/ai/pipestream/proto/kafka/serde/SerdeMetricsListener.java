@@ -10,7 +10,7 @@ import java.util.List;
  * schema's declared rules and which rules they violated, and how often the registry could not
  * answer. Implementations are discovered with {@link java.util.ServiceLoader} — put one on the
  * classpath and every serde reports to it, no configuration — and the
- * {@code protomolt-serde-micrometer} module ships one that turns these calls into Micrometer
+ * {@code protomolt-kafka-serde-micrometer} module ships one that turns these calls into Micrometer
  * counters.</p>
  *
  * <p>Every method has an empty default, so a listener implements only what it wants. Listener

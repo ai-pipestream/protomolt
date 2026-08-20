@@ -67,7 +67,7 @@ jobs:
       - name: Distribution and container preflight
         run: |
           ./gradlew :protomolt-serve:distZip :protomolt-serve:installDist \
-            :protomolt-mcp:distZip :protomolt-connect:connectPluginZip \
+            :protomolt-mcp:distZip :protomolt-kafka-connect:connectPluginZip \
             :protomolt-document-platform:distZip \
             :protomolt-document-platform:installDist \
             --no-daemon --console=plain
@@ -97,7 +97,7 @@ jobs:
           echo "Released version: $V"
 
       - name: Build runnable distributions
-        run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip :protomolt-connect:connectPluginZip :protomolt-document-platform:distZip --no-daemon
+        run: ./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip :protomolt-kafka-connect:connectPluginZip :protomolt-document-platform:distZip --no-daemon
 
       - name: Publish signed artifacts to Maven Central
         env:
@@ -115,7 +115,7 @@ jobs:
           gh release create "v$V" --title "ProtoMolt $V" --generate-notes \
             "apps/serve/build/distributions/protomolt-serve-$V.zip#protomolt-serve $V (run bin/protomolt-serve, JRE 21+)" \
             "surface/mcp/build/distributions/protomolt-mcp-$V.zip#protomolt-mcp $V (run bin/protomolt-mcp, JRE 21+)" \
-            "sink/kafka/connect/build/distributions/protomolt-connect-plugin-$V.zip#protomolt-connect $V (Kafka Connect plugin, unzip onto plugin.path)" \
+            "sink/kafka/connect/build/distributions/protomolt-connect-plugin-$V.zip#protomolt-kafka-connect $V (Kafka Connect plugin, unzip onto plugin.path)" \
             "apps/document-platform/build/distributions/protomolt-document-platform-$V.zip#protomolt-document-platform $V (run bin/protomolt-document-platform, JRE 25+)"
 
   docker:

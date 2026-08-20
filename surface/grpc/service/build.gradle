@@ -28,6 +28,6 @@ dependencies {
 
     implementation libs.grpc.netty.shaded
 
-    testImplementation project(':protomolt-json')
+    testImplementation project(':protomolt-http-json')
     testImplementation libs.grpc.inprocess
 }

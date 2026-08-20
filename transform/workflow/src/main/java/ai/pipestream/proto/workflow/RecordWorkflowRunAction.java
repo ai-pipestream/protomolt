@@ -7,7 +7,7 @@ import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 

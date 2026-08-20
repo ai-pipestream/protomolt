@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>Defaults are a live tap: auto-commit on, newest offsets. Offset ownership is a
  * deployment concern carried in {@link KafkaSourcePlan#overrides()}, not part of this
  * interface; for managed offsets and rebalance-safe delivery, the Kafka Connect source
- * ({@code protomolt-connect}) is the production path.</p>
+ * ({@code protomolt-kafka-connect}) is the production path.</p>
  *
  * <p>One caveat for bounded consumers: a full {@link SourcePump} blocks the poll thread,
  * and a stall longer than {@code max.poll.interval.ms} drops the consumer from its group.

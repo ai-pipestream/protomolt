@@ -1,6 +1,6 @@
 package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 

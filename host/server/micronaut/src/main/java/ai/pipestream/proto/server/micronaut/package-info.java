@@ -7,7 +7,7 @@
  * dependency on Micronaut; the facade returns each response as a
  * {@code MicronautProtoRestFacade.Result} carrying status, body, and headers.
  *
- * <p>Request handling is delegated to {@link ai.pipestream.proto.rest.ProtoRestGateway}, and body
+ * <p>Request handling is delegated to {@link ai.pipestream.proto.http.rest.ProtoRestGateway}, and body
  * size checks, header flattening, and status mapping come from
  * {@link ai.pipestream.proto.server.ProtoRestHttpSupport}, so responses match the standalone hosts.
  *

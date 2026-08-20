@@ -13,7 +13,7 @@ import java.util.Map;
  * The validating interceptors' events as Micrometer meters. Put this module on the classpath
  * and every interceptor reports — discovery is {@link java.util.ServiceLoader}, the no-arg
  * constructor binds to {@link Metrics#globalRegistry}, and nothing is configured. The gRPC
- * sibling of the serde's {@code protomolt-serde-micrometer}.
+ * sibling of the serde's {@code protomolt-kafka-serde-micrometer}.
  *
  * <h2>Meters</h2>
  * <ul>

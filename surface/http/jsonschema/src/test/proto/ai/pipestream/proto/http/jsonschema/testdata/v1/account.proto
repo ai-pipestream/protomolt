@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.http.jsonschema.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.http.jsonschema.testdata";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Account tier; exercises enum handling (defined_only) in the generator.
+enum Tier {
+  // Zero value; rejected by defined_only validation.
+  TIER_UNSPECIFIED = 0;
+  // Basic tier.
+  TIER_BASIC = 1;
+  // Pro tier; the message-level CEL rule requires an email for it.
+  TIER_PRO = 2;
+}
+
+// Kitchen-sink fixture for the JSON Schema generator: one field per rule kind
+// (string, numeric, repeated, map, enum, bool, message, CEL) plus unannotated
+// scalars, so the tests can check each rule's schema keywords and that
+// unannotated fields fall back to plain type mappings. The message-level CEL
+// rule also exercises cross-field constraints landing in the schema.
+message Account {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "account.pro_needs_email"
+      message: "pro accounts need an email"
+      expression: "this.tier != 2 || this.email != ''"
+    }
+  };
+
+  // Login name; the only required field (lands in the schema's required
+  // array), with length and pattern rules.
+  string username = 1 [(ai.pipestream.proto.validate.v1.field) = {
+    required: true
+    string: { min_len: 3, max_len: 20, pattern: "^[a-z0-9_]+$" }
+  }];
+  // Contact email; maps to the "email" format keyword.
+  string email = 2 [(ai.pipestream.proto.validate.v1.field) = {
+    string: { email: true }
+  }];
+  // Age in years; bounds map to minimum / exclusiveMaximum.
+  int32 age = 3 [(ai.pipestream.proto.validate.v1.field) = {
+    int32: { gte: 13, lt: 200 }
+  }];
+  // Balance; exercises uint64's integer-or-string JSON spelling, with the
+  // upper bound enforced on both spellings.
+  uint64 balance = 4 [(ai.pipestream.proto.validate.v1.field) = {
+    uint64: { lte: 1000000 }
+  }];
+  // Granted roles; non-empty, unique, each drawn from a fixed set.
+  repeated string roles = 5 [(ai.pipestream.proto.validate.v1.field) = {
+    repeated: {
+      min_items: 1
+      unique: true
+      items: { string: { in: "admin", in: "user" } }
+    }
+  }];
+  // Per-resource quotas; exercises key and value rules on map entries.
+  map<string, int32> quotas = 6 [(ai.pipestream.proto.validate.v1.field) = {
+    map: {
+      keys: { string: { min_len: 2 } }
+      values: { int32: { gte: 0 } }
+    }
+  }];
+  // Account tier; must be a defined enum value (no UNSPECIFIED, no unknown
+  // numbers).
+  Tier tier = 7 [(ai.pipestream.proto.validate.v1.field) = {
+    enum: { defined_only: true }
+  }];
+  // Avatar image; unannotated bytes (schema: base64 string).
+  bytes avatar = 8;
+  // Presence-tracked flag; when set it must be true.
+  optional bool active = 9 [(ai.pipestream.proto.validate.v1.field) = {
+    bool: { const: true }
+  }];
+  // Creation time; unannotated well-known type (schema: date-time string).
+  google.protobuf.Timestamp created = 10;
+  // Time-to-live; unannotated well-known type (schema: duration string).
+  google.protobuf.Duration ttl = 11;
+  // Parent account; exercises recursion — the schema refs back into $defs.
+  Account parent = 12;
+  // Free-text note; exercises a field-level CEL rule (length cap).
+  string note = 13 [(ai.pipestream.proto.validate.v1.field) = {
+    cel: {
+      id: "note.short"
+      message: "notes are short"
+      expression: "this.size() < 100"
+    }
+  }];
+  // Pinned version; a const constraint that must accept int64's numeric and
+  // string spellings alike.
+  int64 exact_version = 14 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { const: 5 }
+  }];
+  // Coarse level; an in-set constraint over both int64 spellings.
+  int64 level = 15 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { in: 1, in: 2, in: 3 }
+  }];
+  // Shard number; a not_in (forbidden value) constraint.
+  int64 shard = 16 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { not_in: 4 }
+  }];
+  // Signed offset in ms; a range that must also hold for int64's string
+  // spelling, including negatives.
+  int64 offset_ms = 17 [(ai.pipestream.proto.validate.v1.field) = {
+    int64: { gte: -500, lte: 500 }
+  }];
+}

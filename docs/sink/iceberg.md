@@ -148,7 +148,7 @@ back, so the interop is a test rather than a claim.
 
 ## Streaming in with Kafka Connect
 
-`protomolt-connect-iceberg` is a Kafka Connect sink: topic records land as Iceberg
+`protomolt-kafka-connect-iceberg` is a Kafka Connect sink: topic records land as Iceberg
 table rows, committed as snapshots through the same descriptor-driven emitter, with
 no generated stubs and no gRPC. Each `put` batch is one snapshot, so offsets advance
 only after the commit; delivery is at-least-once (a redelivered batch appends again,

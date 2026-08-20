@@ -1,6 +1,6 @@
 # Kafka serde
 
-`protomolt-serde` is a Kafka protobuf serializer and deserializer that writes
+`protomolt-kafka-serde` is a Kafka protobuf serializer and deserializer that writes
 the Confluent wire format and enforces the schema's own declared rules on the
 way out.
 
@@ -217,7 +217,7 @@ malformed rule fails at configure time.
 
 The serde is the choke point every record passes through, and it is already
 deciding what a data-quality dashboard wants to know. Drop
-`protomolt-serde-micrometer` on the classpath: nothing to configure, the
+`protomolt-kafka-serde-micrometer` on the classpath: nothing to configure, the
 serde discovers it, and every serde reports counters to Micrometer's global
 registry, which is where an instrumented application already points its
 Prometheus (or other) backend:

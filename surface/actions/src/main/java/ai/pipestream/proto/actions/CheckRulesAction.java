@@ -5,7 +5,7 @@ import ai.pipestream.proto.cel.CelEvaluator;
 import ai.pipestream.proto.cel.CelMappingRule;
 import ai.pipestream.proto.cel.CelProtoMapper;
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
 import ai.pipestream.proto.shapes.MessageJoiner;
 import ai.pipestream.proto.shapes.MessageScope;

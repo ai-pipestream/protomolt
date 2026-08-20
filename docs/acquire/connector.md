@@ -2,7 +2,7 @@
 
 A connector is a streaming input for a pipeline: a gRPC server stream or a
 Kafka topic, opened once and then pushed to a listener until it ends, fails,
-or is closed. The Kafka Connect runtime (`protomolt-connect`) and a pipeline
+or is closed. The Kafka Connect runtime (`protomolt-kafka-connect`) and a pipeline
 executor both build on this SPI.
 
 ## The SPI

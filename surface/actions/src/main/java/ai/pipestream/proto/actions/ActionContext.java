@@ -1,7 +1,7 @@
 package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
-import ai.pipestream.proto.json.ProtobufJsonTranscoder;
+import ai.pipestream.proto.http.json.ProtobufJsonTranscoder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Objects;

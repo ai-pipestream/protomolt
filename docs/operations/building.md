@@ -67,7 +67,7 @@ native v3 API, and the Confluent subjects API against both Apicurio's
 ccompat facade and a Redpanda container.
 
 The Confluent lanes (the `:protomolt-schema-confluent` Confluent suites and
-the `:protomolt-serde` registry suite) provision their own registry: a
+the `:protomolt-kafka-serde` registry suite) provision their own registry: a
 Testcontainers Redpanda, which serves the Confluent Schema Registry API.
 They run wherever Docker is available and skip otherwise.
 
@@ -82,7 +82,7 @@ The Iceberg lanes self-provision the same way. The `:protomolt-iceberg`
 suites each boot an `apache/iceberg-rest-fixture` catalog (one suite uses
 `apache/gravitino-iceberg-rest` instead), the `:protomolt-iceberg-s3` suite
 pairs a fixture catalog with a Testcontainers LocalStack S3 store, and the
-`:protomolt-connect-iceberg` suite boots its own fixture catalog. They run
+`:protomolt-kafka-connect-iceberg` suite boots its own fixture catalog. They run
 wherever Docker is available and skip otherwise, so the compose stack's
 `iceberg-rest`, `iceberg-rest-s3`, `rustfs`, and `gravitino-iceberg-rest`
 services are not needed for tests.
@@ -173,7 +173,7 @@ to `main` and on pull requests:
   against it: `:protomolt-schema-apicurio`, `:protomolt-schema-confluent`,
   `:protomolt-index-solr`, `:protomolt-index-opensearch`,
   `:protomolt-iceberg`, `:protomolt-iceberg-s3`,
-  `:protomolt-connect-iceberg`, and `:protomolt-serde`.
+  `:protomolt-kafka-connect-iceberg`, and `:protomolt-kafka-serde`.
 
 ## Releasing to Maven Central
 

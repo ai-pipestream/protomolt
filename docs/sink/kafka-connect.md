@@ -1,6 +1,6 @@
 # Kafka Connect
 
-`protomolt-connect` is a Kafka Connect plugin that joins topics and gRPC
+`protomolt-kafka-connect` is a Kafka Connect plugin that joins topics and gRPC
 services in both directions, descriptor-native with no generated stubs:
 
 - **`GrpcSinkConnector`**: records from subscribed topics become request
@@ -23,9 +23,9 @@ generation, no rebuild when the schema changes. The classes live in
 `ai.pipestream.proto.kafka.connect`.
 
 Two sibling plugins land records in storage instead of gRPC: the
-[Iceberg sink](iceberg.md) (`protomolt-connect-iceberg`) and the
+[Iceberg sink](iceberg.md) (`protomolt-kafka-connect-iceberg`) and the
 [OpenSearch sink](kafka-connect-opensearch.md)
-(`protomolt-connect-opensearch`), which indexes documents shaped by the
+(`protomolt-kafka-connect-opensearch`), which indexes documents shaped by the
 schema's declared indexing hints.
 
 ## Getting the descriptor set
@@ -47,12 +47,12 @@ The build packages a ready-made layout: the connector jar and its runtime
 dependencies, with the worker-provided Connect framework kept out:
 
 ```bash
-./gradlew :protomolt-connect:connectPluginZip
-unzip kafka/connect/build/distributions/protomolt-connect-plugin-*.zip \
+./gradlew :protomolt-kafka-connect:connectPluginZip
+unzip sink/kafka/connect/build/distributions/protomolt-kafka-connect-plugin-*.zip \
       -d /opt/kafka/plugins/
 ```
 
-Releases attach the same zip as `protomolt-connect-plugin-<version>.zip`.
+Releases attach the same zip as `protomolt-kafka-connect-plugin-<version>.zip`.
 
 ## The sink
 

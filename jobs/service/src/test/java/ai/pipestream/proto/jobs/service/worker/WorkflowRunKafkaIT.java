@@ -54,7 +54,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * channels cannot cross a real target string): a WorkflowRunRequest produced
  * to the request topic is consumed by the worker, submitted, claimed,
  * executed, and completed; the relay publishes the lifecycle to the events
- * topic, where a protomolt-serde consumer revalidates every record on read.
+ * topic, where a protomolt-kafka-serde consumer revalidates every record on read.
  * A request naming an unknown workflow fails the job loudly — a FAILED row and
  * a FAILED event, never a silent drop.
  */

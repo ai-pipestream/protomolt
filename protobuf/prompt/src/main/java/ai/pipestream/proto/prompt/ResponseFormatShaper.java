@@ -29,7 +29,7 @@ public final class ResponseFormatShaper {
      *
      * @param name the provider-safe schema name the envelope reports
      * @param jsonSchema the JSON Schema document as text (e.g. from
-     *     {@link ai.pipestream.proto.jsonschema.ProtoJsonSchemaGenerator#generateJson})
+     *     {@link ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator#generateJson})
      * @param strict whether the backend should reject output that does not validate
      */
     public static String jsonSchemaEnvelope(String name, String jsonSchema, boolean strict) {

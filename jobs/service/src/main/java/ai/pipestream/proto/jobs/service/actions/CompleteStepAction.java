@@ -10,7 +10,7 @@ import ai.pipestream.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import ai.pipestream.proto.jobs.service.store.ParkedCompletion;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;

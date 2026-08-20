@@ -1,6 +1,6 @@
 package ai.pipestream.proto.server;
 
-import ai.pipestream.proto.rest.ProtoRestGateway;
+import ai.pipestream.proto.http.rest.ProtoRestGateway;
 
 /**
  * Common host contract for every {@code servers/*} adapter.

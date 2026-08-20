@@ -21,7 +21,7 @@ dependencies {
 
     // KafkaChangeSink: the protomolt serde frames and validates on write; the
     // serde module leaves kafka-clients to the application.
-    implementation project(':protomolt-serde')
+    implementation project(':protomolt-kafka-serde')
     implementation libs.kafka.clients
 
     // RepoChangeSink: the DocumentService client surface and Document model.

@@ -9,7 +9,7 @@ dependencies {
     // The access-policy loader and resolver behind --access-policy.
     implementation project(':protomolt-authz')
 
-    implementation project(':protomolt-json')
+    implementation project(':protomolt-http-json')
     implementation project(':protomolt-mcp')
     implementation project(':protomolt-workflow')
     // The live delegation coordinator and its MCP verbs mount in this process.
@@ -23,8 +23,8 @@ dependencies {
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
     implementation project(':protomolt-index-spi')
-    implementation project(':protomolt-rest')
-    implementation project(':protomolt-openapi')
+    implementation project(':protomolt-http-rest')
+    implementation project(':protomolt-http-openapi')
     implementation project(':protomolt-server-jdk')
     implementation project(':protomolt-registry')
     implementation project(':protomolt-registry-service')

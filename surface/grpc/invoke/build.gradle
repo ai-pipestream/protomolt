@@ -6,7 +6,7 @@ dependencies {
     api libs.grpc.api
     api libs.protobuf.java
 
-    implementation project(':protomolt-json')
+    implementation project(':protomolt-http-json')
     implementation libs.grpc.stub
     implementation libs.grpc.services
 

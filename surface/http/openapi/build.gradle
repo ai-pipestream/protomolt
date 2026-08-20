@@ -1,6 +1,6 @@
 description = 'OpenAPI 3.x generation from protobuf service descriptors'
 
 dependencies {
-    api project(':protomolt-rest')
+    api project(':protomolt-http-rest')
     api libs.jackson.databind
 }

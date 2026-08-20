@@ -36,7 +36,7 @@ dependencies {
 
     runtimeOnly libs.slf4j.simple
 
-    testImplementation project(':protomolt-serde')
+    testImplementation project(':protomolt-kafka-serde')
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.redpanda

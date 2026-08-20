@@ -4,7 +4,7 @@ import ai.pipestream.proto.cel.CelCompilationException;
 import ai.pipestream.proto.cel.CelEnvironmentFactory;
 import ai.pipestream.proto.cel.CelEvaluationException;
 import ai.pipestream.proto.cel.CelEvaluator;
-import ai.pipestream.proto.json.MalformedProtobufJsonException;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;

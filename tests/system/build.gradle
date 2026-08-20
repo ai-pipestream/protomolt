@@ -12,8 +12,8 @@ dependencies {
     testImplementation project(':protomolt-registry-service')
     testImplementation project(':protomolt-schema-confluent')
     testImplementation project(':protomolt-protobuf-validation')
-    testImplementation project(':protomolt-json')
-    testImplementation project(':protomolt-jsonschema')
+    testImplementation project(':protomolt-http-json')
+    testImplementation project(':protomolt-http-jsonschema')
     testImplementation project(':protomolt-index-spi')
     testImplementation project(':protomolt-index-opensearch')
     testImplementation libs.jackson.databind

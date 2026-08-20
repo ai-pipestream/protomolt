@@ -11,7 +11,7 @@ quarkusExtension {
 dependencies {
     implementation platform(libs.quarkus.bom)
     api project(':protomolt-mapper-cel')
-    api project(':protomolt-rest')
+    api project(':protomolt-http-rest')
     api project(':protomolt-server-common')
     api libs.quarkus.arc
 }
