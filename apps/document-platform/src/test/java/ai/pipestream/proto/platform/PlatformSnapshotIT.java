@@ -185,7 +185,7 @@ class PlatformSnapshotIT {
         readerEnvironment.put(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "true");
         readerEnvironment.put(DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "1");
         try (DocumentPlatform reader = DocumentPlatform.start(
-                config(List.of("search", "metrics"), work.resolve("reader-index"),
+                config(List.of("search", "metric"), work.resolve("reader-index"),
                         readerEnvironment), null)) {
             withChannel(reader.searchPort(), search -> {
                 SearchResponse hits = SearchServiceGrpc.newBlockingStub(search)

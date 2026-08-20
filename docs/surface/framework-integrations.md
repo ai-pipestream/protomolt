@@ -2,7 +2,7 @@
 
 The `host/integrations/` modules wire ProtoMolt into a dependency-injection
 container. They provide beans, not HTTP endpoints: the HTTP hosts live in
-`host/servers/` (see [REST gateway and servers](rest-gateway.md)). A Spring
+`host/server/` (see [REST gateway and servers](rest-gateway.md)). A Spring
 application typically pairs `protomolt-spring` with
 `protomolt-server-spring`; the same split applies to Quarkus.
 

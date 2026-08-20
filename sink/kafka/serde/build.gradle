@@ -39,7 +39,7 @@ dependencies {
 
     // Interop verification: the reference Confluent serde and client against our wire format
     // and our registry server. Test-scoped; nothing Confluent enters the main source set.
-    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-registry-service')
     testImplementation project(':protomolt-repo-proto')
     testImplementation libs.confluent.kafka.protobuf.serializer
     testImplementation libs.confluent.kafka.schema.registry.client

@@ -27,7 +27,7 @@ dependencies {
     implementation project(':protomolt-openapi')
     implementation project(':protomolt-server-jdk')
     implementation project(':protomolt-registry')
-    implementation project(':protomolt-registry-server')
+    implementation project(':protomolt-registry-service')
     // The workflow-runs fleet (worker, relay, store) starts in this process
     // when --jobs-jdbc is given.
     implementation project(':protomolt-jobs-service')

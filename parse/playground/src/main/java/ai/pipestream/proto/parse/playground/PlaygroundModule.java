@@ -16,7 +16,7 @@ public final class PlaygroundModule implements ServiceModule {
     public static final String ROLE = "playground";
 
     /** The parser role the playground watches by default. */
-    public static final String DEFAULT_PARSER_ROLE = "parser-text";
+    public static final String DEFAULT_PARSER_ROLE = "parse-text";
 
     private final int port;
     private final String parserRole;

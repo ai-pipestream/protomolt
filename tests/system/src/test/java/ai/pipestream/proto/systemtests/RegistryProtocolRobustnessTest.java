@@ -1,8 +1,8 @@
 package ai.pipestream.proto.systemtests;
 
 import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
-import ai.pipestream.proto.registry.server.SchemaRegistryServer;
-import ai.pipestream.proto.registry.server.SchemaRegistryServerConfig;
+import ai.pipestream.proto.registry.service.SchemaRegistryServer;
+import ai.pipestream.proto.registry.service.SchemaRegistryServerConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;

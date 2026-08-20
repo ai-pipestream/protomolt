@@ -44,7 +44,7 @@ dependencies {
 
     // Interop verification: a standard Confluent consumer against the events the relay
     // publishes and against our registry server. Test-scoped.
-    testImplementation project(':protomolt-registry-server')
+    testImplementation project(':protomolt-registry-service')
     testImplementation libs.confluent.kafka.protobuf.serializer
     testImplementation libs.confluent.kafka.schema.registry.client
 }

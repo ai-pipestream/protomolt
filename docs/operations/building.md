@@ -25,7 +25,7 @@ catalog constructors. Refresh the checked-in machine-readable document after
 changing action registration:
 
 ```shell
-./gradlew :system-tests:generateActionInventory
+./gradlew :protomolt-system-tests:generateActionInventory
 ```
 
 The system-test inventory check compares that document with the running

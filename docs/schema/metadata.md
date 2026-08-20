@@ -34,7 +34,7 @@ DescriptorMetadata.registerExtensions(extensionRegistry);
 Map<String, Object> bag = DescriptorMetadata.asBag(Doc.getDescriptor());
 ```
 
-## Extracted metadata (`protomolt-metadata`)
+## Extracted metadata (`protomolt-mapper-metadata`)
 
 `MetadataExtractor` builds a named metadata bag from a message instance
 using CEL selector expressions: for example, pulling routing keys or audit

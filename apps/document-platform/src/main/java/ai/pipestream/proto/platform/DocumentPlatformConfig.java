@@ -1,9 +1,11 @@
 package ai.pipestream.proto.platform;
 
+import ai.pipestream.proto.composer.Channels;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -68,14 +70,22 @@ public record DocumentPlatformConfig(
 
     /** The full one-container preset, in canonical mount order. */
     public static final List<String> DEFAULT_ROLES = List.of(
-            "repo", "parser-text", "registry", "parse", "jobs", "intake",
-            "playground", "search", "metrics", "search-console");
+            "repo", "parse-text", "registry", "parse", "jobs", "intake",
+            "playground", "search", "metric", "search-console");
 
     /** Every role the platform binary can mount. */
     public static final Set<String> KNOWN_ROLES = Set.of(
-            "repo", "parser-text", "registry", "parse", "jobs", "intake",
-            "playground", "search", "metrics", "search-console",
+            "repo", "parse-text", "registry", "parse", "jobs", "intake",
+            "playground", "search", "metric", "search-console",
             "acquire-s3", "acquire-jdbc");
+
+    /**
+     * Role spellings {@link #ENV_ROLES} accepts as aliases, mapped to the
+     * canonical id: {@code metrics} names the {@code metric} role and
+     * {@code parser-text} names {@code parse-text}. The same table the
+     * composer reads an alias's {@code PROTOMOLT_<ROLE>_TARGET} through.
+     */
+    public static final Map<String, String> ALIASES = Channels.ROLE_ALIASES;
 
     /** Env var selecting the roles this node mounts (comma-separated). */
     public static final String ENV_ROLES = "PROTOMOLT_ROLES";
@@ -160,7 +170,7 @@ public record DocumentPlatformConfig(
      * Env var making the search role a reader ({@code true}/{@code false},
      * absent means writable): no repo channel, no indexing surface, and
      * restore-only snapshots. The remote metrics node is
-     * {@code PROTOMOLT_ROLES=search,metrics} with this set and the
+     * {@code PROTOMOLT_ROLES=search,metric} with this set and the
      * snapshot family pointing at the writer's bucket.
      */
     public static final String ENV_SEARCH_READ_ONLY = "DOCUMENT_PLATFORM_SEARCH_READ_ONLY";
@@ -310,9 +320,9 @@ public record DocumentPlatformConfig(
             throw new IllegalArgumentException(
                     "searchIndexDir is required: this node serves search");
         }
-        if (roles.contains("metrics") && !roles.contains("search")) {
+        if (roles.contains("metric") && !roles.contains("search")) {
             throw new IllegalArgumentException(
-                    "the metrics role reads the search index in process: add 'search'"
+                    "the metric role reads the search index in process: add 'search'"
                             + " to this node's roles");
         }
     }
@@ -363,16 +373,31 @@ public record DocumentPlatformConfig(
                 System.getenv());
     }
 
-    /** Parses {@code PROTOMOLT_ROLES}; absent or blank means the full preset. */
+    /**
+     * Parses {@code PROTOMOLT_ROLES}; absent or blank means the full
+     * preset. {@linkplain #ALIASES Aliases} normalize to their canonical
+     * id, so a list naming one role twice — under either spelling — is a
+     * contradiction refused by both spellings.
+     */
     static List<String> rolesFromEnvironment(String value) {
         if (value == null || value.isBlank()) {
             return DEFAULT_ROLES;
         }
         List<String> roles = new ArrayList<>();
-        for (String role : value.split(",")) {
-            if (!role.isBlank()) {
-                roles.add(role.trim().toLowerCase(Locale.ROOT));
+        Map<String, String> spellings = new LinkedHashMap<>();
+        for (String entry : value.split(",")) {
+            if (entry.isBlank()) {
+                continue;
             }
+            String spelling = entry.trim().toLowerCase(Locale.ROOT);
+            String role = ALIASES.getOrDefault(spelling, spelling);
+            String first = spellings.putIfAbsent(role, spelling);
+            if (first != null) {
+                throw new IllegalArgumentException(ENV_ROLES + " names the "
+                        + role + " role twice" + (first.equals(spelling)
+                                ? "" : ", as '" + first + "' and '" + spelling + "'"));
+            }
+            roles.add(role);
         }
         return List.copyOf(roles);
     }

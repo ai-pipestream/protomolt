@@ -104,7 +104,7 @@ blobs). `DOCUMENT_PLATFORM_SEARCH_REFRESH_SECONDS` makes the reader
 follow the writer live, pulling newer snapshots into its serving index
 on that interval; absent means restart-only, and setting it on a
 writable node refuses — refresh is the reader's pull. Combined with the
-`metrics` role this is the remote metrics node — see
+`metric` role this is the remote metrics node — see
 [Role nodes](role-nodes.md).
 
 ## Distributed config

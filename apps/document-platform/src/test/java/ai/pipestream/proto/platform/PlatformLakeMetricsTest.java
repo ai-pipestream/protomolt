@@ -91,7 +91,7 @@ class PlatformLakeMetricsTest {
                 null, null, null, 0, 0, 0, 0,
                 null, null, null,
                 60L, 1, 0, work.resolve("index"), 0, 0,
-                List.of("search", "metrics"), lakeEnvironment(lake));
+                List.of("search", "metric"), lakeEnvironment(lake));
     }
 
     private static void withMetricsStub(DocumentPlatform platform,
@@ -257,7 +257,7 @@ class PlatformLakeMetricsTest {
                 null, null, null, 0, 0, 0, 0,
                 null, null, null,
                 60L, 1, 0, work.resolve("default-index"), 0, 0,
-                List.of("search", "metrics"), environment);
+                List.of("search", "metric"), environment);
 
         try (DocumentPlatform platform = DocumentPlatform.start(config, null)) {
             // The lake is lazy: booting alone must not create it.

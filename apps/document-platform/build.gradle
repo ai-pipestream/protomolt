@@ -55,7 +55,7 @@ dependencies {
     implementation project(':protomolt-workflow')
     implementation project(':protomolt-actions')
     implementation project(':protomolt-registry')
-    implementation project(':protomolt-registry-server')
+    implementation project(':protomolt-registry-service')
     implementation project(':protomolt-schema-confluent')
     implementation project(':protomolt-proto-sources')
     implementation project(':protomolt-grpc-service-profile')

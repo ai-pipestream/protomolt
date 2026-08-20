@@ -181,9 +181,9 @@ the sink did not write refuses instead of guessing a shape.
 ## The platform mount
 
 `MetricServiceModule` (in `protomolt-metric-lucene`) is the composer role:
-`metrics` in `PROTOMOLT_ROLES`. Wiring borrows the `LuceneSearchStore`
+`metric` in `PROTOMOLT_ROLES`. Wiring borrows the `LuceneSearchStore`
 the co-mounted `search` role contributes, so the two roles must share a
-node; a `metrics` role without `search` refuses to wire instead of
+node; a `metric` role without `search` refuses to wire instead of
 serving an empty corpus, and a metric subject must name a served search
 mapping subject. The document platform mounts it by default on port 9095
 (`DOCUMENT_PLATFORM_METRICS_GRPC_PORT`), serving `repo-document` with a

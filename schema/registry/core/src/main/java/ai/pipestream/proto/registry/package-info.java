@@ -21,7 +21,7 @@
  * schema plus its transitive references into a self-contained
  * {@link ai.pipestream.proto.sources.ProtoSourceSet}, which is how both register-time
  * verification and descriptor-set serving obtain compilable input. The HTTP surface over this
- * package lives in the {@code protomolt-registry-server} module.</p>
+ * package lives in the {@code protomolt-registry-service} module.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/registry.md">registry
  * guide</a> for usage.</p>
