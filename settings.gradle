@@ -141,6 +141,8 @@ include 'protomolt-delegation'
 project(':protomolt-delegation').projectDir = file('transform/delegation')
 include 'protomolt-screening'
 project(':protomolt-screening').projectDir = file('transform/screening')
+include 'protomolt-receipt'
+project(':protomolt-receipt').projectDir = file('transform/receipt')
 
 include 'protomolt-workflow'
 project(':protomolt-workflow').projectDir = file('transform/workflow')

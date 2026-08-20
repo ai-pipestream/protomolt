@@ -129,19 +129,32 @@ lane is never required for verification.
 The verifier runs a fixed ordered pipeline, each check with a stable
 identifier, each failure refusing by name:
 
-1. container bounds (size, strict fields, known manifest version);
-2. manifest digest matches the bytes;
-3. reserialization equality;
-4. signature verifies over the manifest bytes;
-5. key is known to the snapshot, in state and window at the claimed
-   issuance time;
-6. issuer is authorized for the record's subject;
-7. completeness status is internally consistent (reasons present iff
-   not complete; policy digest present);
-8. revision link, when present, is well-formed;
-9. artifact rehash, when bytes are supplied: all-or-nothing — every
+1. container bounds: the size cap, a strict parse with unknown fields
+   refused, at least one signature, every algorithm inside the
+   profile;
+2. manifest parse: a strict parse with unknown fields refused, a known
+   manifest version, and every rule the manifest declares holding —
+   the revision and disclosure links are digest-formed by declared
+   rule, so link well-formedness is part of this check;
+3. reserialization equality: deterministically reserializing the
+   parsed manifest reproduces the signed bytes exactly;
+4. key trust: the issuer is in the snapshot, every signing key
+   resolves under that issuer, none is revoked, and the claimed
+   issuance time falls inside each key's validity window — keys
+   resolve before signatures can be checked, which is why this
+   precedes the signature check;
+5. signature validity: every signature verifies over the manifest
+   bytes, the manifest's own key among them;
+6. issuer authorization for the record's subject kind;
+7. completeness consistency: missing reasons present exactly when the
+   record is not complete;
+8. artifact rehash, when bytes are supplied: all-or-nothing — every
    referenced artifact matches digest and size, or the check fails as
-   a unit.
+   a unit; skipped, and named as skipped, when none are supplied.
+
+Walking a revision chain — following prior digests across records — is
+the relying party's traversal over verified records, not a
+single-record check.
 
 The result carries every check's outcome plus the non-claims. A
 relying party who wants a decision, not a checklist, uses the
