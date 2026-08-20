@@ -135,6 +135,57 @@ class OkfRendererTest {
     }
 
     @Test
+    void everyOptionCarrierDialectStaysOutOfTheBundle() throws Exception {
+        // Each dialect gets a distinct shape: hints as a field type, llm as an
+        // enum, projection as a nested carrier, so a filter that only handles
+        // one kind of leak cannot pass by accident.
+        String hints = """
+                syntax = "proto3";
+                package ai.pipestream.proto.index.hints.v1;
+                message FieldHint { string analyzer = 1; }
+                """;
+        String llm = """
+                syntax = "proto3";
+                package ai.pipestream.proto.llm.v1;
+                enum Tone { TONE_UNSPECIFIED = 0; TONE_FORMAL = 1; }
+                """;
+        String projection = """
+                syntax = "proto3";
+                package ai.pipestream.proto.projection.v1;
+                message Rule { message Scope { string path = 1; } Scope scope = 1; }
+                """;
+        String schema = """
+                syntax = "proto3";
+                package okf.docs.v1;
+                import "ai/pipestream/proto/index/hints/v1/hints.proto";
+                import "ai/pipestream/proto/llm/v1/llm.proto";
+                import "ai/pipestream/proto/projection/v1/projection.proto";
+
+                message Doc {
+                  string body = 1;
+                  ai.pipestream.proto.index.hints.v1.FieldHint hint = 2;
+                  ai.pipestream.proto.llm.v1.Tone tone = 3;
+                  ai.pipestream.proto.projection.v1.Rule rule = 4;
+                }
+                """;
+        CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                .add("ai/pipestream/proto/index/hints/v1/hints.proto", hints, "hints")
+                .add("ai/pipestream/proto/llm/v1/llm.proto", llm, "llm")
+                .add("ai/pipestream/proto/projection/v1/projection.proto", projection, "projection")
+                .add("okf/docs/v1/docs.proto", schema, "test")
+                .build());
+        Bundle bundle = new OkfRenderer().render(
+                OkfRegistryBundles.linkWithMetadata(compiled.descriptorSet()),
+                OkfRenderer.Options.defaults());
+
+        assertThat(bundle.paths()).anyMatch(p -> p.contains("okf.docs.v1.Doc"));
+        assertThat(bundle.paths())
+                .noneMatch(p -> p.contains("ai.pipestream.proto.index.hints"))
+                .noneMatch(p -> p.contains("ai.pipestream.proto.llm"))
+                .noneMatch(p -> p.contains("ai.pipestream.proto.projection"));
+    }
+
+    @Test
     void frontmatterRendersLabelsAsTagsAndQuotesUnsafeYaml() {
         StringBuilder doc = new StringBuilder();
         OkfRenderer.frontmatter(doc, "Protobuf Message", "Order: v2",

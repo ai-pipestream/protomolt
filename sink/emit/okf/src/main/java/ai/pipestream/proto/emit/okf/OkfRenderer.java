@@ -55,9 +55,14 @@ public final class OkfRenderer {
     /** Option-carrier packages whose types describe schemas rather than being the schema. */
     private static final List<String> INTERNAL_PACKAGES = List.of(
             "google.protobuf",
+            "buf.validate",
             "ai.pipestream.proto.meta.v1",
             "ai.pipestream.proto.validate.v1",
-            "ai.pipestream.proto.index.v1");
+            "ai.pipestream.proto.llm.v1",
+            "ai.pipestream.proto.quality.v1",
+            "ai.pipestream.proto.metric.v1",
+            "ai.pipestream.proto.projection.v1",
+            "ai.pipestream.proto.index.hints.v1");
 
     /** Renders every user-defined type and service in {@code files} as one bundle. */
     public Bundle render(List<FileDescriptor> files, Options options) {
