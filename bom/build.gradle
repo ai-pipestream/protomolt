@@ -57,6 +57,7 @@ def supportedModules = [
         'protomolt-pipeline',
         'protomolt-delegation',
         'protomolt-screening',
+        'protomolt-receipt',
         'protomolt-mesh-proto',
         'protomolt-mesh-contracts',
         'protomolt-mesh-cluster',

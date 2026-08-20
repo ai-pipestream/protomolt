@@ -1,0 +1,17 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The receipt layer: canonical signed work records, the trust snapshot, and the strict offline verifier'
+
+dependencies {
+    api libs.protobuf.java
+    // receipt.v1 annotates its fields with validate.v1 rules.
+    api project(':protomolt-protobuf-validation')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
+}
