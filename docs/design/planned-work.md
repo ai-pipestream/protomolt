@@ -116,6 +116,46 @@ or CEL value sources, split rules, and metadata propagation behavior.
 Require explicit opt-in before encrypted or otherwise restricted field content
 can feed an embedding provider.
 
+## Evidence and receipts
+
+### Signed work records
+
+The platform's evidence objects — run evidence, screening findings, masking
+results, physical plans, config versions — are bounded, fingerprinted, and
+honest about gaps, but they are not portable: nothing signs them, and no
+verifier exists outside the platform. Add a receipt layer over the existing
+evidence so a record can leave the platform, survive it, and be checked by
+someone else:
+
+- **Canonical record export.** Project a run's evidence into one canonical
+  byte form (deterministic proto serialization already backs every
+  fingerprint) and pack it with a detached signature as a tightly bounded
+  two-payload archive. Artifact bytes stay outside the record as
+  content-addressed references, which `ArtifactReference` already is.
+- **Issuer signature and explicit trust input.** Sign the canonical bytes
+  with an issuer key. Verification takes the record plus a caller-supplied
+  trust snapshot (key states, validity windows, issuer authorization) and
+  makes zero network calls.
+- **Signed completeness with a policy denominator.** Complete, partial, or
+  historical, with ordered missing-evidence reasons, against a committed
+  evidence policy (id, version, digest). The honest counters that exist
+  today (`rows_unenriched`, unresolved payload paths) become signed facts.
+- **Machine-readable non-claims.** A verification result names what it does
+  not establish — issuer truth, trusted time, completeness of the world —
+  as stable identifiers, not prose.
+- **Revision links.** A re-issued record carries the prior record's
+  manifest digest: the `VersionedWorkflow` fingerprint pattern applied to
+  evidence.
+- **Relying-party evaluation sidecar.** Replay already re-executes a
+  recorded run; wrap it in a reproducible decision procedure that freezes
+  its inputs, preserves per-check results, applies a predeclared policy,
+  and writes a versioned evaluation record beside the original — never
+  modifying the signed record.
+- **Offline verifier and conformance corpus.** A standalone verifier verb
+  plus valid and invalid fixtures, so records verify without the platform.
+- **Composable later, not in v1:** trusted timestamps (RFC 3161),
+  transparency receipts (SCITT), environment attestation (RATS/EAT).
+
 ## Security and operations
 
 ### ARM64 build and Jetson inference processors
