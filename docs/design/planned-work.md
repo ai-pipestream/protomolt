@@ -125,7 +125,7 @@ results, physical plans, config versions — are bounded, fingerprinted, and
 honest about gaps, but they are not portable: nothing signs them, and no
 verifier exists outside the platform. Add a receipt layer over the existing
 evidence so a record can leave the platform, survive it, and be checked by
-someone else:
+someone else. Design of record: [signed work records](receipts.md).
 
 - **Canonical record export.** Project a run's evidence into one canonical
   byte form (deterministic proto serialization already backs every
