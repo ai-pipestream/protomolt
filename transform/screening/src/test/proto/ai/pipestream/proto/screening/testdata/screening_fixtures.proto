@@ -6,6 +6,7 @@ option java_multiple_files = true;
 option java_package = "ai.pipestream.proto.screening.testdata";
 
 import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "google/protobuf/any.proto";
 
 // A nested carrier: its note is screened, its kind is not.
 message Contact {
@@ -22,4 +23,6 @@ message Profile {
   Contact contact = 4;
   map<string, string> notes = 5 [(ai.pipestream.proto.meta.v1.field).sensitivity = "pii"];
   repeated Contact contacts = 6;
+  google.protobuf.Any payload = 7;
+  repeated google.protobuf.Any attachments = 8;
 }

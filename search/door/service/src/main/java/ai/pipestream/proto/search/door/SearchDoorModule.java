@@ -1,16 +1,22 @@
 package ai.pipestream.proto.search.door;
 
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
-import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.composer.ServiceMount;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
+import ai.pipestream.proto.screening.Screener;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.spi.PostalCodeCatalog;
+import ai.pipestream.proto.validate.spi.TaxonomyCatalog;
+import ai.pipestream.proto.validate.spi.ValidationRuleSources;
 import io.grpc.Server;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * The search door as a mountable role. Wiring opens the document fetcher
@@ -41,8 +47,9 @@ public final class SearchDoorModule implements ServiceModule {
     public record Config(
             int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
             IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
-            ai.pipestream.proto.validate.spi.TaxonomyCatalog taxonomies,
-            java.util.function.Supplier<ai.pipestream.proto.screening.Screener> screening) {
+            TaxonomyCatalog taxonomies,
+            Supplier<Screener> screening,
+            PostalCodeCatalog postalCodes) {
 
         /** Validates the configuration. */
         public Config {
@@ -72,12 +79,21 @@ public final class SearchDoorModule implements ServiceModule {
             subjects = Map.copyOf(subjects);
         }
 
+        /** A configuration without a postal-code pack. */
+        public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+                IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
+                TaxonomyCatalog taxonomies,
+                Supplier<Screener> screening) {
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds,
+                    taxonomies, screening, null);
+        }
+
         /** A configuration without a screening mount. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
-                ai.pipestream.proto.validate.spi.TaxonomyCatalog taxonomies) {
+                TaxonomyCatalog taxonomies) {
             this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds,
-                    taxonomies, null);
+                    taxonomies, null, null);
         }
 
         /**
@@ -87,13 +103,13 @@ public final class SearchDoorModule implements ServiceModule {
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots, boolean readOnly, long refreshSeconds) {
             this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds,
-                    null, null);
+                    null, null, null);
         }
 
         /** A configuration without periodic refresh. */
         public Config(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
                 IndexSnapshots snapshots, boolean readOnly) {
-            this(grpcPort, indexDir, subjects, snapshots, readOnly, 0L, null, null);
+            this(grpcPort, indexDir, subjects, snapshots, readOnly, 0L, null, null, null);
         }
 
         /** A writable configuration. */
@@ -159,10 +175,16 @@ public final class SearchDoorModule implements ServiceModule {
                     repo,
                     // A configured catalog turns the document gate on: fetched
                     // documents validate over the live mounts before indexing.
-                    config.taxonomies() == null
+                    config.taxonomies() == null && config.postalCodes() == null
                             ? null
-                            : ai.pipestream.proto.validate.ProtoValidator
-                                    .create(config.taxonomies()),
+                            : ProtoValidator.create(
+                                    ValidationRuleSources.defaults(),
+                                    config.taxonomies() == null
+                                            ? TaxonomyCatalog.empty()
+                                            : config.taxonomies(),
+                                    config.postalCodes() == null
+                                            ? PostalCodeCatalog.empty()
+                                            : config.postalCodes()),
                     // A configured screening supplier turns the mask policy
                     // on: fetched documents screen over the live mount.
                     config.screening());

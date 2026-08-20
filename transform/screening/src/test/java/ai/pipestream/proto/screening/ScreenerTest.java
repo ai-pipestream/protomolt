@@ -1,6 +1,8 @@
 package ai.pipestream.proto.screening;
 
 import ai.pipestream.proto.screening.testdata.Contact;
+import com.google.protobuf.Any;
+import com.google.protobuf.ByteString;
 import ai.pipestream.proto.screening.testdata.Profile;
 import ai.pipestream.proto.types.ScreeningConfig;
 import ai.pipestream.proto.types.ScreeningPolicy;
@@ -214,5 +216,118 @@ class ScreenerTest {
                 v.path().equals("policy") && v.ruleId().equals("required"));
         assertThat(violations).anyMatch(v ->
                 v.path().equals("threshold") && v.ruleId().startsWith("double."));
+    }
+
+    @Test
+    void aPackedPayloadIsOpenedScreenedAndRepackedUnderItsTypeUrl() throws Exception {
+        Screener screener = new Screener(new AdaEngine(0.9),
+                config(ScreeningPolicy.SCREENING_POLICY_MASK, 0.5));
+        Profile input = Profile.newBuilder()
+                .setPayload(Any.pack(Contact.newBuilder().setNote("call Ada").build()))
+                .build();
+
+        Screener.Verdict verdict = screener.screen(input);
+
+        Profile screened = (Profile) verdict.message();
+        Contact payload = screened.getPayload().unpack(Contact.class);
+        assertThat(payload.getNote()).isEqualTo("call ***");
+        assertThat(screened.getPayload().getTypeUrl())
+                .isEqualTo(input.getPayload().getTypeUrl());
+        assertThat(verdict.findings()).singleElement()
+                .satisfies(finding -> assertThat(finding.path()).isEqualTo("payload.note"));
+        assertThat(verdict.unresolvedPaths()).isEmpty();
+    }
+
+    @Test
+    void aPayloadNothingChangedKeepsItsExactBytes() {
+        Screener screener = new Screener(new AdaEngine(0.9),
+                config(ScreeningPolicy.SCREENING_POLICY_MASK, 0.5));
+        Profile input = Profile.newBuilder()
+                .setPayload(Any.pack(Contact.newBuilder().setKind("plain Ada kind").build()))
+                .build();
+
+        Screener.Verdict verdict = screener.screen(input);
+
+        assertThat(verdict.message()).isSameAs(input);
+        assertThat(verdict.findings()).isEmpty();
+    }
+
+    @Test
+    void aTaggedPayloadRecordsFindingsWithoutRewritingBytes() {
+        Screener screener = new Screener(new AdaEngine(0.9),
+                config(ScreeningPolicy.SCREENING_POLICY_TAG, 0.5));
+        Profile input = Profile.newBuilder()
+                .setPayload(Any.pack(Contact.newBuilder().setNote("Ada wrote this").build()))
+                .build();
+
+        Screener.Verdict verdict = screener.screen(input);
+
+        assertThat(verdict.findings()).singleElement()
+                .satisfies(finding -> assertThat(finding.path()).isEqualTo("payload.note"));
+        assertThat(((Profile) verdict.message()).getPayload().getValue())
+                .isEqualTo(input.getPayload().getValue());
+    }
+
+    @Test
+    void anUnanswerableTypeIsReportedNeverFailedNeverSilent() {
+        Screener screener = new Screener(new AdaEngine(0.9),
+                config(ScreeningPolicy.SCREENING_POLICY_MASK, 0.5));
+        Profile input = Profile.newBuilder()
+                .setPayload(Any.newBuilder()
+                        .setTypeUrl("type.googleapis.com/unknown.Elsewhere")
+                        .setValue(ByteString.copyFromUtf8("Ada")))
+                .build();
+
+        Screener.Verdict verdict = screener.screen(input);
+
+        assertThat(verdict.unresolvedPaths()).containsExactly("payload");
+        assertThat(verdict.message()).isSameAs(input);
+        assertThat(verdict.findings()).isEmpty();
+    }
+
+    @Test
+    void bytesDisagreeingWithTheTypeUrlAreReportedToo() {
+        Screener screener = new Screener(new AdaEngine(0.9),
+                config(ScreeningPolicy.SCREENING_POLICY_MASK, 0.5));
+        Profile input = Profile.newBuilder()
+                .setPayload(Any.newBuilder()
+                        .setTypeUrl("type.googleapis.com/"
+                                + Contact.getDescriptor().getFullName())
+                        .setValue(ByteString.copyFrom(new byte[] {(byte) 0xff, 0x01})))
+                .build();
+
+        Screener.Verdict verdict = screener.screen(input);
+
+        assertThat(verdict.unresolvedPaths()).containsExactly("payload");
+        assertThat(verdict.message()).isSameAs(input);
+    }
+
+    @Test
+    void refusePropagatesFromInsideAPackedPayload() {
+        Screener screener = new Screener(new AdaEngine(0.9),
+                config(ScreeningPolicy.SCREENING_POLICY_REFUSE, 0.5));
+        Profile input = Profile.newBuilder()
+                .addAttachments(Any.pack(Contact.newBuilder().setNote("by Ada").build()))
+                .build();
+
+        assertThatThrownBy(() -> screener.screen(input))
+                .isInstanceOf(Screener.ScreeningRefusedException.class)
+                .hasMessageContaining("attachments[0].note");
+    }
+
+    @Test
+    void anExplicitResolverBeatsTheDefault() throws Exception {
+        Screener screener = new Screener(new AdaEngine(0.9),
+                config(ScreeningPolicy.SCREENING_POLICY_MASK, 0.5),
+                typeName -> Contact.getDescriptor().getFullName().equals(typeName)
+                        ? Contact.getDescriptor() : null);
+        Profile input = Profile.newBuilder()
+                .setPayload(Any.pack(Contact.newBuilder().setNote("Ada here").build()))
+                .build();
+
+        Screener.Verdict verdict = screener.screen(input);
+
+        assertThat(((Profile) verdict.message()).getPayload().unpack(Contact.class)
+                .getNote()).isEqualTo("*** here");
     }
 }

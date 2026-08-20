@@ -260,6 +260,17 @@ public record DocumentPlatformConfig(
      */
     public static final String ENV_SCREENING = "DOCUMENT_PLATFORM_SCREENING";
 
+    /**
+     * Set to {@code true}, the search door's gate validates postal codes
+     * against the pack published at config subject {@code postal-codes}: a
+     * mounted region's non-empty {@code google.type.PostalAddress.postal_code}
+     * must match one of the region's masks, an unmounted region stays
+     * unchecked — the pack's per-region opt-in stance. Requires the config
+     * lane ({@link #ENV_CONFIG_REFRESH_SECONDS}); absent keeps the door's
+     * behavior exactly.
+     */
+    public static final String ENV_POSTAL_CODES = "DOCUMENT_PLATFORM_POSTAL_CODES";
+
     /** The default metric door gRPC port. */
     public static final int DEFAULT_METRICS_GRPC_PORT = 9095;
 

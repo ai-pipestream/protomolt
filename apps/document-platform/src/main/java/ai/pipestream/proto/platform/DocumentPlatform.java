@@ -108,6 +108,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private final LocalLakeRollupSink defaultRollupLake;
     private final ai.pipestream.proto.config.DistributedConfig distributedConfig;
     private final SwappableTaxonomyCatalog taxonomies;
+    private final SwappablePostalCodes postalCodes;
     private final SwappableScreening screening;
     private final String screeningMountName;
     private final java.util.concurrent.ScheduledExecutorService configRefresher;
@@ -195,6 +196,8 @@ public final class DocumentPlatform implements AutoCloseable {
         this.taxonomies = taxonomyNames.isEmpty() ? null : new SwappableTaxonomyCatalog();
         this.screeningMountName = screeningFromEnvironment(config.environment());
         this.screening = screeningMountName == null ? null : new SwappableScreening();
+        this.postalCodes = postalCodesFromEnvironment(config.environment())
+                ? new SwappablePostalCodes() : null;
         this.search = config.mounts(SearchDoorModule.ROLE)
                 ? new SearchDoorModule(new SearchDoorModule.Config(
                         config.searchGrpcPort(),
@@ -211,7 +214,8 @@ public final class DocumentPlatform implements AutoCloseable {
                         searchReadOnly,
                         searchRefreshSeconds,
                         taxonomies,
-                        screening))
+                        screening,
+                        postalCodes))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricDoorModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -298,8 +302,17 @@ public final class DocumentPlatform implements AutoCloseable {
                                 + DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
                                 + " or unset the screening mount");
             }
+            if (postalCodes != null && configRefreshSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        DocumentPlatformConfig.ENV_POSTAL_CODES + " is set but the config"
+                                + " lane is off: the postal-code pack arrives as a config"
+                                + " document, so set "
+                                + DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
+                                + " or unset it");
+            }
             if (configRefreshSeconds > 0) {
-                if (parse == null && taxonomies == null && screening == null) {
+                if (parse == null && taxonomies == null && screening == null
+                        && postalCodes == null) {
                     throw new IllegalArgumentException(
                             DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
                                     + " is set but this node mounts no config consumer:"
@@ -357,6 +370,14 @@ public final class DocumentPlatform implements AutoCloseable {
                     taxonomies.swap(ai.pipestream.proto.config.TaxonomyMounts
                             .follow(distributedConfig, taxonomyNames));
                     LOG.info("taxonomy mounts following {}", taxonomyNames);
+                }
+                if (postalCodes != null) {
+                    // The gate was handed the swappable catalog; unmounted
+                    // regions stay unchecked until the pack applies.
+                    postalCodes.swap(ai.pipestream.proto.config.PostalCodeMounts
+                            .follow(distributedConfig));
+                    LOG.info("postal-code pack following '{}'",
+                            ai.pipestream.proto.config.PostalCodeMounts.SUBJECT);
                 }
                 if (screening != null) {
                     // The door was already handed the swappable mount; it
@@ -757,6 +778,20 @@ public final class DocumentPlatform implements AutoCloseable {
      * screening mount name, trimmed. Absent means no screening, exactly as
      * before.
      */
+    /** The strict read of DOCUMENT_PLATFORM_POSTAL_CODES: true, or unset. */
+    static boolean postalCodesFromEnvironment(Map<String, String> environment) {
+        String value = environment
+                .getOrDefault(DocumentPlatformConfig.ENV_POSTAL_CODES, "").trim();
+        if (value.isEmpty()) {
+            return false;
+        }
+        if ("true".equals(value)) {
+            return true;
+        }
+        throw new IllegalArgumentException(DocumentPlatformConfig.ENV_POSTAL_CODES
+                + " must be 'true' or unset, not '" + value + "'");
+    }
+
     static String screeningFromEnvironment(Map<String, String> environment) {
         String value = environment
                 .getOrDefault(DocumentPlatformConfig.ENV_SCREENING, "").trim();
