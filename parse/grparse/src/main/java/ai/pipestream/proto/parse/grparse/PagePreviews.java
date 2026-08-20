@@ -1,7 +1,7 @@
 package ai.pipestream.proto.parse.grparse;
 
-import ai.pipestream.document.v1.ImageRef;
-import ai.pipestream.parse.v1.PageData;
+import ai.pipestream.proto.parse.document.v1.ImageRef;
+import ai.pipestream.proto.parse.grparse.v1.PageData;
 import ai.pipestream.proto.parse.plugin.v1.PagePreview;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

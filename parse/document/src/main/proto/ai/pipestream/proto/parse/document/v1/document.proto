@@ -1,12 +1,12 @@
 syntax = "proto3";
 
-package ai.pipestream.document.v1;
+package ai.pipestream.proto.parse.document.v1;
 
 import "google/protobuf/struct.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "DocumentProto";
-option java_package = "ai.pipestream.document.v1";
+option java_package = "ai.pipestream.proto.parse.document.v1";
 
 // Pipestream document structure.
 //

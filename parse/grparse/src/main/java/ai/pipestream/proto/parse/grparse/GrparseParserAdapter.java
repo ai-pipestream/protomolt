@@ -1,12 +1,12 @@
 package ai.pipestream.proto.parse.grparse;
 
-import ai.pipestream.document.v1.Document;
-import ai.pipestream.parse.v1.CollectorDocument;
-import ai.pipestream.parse.v1.DocumentChunk;
-import ai.pipestream.parse.v1.DocumentComplete;
-import ai.pipestream.parse.v1.DocumentStreamEvent;
-import ai.pipestream.parse.v1.PageData;
-import ai.pipestream.parse.v1.ParseStreamingServiceGrpc;
+import ai.pipestream.proto.parse.document.v1.Document;
+import ai.pipestream.proto.parse.grparse.v1.CollectorDocument;
+import ai.pipestream.proto.parse.grparse.v1.DocumentChunk;
+import ai.pipestream.proto.parse.grparse.v1.DocumentComplete;
+import ai.pipestream.proto.parse.grparse.v1.DocumentStreamEvent;
+import ai.pipestream.proto.parse.grparse.v1.PageData;
+import ai.pipestream.proto.parse.grparse.v1.ParseStreamingServiceGrpc;
 import ai.pipestream.proto.parse.document.DoclingProjection;
 import ai.pipestream.proto.parse.plugin.v1.DocumentClaims;
 import ai.pipestream.proto.parse.plugin.v1.GetParserInfoRequest;

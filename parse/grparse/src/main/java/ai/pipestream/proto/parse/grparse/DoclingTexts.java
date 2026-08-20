@@ -1,9 +1,9 @@
 package ai.pipestream.proto.parse.grparse;
 
-import ai.pipestream.document.v1.BaseTextItem;
-import ai.pipestream.document.v1.Document;
-import ai.pipestream.document.v1.TextItemBase;
-import ai.pipestream.parse.v1.PageData;
+import ai.pipestream.proto.parse.document.v1.BaseTextItem;
+import ai.pipestream.proto.parse.document.v1.Document;
+import ai.pipestream.proto.parse.document.v1.TextItemBase;
+import ai.pipestream.proto.parse.grparse.v1.PageData;
 
 /**
  * Text extraction over the fleet document model: how a page's or document's

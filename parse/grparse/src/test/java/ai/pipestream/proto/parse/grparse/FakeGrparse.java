@@ -1,8 +1,8 @@
 package ai.pipestream.proto.parse.grparse;
 
-import ai.pipestream.parse.v1.DocumentChunk;
-import ai.pipestream.parse.v1.DocumentStreamEvent;
-import ai.pipestream.parse.v1.ParseStreamingServiceGrpc;
+import ai.pipestream.proto.parse.grparse.v1.DocumentChunk;
+import ai.pipestream.proto.parse.grparse.v1.DocumentStreamEvent;
+import ai.pipestream.proto.parse.grparse.v1.ParseStreamingServiceGrpc;
 import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;

@@ -251,7 +251,7 @@ class GoldenPathSystemTest {
         context = ActionContext.create();
         // The parse checkpoint carries the parser's docling document as an
         // Any; the checkpoint transcoder resolves it through this registry.
-        context.registry().registerFile(ai.pipestream.document.v1.DocumentProto.getDescriptor());
+        context.registry().registerFile(ai.pipestream.proto.parse.document.v1.DocumentProto.getDescriptor());
         WorkflowRunsConfig jobsConfig = new WorkflowRunsConfig(
                 "golden-worker", 1, Duration.ofMinutes(1), Duration.ofMillis(50),
                 0, 3, 4, null, WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC, null, null);
@@ -311,18 +311,18 @@ class GoldenPathSystemTest {
     void theRegistryServesTheFleetDocumentModelAsAPublishedArtifact() throws Exception {
         String documentProto = Files.readString(
                 Path.of("..", "..", "parse", "document", "src", "main", "proto",
-                        "ai", "pipestream", "document", "v1", "document.proto"));
+                        "ai", "pipestream", "proto", "parse", "document", "v1", "document.proto"));
         ProtoSourceSet sources = ProtoSourceSet.builder()
-                .add("ai/pipestream/document/v1/document.proto", documentProto, "fleet")
+                .add("ai/pipestream/proto/parse/document/v1/document.proto", documentProto, "fleet")
                 .build();
         try (ConfluentSchemaPublisher publisher = new ConfluentSchemaPublisher(registryBase)) {
             publisher.publish(sources, PublishOptions.defaults()).throwIfFailed();
         }
-        assertThat(registry.subjects()).contains("ai/pipestream/document/v1/document.proto");
+        assertThat(registry.subjects()).contains("ai/pipestream/proto/parse/document/v1/document.proto");
 
         HttpResponse<byte[]> descriptorSet = HTTP.send(
                 HttpRequest.newBuilder(registryBase.resolve(
-                                "/protomolt/subjects/ai%2Fpipestream%2Fdocument%2Fv1%2Fdocument.proto/descriptor-set"))
+                                "/protomolt/subjects/ai%2Fpipestream%2Fproto%2Fparse%2Fdocument%2Fv1%2Fdocument.proto/descriptor-set"))
                         .timeout(Duration.ofSeconds(10)).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(descriptorSet.statusCode()).isEqualTo(200);

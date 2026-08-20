@@ -1,7 +1,7 @@
 package ai.pipestream.proto.parse.document;
 
-import ai.pipestream.document.v1.BaseTextItem;
-import ai.pipestream.document.v1.TextItemBase;
+import ai.pipestream.proto.parse.document.v1.BaseTextItem;
+import ai.pipestream.proto.parse.document.v1.TextItemBase;
 import ai.pipestream.proto.repo.v1.ParserDocument;
 import ai.pipestream.proto.repo.v1.SearchMetadata;
 import com.google.protobuf.Any;
@@ -14,7 +14,7 @@ import java.util.Optional;
 
 /**
  * Projections between the parser-fleet document model
- * ({@link ai.pipestream.document.v1.Document}, docling-core v2 parity) and
+ * ({@link ai.pipestream.proto.parse.document.v1.Document}, docling-core v2 parity) and
  * the repo document contract.
  *
  * <p>Forward ({@link #toParserDocument}): the docling document rides
@@ -67,7 +67,7 @@ public final class DoclingProjection {
      * @param docling the parsed document in the fleet model
      * @return the projection with per-field provenance
      */
-    public static Projected toParserDocument(ai.pipestream.document.v1.Document docling) {
+    public static Projected toParserDocument(ai.pipestream.proto.parse.document.v1.Document docling) {
         if (docling == null) {
             throw new IllegalArgumentException("docling document must not be null");
         }
@@ -127,17 +127,17 @@ public final class DoclingProjection {
      * @param document the stored parser document
      * @return the docling document, when the shape carries one
      */
-    public static Optional<ai.pipestream.document.v1.Document> fromParserDocument(
+    public static Optional<ai.pipestream.proto.parse.document.v1.Document> fromParserDocument(
             ParserDocument document) {
         if (document == null || !document.hasShape()) {
             return Optional.empty();
         }
         Any shape = document.getShape();
-        if (!shape.is(ai.pipestream.document.v1.Document.class)) {
+        if (!shape.is(ai.pipestream.proto.parse.document.v1.Document.class)) {
             return Optional.empty();
         }
         try {
-            return Optional.of(shape.unpack(ai.pipestream.document.v1.Document.class));
+            return Optional.of(shape.unpack(ai.pipestream.proto.parse.document.v1.Document.class));
         } catch (InvalidProtocolBufferException e) {
             throw new IllegalArgumentException(
                     "shape claims " + shape.getTypeUrl() + " but does not parse as it", e);
@@ -179,7 +179,7 @@ public final class DoclingProjection {
 
     // ------------------------------------------------------------------
 
-    private static String titleOf(ai.pipestream.document.v1.Document docling) {
+    private static String titleOf(ai.pipestream.proto.parse.document.v1.Document docling) {
         for (BaseTextItem item : docling.getTextsList()) {
             if (item.getItemCase() == BaseTextItem.ItemCase.TITLE) {
                 String text = item.getTitle().getBase().getText();
@@ -191,7 +191,7 @@ public final class DoclingProjection {
         return docling.getName();
     }
 
-    private static String titleProvenance(ai.pipestream.document.v1.Document docling) {
+    private static String titleProvenance(ai.pipestream.proto.parse.document.v1.Document docling) {
         for (BaseTextItem item : docling.getTextsList()) {
             if (item.getItemCase() == BaseTextItem.ItemCase.TITLE
                     && !item.getTitle().getBase().getText().isBlank()) {
@@ -202,7 +202,7 @@ public final class DoclingProjection {
     }
 
     /** Concatenates every text item's text in list order, newline-separated. */
-    private static String bodyTextOf(ai.pipestream.document.v1.Document docling) {
+    private static String bodyTextOf(ai.pipestream.proto.parse.document.v1.Document docling) {
         StringBuilder body = new StringBuilder();
         for (BaseTextItem item : docling.getTextsList()) {
             String text = textOf(item);

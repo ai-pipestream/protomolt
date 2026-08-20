@@ -1,11 +1,11 @@
 package ai.pipestream.proto.parse.text;
 
-import ai.pipestream.document.v1.BaseTextItem;
-import ai.pipestream.document.v1.Document;
-import ai.pipestream.document.v1.DocumentOrigin;
-import ai.pipestream.document.v1.TextItem;
-import ai.pipestream.document.v1.TextItemBase;
-import ai.pipestream.document.v1.TitleItem;
+import ai.pipestream.proto.parse.document.v1.BaseTextItem;
+import ai.pipestream.proto.parse.document.v1.Document;
+import ai.pipestream.proto.parse.document.v1.DocumentOrigin;
+import ai.pipestream.proto.parse.document.v1.TextItem;
+import ai.pipestream.proto.parse.document.v1.TextItemBase;
+import ai.pipestream.proto.parse.document.v1.TitleItem;
 import ai.pipestream.proto.parse.document.DoclingProjection;
 import ai.pipestream.proto.parse.plugin.v1.DocumentClaims;
 import ai.pipestream.proto.parse.plugin.v1.GetParserInfoRequest;

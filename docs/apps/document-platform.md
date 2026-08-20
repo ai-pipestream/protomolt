@@ -34,7 +34,7 @@ the jobs store) and RustFS for object storage. Ports:
 
 - The git-backed registry initializes at `DOCUMENT_PLATFORM_REGISTRY_GIT`
   (default `/data/registry.git`) and **publishes the fleet document model**
-  (`ai/pipestream/document/v1/document.proto`) from the build's own
+  (`ai/pipestream/proto/parse/document/v1/document.proto`) from the build's own
   classpath, so the registry serves it as a subject from the start. The
   registry is not optional here: the platform runs it by default.
 - The `parse-document` workflow registers under that name, so a durable parse

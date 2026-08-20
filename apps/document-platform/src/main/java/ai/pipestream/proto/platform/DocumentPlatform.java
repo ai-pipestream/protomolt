@@ -81,7 +81,7 @@ public final class DocumentPlatform implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(DocumentPlatform.class);
 
     /** The registry subject the fleet document model publishes under. */
-    public static final String DOCUMENT_SUBJECT = "ai/pipestream/document/v1/document.proto";
+    public static final String DOCUMENT_SUBJECT = "ai/pipestream/proto/parse/document/v1/document.proto";
 
     /** The registry subject the routing contract publishes under. */
     public static final String ROUTING_SUBJECT =

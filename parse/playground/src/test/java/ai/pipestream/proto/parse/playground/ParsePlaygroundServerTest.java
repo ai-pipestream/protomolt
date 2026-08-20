@@ -47,7 +47,7 @@ class ParsePlaygroundServerTest {
                 0,
                 ParsePlaygroundServer.INPROCESS_TARGET_PREFIX + name,
                 JsonFormat.TypeRegistry.newBuilder()
-                        .add(ai.pipestream.document.v1.Document.getDescriptor())
+                        .add(ai.pipestream.proto.parse.document.v1.Document.getDescriptor())
                         .build());
         http = HttpClient.newHttpClient();
         base = URI.create("http://127.0.0.1:" + playground.port());
@@ -102,7 +102,7 @@ class ParsePlaygroundServerTest {
         // rendered through the registry (fields visible, not base64).
         String last = lines.getLast();
         assertThat(last).contains("\"document\"");
-        assertThat(last).contains("ai.pipestream.document.v1.Document");
+        assertThat(last).contains("ai.pipestream.proto.parse.document.v1.Document");
         assertThat(last).contains("The first paragraph.");
     }
 
