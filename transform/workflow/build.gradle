@@ -12,6 +12,8 @@ dependencies {
     api project(':protomolt-inference-structured')
     // Typed edges project their produced values with this compiled projection.
     api project(':protomolt-projection')
+    // Run evidence projects into canonical signed work records.
+    api project(':protomolt-receipt')
 
     implementation project(':protomolt-json')
     implementation project(':protomolt-protobuf-validation')

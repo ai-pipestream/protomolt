@@ -108,6 +108,13 @@ service ProtoMoltService {
   // Promotes workflow content as an immutable version in the git registry.
   rpc PromoteWorkflow(PromoteWorkflowRequest) returns (PromoteWorkflowResponse);
 
+  // Projects a stored run's evidence into a canonical signed work record.
+  rpc ExportWorkRecord(ExportWorkRecordRequest) returns (ExportWorkRecordResponse);
+
+  // Verifies a signed work record offline against a caller-supplied trust
+  // snapshot.
+  rpc VerifyWorkRecord(VerifyWorkRecordRequest) returns (VerifyWorkRecordResponse);
+
   // Fetches a live gRPC server's schema over server reflection, given only
   // its address. Servers without reflection return ok=false.
   rpc Reflect(ReflectRequest) returns (ReflectResponse);
@@ -1162,6 +1169,56 @@ message PromoteWorkflowResponse {
   bool promoted = 1;
   // Stored VersionedWorkflow rendered as protobuf JSON.
   google.protobuf.Struct versioned_workflow = 2;
+}
+
+// The stored run to project and the record identity to issue it under.
+message ExportWorkRecordRequest {
+  // Stored run-evidence identity to project.
+  string run_id = 1;
+  // Record identity; derived as "record-<run_id>" when empty.
+  string record_id = 2;
+  // Manifest digest of the record this one re-issues, or empty.
+  string prior_manifest_sha256 = 3;
+}
+
+// The signed record and its identity.
+message ExportWorkRecordResponse {
+  // Serialized SignedWorkRecord, base64.
+  string record_base64 = 1;
+  // SHA-256 of the manifest bytes: the record's identity.
+  string manifest_digest = 2;
+  // The record identity the manifest carries.
+  string record_id = 3;
+}
+
+// A signed record and the trust snapshot to verify it against.
+message VerifyWorkRecordRequest {
+  // Serialized SignedWorkRecord, base64.
+  string record_base64 = 1;
+  // TrustSnapshot encoded as protobuf JSON.
+  google.protobuf.Struct trust = 2;
+}
+
+// One named verification check's outcome.
+message WorkRecordCheck {
+  // Stable check identifier.
+  string id = 1;
+  // PASSED, FAILED, or SKIPPED.
+  string status = 2;
+  // What passed, failed, or why the check was skipped.
+  string detail = 3;
+}
+
+// The verification outcome with its checks and non-claims.
+message VerifyWorkRecordResponse {
+  // True when no check failed.
+  bool verified = 1;
+  // SHA-256 of the manifest bytes, empty until the container parsed.
+  string manifest_digest = 2;
+  // Every check that ran, in pipeline order.
+  repeated WorkRecordCheck checks = 3;
+  // What verification does not establish, as stable identifiers.
+  repeated string non_claims = 4;
 }
 
 // The input of submit-workflow: an inline workflow or the name of a stored one,

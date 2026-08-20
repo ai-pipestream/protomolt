@@ -24,7 +24,8 @@ class McpMainTest {
             "mask-message", "extract-metadata", "list-types", "grpc-invoke", "reflect",
             "generate-stubs", "gather-git", "service-register", "service-list",
             "service-inspect", "service-refresh", "service-invoke", "compile-workflow", "suggest-mappings",
-            "record-workflow-run", "replay-workflow", "promote-workflow");
+            "record-workflow-run", "replay-workflow", "promote-workflow",
+            "export-work-record", "verify-work-record");
 
     @Test
     void helpPrintsUsageToStderrAndReturns() throws Exception {

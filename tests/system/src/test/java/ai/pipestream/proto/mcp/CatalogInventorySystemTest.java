@@ -33,8 +33,8 @@ class CatalogInventorySystemTest {
         ActionContext context = ActionContext.create();
 
         assertCatalog(inventory, "defaults", ActionCatalog.defaults(context), 17);
-        assertCatalog(inventory, "standaloneMcp", McpMain.catalog(context), 31);
-        assertCatalog(inventory, "full", ProtoMoltCatalog.full(context), 41);
+        assertCatalog(inventory, "standaloneMcp", McpMain.catalog(context), 33);
+        assertCatalog(inventory, "full", ProtoMoltCatalog.full(context), 43);
     }
 
     @Test
