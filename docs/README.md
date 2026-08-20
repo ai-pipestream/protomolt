@@ -87,6 +87,7 @@ built-in action exposed by the standalone and full catalogs.
   LLM software generation, and OpenNLP PII policy across mesh nodes
 - [Planned work](design/planned-work.md): open product and hardening work
 - [Metric mappings](design/metric-mapping.md): governed aggregate queries on a mapping subject (Cube comparison, option dialect, `query-metrics`)
+- [Signed work records](design/receipts.md): portable, signed, offline-verifiable receipts projected from existing evidence
 - [Intake and parsing](design/intake-and-parsing.md): platform ingestion architecture
 - [Document platform](design/document-platform.md): repository and account service architecture
 - [Review records](reviews): dated correctness and security reviews
