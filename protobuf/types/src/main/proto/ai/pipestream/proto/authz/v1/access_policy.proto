@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.authz.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.authz";
+option java_outer_classname = "AccessPolicyProto";
+
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// The access-policy config document: named principals resolved from
+// credential digests, each holding scopes from the closed vocabulary
+// (docs/design/authorization-scopes.md). Distributed on the config lane
+// (subject "access-policy") or loaded from a startup file; the document
+// carries no secrets — credentials appear only as SHA-256 digests.
+message AccessPolicy {
+  // The named principals; names and digests must be unique across the
+  // document, refused at load otherwise.
+  repeated Principal principals = 1 [
+    (ai.pipestream.proto.validate.v1.field).repeated.min_items = 1
+  ];
+}
+
+// One named caller and the authority it holds.
+message Principal {
+  // Principal name: appears in refusals and logs; never a credential.
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    }
+  ];
+  // Lowercase-hex SHA-256 digests of the credentials that resolve to this
+  // principal; several during rotation-with-grace.
+  repeated string credential_sha256 = 2 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        string: {sha256_hex: true}
+      }
+    }
+  ];
+  // Scopes the principal holds, each from the closed vocabulary; the
+  // vocabulary check itself is the loader's, naming the unknown scope.
+  repeated string scopes = 3 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        string: {slug: true, max_len: 64}
+      }
+    }
+  ];
+}

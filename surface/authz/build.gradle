@@ -1,0 +1,13 @@
+description = 'Authorization scopes: the access-policy document validator, file loader, and credential-digest resolver'
+
+dependencies {
+    api libs.protobuf.java
+    // The AccessPolicy config document type.
+    api project(':protomolt-protobuf-types')
+    // Caller and the closed scope vocabulary live with the action layer.
+    api project(':protomolt-actions')
+    // The document validates against its declared validate.v1 rules before it applies.
+    implementation project(':protomolt-protobuf-validation')
+    // JSON policy files parse as canonical proto3 JSON.
+    implementation libs.protobuf.java.util
+}

@@ -321,6 +321,9 @@ project(':protomolt-acp').projectDir = file('surface/acp')
 include 'protomolt-actions'
 project(':protomolt-actions').projectDir = file('surface/actions')
 
+include 'protomolt-authz'
+project(':protomolt-authz').projectDir = file('surface/authz')
+
 // repo/ — the claim-check document store.
 
 include 'protomolt-repo-proto'
