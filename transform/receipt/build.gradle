@@ -9,6 +9,8 @@ dependencies {
     api libs.protobuf.java
     // receipt.v1 annotates its fields with validate.v1 rules.
     api project(':protomolt-protobuf-validation')
+    // Pinned trust-snapshot files load as canonical proto3 JSON.
+    implementation libs.protobuf.java.util
 }
 
 protobuf {

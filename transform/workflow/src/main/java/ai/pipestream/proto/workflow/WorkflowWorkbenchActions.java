@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionCatalog;
+import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
@@ -11,7 +12,7 @@ public final class WorkflowWorkbenchActions {
     private WorkflowWorkbenchActions() {
     }
 
-    /** Registers with the record-signing identity read from the environment. */
+    /** Registers with the signing identity and trust pin read from the environment. */
     public static ActionCatalog register(ActionCatalog catalog, WorkflowRunner runner,
                                          ArtifactRepository artifacts,
                                          RunEvidenceRepository runs,
@@ -20,18 +21,29 @@ public final class WorkflowWorkbenchActions {
                 RecordSigning.fromEnvironment());
     }
 
+    /** Registers with an explicit signing identity; the trust pin still reads the environment. */
     public static ActionCatalog register(ActionCatalog catalog, WorkflowRunner runner,
                                          ArtifactRepository artifacts,
                                          RunEvidenceRepository runs,
                                          WorkflowVersionRepository workflows,
                                          RecordSigning signing) {
+        return register(catalog, runner, artifacts, runs, workflows, signing,
+                TrustPin.fromEnvironment());
+    }
+
+    public static ActionCatalog register(ActionCatalog catalog, WorkflowRunner runner,
+                                         ArtifactRepository artifacts,
+                                         RunEvidenceRepository runs,
+                                         WorkflowVersionRepository workflows,
+                                         RecordSigning signing, TrustPin trust) {
+        TrustSnapshot pinned = trust == null ? null : trust.snapshot();
         return catalog.register(new CompileWorkflowAction())
                 .register(new SuggestMappingsAction())
                 .register(new RecordWorkflowRunAction(runner, artifacts, runs))
                 .register(new ReplayWorkflowAction(artifacts, runs))
                 .register(new PromoteWorkflowAction(workflows))
                 .register(new ExportWorkRecordAction(runs, signing))
-                .register(new VerifyWorkRecordAction())
-                .register(new EvaluateWorkRecordAction(artifacts, runs));
+                .register(new VerifyWorkRecordAction(pinned))
+                .register(new EvaluateWorkRecordAction(artifacts, runs, pinned));
     }
 }

@@ -122,7 +122,10 @@ distributes on the [config lane](config-distribution.md) exactly like
 taxonomies, screening mounts, and postal packs: registry-stored,
 verify-then-swap, commit as version, subject `trust-snapshot`. Outside
 the platform it is a file the relying party pins. Same document, two
-custody models, and the lane is never required for verification.
+custody models, and the lane is never required for verification. The
+workbench's verifying verbs take the file custody themselves:
+`PROTOMOLT_TRUST_SNAPSHOT` pins a snapshot the server defaults to when
+a request carries none, and a request's own snapshot always wins.
 
 ## Verification: named checks, named refusals
 

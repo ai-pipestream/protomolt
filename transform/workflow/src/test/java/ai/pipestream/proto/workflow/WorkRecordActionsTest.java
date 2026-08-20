@@ -265,6 +265,49 @@ class WorkRecordActionsTest {
     }
 
     @Test
+    void aPinnedSnapshotIsTheDefaultAndTheRequestWins() throws Exception {
+        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
+                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode input = MAPPER.createObjectNode()
+                .put("recordBase64", exported.path("recordBase64").asText());
+
+        ObjectNode pinned = new VerifyWorkRecordAction(trust()).execute(input, CONTEXT);
+        assertThat(pinned.path("verified").asBoolean()).isTrue();
+
+        TrustSnapshot stranger = TrustSnapshot.newBuilder()
+                .addIssuers(trust().getIssuers(0).toBuilder().setIssuer("someone-else"))
+                .build();
+        ObjectNode withTrust = input.deepCopy();
+        withTrust.set("trust", (ObjectNode) MAPPER.readTree(
+                JsonFormat.printer().print(stranger)));
+        ObjectNode refused = new VerifyWorkRecordAction(trust())
+                .execute(withTrust, CONTEXT);
+        assertThat(refused.path("verified").asBoolean())
+                .as("an explicit request snapshot must beat the pin")
+                .isFalse();
+    }
+
+    @Test
+    void withoutAPinTheRequestMustCarryTrust() throws Exception {
+        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
+                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode input = MAPPER.createObjectNode()
+                .put("recordBase64", exported.path("recordBase64").asText());
+        assertThatThrownBy(() -> new VerifyWorkRecordAction().execute(input, CONTEXT))
+                .hasMessageContaining(TrustPin.ENV_TRUST_SNAPSHOT);
+    }
+
+    @Test
+    void theSchemaRequiresTrustExactlyWhenNoPinExists() {
+        assertThat(new VerifyWorkRecordAction().inputSchema()
+                .path("required").toString()).contains("trust");
+        assertThat(new VerifyWorkRecordAction(trust()).inputSchema()
+                .path("required").toString()).doesNotContain("trust");
+        assertThat(new EvaluateWorkRecordAction(null, null, trust()).inputSchema()
+                .path("required").toString()).doesNotContain("\"trust\"");
+    }
+
+    @Test
     void verifyRefusesBadInputsByPointer() {
         ObjectNode badBase64 = MAPPER.createObjectNode()
                 .put("recordBase64", "!!!");

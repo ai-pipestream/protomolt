@@ -15,6 +15,17 @@ import java.util.Map;
 /** Verifies a signed work record offline against a caller-supplied trust snapshot. */
 final class VerifyWorkRecordAction implements ProtoAction {
 
+    private final TrustSnapshot defaultTrust;
+
+    VerifyWorkRecordAction() {
+        this(null);
+    }
+
+    /** With a pinned snapshot, requests may omit {@code trust}; a supplied one wins. */
+    VerifyWorkRecordAction(TrustSnapshot defaultTrust) {
+        this.defaultTrust = defaultTrust;
+    }
+
     @Override
     public String name() {
         return "verify-work-record";
@@ -39,14 +50,20 @@ final class VerifyWorkRecordAction implements ProtoAction {
         properties.putObject("recordBase64").put("type", "string")
                 .put("description", "Serialized SignedWorkRecord, base64.");
         properties.putObject("trust").put("type", "object")
-                .put("description", "TrustSnapshot encoded as protobuf JSON.");
+                .put("description", defaultTrust == null
+                        ? "TrustSnapshot encoded as protobuf JSON."
+                        : "TrustSnapshot encoded as protobuf JSON; defaults to the "
+                                + "server's pinned snapshot when omitted.");
         ObjectNode artifacts = properties.putObject("artifacts");
         artifacts.put("type", "object");
         artifacts.putObject("additionalProperties").put("type", "string");
         artifacts.put("description",
                 "Referenced artifact bytes by SHA-256, base64-encoded; when present the "
                         + "rehash check runs all-or-nothing instead of being skipped.");
-        schema.putArray("required").add("recordBase64").add("trust");
+        var required = schema.putArray("required").add("recordBase64");
+        if (defaultTrust == null) {
+            required.add("trust");
+        }
         schema.put("additionalProperties", false);
         return schema;
     }
@@ -61,9 +78,7 @@ final class VerifyWorkRecordAction implements ProtoAction {
             throw WorkflowActionJson.invalid("'recordBase64' is not valid base64",
                     "/recordBase64");
         }
-        TrustSnapshot trust = (TrustSnapshot) WorkflowActionJson.parse(
-                WorkflowActionJson.object(input, "trust"), TrustSnapshot.newBuilder(),
-                "/trust");
+        TrustSnapshot trust = TrustPin.resolve(input, defaultTrust);
         Map<String, byte[]> artifacts = WorkflowActionJson.base64Map(input, "artifacts");
         Verification verification;
         try {
