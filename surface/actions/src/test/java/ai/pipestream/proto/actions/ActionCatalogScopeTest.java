@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -124,6 +125,33 @@ class ActionCatalogScopeTest {
         assertThat(catalog.list(everything)).hasSize(17);
         assertThat(catalog.list()).hasSize(18);
         assertThat(catalog.list(Caller.operator())).hasSize(18);
+    }
+
+    @Test
+    void aBudgetedCallerExhaustsItsRateAndItsPayloadCapByName() throws Exception {
+        AtomicBoolean ran = new AtomicBoolean();
+        catalog.register(stub("metered", Scopes.SCHEMA_WRITE, ran));
+        Caller budgeted = Caller.scoped("meterme", Set.of(Scopes.SCHEMA_WRITE),
+                Map.of(Scopes.SCHEMA_WRITE, new Caller.Budget(2, 0)));
+
+        catalog.execute("metered", JsonNodeFactory.instance.objectNode(), budgeted);
+        catalog.execute("metered", JsonNodeFactory.instance.objectNode(), budgeted);
+        ActionException exhausted = catchThrowableOfType(ActionException.class, () ->
+                catalog.execute("metered", JsonNodeFactory.instance.objectNode(), budgeted));
+        assertThat(exhausted.code()).isEqualTo("resource-exhausted");
+        assertThat(exhausted.getMessage())
+                .contains("meterme").contains("2-per-minute").contains(Scopes.SCHEMA_WRITE);
+
+        ObjectNode oversize = JsonNodeFactory.instance.objectNode()
+                .put("padding", "x".repeat(200));
+        Caller capped = Caller.scoped("freshly", Set.of(Scopes.SCHEMA_WRITE),
+                Map.of(Scopes.SCHEMA_WRITE, new Caller.Budget(0, 64)));
+        ran.set(false);
+        ActionException tooBig = catchThrowableOfType(ActionException.class, () ->
+                catalog.execute("metered", oversize, capped));
+        assertThat(tooBig.code()).isEqualTo("resource-exhausted");
+        assertThat(tooBig.getMessage()).contains("freshly").contains("64-byte");
+        assertThat(ran).isFalse();
     }
 
     @Test

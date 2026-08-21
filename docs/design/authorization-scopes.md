@@ -246,6 +246,39 @@ IdP-issued and database-minted credentials exactly like policy
 principals. The access-policy lane keeps re-scoping the digest half
 live; the external stores are boot configuration.
 
+## Per-scope budgets
+
+A scope says what a principal may do; a budget says how much,
+following the intake scope's per-key caps. The policy document
+declares them per principal, per scope:
+
+```protobuf
+message ScopeBudget {
+  string scope = 1;                // one the principal holds
+  uint32 requests_per_minute = 2;  // 0 = unlimited
+  uint64 max_payload_bytes = 3;    // 0 = uncapped
+}
+```
+
+A budget naming a scope the principal does not hold, duplicated on a
+principal, or capping nothing is refused at load by name. The limits
+ride the resolved `Caller`, so every enforcement point that already
+checks scopes — the action catalog behind gRPC, REST, MCP, and the
+CLI; the scope interceptor on the search and metric services; the
+registry's route table; the search console's login boundary — consults
+its own spending ledger with no new wiring, and a policy re-scoped on
+the config lane re-budgets the same way. The operator is never
+budgeted, and an unbudgeted scope is untouched.
+
+Rate is a fixed one-minute window per principal and scope: admitted
+requests count, refusals do not. Payload caps apply on surfaces that
+know their request size (the catalog's JSON input, a gRPC request
+message, an HTTP body's declared length) and an oversize refusal
+spends no rate. The refusal is uniform: error code
+`resource-exhausted`, gRPC `RESOURCE_EXHAUSTED`, HTTP `429`, message
+naming the principal, the scope, and the exhausted limit — never a
+credential.
+
 ## What this layer does not do
 
 - **It is not row-level security.** A scope gates operations, not
@@ -299,7 +332,5 @@ action against its required scope.
 - Signed scope assertions (a receipt-layer trust snapshot vouching for
   an external issuer's scope claims) — the verification machinery
   exists; binding it to call credentials is its own decision.
-- Per-scope rate and payload budgets, following the intake scope's
-  per-key caps.
 - The metric mapping's row-level rewrite, which starts from the
   `Caller` this layer establishes.

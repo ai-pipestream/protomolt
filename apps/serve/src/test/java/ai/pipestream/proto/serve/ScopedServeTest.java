@@ -7,6 +7,7 @@ import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.AccessPolicy;
 import ai.pipestream.proto.authz.AccessPolicyCallers;
 import ai.pipestream.proto.authz.Principal;
+import ai.pipestream.proto.authz.ScopeBudget;
 import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -40,6 +41,7 @@ class ScopedServeTest {
 
     private static final String TOKEN = "operator-sekret";
     private static final String READER = "reader-sekret";
+    private static final String METERED = "metered-sekret";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** The schema-read slice of the serve catalog (44 typed verbs + delegation + mesh). */
@@ -58,6 +60,13 @@ class ScopedServeTest {
                         .setName("ci-reader")
                         .addCredentialSha256(AccessPolicyCallers.sha256Hex(READER))
                         .addScopes(Scopes.SCHEMA_READ))
+                .addPrincipals(Principal.newBuilder()
+                        .setName("metered")
+                        .addCredentialSha256(AccessPolicyCallers.sha256Hex(METERED))
+                        .addScopes(Scopes.SCHEMA_READ)
+                        .addBudgets(ScopeBudget.newBuilder()
+                                .setScope(Scopes.SCHEMA_READ)
+                                .setRequestsPerMinute(2)))
                 .build();
         Files.writeString(policyFile, JsonFormat.printer().print(policy));
         serve = ProtoMoltServe.start(new ProtoMoltServe.Options(
@@ -101,6 +110,19 @@ class ScopedServeTest {
                     .contains("ci-reader").contains(Scopes.SERVICE_INVOKE);
         });
         assertThat(grpcCall("ListTypes", READER)).isInstanceOf(List.class);
+    }
+
+    @Test
+    void aBudgetedPrincipalExhaustsItsRateAsResourceExhausted() {
+        assertThat(grpcCall("ListTypes", METERED)).isInstanceOf(List.class);
+        assertThat(grpcCall("ListTypes", METERED)).isInstanceOf(List.class);
+        Object exhausted = grpcCall("ListTypes", METERED);
+        assertThat(exhausted).isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+            assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(e.getStatus().getDescription())
+                    .contains("metered").contains("2-per-minute")
+                    .contains(Scopes.SCHEMA_READ);
+        });
     }
 
     @Test

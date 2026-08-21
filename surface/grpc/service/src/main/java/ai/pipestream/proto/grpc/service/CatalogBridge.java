@@ -84,6 +84,7 @@ public final class CatalogBridge {
             case "internal-error" -> io.grpc.Status.INTERNAL;
             case "unknown-action" -> io.grpc.Status.UNIMPLEMENTED;
             case "permission-denied" -> io.grpc.Status.PERMISSION_DENIED;
+            case "resource-exhausted" -> io.grpc.Status.RESOURCE_EXHAUSTED;
             default -> io.grpc.Status.INVALID_ARGUMENT;
         };
         io.grpc.Metadata trailers = new io.grpc.Metadata();

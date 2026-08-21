@@ -143,4 +143,42 @@ class AccessPoliciesTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("invalid");
     }
+
+    @Test
+    void budgetsAreValidatedByName() {
+        AccessPolicy budgeted = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .addBudgets(ScopeBudget.newBuilder()
+                                .setScope(Scopes.SCHEMA_READ)
+                                .setRequestsPerMinute(100)))
+                .build();
+        assertThat(AccessPolicies.requireWellFormed(budgeted)).isSameAs(budgeted);
+
+        AccessPolicy unheld = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .addBudgets(ScopeBudget.newBuilder()
+                                .setScope(Scopes.SCHEMA_WRITE)
+                                .setRequestsPerMinute(1)))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(unheld))
+                .hasMessageContaining("ci-reader")
+                .hasMessageContaining("does not hold");
+
+        AccessPolicy doubled = budgeted.toBuilder()
+                .setPrincipals(0, budgeted.getPrincipals(0).toBuilder()
+                        .addBudgets(ScopeBudget.newBuilder()
+                                .setScope(Scopes.SCHEMA_READ)
+                                .setMaxPayloadBytes(10)))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(doubled))
+                .hasMessageContaining("twice");
+
+        AccessPolicy empty = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .addBudgets(ScopeBudget.newBuilder()
+                                .setScope(Scopes.SCHEMA_READ)))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(empty))
+                .hasMessageContaining("caps nothing");
+    }
 }

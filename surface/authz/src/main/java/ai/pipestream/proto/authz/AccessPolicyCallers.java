@@ -25,8 +25,13 @@ public final class AccessPolicyCallers implements CallerResolver {
         AccessPolicies.requireWellFormed(policy);
         Map<String, Caller> resolved = new HashMap<>();
         for (Principal principal : policy.getPrincipalsList()) {
+            Map<String, Caller.Budget> budgets = new HashMap<>();
+            for (ScopeBudget budget : principal.getBudgetsList()) {
+                budgets.put(budget.getScope(), new Caller.Budget(
+                        budget.getRequestsPerMinute(), budget.getMaxPayloadBytes()));
+            }
             Caller caller = Caller.scoped(principal.getName(),
-                    Set.copyOf(principal.getScopesList()));
+                    Set.copyOf(principal.getScopesList()), budgets);
             for (String digest : principal.getCredentialSha256List()) {
                 resolved.put(digest, caller);
             }
