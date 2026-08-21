@@ -49,39 +49,18 @@ promotion review.
 
 ## Inference role
 
-Nano1 hosts DJL Serving and text-embeddings-inference, but the build runner and
-inference processors are separate capacities. A busy build must not silently
-consume the memory reserved for inference, and an inference container must not
+Nano1 hosts text-embeddings-inference, but the build runner and inference
+processors are separate capacities. A busy build must not silently consume
+the memory reserved for inference, and an inference container must not
 receive the runner's Docker authority.
-
-The official DJL Serving 0.36 GPU image does not publish an ARM64 manifest.
-The Nano1 image combines DJL Serving's ARM64 Java distribution with NVIDIA's
-ARM64 TensorRT 26.05 container. That NVIDIA release matches the host's CUDA
-13.2 and TensorRT 10.16 line. DJL uses its Python engine so inference executes
-in NVIDIA's TensorRT runtime.
-
-The container refuses to start unless TensorRT builds and executes a CUDA
-engine. CPU inference and CPU model offload are not fallbacks. The included
-`cuda-probe` model adds two to a fixed 16-value tensor and returns the GPU
-identity, compute capability, TensorRT version, timing, and device memory.
-
-Build, start, and verify the service on Nano1 with:
-
-```shell
-sudo -u protomolt-runner -H env PROTOMOLT_NANO1_DJL_LIVE=1 \
-  scripts/nano1-djl-live.sh
-```
-
-The live check must return `backend: TensorRT`, device `Orin`, compute
-capability `8.7`, and the expected output values. The container is unhealthy
-and restart-looped if the startup CUDA engine cannot execute.
 
 ## Embeddings
 
 The `tei-gpu` service provides normalized 384-dimensional embeddings from
-`BAAI/bge-small-en-v1.5`. The model is small enough to coexist with the DJL
-probe and useful for agent memory, source-code retrieval, and local search.
-Both its public model revision and the TEI source revision are pinned.
+`BAAI/bge-small-en-v1.5`. The model fits the Orin's shared memory alongside
+the build runner and is useful for agent memory, source-code retrieval, and
+local search. Both its public model revision and the TEI source revision are
+pinned.
 
 TEI is compiled natively for the Orin's `sm_87` CUDA capability. The build uses
 the CUDA-only Candle backend, so an unavailable GPU is a startup failure. CPU
@@ -106,21 +85,19 @@ uses a pinned ARM64 grpcurl container to verify reflection, gRPC health, model
 identity, vector dimensions, finite values, normalization, and semantic
 ordering for related and unrelated sentences.
 
-DJL listens on `127.0.0.1:8082` and TEI listens on `127.0.0.1:8083` by default.
-Set `NANO1_DJL_BIND` or `NANO1_TEI_BIND` to Nano1's Tailscale address only when
-direct tailnet access is needed. Do not bind either unauthenticated API to every
-interface. A public route should terminate TLS and authentication before
-forwarding to these endpoints.
+TEI listens on `127.0.0.1:8083` by default. Set `NANO1_TEI_BIND` to Nano1's
+Tailscale address only when direct tailnet access is needed. Do not bind the
+unauthenticated API to every interface. A public route should terminate TLS
+and authentication before forwarding to this endpoint.
 
 With `NANO1_TEI_BIND` set to the host's Tailscale IPv4 address, tailnet members
 can reflect and invoke `nano1:8083` with grpcurl or register it directly in
 ProtoMolt. Tailscale encrypts that route and applies tailnet identity policy.
 Internet exposure still requires an authenticated proxy.
 
-The verified tailnet deployment uses `nano1:8083`. With DJL and TEI healthy,
-DJL used about 1 GiB and TEI used about 677 MiB of host memory at idle. Treat
-those observations as deployment evidence, not scheduling limits. The hard
-container limits remain 2 GiB and 3 GiB respectively.
+The verified tailnet deployment uses `nano1:8083`. TEI used about 677 MiB of
+host memory at idle in that deployment. Treat the observation as deployment
+evidence, not a scheduling limit. The hard container limit remains 3 GiB.
 
 Stop it with:
 
@@ -129,22 +106,20 @@ sudo -u protomolt-runner -H docker compose \
   -f deploy/nano1/compose.yml down
 ```
 
-The CUDA probe proves the DJL serving stack without downloading model weights.
 TEI provides the first useful model while keeping its cache on Nano1's local
 disk. Its processor advertisement should identify the pinned model, embedding
 dimensions, CUDA capability, concurrency limit, and current in-flight count.
-DJL and the ARM64 build processor should publish different capability and
+TEI and the ARM64 build processor should publish different capability and
 capacity records.
 
 ## Mesh publisher
 
-`scripts/nano1-mesh-publisher.py` advertises Nano1 as one node with three
+`scripts/nano1-mesh-publisher.py` advertises Nano1 as one node with two
 independent leased processors:
 
 | Processor | Readiness gate | Advertised capacity |
 |---|---|---|
 | `nano1-tei` | NVIDIA-runtime container, pinned model identity, live normalized 384-dimensional embedding | TEI's reported concurrent-request limit |
-| `nano1-djl` | Live TensorRT CUDA probe with compute capability 8.7 and allocated device memory | One probe at a time |
 | `nano1-arm64-builder` | Full native host gate, including ARM64, JetPack, CUDA, TensorRT, Docker, and power mode | One trusted build at a time |
 
 The publisher renews only processors whose gate passes. A failed processor
@@ -153,14 +128,10 @@ the host gate or publisher stops, the node presence expires and the directory
 cascades expiry to all of its processors. No CPU inference or CPU model offload
 path exists.
 
-The TEI endpoint is advertised only after its live gRPC gate passes. DJL stays
-loopback-only by default, so the publisher records its health and capacity but
-does not claim a directly reachable endpoint. Set
-`NANO1_DJL_ADVERTISE_ADDRESS` to an absolute authenticated proxy URI or an
-explicit tailnet address only after that route exists. The ARM64 advertisement
-uses the `arm64-build-capacity` capability. It describes a healthy build host;
-the bounded task API in planned work will add remote execution without
-exposing Nano1's Docker socket.
+The TEI endpoint is advertised only after its live gRPC gate passes. The
+ARM64 advertisement uses the `arm64-build-capability` capability. It
+describes a healthy build host; the bounded task API in planned work will add
+remote execution without exposing Nano1's Docker socket.
 
 Place `PROTOMOLT_MCP_TOKEN` in a root-readable or runner-readable environment
 file outside the repository, then run the publisher as the existing

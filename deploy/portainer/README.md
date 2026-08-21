@@ -1,8 +1,8 @@
 # Always-on coordinator in Portainer
 
 `compose.yml` runs the persistent ProtoMolt coordinator on the NAS Portainer
-endpoint. Portainer is the sole lifecycle owner. The existing DJL stack remains
-on the GPU host and is not duplicated here.
+endpoint. Portainer is the sole lifecycle owner. Inference stays on the GPU
+hosts and is not duplicated here.
 
 The serve and repo-service images default to the `edge` tag published by the
 Docker Publish workflow. Updating the coordinator is an explicit pin: after a

@@ -79,26 +79,6 @@ def probe_tei(target: str) -> dict:
     return info
 
 
-def probe_djl(port: int) -> dict:
-    payload = json.dumps({"values": list(range(16))}).encode()
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/predictions/cuda-probe",
-        data=payload,
-        headers={"content-type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        result = json.loads(response.read())
-    if (
-        result.get("backend") != "TensorRT"
-        or result.get("compute_capability") != [8, 7]
-        or int(result.get("total_device_bytes", 0)) <= 0
-        or result.get("output") != list(range(2, 18))
-    ):
-        raise RuntimeError("DJL did not execute the expected TensorRT CUDA probe")
-    return result
-
-
 class McpClient:
     def __init__(self, endpoint: str, token: str) -> None:
         self.endpoint = endpoint
@@ -217,7 +197,6 @@ def processor(processor_id: str, kind: str, capabilities: list[str], now: dt.dat
                 "cuda": "GPU execution is required by the local readiness gate.",
                 "cuda-sm87": "NVIDIA compute capability 8.7 is required by the gate.",
                 "dimensions-384": "Dense embedding vectors contain 384 float values.",
-                "tensorrt-probe": "Executes a real TensorRT engine on the Orin GPU.",
                 "arm64-build-capacity": "Trusted native linux/arm64 build host capacity.",
             }.items() if name in capabilities
         ],
@@ -243,14 +222,12 @@ def publish_once(client: McpClient, state: PublisherState,
     expiry = now + dt.timedelta(seconds=ttl_seconds)
     ip = tailnet_ip()
     tei_target = os.environ.get("NANO1_TEI_TARGET", f"{ip}:8083")
-    djl_port = int(os.environ.get("NANO1_DJL_PORT", "8082"))
 
     probe_host(repo_root)
     healthy: dict[str, object] = {}
     failures: dict[str, str] = {}
     for name, probe in {
         "nano1-tei": lambda: probe_tei(tei_target),
-        "nano1-djl": lambda: probe_djl(djl_port),
         "nano1-arm64-builder": lambda: {"architecture": "linux/arm64"},
     }.items():
         try:
@@ -295,14 +272,6 @@ def publish_once(client: McpClient, state: PublisherState,
             "direct": True,
         })
         node_capabilities.append("grpc-reflection")
-    djl_address = os.environ.get("NANO1_DJL_ADVERTISE_ADDRESS")
-    if "nano1-djl" in healthy and djl_address:
-        endpoints.append({
-            "endpointId": "djl-http",
-            "address": djl_address,
-            "tlsMode": "TLS_MODE_DISABLED",
-            "direct": True,
-        })
     node = {
         "nodeId": "nano1",
         "clusterId": os.environ.get("PROTOMOLT_MESH_CLUSTER_ID", "protomolt"),
@@ -331,10 +300,6 @@ def publish_once(client: McpClient, state: PublisherState,
             ["embedding", "dimensions-384", "cuda", "cuda-sm87", "grpc-reflection"],
             "tei", MODEL_ID, MODEL_SHA,
             int(healthy.get("nano1-tei", {}).get("maxConcurrentRequests", 4)),
-        ),
-        "nano1-djl": (
-            "PROCESSOR_KIND_GRPC_SERVICE", ["tensorrt-probe", "cuda", "cuda-sm87"],
-            "djl", "cuda-probe", "TensorRT-sm87", 1,
         ),
         "nano1-arm64-builder": (
             "PROCESSOR_KIND_DETERMINISTIC", ["arm64-build-capacity"],

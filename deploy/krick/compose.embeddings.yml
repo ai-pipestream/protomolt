@@ -1,0 +1,53 @@
+# NVIDIA-GPU text-embeddings-inference sidecar for the Krick workstation.
+# TEI serves BAAI/bge-m3 (1024-dimensional normalized embeddings) on the
+# RTX 4080 SUPER from the pinned upstream image. This replaces the retired
+# DJL Serving embedder: DJL's Rust engine has no working CUDA path (its
+# kernels fail at model load with CUDA_ERROR_NOT_FOUND), while TEI's CUDA
+# backend is maintained and measured faster on this host. Verified
+# 2026-08-21: about 1400 embeddings/s with bge-m3 and 9200 embeddings/s
+# with bge-small-en-v1.5, unit-normed vectors in both cases.
+#
+#   docker compose -f deploy/krick/compose.embeddings.yml up -d
+#   docker compose -f deploy/krick/compose.embeddings.yml logs -f
+#
+# The endpoint publishes on the host loopback only and is unauthenticated.
+name: protomolt-krick-embeddings
+
+services:
+  embedder-tei:
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:1.9.3}
+    container_name: protomolt-embedder-tei
+    command:
+      - --model-id
+      - ${TEI_MODEL_ID:-BAAI/bge-m3}
+      - --revision
+      - ${TEI_MODEL_REVISION:-5617a9f61b028005a4858fdac845db406aefb181}
+      - --dtype
+      - float16
+    ports:
+      # Host loopback only.
+      - 127.0.0.1:${EMBEDDER_HOST_PORT:-8096}:80
+    volumes:
+      # Hugging Face download cache; survives container replacement.
+      - tei-model-cache:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+
+volumes:
+  tei-model-cache:
