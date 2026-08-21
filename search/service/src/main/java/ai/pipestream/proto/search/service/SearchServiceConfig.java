@@ -1,5 +1,6 @@
 package ai.pipestream.proto.search.service;
 
+import ai.pipestream.proto.search.embedding.VectorizationPolicy;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -24,10 +25,14 @@ import java.util.Map;
  */
 public record SearchServiceConfig(
         int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
-        IndexSnapshots snapshots, boolean readOnly, long refreshSeconds) {
+        IndexSnapshots snapshots, boolean readOnly, long refreshSeconds,
+        VectorizationPolicy vectorization) {
 
     /** Validates the configuration. */
     public SearchServiceConfig {
+        if (vectorization == null) {
+            vectorization = VectorizationPolicy.unclassifiedOnly();
+        }
         if (indexDir == null) {
             throw new IllegalArgumentException("indexDir must not be null");
         }
@@ -50,6 +55,18 @@ public record SearchServiceConfig(
                     "refreshSeconds needs snapshots to refresh from");
         }
         subjects = Map.copyOf(subjects);
+    }
+
+    /** The same configuration with a vectorization policy. */
+    public SearchServiceConfig vectorizing(VectorizationPolicy policy) {
+        return new SearchServiceConfig(grpcPort, indexDir, subjects, snapshots, readOnly,
+                refreshSeconds, policy);
+    }
+
+    /** A configuration vectorizing unclassified content only. */
+    public SearchServiceConfig(int grpcPort, Path indexDir, Map<String, ServedMapping> subjects,
+            IndexSnapshots snapshots, boolean readOnly, long refreshSeconds) {
+        this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds, null);
     }
 
     /** A configuration without periodic refresh (readers restore on boot). */

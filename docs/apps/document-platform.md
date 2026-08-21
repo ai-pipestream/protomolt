@@ -97,6 +97,16 @@ creates it. A node booting over an empty index directory with the family
 set restores each subject from the bucket before serving, which is what
 `PlatformSnapshotIT` proves end to end.
 
+`DOCUMENT_PLATFORM_SEARCH_VECTORIZE_SENSITIVITY` says which `meta.v1`
+sensitivity classes this node may send to an embedding provider, as a
+comma-separated list, or `*` for every class. Unset, the node permits
+exactly one: `screened`, which the repo document's body declares and
+which indexing that body requires. A subject whose chunk lane reads any
+other classified field fails the mount by name rather than quietly
+vectorizing it — see [embeddings](../search/embeddings.md#vectorizing-sensitive-content).
+Setting the variable replaces that default rather than adding to it, so
+an operator taking control takes all of it.
+
 `DOCUMENT_PLATFORM_SEARCH_READ_ONLY=true` makes the search role a
 reader: no repo channel, no `SearchIndexService`, and restore-only
 snapshots (a reader never uploads a commit or prunes the writer's

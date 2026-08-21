@@ -156,4 +156,87 @@ class MappingEmbedderTest {
                 .hasMessageContaining("null-returning");
         assertThat(document).containsOnlyKeys("title");
     }
+
+    private static IndexMapping classifiedTextMapping(String sensitivity) {
+        return new IndexMapping("library.Book", List.of(
+                new IndexMapping.IndexedField("title", "title",
+                        ResolvedFieldHint.of(IndexFieldKind.TEXT), false, sensitivity),
+                vector("embedding", 3)));
+    }
+
+    @Test
+    void classifiedTextIsRefusedByDefaultNamingTheFieldAndClass() {
+        Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world"));
+
+        assertThatThrownBy(() ->
+                new MappingEmbedder(provider, classifiedTextMapping("pii")).embed(document))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("title")
+                .hasMessageContaining("pii")
+                .hasMessageContaining("unclassified content only");
+        assertThat(document).doesNotContainKey("embedding");
+    }
+
+    @Test
+    void theRefusalNeverEchoesTheContent() {
+        Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "sekret-value"));
+
+        assertThatThrownBy(() ->
+                new MappingEmbedder(provider, classifiedTextMapping("pii")).embed(document))
+                .hasMessageNotContaining("sekret-value");
+    }
+
+    @Test
+    void aPermittedClassEmbedsVerbatim() {
+        Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world"));
+
+        Map<String, Object> embedded = new MappingEmbedder(provider,
+                classifiedTextMapping("internal"),
+                VectorizationPolicy.permitting(java.util.Set.of("internal"))).embed(document);
+
+        assertThat(embedded.get("embedding")).isEqualTo(List.of(0.1f, 0.2f, 0.3f));
+    }
+
+    @Test
+    void aPermittedClassDoesNotPermitADifferentOne() {
+        Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world"));
+
+        assertThatThrownBy(() -> new MappingEmbedder(provider,
+                classifiedTextMapping("pii"),
+                VectorizationPolicy.permitting(java.util.Set.of("internal"))).embed(document))
+                .hasMessageContaining("pii")
+                .hasMessageContaining("internal");
+    }
+
+    @Test
+    void unrestrictedEmbedsAnyClassAndUnclassifiedIsAlwaysAllowed() {
+        Map<String, Object> classified = new LinkedHashMap<>(Map.of("title", "hello world"));
+        assertThat(new MappingEmbedder(provider, classifiedTextMapping("secret"),
+                VectorizationPolicy.unrestricted()).embed(classified))
+                .containsKey("embedding");
+
+        Map<String, Object> plain = new LinkedHashMap<>(Map.of("title", "hello world"));
+        assertThat(new MappingEmbedder(provider, classifiedTextMapping(""))
+                .embed(plain)).containsKey("embedding");
+    }
+
+    @Test
+    void theGateRunsBeforeTheDocumentIsRead() {
+        // No text in the document at all: an ungated embedder would return it
+        // untouched, so a refusal here proves the gate precedes the read.
+        assertThatThrownBy(() -> new MappingEmbedder(provider, classifiedTextMapping("pii"))
+                .embed(new LinkedHashMap<>()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pii");
+    }
+
+    @Test
+    void aPolicyMustNameSomethingAndNeverABlankClass() {
+        assertThatThrownBy(() -> VectorizationPolicy.permitting(java.util.Set.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unclassifiedOnly()");
+        assertThatThrownBy(() -> VectorizationPolicy.permitting(java.util.Set.of(" ")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unclassified case");
+    }
 }

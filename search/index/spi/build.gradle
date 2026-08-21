@@ -6,6 +6,9 @@ description = 'Search-index SPI, indexing plans, and descriptor indexing hints'
 
 dependencies {
     api project(':protomolt-mapper')
+    // The mapping carries each field's declared sensitivity so consumers past
+    // the descriptor (the embedder) can refuse restricted content.
+    api project(':protomolt-protobuf-metadata')
     api libs.protobuf.java
     api libs.slf4j.api
     // Canonical range types for the range-resolution tests.

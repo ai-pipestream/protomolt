@@ -1,5 +1,6 @@
 package ai.pipestream.proto.search.service;
 
+import ai.pipestream.proto.search.embedding.VectorizationPolicy;
 import ai.pipestream.proto.search.index.spi.CatalogIndexingHintSource;
 import ai.pipestream.proto.search.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.search.index.spi.IndexFieldKind;
@@ -7,6 +8,7 @@ import ai.pipestream.proto.search.index.spi.IndexMapping;
 import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
 import ai.pipestream.proto.search.index.spi.ResolvedFieldHint;
 import ai.pipestream.proto.repo.v1.Document;
+import java.util.Set;
 
 /**
  * The out-of-the-box mapping subject for repository documents: identity plus
@@ -22,6 +24,27 @@ public final class RepoDocumentMapping {
 
     /** The index field name of the folded body text: {@value}. */
     public static final String BODY_FIELD = "search_metadata_body";
+
+    /**
+     * The sensitivity class the repo document's body declares: {@value}. It names the
+     * screening policy that applies to that text rather than a restriction on it, but a
+     * chunk lane over the body still sends it to an embedding provider, so a deployment
+     * serving this mapping with a lane must permit the class — see
+     * {@link VectorizationPolicy}.
+     */
+    public static final String BODY_SENSITIVITY = "screened";
+
+    /**
+     * The narrowest vectorization policy a chunk lane over this mapping needs: unclassified
+     * content plus {@link #BODY_SENSITIVITY}. A deployment still states the decision by
+     * passing this, which is the point; the constant only spares it from spelling the class
+     * name and getting it wrong.
+     *
+     * @return the policy permitting this mapping's body class
+     */
+    public static VectorizationPolicy laneVectorization() {
+        return VectorizationPolicy.permitting(Set.of(BODY_SENSITIVITY));
+    }
 
     private RepoDocumentMapping() {
     }
