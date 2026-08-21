@@ -1,24 +1,4 @@
 services:
-  djl-gpu:
-    build:
-      context: .
-      dockerfile: Dockerfile.djl-gpu
-    image: protomolt-djl-jetson:local
-    container_name: protomolt-djl-jetson
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    ports:
-      - "${NANO1_DJL_BIND:-127.0.0.1}:${NANO1_DJL_PORT:-8082}:8080"
-    mem_limit: 2g
-    shm_size: 1g
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-
   tei-gpu:
     build:
       context: "${PROTOMOLT_TEI_SOURCE_DIR:-/var/lib/protomolt-runner/.cache/protomolt/tei-source}"

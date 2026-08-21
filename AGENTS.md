@@ -176,11 +176,11 @@ Current implementation and deployment snapshot, verified 2026-08-14:
 - Nano1 is a trusted, manual-only native ARM64 GitHub runner. Its Docker group
   authority belongs only to the runner service. Never select its labels from a
   pull-request workflow or expose its Docker socket to a coding worker.
-- Nano1 also runs a loopback-only, GPU-gated DJL Serving processor backed by
-  TensorRT. Its startup and live checks execute a real CUDA engine on the Orin
-  GPU. CPU inference and CPU model offload are prohibited. Build capacity and
-  inference capacity must be advertised separately before either joins mesh
-  scheduling.
+- krick runs a TEI embeddings sidecar on its NVIDIA GPU
+  (`deploy/krick/compose.embeddings.yml`, loopback port 8096) serving pinned
+  `BAAI/bge-m3` for 1024-dimensional embeddings. It replaces the retired DJL
+  Serving embedder, whose Rust engine has no working CUDA path. It binds to
+  loopback only; do not expose its unauthenticated port to the Internet.
 - Nano1's TEI service uses a CUDA-only native ARM64 build and a pinned
   `BAAI/bge-small-en-v1.5` revision for 384-dimensional embeddings. It binds to
   loopback by default and may bind to Nano1's Tailscale address for tailnet

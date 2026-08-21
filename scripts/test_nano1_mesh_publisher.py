@@ -45,9 +45,6 @@ class Nano1MeshPublisherTest(unittest.TestCase):
                 mock.patch.object(PUBLISHER, "probe_host"), \
                 mock.patch.object(PUBLISHER, "probe_tei", return_value={
                     "maxConcurrentRequests": 4,
-                }), \
-                mock.patch.object(PUBLISHER, "probe_djl", return_value={
-                    "backend": "TensorRT",
                 }):
             state = PUBLISHER.PublisherState(
                 pathlib.Path(temporary) / "publisher-state.json")
@@ -60,7 +57,7 @@ class Nano1MeshPublisherTest(unittest.TestCase):
         self.assertEqual(["tei-grpc"], [entry["endpointId"]
                                        for entry in node["endpoints"]])
         self.assertCountEqual(
-            ["nano1-tei", "nano1-djl", "nano1-arm64-builder"],
+            ["nano1-tei", "nano1-arm64-builder"],
             result["renewed"],
         )
 

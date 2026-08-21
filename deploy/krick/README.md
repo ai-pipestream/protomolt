@@ -112,3 +112,31 @@ and the recovery semantics.
 delegation lifecycle against the coordinator with real provider processes,
 including a worker restart across a checkpoint. It is opt-in and skips unless
 its environment contract is met.
+
+## Embeddings sidecar
+
+`compose.embeddings.yml` runs a text-embeddings-inference sidecar on the
+workstation's NVIDIA GPU, separate from the agent stack. It serves pinned
+`BAAI/bge-m3` as 1024-dimensional normalized embeddings over HTTP on
+`127.0.0.1:8096` (loopback only, unauthenticated; the same exposure rule as
+the Nano1 and MacBook endpoints applies). It replaces the retired DJL Serving
+embedder, whose Rust engine has no working CUDA path.
+
+```shell
+docker compose -f deploy/krick/compose.embeddings.yml up -d
+
+curl -s http://127.0.0.1:8096/embed \
+  -H 'Content-Type: application/json' \
+  -d '{"inputs": ["Krick verifies its embedding sidecar."]}'
+```
+
+Stop with `docker compose -f deploy/krick/compose.embeddings.yml down`. Model
+files persist in the `tei-model-cache` volume. `TEI_IMAGE`, `TEI_MODEL_ID`,
+`TEI_MODEL_REVISION`, and `EMBEDDER_HOST_PORT` override the image, model, and
+port. The 1024-dimensional output matches the MacBook Air's `bge-m3` endpoint
+in dimension; indexes built from one are not comparable with the 384- and
+768-dimensional endpoints on Nano1 and krick-1.
+
+Verified 2026-08-21 against the running container on the RTX 4080 SUPER:
+about 1400 embeddings/s with `bge-m3` and 9200 embeddings/s with
+`bge-small-en-v1.5`, unit-normed vectors in both cases.
