@@ -39,13 +39,29 @@ final class SearchConsolePage {
               @keyframes arrive { from { opacity: 0; transform: translateY(4px); }
                                   to { opacity: 1; } }
               #ops { display: none; }
+              header { display: flex; align-items: baseline; gap: 1rem; }
+              header h1 { margin-right: auto; }
+              #loginStatus { color: #c33; min-height: 1.5em; }
               table { border-collapse: collapse; width: 100%; font-size: .9rem; }
               th, td { text-align: left; padding: .25rem .5rem;
                        border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
               #opsOut { font-family: ui-monospace, monospace; font-size: .85rem;
                         white-space: pre-wrap; overflow-wrap: anywhere; color: #888; }
             </style>
-            <h1>Search Console</h1>
+            <header>
+              <h1>Search Console</h1>
+              <button id="signout" hidden>Sign out</button>
+            </header>
+            <section id="loginPanel" hidden>
+              <p>This console is guarded: sign in with a credential the access policy names.</p>
+              <form class="bar" id="loginForm">
+                <input id="credential" type="password" placeholder="credential"
+                       autocomplete="current-password">
+                <button>Sign in</button>
+              </form>
+              <div id="loginStatus"></div>
+            </section>
+            <div id="app" hidden>
             <form class="bar" id="searchForm">
               <select id="subject" title="mapping subject"></select>
               <select id="lane" title="lane">
@@ -74,6 +90,7 @@ final class SearchConsolePage {
                 <tbody></tbody>
               </table>
             </section>
+            </div>
             <script>
             const el = id => document.getElementById(id);
             const status = el('status'), hits = el('hits');
@@ -83,6 +100,17 @@ final class SearchConsolePage {
               status.className = isError ? 'error' : '';
             }
             async function load() {
+              let session = {};
+              try { session = await (await fetch('/session')).json(); } catch {}
+              if (session.loginRequired && !session.authenticated) {
+                el('loginPanel').hidden = false;
+                el('app').hidden = true;
+                el('signout').hidden = true;
+                return;
+              }
+              el('loginPanel').hidden = true;
+              el('app').hidden = false;
+              el('signout').hidden = !session.loginRequired;
               const resp = await fetch('/subjects');
               if (!resp.ok) { say((await resp.json()).error || 'subjects unavailable', true); return; }
               subjects = (await resp.json()).subjects || [];
@@ -102,6 +130,23 @@ final class SearchConsolePage {
               }
               if (!vector) el('lane').value = 'SEARCH_LANE_LEXICAL';
             }
+            el('loginForm').onsubmit = async e => {
+              e.preventDefault();
+              const resp = await fetch('/session',
+                  { method: 'POST', body: el('credential').value });
+              if (!resp.ok) {
+                el('loginStatus').textContent =
+                    (await resp.json()).error || 'sign-in failed';
+                return;
+              }
+              el('credential').value = '';
+              el('loginStatus').textContent = '';
+              load();
+            };
+            el('signout').onclick = async () => {
+              await fetch('/session', { method: 'DELETE' });
+              load();
+            };
             el('subject').onchange = laneOptions;
             el('searchForm').onsubmit = async e => {
               e.preventDefault();

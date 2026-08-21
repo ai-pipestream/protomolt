@@ -196,3 +196,14 @@ gives the operations panel replay (`replay-documents`), job inspection
 (`list-jobs`), and connector pulls without CORS. Mounted as the
 `search-console` role (requires `search`); the platform serves it on port
 8096 by default (`DOCUMENT_PLATFORM_SEARCH_CONSOLE_PORT`).
+
+On a guarded node the console demands a browser login: a credential the
+[access policy](../design/authorization-scopes.md) names signs in at
+`POST /session` and gets an HttpOnly cookie bound to that principal for
+twelve hours — the operator token never logs in. The search bridges
+require the session principal to hold `search-query`, refused by name
+otherwise, and both bridges present the session's own credential to
+their peers (the search service as call metadata, the actions route as
+the `api_token` header), so a guarded registry stays the authority over
+which operations the principal may run. The open console is unchanged:
+no login, process authority, the trusted-network page.

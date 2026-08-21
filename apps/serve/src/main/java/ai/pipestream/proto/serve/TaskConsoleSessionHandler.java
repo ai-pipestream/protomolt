@@ -1,6 +1,7 @@
 package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.authz.ConsoleSessions;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
@@ -14,9 +15,9 @@ final class TaskConsoleSessionHandler implements HttpHandler {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BODY_BYTES = 4 * 1024;
-    private final TaskConsoleSessions sessions;
+    private final ConsoleSessions sessions;
 
-    TaskConsoleSessionHandler(TaskConsoleSessions sessions) {
+    TaskConsoleSessionHandler(ConsoleSessions sessions) {
         this.sessions = sessions;
     }
 
@@ -68,7 +69,7 @@ final class TaskConsoleSessionHandler implements HttpHandler {
             respondJson(exchange, 401, "{\"error\":\"invalid credentials\"}");
             return;
         }
-        String session = sessions.issue(caller);
+        String session = sessions.issue(caller, token);
         exchange.getResponseHeaders().add("Set-Cookie", TaskConsoleSessions.COOKIE + "="
                 + session + "; Path=/; Max-Age=" + sessions.maxAgeSeconds()
                 + "; HttpOnly; Secure; SameSite=Strict");

@@ -164,7 +164,7 @@ never a thread-local guessed at later.
 | MCP over HTTP | The caller is pinned to the session at `initialize`; `tools/list` serves only tools whose scope the caller holds; `tools/call` refuses the rest by name |
 | Registry server | Route-table split before dispatch: reads, writes, and action execution each name their scope |
 | Search and metric services | An identity interceptor beside the validating one, mounted only when the service is started with a resolver; a service without one stays an open, trusted-network surface, as today |
-| Console sessions | A console login issues a session bound to a principal's scopes, never to the operator token — which un-disables the console in token mode, closing the console-sessions item |
+| Console sessions | A console login issues an HttpOnly session bound to a principal's scopes, never to the operator token, through the shared `ConsoleSessions` mechanism: serve's task console and the search console both use it, and a session retains the credential it presented so a console can hand it to guarded peers |
 
 The refusal is uniform everywhere: error code `permission-denied`,
 gRPC `PERMISSION_DENIED`, HTTP `403`, message naming the principal,
@@ -198,10 +198,14 @@ assembly:
   operator scoping stay separate layers, as below. The in-process
   channels between co-mounted roles stay inside the process trust
   boundary; the guard sits on the network edges.
-- A guarded node refuses to mount the search console, which has no
-  principal sessions yet: serving it would put an unauthenticated
-  browser surface in front of guarded services. Unmount the role or
-  run the node open.
+- A guarded node's search console demands a browser login: a credential
+  the policy names signs in and gets an HttpOnly session bound to that
+  principal — never to the operator token, which does not log in. The
+  console checks `search-query` itself before its in-process search
+  bridge (that lane sits inside the trust boundary and cannot refuse
+  for it) and presents the session's own credential to the guarded
+  registry's actions route, which stays the authority over which
+  operations the principal may run.
 
 ## What this layer does not do
 

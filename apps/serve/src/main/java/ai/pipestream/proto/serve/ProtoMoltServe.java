@@ -6,6 +6,7 @@ import ai.pipestream.proto.actions.Caller;
 import ai.pipestream.proto.authz.AccessPolicies;
 import ai.pipestream.proto.authz.AccessPolicyCallers;
 import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.delegation.DelegationActions;
@@ -698,7 +699,7 @@ public final class ProtoMoltServe implements AutoCloseable {
     public record TaskConsoleOptions(String loginToken, Duration sessionTtl) {
 
         public TaskConsoleOptions {
-            TaskConsoleSessions.validateSettings(loginToken, sessionTtl);
+            ConsoleSessions.validateSettings(loginToken, sessionTtl);
         }
     }
 
@@ -998,7 +999,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                             "/", config.restPathPrefix()))
                     .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
                     .withContext("/mcp", mcpHandler);
-            TaskConsoleSessions taskSessions = options.taskConsole() == null
+            ConsoleSessions taskSessions = options.taskConsole() == null
                     ? TaskConsoleSessions.open()
                     : TaskConsoleSessions.secured(options.taskConsole().loginToken(),
                             options.taskConsole().sessionTtl(), callers);

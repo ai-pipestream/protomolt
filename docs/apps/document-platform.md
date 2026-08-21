@@ -187,9 +187,12 @@ an [access policy](../design/authorization-scopes.md) file read at
 boot, and the config-lane subject `access-policy` re-scopes a running
 node without a restart; a guarded registry node publishes the policy
 contract at boot so the config gate can validate the documents. A
-policy without the token refuses at boot, and a guarded node refuses
-the search console role, which has no principal sessions yet. Both
-variables unset is the open, trusted-network node.
+policy without the token refuses at boot. A guarded node's search
+console demands a browser login bound to a policy principal holding
+`search-query` (the operator token never logs in), and hands the
+session's own credential to the operations panel's registry proxy —
+see [the console](../search/service.md#the-console). Both variables
+unset is the open, trusted-network node.
 
 ## Configuration
 

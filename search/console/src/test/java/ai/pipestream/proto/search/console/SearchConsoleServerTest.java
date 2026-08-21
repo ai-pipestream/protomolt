@@ -1,5 +1,9 @@
 package ai.pipestream.proto.search.console;
 
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.search.v1.ListSubjectsRequest;
 import ai.pipestream.proto.search.v1.ListSubjectsResponse;
 import ai.pipestream.proto.search.v1.SearchHit;
@@ -12,7 +16,13 @@ import ai.pipestream.proto.search.v1.SubjectInfo;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import io.grpc.Context;
+import io.grpc.Contexts;
+import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
@@ -27,6 +37,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,11 +52,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SearchConsoleServerTest {
 
     static final AtomicReference<SearchRequest> lastSearch = new AtomicReference<>();
+    static final AtomicReference<String> lastActionsApiToken = new AtomicReference<>();
+    static final AtomicReference<String> lastCallApiToken = new AtomicReference<>();
+    static final Metadata.Key<String> API_TOKEN =
+            Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER);
+
+    static final CallerResolver RESOLVER = credential -> switch (credential) {
+        case "querier-credential" -> Optional.of(
+                Caller.scoped("querier", Set.of(Scopes.SEARCH_QUERY)));
+        case "rebuilder-credential" -> Optional.of(
+                Caller.scoped("rebuilder", Set.of(Scopes.METRICS_REBUILD)));
+        default -> Optional.empty();
+    };
 
     static Server service;
     static HttpServer actions;
     static SearchConsoleServer console;
     static SearchConsoleServer consoleWithoutOps;
+    static SearchConsoleServer guarded;
     static HttpClient client;
     static ObjectMapper json;
 
@@ -89,11 +115,22 @@ class SearchConsoleServerTest {
 
     @BeforeAll
     static void boot() throws Exception {
+        ServerInterceptor captureApiToken = new ServerInterceptor() {
+            @Override
+            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                    ServerCall<ReqT, RespT> call, Metadata headers,
+                    ServerCallHandler<ReqT, RespT> next) {
+                lastCallApiToken.set(headers.get(API_TOKEN));
+                return Contexts.interceptCall(Context.current(), call, headers, next);
+            }
+        };
         service = InProcessServerBuilder.forName("console-test-service")
+                .intercept(captureApiToken)
                 .addService(new FakeSearchService()).build().start();
 
         actions = HttpServer.create(new InetSocketAddress(0), 0);
         actions.createContext("/protomolt/actions", exchange -> {
+            lastActionsApiToken.set(exchange.getRequestHeaders().getFirst("api_token"));
             byte[] body = exchange.getRequestBody().readAllBytes();
             String path = exchange.getRequestURI().getPath();
             byte[] answer;
@@ -120,6 +157,12 @@ class SearchConsoleServerTest {
         console.start();
         consoleWithoutOps = new SearchConsoleServer(0, "inprocess:console-test-service", () -> "");
         consoleWithoutOps.start();
+        guarded = new SearchConsoleServer(0, "inprocess:console-test-service",
+                () -> "http://127.0.0.1:" + actions.getAddress().getPort()
+                        + "/protomolt/actions",
+                ConsoleSessions.secured(SearchConsoleServer.COOKIE,
+                        Duration.ofHours(1), RESOLVER));
+        guarded.start();
         client = HttpClient.newHttpClient();
         json = new ObjectMapper();
     }
@@ -128,6 +171,7 @@ class SearchConsoleServerTest {
     static void shutdown() {
         console.close();
         consoleWithoutOps.close();
+        guarded.close();
         actions.stop(0);
         service.shutdownNow();
     }
@@ -226,5 +270,107 @@ class SearchConsoleServerTest {
     void consoleWithoutAnActionsTargetAnswers503() throws Exception {
         assertThat(get(consoleWithoutOps, "/actions").statusCode()).isEqualTo(503);
         assertThat(get(consoleWithoutOps, "/subjects").statusCode()).isEqualTo(200);
+    }
+
+    // ------------------------------------------------------------ secured console
+
+    static HttpResponse<String> getWithCookie(String path, String cookie) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(
+                URI.create("http://127.0.0.1:" + guarded.port() + path)).GET();
+        if (cookie != null) {
+            request.header("Cookie", cookie);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    static HttpResponse<String> postWithCookie(String path, String body, String cookie)
+            throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + guarded.port() + path))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (cookie != null) {
+            request.header("Cookie", cookie);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    static String signIn(String credential) throws Exception {
+        HttpResponse<String> login = client.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + guarded.port() + "/session"))
+                        .POST(HttpRequest.BodyPublishers.ofString(credential)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(login.statusCode()).isEqualTo(200);
+        String setCookie = login.headers().firstValue("set-cookie").orElseThrow();
+        assertThat(setCookie).contains("HttpOnly");
+        return setCookie.substring(0, setCookie.indexOf(';'));
+    }
+
+    @Test
+    void theGuardedConsoleRefusesEveryBridgeWithoutASession() throws Exception {
+        assertThat(getWithCookie("/", null).statusCode()).isEqualTo(200);
+        assertThat(getWithCookie("/health", null).statusCode()).isEqualTo(200);
+        HttpResponse<String> session = getWithCookie("/session", null);
+        assertThat(session.statusCode()).isEqualTo(401);
+        assertThat(session.body()).contains("\"loginRequired\":true");
+        assertThat(getWithCookie("/subjects", null).statusCode()).isEqualTo(401);
+        assertThat(postWithCookie("/search", "{}", null).statusCode()).isEqualTo(401);
+        assertThat(getWithCookie("/actions", null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void aPolicyPrincipalSignsInSearchesAndItsCredentialRidesTheCall() throws Exception {
+        String cookie = signIn("querier-credential");
+        assertThat(getWithCookie("/session", cookie).body())
+                .contains("\"authenticated\":true");
+        assertThat(getWithCookie("/subjects", cookie).statusCode()).isEqualTo(200);
+        lastCallApiToken.set(null);
+        HttpResponse<String> hits = postWithCookie("/search",
+                "{\"mappingSubject\":\"repo-document\",\"query\":\"first\",\"k\":1,"
+                        + "\"lane\":\"SEARCH_LANE_LEXICAL\"}", cookie);
+        assertThat(hits.statusCode()).isEqualTo(200);
+        assertThat(lastCallApiToken.get()).isEqualTo("querier-credential");
+    }
+
+    @Test
+    void aPrincipalWithoutSearchQueryIsRefusedByName() throws Exception {
+        String cookie = signIn("rebuilder-credential");
+        HttpResponse<String> refused = postWithCookie("/search",
+                "{\"mappingSubject\":\"repo-document\",\"query\":\"x\",\"k\":1}", cookie);
+        assertThat(refused.statusCode()).isEqualTo(403);
+        assertThat(json.readTree(refused.body()).get("error").asText())
+                .contains("rebuilder").contains("search-query");
+        assertThat(getWithCookie("/subjects", cookie).statusCode()).isEqualTo(403);
+    }
+
+    @Test
+    void theActionsProxyPresentsTheSessionsOwnCredential() throws Exception {
+        String cookie = signIn("querier-credential");
+        lastActionsApiToken.set(null);
+        HttpResponse<String> echoed = postWithCookie("/actions/echo-input", "{\"a\":1}", cookie);
+        assertThat(echoed.statusCode()).isEqualTo(200);
+        assertThat(lastActionsApiToken.get()).isEqualTo("querier-credential");
+    }
+
+    @Test
+    void unknownCredentialsNeverGetASession() throws Exception {
+        HttpResponse<String> refused = client.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + guarded.port() + "/session"))
+                        .POST(HttpRequest.BodyPublishers.ofString("guessed")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(refused.statusCode()).isEqualTo(401);
+        assertThat(refused.headers().firstValue("set-cookie")).isEmpty();
+    }
+
+    @Test
+    void signingOutEndsTheSession() throws Exception {
+        String cookie = signIn("querier-credential");
+        assertThat(getWithCookie("/subjects", cookie).statusCode()).isEqualTo(200);
+        HttpRequest signOut = HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + guarded.port() + "/session"))
+                .header("Cookie", cookie).DELETE().build();
+        assertThat(client.send(signOut, HttpResponse.BodyHandlers.ofString())
+                .statusCode()).isEqualTo(204);
+        assertThat(getWithCookie("/subjects", cookie).statusCode()).isEqualTo(401);
     }
 }

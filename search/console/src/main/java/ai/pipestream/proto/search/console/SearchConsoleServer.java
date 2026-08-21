@@ -1,5 +1,8 @@
 package ai.pipestream.proto.search.console;
 
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.search.v1.ListSubjectsRequest;
 import ai.pipestream.proto.search.v1.SearchRequest;
 import ai.pipestream.proto.search.v1.SearchResponse;
@@ -8,10 +11,12 @@ import com.google.protobuf.util.JsonFormat;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.stub.MetadataUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,6 +28,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -34,6 +41,9 @@ import java.util.regex.Pattern;
  *
  * <ul>
  *   <li>{@code GET /} — the page</li>
+ *   <li>{@code GET /session}, {@code POST /session}, {@code DELETE /session} — the login
+ *       boundary when the console is secured: the POST body is the credential, the answer
+ *       is an HttpOnly session cookie bound to the access-policy principal it names</li>
  *   <li>{@code GET /subjects} — the service's served surface, proto3 JSON</li>
  *   <li>{@code POST /search} — a proto3-JSON {@code SearchRequest} in, hits out; the service's
  *       refusals pass through verbatim (they are written for humans)</li>
@@ -41,20 +51,39 @@ import java.util.regex.Pattern;
  *       registry's actions route, so the operations panel needs no CORS; answers 503 when the
  *       console was mounted without an actions target</li>
  * </ul>
+ *
+ * <p>Secured, the console demands a session everywhere but the page and health: the search
+ * routes additionally require the session principal to hold {@code search-query}, refused by
+ * name otherwise, and both bridges present the session's own credential to their peers — the
+ * search service as call metadata, the actions route as the {@code api_token} header — so a
+ * guarded peer stays the authority over what the principal may do there.
  */
 public final class SearchConsoleServer implements AutoCloseable {
 
     /** In-process target prefix, shared vocabulary with the composer: {@value}. */
     public static final String INPROCESS_TARGET_PREFIX = "inprocess:";
 
+    /** The session cookie: {@value}. */
+    public static final String COOKIE = "__Host-protomolt_search_session";
+
     private static final Logger LOG = LoggerFactory.getLogger(SearchConsoleServer.class);
     private static final Pattern ACTION_NAME = Pattern.compile("[a-z][a-z0-9-]*");
+    private static final Metadata.Key<String> API_TOKEN_HEADER =
+            Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER);
+    private static final int MAX_CREDENTIAL_BYTES = 4 * 1024;
 
     private final HttpServer http;
     private final ManagedChannel channel;
     private final SearchServiceGrpc.SearchServiceBlockingStub service;
     private final Supplier<String> actionsBaseUrl;
+    private final ConsoleSessions sessions;
     private final HttpClient actionsClient = HttpClient.newHttpClient();
+
+    /** Creates the open console (no login), for trusted-network nodes. */
+    public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl)
+            throws IOException {
+        this(port, serviceTarget, actionsBaseUrl, ConsoleSessions.open(COOKIE));
+    }
 
     /**
      * Creates the server (not yet started).
@@ -65,12 +94,18 @@ public final class SearchConsoleServer implements AutoCloseable {
      * @param actionsBaseUrl supplies the registry actions route to proxy operations to, e.g.
      *        {@code http://127.0.0.1:8081/protomolt/actions} — a supplier because a co-mounted
      *        registry's port is only known once it starts; a blank answer disables the panel
+     * @param sessions the console's session boundary; {@link ConsoleSessions#open} serves
+     *        without a login, exactly the trusted-network console
      */
-    public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl)
-            throws IOException {
+    public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl,
+                               ConsoleSessions sessions) throws IOException {
         if (serviceTarget == null || serviceTarget.isBlank()) {
             throw new IllegalArgumentException("serviceTarget must not be blank");
         }
+        if (sessions == null) {
+            throw new IllegalArgumentException("sessions must not be null");
+        }
+        this.sessions = sessions;
         this.channel = serviceTarget.startsWith(INPROCESS_TARGET_PREFIX)
                 ? InProcessChannelBuilder.forName(
                         serviceTarget.substring(INPROCESS_TARGET_PREFIX.length())).build()
@@ -80,6 +115,7 @@ public final class SearchConsoleServer implements AutoCloseable {
         this.http = HttpServer.create(new InetSocketAddress(port), 0);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.createContext("/", this::servePage);
+        http.createContext("/session", this::serveSession);
         http.createContext("/subjects", this::serveSubjects);
         http.createContext("/search", this::serveSearch);
         http.createContext("/actions", this::serveActions);
@@ -119,10 +155,97 @@ public final class SearchConsoleServer implements AutoCloseable {
         respond(exchange, 200, "text/html; charset=utf-8", SearchConsolePage.PAGE);
     }
 
+    private void serveSession(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        switch (exchange.getRequestMethod().toUpperCase(Locale.ROOT)) {
+            case "GET" -> {
+                boolean authenticated = sessions.authorized(exchange);
+                respond(exchange, authenticated ? 200 : 401,
+                        "application/json; charset=utf-8",
+                        "{\"authenticated\":" + authenticated
+                                + ",\"loginRequired\":" + sessions.requiresLogin() + "}");
+            }
+            case "POST" -> login(exchange);
+            case "DELETE" -> {
+                sessions.revoke(exchange);
+                exchange.getResponseHeaders().add("Set-Cookie", COOKIE
+                        + "=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict");
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+            }
+            default -> respond(exchange, 405, "text/plain; charset=utf-8",
+                    "GET, POST or DELETE");
+        }
+    }
+
+    private void login(HttpExchange exchange) throws IOException {
+        if (!sessions.requiresLogin()) {
+            respond(exchange, 200, "application/json; charset=utf-8",
+                    "{\"authenticated\":true,\"loginRequired\":false}");
+            return;
+        }
+        byte[] body = exchange.getRequestBody()
+                .readNBytes(MAX_CREDENTIAL_BYTES + 1);
+        if (body.length > MAX_CREDENTIAL_BYTES) {
+            respond(exchange, 413, "application/json; charset=utf-8",
+                    errorJson("the credential is too large"));
+            return;
+        }
+        String credential = new String(body, StandardCharsets.UTF_8).trim();
+        Caller caller = sessions.loginCaller(credential);
+        if (caller == null) {
+            respond(exchange, 401, "application/json; charset=utf-8",
+                    errorJson("invalid credentials"));
+            return;
+        }
+        String session = sessions.issue(caller, credential);
+        exchange.getResponseHeaders().add("Set-Cookie", COOKIE + "=" + session
+                + "; Path=/; Max-Age=" + sessions.maxAgeSeconds()
+                + "; HttpOnly; Secure; SameSite=Strict");
+        respond(exchange, 200, "application/json; charset=utf-8",
+                "{\"authenticated\":true,\"loginRequired\":true}");
+    }
+
+    /**
+     * The session's caller, refusing the exchange when there is none; the search routes
+     * additionally demand {@code search-query}, because the co-mounted service's in-process
+     * lane sits inside the process trust boundary and cannot refuse for the console.
+     */
+    private Caller sessionCaller(HttpExchange exchange, boolean requireSearchQuery)
+            throws IOException {
+        Caller caller = sessions.caller(exchange).orElse(null);
+        if (caller == null) {
+            respond(exchange, 401, "application/json; charset=utf-8",
+                    errorJson("sign in to use the search console"));
+            return null;
+        }
+        if (requireSearchQuery && !caller.holds(Scopes.SEARCH_QUERY)) {
+            respond(exchange, 403, "application/json; charset=utf-8",
+                    errorJson("caller '" + caller.name() + "' does not hold '"
+                            + Scopes.SEARCH_QUERY + "', which the search console requires"));
+            return null;
+        }
+        return caller;
+    }
+
+    /** The stub for this exchange: the session's own credential rides guarded channels. */
+    private SearchServiceGrpc.SearchServiceBlockingStub serviceFor(HttpExchange exchange) {
+        Optional<String> credential = sessions.credential(exchange);
+        if (credential.isEmpty()) {
+            return service;
+        }
+        Metadata identity = new Metadata();
+        identity.put(API_TOKEN_HEADER, credential.get());
+        return service.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(identity));
+    }
+
     private void serveSubjects(HttpExchange exchange) throws IOException {
+        if (sessionCaller(exchange, true) == null) {
+            return;
+        }
         try {
             String json = JsonFormat.printer().print(
-                    service.listSubjects(ListSubjectsRequest.getDefaultInstance()));
+                    serviceFor(exchange).listSubjects(ListSubjectsRequest.getDefaultInstance()));
             respond(exchange, 200, "application/json; charset=utf-8", json);
         } catch (StatusRuntimeException e) {
             respondServiceError(exchange, e);
@@ -132,6 +255,9 @@ public final class SearchConsoleServer implements AutoCloseable {
     private void serveSearch(HttpExchange exchange) throws IOException {
         if (!"POST".equals(exchange.getRequestMethod())) {
             respond(exchange, 405, "text/plain; charset=utf-8", "POST only");
+            return;
+        }
+        if (sessionCaller(exchange, true) == null) {
             return;
         }
         String body = new String(
@@ -145,7 +271,7 @@ public final class SearchConsoleServer implements AutoCloseable {
             return;
         }
         try {
-            SearchResponse hits = service.search(request.build());
+            SearchResponse hits = serviceFor(exchange).search(request.build());
             respond(exchange, 200, "application/json; charset=utf-8",
                     JsonFormat.printer().print(hits));
         } catch (StatusRuntimeException e) {
@@ -154,6 +280,9 @@ public final class SearchConsoleServer implements AutoCloseable {
     }
 
     private void serveActions(HttpExchange exchange) throws IOException {
+        if (sessionCaller(exchange, false) == null) {
+            return;
+        }
         String base;
         try {
             base = stripTrailingSlash(actionsBaseUrl.get());
@@ -192,6 +321,10 @@ public final class SearchConsoleServer implements AutoCloseable {
 
     private void forward(HttpExchange exchange, HttpRequest.Builder request)
             throws IOException, InterruptedException {
+        // A guarded registry resolves the session's credential itself and stays the
+        // authority over which actions the principal may run.
+        sessions.credential(exchange).ifPresent(
+                credential -> request.header("api_token", credential));
         HttpResponse<byte[]> answer = actionsClient.send(
                 request.build(), HttpResponse.BodyHandlers.ofByteArray());
         exchange.getResponseHeaders().set("Content-Type",
@@ -209,6 +342,8 @@ public final class SearchConsoleServer implements AutoCloseable {
         int status = switch (e.getStatus().getCode()) {
             case INVALID_ARGUMENT -> 400;
             case FAILED_PRECONDITION -> 409;
+            case UNAUTHENTICATED -> 401;
+            case PERMISSION_DENIED -> 403;
             case UNAVAILABLE -> 503;
             default -> 502;
         };
@@ -257,7 +392,9 @@ public final class SearchConsoleServer implements AutoCloseable {
                                 String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+        if (!exchange.getResponseHeaders().containsKey("Cache-Control")) {
+            exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+        }
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(bytes);
