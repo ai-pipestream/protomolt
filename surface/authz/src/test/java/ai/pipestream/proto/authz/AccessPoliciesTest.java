@@ -181,4 +181,62 @@ class AccessPoliciesTest {
         assertThatThrownBy(() -> AccessPolicies.requireWellFormed(empty))
                 .hasMessageContaining("caps nothing");
     }
+
+    @Test
+    void metricAccessIsValidatedByName() {
+        AccessPolicy restricted = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addDeny(MetricMemberDeny.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .addMembers("revenue"))
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("segment")
+                                        .addEquals("smb"))))
+                .build();
+        assertThat(AccessPolicies.requireWellFormed(restricted)).isSameAs(restricted);
+
+        AccessPolicy nothing = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.getDefaultInstance()))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(nothing))
+                .hasMessageContaining("restricts nothing");
+
+        AccessPolicy doubledDeny = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addDeny(MetricMemberDeny.newBuilder()
+                                        .setMappingSubject("orders").addMembers("a"))
+                                .addDeny(MetricMemberDeny.newBuilder()
+                                        .setMappingSubject("orders").addMembers("b"))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(doubledDeny))
+                .hasMessageContaining("'orders' twice");
+
+        AccessPolicy doubledFilter = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("segment").addEquals("smb"))
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("segment").addEquals("mid"))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(doubledFilter))
+                .hasMessageContaining("filters member 'segment'")
+                .hasMessageContaining("twice");
+
+        AccessPolicy blankEquals = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("segment"))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(blankEquals))
+                .hasMessageContaining("invalid");
+    }
 }

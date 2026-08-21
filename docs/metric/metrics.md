@@ -56,6 +56,22 @@ validation: `DescribeMapping` and `QueryMetrics` require
 health and reflection stay open. Started without a token it remains
 an open, trusted-network surface.
 
+Built with the access policy (`MetricServices.build` with a policy
+supplier; the platform wires it on guarded nodes), a principal whose
+policy entry carries `metric_access` gets the compile-time rewrite:
+denied members disappear from `DescribeMapping` and refuse
+`QueryMetrics` by name, and the principal's row filters are ANDed into
+every query as ordinary equality filters, so the executor runs the
+narrowed reduction. A policy filtering a member the mapping does not
+declare is the operator's error, refused loudly rather than blamed on
+the caller. Restricted principals are fail-closed off subjects the
+mount does not serve statically (rollup tables carry no mapping-level
+rules) and off `RebuildRollup` (a rebuilt rollup is an unrestricted
+reduction they could then read around their filters). The supplier is
+read per request, so a policy swapped on the config lane re-scopes the
+rewrite with no restart; the operator and principals without rules
+pass untouched.
+
 `MetricQueries.query` compiles a request against the mapping, refuses
 everything refusable with a stable kebab-case code and the legal set
 (`unknown-subject`, `unknown-member`, `unknown-backend`,

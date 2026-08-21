@@ -7,10 +7,14 @@ import ai.pipestream.proto.metric.QueryMetricsRequest;
 import ai.pipestream.proto.metric.QueryMetricsResponse;
 import ai.pipestream.proto.metric.RebuildRollupRequest;
 import ai.pipestream.proto.metric.RebuildRollupResponse;
+import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.authz.MetricAccess;
+import ai.pipestream.proto.authz.grpc.CallerContexts;
 import ai.pipestream.proto.metric.spi.MetricQueries;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
 import ai.pipestream.proto.metric.spi.RollupSink;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
@@ -47,38 +51,75 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
     private final Map<String, ServedMetricSubject> subjects;
     private final RollupSink rollups;
     private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
+    private final MetricAccessRewrites rewrites;
 
     MetricGrpcService(Map<String, ServedMetricSubject> subjects, RollupSink rollups,
-            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver,
+            java.util.function.Supplier<ai.pipestream.proto.authz.AccessPolicy> accessPolicy) {
         this.subjects = Map.copyOf(subjects);
         this.rollups = rollups;
         this.resolver = resolver;
+        this.rewrites = new MetricAccessRewrites(accessPolicy);
     }
 
     @Override
     public void describeMapping(
             DescribeMappingRequest request, StreamObserver<DescribeMappingResponse> observer) {
+        Caller caller = CallerContexts.current();
         run(observer, () -> {
-            ServedMetricSubject subject = subject(request.getMappingSubject());
-            return MetricQueries.describe(subject.mapping(),
+            ServedMetricSubject subject = restricted(caller, request.getMappingSubject());
+            DescribeMappingResponse described = MetricQueries.describe(subject.mapping(),
                     List.copyOf(subject.executors().keySet()));
+            MetricAccess access = rewrites.accessFor(caller);
+            return access == null ? described : MetricAccessRewrites.filter(
+                    described, access, request.getMappingSubject());
         });
     }
 
     @Override
     public void queryMetrics(
             QueryMetricsRequest request, StreamObserver<QueryMetricsResponse> observer) {
+        Caller caller = CallerContexts.current();
         run(observer, () -> {
-            ServedMetricSubject subject = subject(request.getMappingSubject());
-            return MetricQueries.query(subject.mapping(), subject.executors(), request);
+            ServedMetricSubject subject = restricted(caller, request.getMappingSubject());
+            MetricAccess access = rewrites.accessFor(caller);
+            QueryMetricsRequest effective = access == null ? request
+                    : MetricAccessRewrites.rewrite(request, access, caller,
+                            subject.mapping());
+            return MetricQueries.query(subject.mapping(), subject.executors(), effective);
         });
     }
 
     @Override
     public void rebuildRollup(
             RebuildRollupRequest request, StreamObserver<RebuildRollupResponse> observer) {
-        run(observer, () -> Rollups.rebuild(
-                subject(request.getMappingSubject()), rollups, request, this::subject));
+        Caller caller = CallerContexts.current();
+        run(observer, () -> {
+            if (rewrites.accessFor(caller) != null) {
+                throw new StatusRuntimeException(Status.PERMISSION_DENIED.withDescription(
+                        "caller '" + caller.name() + "' carries metric access rules; a"
+                                + " rebuilt rollup is an unrestricted reduction, so the"
+                                + " rebuild verb is refused"));
+            }
+            return Rollups.rebuild(
+                    subject(request.getMappingSubject()), rollups, request, this::subject);
+        });
+    }
+
+    /**
+     * The served subject, additionally fail-closed for restricted principals: a subject
+     * this mount does not serve statically (a rollup table through the resolver) carries
+     * no mapping-level rules to enforce, so a caller with metric access rules is refused
+     * it rather than served an unrestricted view.
+     */
+    private ServedMetricSubject restricted(Caller caller, String name) {
+        if (rewrites.accessFor(caller) != null && !subjects.containsKey(name)) {
+            throw new StatusRuntimeException(Status.PERMISSION_DENIED.withDescription(
+                    "caller '" + caller.name() + "' carries metric access rules, which"
+                            + " subject '" + name + "' (not statically served here)"
+                            + " cannot enforce"));
+        }
+        return subject(name);
     }
 
     private ServedMetricSubject subject(String name) {
@@ -89,6 +130,8 @@ final class MetricGrpcService extends MetricServiceGrpc.MetricServiceImplBase {
         try {
             observer.onNext(work.get());
             observer.onCompleted();
+        } catch (StatusRuntimeException refusal) {
+            observer.onError(refusal);
         } catch (MetricRefusal refusal) {
             Status status = PRECONDITIONS.contains(refusal.code())
                     ? Status.FAILED_PRECONDITION

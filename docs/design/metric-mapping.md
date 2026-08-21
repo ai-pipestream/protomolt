@@ -212,7 +212,7 @@ of overlap rather than product-versus-product.
 | Analytics Chat / certified queries / evals | Workbench: check, record, replay, promote with proto-validated requests and replies | Ahead on rigor; no aggregate answers until the gap closes |
 | Agent memories, rules, BYO-LLM product | Inference module has provider config; no memory/rules product | Behind (low priority) |
 | Workbooks, dashboards, charts, embeds | Search console (8096) and registry console only | Behind, out of scope |
-| Row-level security with JWT query rewrite | Authorization scopes landed with a caller model; the compile-time rewrite is not built | Behind (planned, v1.1 here) |
+| Row-level security with JWT query rewrite | The access policy's `metric_access` rewrites at compile time: denied members and injected row filters per principal, fail-closed rollups | Match ([authorization scopes](authorization-scopes.md)) |
 | Ingest / parse / RAG / lake write | The whole acquire-to-sink platform | Ours alone |
 
 One asterisk on our own column: the search service's `validate.v1`
@@ -284,12 +284,13 @@ unfinished edges.
    wrong, which is why Tesseract needed multi-fact views; skip it until
    a declared grain exists. Use an authored or synthesized projection
    as the subject if two sources must already be one row.
-8. **Row/member security is v1.1, not a blocker for the compiler.**
-   Sensitivity metadata is already on the field. Compile-time rewrite
-   (drop members, inject filters from a caller context) needs the
-   planned authorization scopes. v1 may refuse a member whose
-   sensitivity is above a mount-time ceiling; it does not invent a
-   policy language.
+8. **Row/member security is the access policy's, not a query
+   feature.** The policy document's `metric_access` section declares
+   per-principal denied members and injected equality row filters (the
+   metric layer's own filter shape, no new policy language); the metric
+   service rewrites at compile time from the resolved caller, with
+   rollup subjects and the rebuild verb fail-closed for restricted
+   principals. See [authorization scopes](authorization-scopes.md).
 9. **Physical SQL is evidence, not an API.** A response may carry the
    Lucene collector plan or the DuckDB statement so a human or agent
    can see what ran. Clients do not submit SQL.
@@ -672,8 +673,9 @@ no metric code on the classpath.
 - Ad-hoc calculated members in the query (only schema-declared `cel`)
 - Caller-submitted SQL
 - Agent memories, behavior rules, BYO-LLM routing as product features
-- Row-level security language and JWT query rewrite (v1.1, after
-  authorization scopes)
+- A row-level policy language beyond the access policy's per-principal
+  deny lists and equality row filters (JWT claim mapping stays the
+  OIDC resolver's job)
 - RANGE / CEL query filters (v1.1; v1 is equality sets)
 - Mixing retrieval hits into an aggregate in one RPC
 - Default subject, default limit, and any backend guess on a

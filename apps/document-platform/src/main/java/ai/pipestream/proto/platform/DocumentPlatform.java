@@ -128,6 +128,11 @@ public final class DocumentPlatform implements AutoCloseable {
     private final SwappableCallers callers;
     private final JdbcCallerResolver jdbcCallers;
     private final CallerResolver callerResolver;
+    // The live policy document, for consumers beyond credential resolution
+    // (the metric service's access rewrite); follows the same lane swap.
+    private final java.util.concurrent.atomic.AtomicReference
+            <ai.pipestream.proto.authz.AccessPolicy> accessPolicy =
+                    new java.util.concurrent.atomic.AtomicReference<>();
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -146,8 +151,10 @@ public final class DocumentPlatform implements AutoCloseable {
         this.callers = apiToken == null ? null : new SwappableCallers();
         if (accessPolicyFile != null) {
             try {
-                callers.swap(new AccessPolicyCallers(
-                        AccessPolicies.load(accessPolicyFile)));
+                ai.pipestream.proto.authz.AccessPolicy bootPolicy =
+                        AccessPolicies.load(accessPolicyFile);
+                callers.swap(new AccessPolicyCallers(bootPolicy));
+                accessPolicy.set(bootPolicy);
                 LOG.info("access policy mounted from {}", accessPolicyFile);
             } catch (IOException e) {
                 throw new IllegalStateException("failed to read the access policy at "
@@ -336,7 +343,8 @@ public final class DocumentPlatform implements AutoCloseable {
                                                         lakeConfig.namespace()))))),
                         rollupSink,
                         rollupSubjects)
-                        .secured(apiToken, callerResolver))
+                        .secured(apiToken, callerResolver)
+                        .withMetricAccess(apiToken == null ? null : accessPolicy::get))
                 : null;
         // On a guarded node the console demands browser logins bound to access-policy
         // principals; the swappable resolver means a policy arriving on the config lane
@@ -498,6 +506,7 @@ public final class DocumentPlatform implements AutoCloseable {
                             ai.pipestream.proto.authz.AccessPolicy.getDefaultInstance())
                             .onChange((policy, version) -> {
                                 callers.swap(new AccessPolicyCallers(policy));
+                                accessPolicy.set(policy);
                                 LOG.info("access policy applied from config '{}'"
                                         + " version {} ({} principal(s))",
                                         ai.pipestream.proto.config
