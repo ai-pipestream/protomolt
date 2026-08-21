@@ -61,6 +61,7 @@ def supportedModules = [
         'protomolt-record-verifier',
         'protomolt-authz',
         'protomolt-authz-grpc',
+        'protomolt-authz-jdbc',
         'protomolt-mesh-proto',
         'protomolt-mesh-contracts',
         'protomolt-mesh-cluster',

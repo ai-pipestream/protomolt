@@ -194,6 +194,14 @@ session's own credential to the operations panel's registry proxy —
 see [the console](../search/service.md#the-console). Both variables
 unset is the open, trusted-network node.
 
+External caller stores compose behind the policy on a guarded node
+(see [the design chapter](../design/authorization-scopes.md)): the
+`PROTOMOLT_AUTHZ_OIDC_*` family mounts RFC 7662 introspection, and the
+`PROTOMOLT_AUTHZ_KEYS_*` family mounts the JDBC caller store, so
+IdP-issued and database-minted credentials resolve exactly like policy
+principals everywhere the node is guarded. Either family without the
+operator token refuses at boot.
+
 ## Configuration
 
 The repository half of the platform reads the `DOCUMENT_PLATFORM_*` family

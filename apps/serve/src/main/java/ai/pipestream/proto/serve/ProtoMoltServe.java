@@ -7,6 +7,9 @@ import ai.pipestream.proto.authz.AccessPolicies;
 import ai.pipestream.proto.authz.AccessPolicyCallers;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.authz.ConsoleSessions;
+import ai.pipestream.proto.authz.OidcCallerResolver;
+import ai.pipestream.proto.authz.jdbc.CallerStoreConfig;
+import ai.pipestream.proto.authz.jdbc.JdbcCallerResolver;
 import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.delegation.DelegationActions;
@@ -54,6 +57,7 @@ import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -102,7 +106,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                           java.util.List<String> inferenceModels, Path serviceWorkspace,
                           OutboundChannelPolicy outboundPolicy, Path workflowWorkspace,
                           DelegationOptions delegation, TaskConsoleOptions taskConsole,
-                          MeshClusterOptions meshCluster, Path accessPolicy) {
+                          MeshClusterOptions meshCluster, Path accessPolicy,
+                          IdentityStoreOptions identityStores) {
 
         public Options {
             if (outboundPolicy == null) {
@@ -112,6 +117,25 @@ public final class ProtoMoltServe implements AutoCloseable {
                 throw new IllegalArgumentException("an access policy requires the operator "
                         + "api token; set --api-token alongside --access-policy");
             }
+            if (identityStores != null && apiToken == null) {
+                throw new IllegalArgumentException("external caller stores require the "
+                        + "operator api token; set --api-token (or PROTOMOLT_API_TOKEN) "
+                        + "alongside them");
+            }
+        }
+
+        /** Binary/source-compatible constructor retaining the pre-identity-store surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
+                       Path workflowWorkspace, DelegationOptions delegation,
+                       TaskConsoleOptions taskConsole, MeshClusterOptions meshCluster,
+                       Path accessPolicy) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    workflowWorkspace, delegation, taskConsole, meshCluster, accessPolicy,
+                    null);
         }
 
         /** Binary/source-compatible constructor retaining the pre-authorization options surface. */
@@ -123,7 +147,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                        TaskConsoleOptions taskConsole, MeshClusterOptions meshCluster) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
                     gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
-                    workflowWorkspace, delegation, taskConsole, meshCluster, null);
+                    workflowWorkspace, delegation, taskConsole, meshCluster, null, null);
         }
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
@@ -260,6 +284,10 @@ public final class ProtoMoltServe implements AutoCloseable {
             String delegationTranscriptObject =
                     System.getenv("PROTOMOLT_DELEGATION_TRANSCRIPT_OBJECT");
             String delegationStateKeyRef = System.getenv("PROTOMOLT_DELEGATION_STATE_KEY_REF");
+            String oidcIntrospection = System.getenv(OidcCallerResolver.ENV_INTROSPECTION_URL);
+            String oidcClientId = System.getenv(OidcCallerResolver.ENV_CLIENT_ID);
+            String oidcClientSecret = System.getenv(OidcCallerResolver.ENV_CLIENT_SECRET);
+            String authzKeysJdbc = System.getenv(CallerStoreConfig.ENV_JDBC_URL);
             String taskConsoleToken = System.getenv("PROTOMOLT_TASK_CONSOLE_TOKEN");
             long taskConsoleSessionSeconds = envLong(
                     "PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS", 43_200L);
@@ -408,6 +436,17 @@ public final class ProtoMoltServe implements AutoCloseable {
                 taskConsole = new TaskConsoleOptions(taskConsoleToken,
                         Duration.ofSeconds(taskConsoleSessionSeconds));
             }
+            IdentityStoreOptions identityStores = null;
+            boolean oidcConfigured = oidcIntrospection != null && !oidcIntrospection.isBlank();
+            boolean authzKeysConfigured = authzKeysJdbc != null && !authzKeysJdbc.isBlank();
+            if (oidcConfigured || authzKeysConfigured) {
+                identityStores = new IdentityStoreOptions(
+                        oidcConfigured ? URI.create(oidcIntrospection.trim()) : null,
+                        oidcClientId, oidcClientSecret,
+                        authzKeysConfigured
+                                ? CallerStoreConfig.fromEnvironmentMap(System.getenv())
+                                : null);
+            }
             MeshClusterOptions meshCluster = null;
             if (meshClusterId != null && !meshClusterId.isBlank()) {
                 if (meshCreatedAt == null || meshCreatedAt.isBlank()) {
@@ -442,7 +481,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
                     serviceWorkspace, outboundPolicy, workflowWorkspace, delegation, taskConsole,
-                    meshCluster, accessPolicy);
+                    meshCluster, accessPolicy, identityStores);
         }
 
         private static int envInt(String name, int fallback) {
@@ -703,6 +742,36 @@ public final class ProtoMoltServe implements AutoCloseable {
         }
     }
 
+    /**
+     * External caller stores composed behind the access policy: OIDC introspection
+     * (RFC 7662) and the JDBC caller store, mirroring the intake service's key stores.
+     * Both are environment-configured — credentials do not ride argv. Either half may be
+     * absent; an options value with neither is refused.
+     *
+     * @param oidcIntrospection the RFC 7662 introspection endpoint; null disables OIDC
+     * @param oidcClientId this server's client id at the IdP; required with the endpoint
+     * @param oidcClientSecret this server's client secret; required with the endpoint
+     * @param callerStore the JDBC caller store settings; null disables the store
+     */
+    public record IdentityStoreOptions(URI oidcIntrospection, String oidcClientId,
+                                       String oidcClientSecret,
+                                       CallerStoreConfig callerStore) {
+
+        public IdentityStoreOptions {
+            if (oidcIntrospection == null && callerStore == null) {
+                throw new IllegalArgumentException(
+                        "identity stores require an OIDC endpoint or a JDBC caller store");
+            }
+            if (oidcIntrospection != null
+                    && (oidcClientId == null || oidcClientId.isBlank()
+                            || oidcClientSecret == null || oidcClientSecret.isBlank())) {
+                throw new IllegalArgumentException("the OIDC introspection endpoint "
+                        + "requires PROTOMOLT_AUTHZ_OIDC_CLIENT_ID and "
+                        + "PROTOMOLT_AUTHZ_OIDC_CLIENT_SECRET");
+            }
+        }
+    }
+
     /** Stable identity of the mesh directory hosted by this serve process. */
     public record MeshClusterOptions(String clusterId, String displayName, String trustDomain,
                                      Instant createdAt) {
@@ -735,13 +804,15 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final WorkflowRunEventRelay jobsRelay;
     private final DelegationRuntime delegation;
     private final MeshClusterRuntime meshCluster;
+    private final JdbcCallerResolver jdbcCallers;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
                            McpHttpHandler mcp, int httpPort,
                            GitSchemaRegistryStore registryStore, SchemaRegistryServer registry,
                            int registryPort, WorkflowRunDatabase jobsDatabase,
                            WorkflowRunWorker jobsWorker, WorkflowRunEventRelay jobsRelay,
-                           DelegationRuntime delegation, MeshClusterRuntime meshCluster) {
+                           DelegationRuntime delegation, MeshClusterRuntime meshCluster,
+                           JdbcCallerResolver jdbcCallers) {
         this.grpc = grpc;
         this.http = http;
         this.mcp = mcp;
@@ -754,6 +825,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         this.jobsRelay = jobsRelay;
         this.delegation = delegation;
         this.meshCluster = meshCluster;
+        this.jdbcCallers = jdbcCallers;
     }
 
     /** Starts every configured surface; closing stops them all. */
@@ -893,6 +965,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         SchemaRegistryServer registry = null;
         DelegationRuntime delegation = null;
         MeshClusterRuntime meshCluster = null;
+        JdbcCallerResolver jdbcCallers = null;
         try {
             if (options.demo()) {
                 DemoSchemas.seed(context.registry(), store);
@@ -910,17 +983,32 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
 
             // The access policy narrows named principals; the operator token keeps every
-            // scope. A policy that fails to load or verify refuses startup loudly.
-            CallerResolver callers = null;
+            // scope. A policy that fails to load or verify refuses startup loudly. The
+            // external stores compose behind the policy, first match wins.
+            java.util.List<CallerResolver> resolvers = new java.util.ArrayList<>();
             if (options.accessPolicy() != null) {
                 try {
-                    callers = new AccessPolicyCallers(
-                            AccessPolicies.load(options.accessPolicy()));
+                    resolvers.add(new AccessPolicyCallers(
+                            AccessPolicies.load(options.accessPolicy())));
                 } catch (IOException e) {
                     throw new IllegalStateException("failed to read the access policy at "
                             + options.accessPolicy() + ": " + e.getMessage(), e);
                 }
             }
+            if (options.identityStores() != null) {
+                IdentityStoreOptions stores = options.identityStores();
+                if (stores.oidcIntrospection() != null) {
+                    resolvers.add(new OidcCallerResolver(stores.oidcIntrospection(),
+                            stores.oidcClientId(), stores.oidcClientSecret()));
+                }
+                if (stores.callerStore() != null) {
+                    jdbcCallers = new JdbcCallerResolver(stores.callerStore());
+                    resolvers.add(jdbcCallers);
+                }
+            }
+            CallerResolver callers = resolvers.isEmpty() ? null
+                    : resolvers.size() == 1 ? resolvers.get(0)
+                            : CallerResolver.chain(resolvers);
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
                     options.apiToken(), callers);
@@ -1031,8 +1119,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             int httpPort = http.start();
             selfPort[0] = httpPort;
             return new ProtoMoltServe(grpc, http, mcpHandler, httpPort, store, registry, registryPort,
-                    jobsDatabase, jobsWorker, jobsRelay, delegation, meshCluster);
+                    jobsDatabase, jobsWorker, jobsRelay, delegation, meshCluster, jdbcCallers);
         } catch (RuntimeException e) {
+            closeQuietly(jdbcCallers);
             closeQuietly(meshCluster);
             closeQuietly(delegation);
             closeQuietly(mcpHandler);
@@ -1153,6 +1242,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         closeQuietly(registryStore);
         http.close();
         grpc.close();
+        closeQuietly(jdbcCallers);
     }
 
     public static void main(String[] args) throws Exception {
@@ -1196,6 +1286,15 @@ public final class ProtoMoltServe implements AutoCloseable {
                 LOG.info("  Auth  access policy mounted from {}; named principals are "
                         + "scope-checked, the operator token keeps every scope",
                         options.accessPolicy());
+            }
+            if (options.identityStores() != null) {
+                LOG.info("  Auth  external caller stores mounted:{}{}",
+                        options.identityStores().oidcIntrospection() != null
+                                ? " OIDC introspection at "
+                                        + options.identityStores().oidcIntrospection()
+                                : "",
+                        options.identityStores().callerStore() != null
+                                ? " JDBC caller store" : "");
             }
         }
         if (options.demo()) {

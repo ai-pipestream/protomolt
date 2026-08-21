@@ -207,6 +207,45 @@ assembly:
   registry's actions route, which stays the authority over which
   operations the principal may run.
 
+## External caller stores
+
+The policy document's digest table is one resolver; the seam admits
+two external stores beside it, composed first-match-wins behind the
+policy, both mirroring the intake service's key stores and both
+requiring the operator token (a store is a reason to be guarded, never
+a substitute for it):
+
+- **OIDC introspection** (`protomolt-authz`): a credential is an
+  IdP-issued opaque token, asked about through RFC 7662. The principal
+  name comes from the `username` claim (falling back to `sub`), the
+  scopes from a `protomolt_scopes` claim (array or space-delimited),
+  each from the closed vocabulary. Rotation, revocation, and expiry
+  are the IdP's policy and take effect on the next call. An active
+  token that names no principal, holds no scopes, or names a scope
+  outside the vocabulary is a misconfigured grant and refuses loudly
+  instead of authenticating; an unreachable or failing endpoint is a
+  store failure, never a bad-credential verdict. Configuration:
+  `PROTOMOLT_AUTHZ_OIDC_INTROSPECTION_URL` with
+  `PROTOMOLT_AUTHZ_OIDC_CLIENT_ID` and
+  `PROTOMOLT_AUTHZ_OIDC_CLIENT_SECRET`.
+- **The JDBC caller store** (`protomolt-authz-jdbc`): for air-gapped
+  deployments with no IdP, principals live in the operator's own
+  PostgreSQL, keyed by the lowercase hex SHA-256 of the credential —
+  raw material never lands in the table, so a dump authenticates
+  nobody. Revocation is a timestamp, and two live rows resolving to
+  the same principal IS the rotation-grace window. The store never
+  mints the operator. Configuration:
+  `PROTOMOLT_AUTHZ_KEYS_JDBC_URL` with `..._USERNAME` and
+  `..._PASSWORD` (required by name, no localhost fallback — an
+  authentication authority must point at the database you mean).
+
+Both mount at the serve layer and on the document platform's guarded
+nodes, where every surface this chapter guards — gRPC, REST, MCP, the
+registry, search and metric services, console logins — resolves
+IdP-issued and database-minted credentials exactly like policy
+principals. The access-policy lane keeps re-scoping the digest half
+live; the external stores are boot configuration.
+
 ## What this layer does not do
 
 - **It is not row-level security.** A scope gates operations, not
@@ -216,9 +255,9 @@ assembly:
 - **It does not issue credentials.** There is no token mint, no
   expiry, no JWT parsing. A credential is an opaque string whose
   digest a policy names; issuance and distribution belong to the
-  operator or an external IdP. The resolver is a seam — the intake
-  service already resolves keys against OIDC introspection and JDBC
-  stores, and the same seam here admits the same stores.
+  operator or an external IdP. The resolver is a seam, and the same
+  stores the intake service resolves keys against mount through it —
+  see the external caller stores above.
 - **It does not authenticate workers.** A delegation worker's id is an
   application-level claim inside an already-authorized coordinator
   stream; `worker-coordinate` gates who may open that stream, not
@@ -260,8 +299,6 @@ action against its required scope.
 - Signed scope assertions (a receipt-layer trust snapshot vouching for
   an external issuer's scope claims) — the verification machinery
   exists; binding it to call credentials is its own decision.
-- OIDC introspection and JDBC resolvers at the serve layer, mirroring
-  the intake service's stores.
 - Per-scope rate and payload budgets, following the intake scope's
   per-key caps.
 - The metric mapping's row-level rewrite, which starts from the

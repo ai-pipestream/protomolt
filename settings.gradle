@@ -330,6 +330,9 @@ project(':protomolt-authz').projectDir = file('surface/authz')
 include 'protomolt-authz-grpc'
 project(':protomolt-authz-grpc').projectDir = file('surface/authz-grpc')
 
+include 'protomolt-authz-jdbc'
+project(':protomolt-authz-jdbc').projectDir = file('surface/authz-jdbc')
+
 // repo/ — the claim-check document store.
 
 include 'protomolt-repo-proto'

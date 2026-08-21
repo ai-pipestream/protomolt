@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import ai.pipestream.proto.authz.AccessPolicyCallers;
+import ai.pipestream.proto.authz.OidcCallerResolver;
+import com.sun.net.httpserver.HttpServer;
 import ai.pipestream.proto.metric.DescribeMappingRequest;
 import ai.pipestream.proto.metric.MetricServiceGrpc;
 import ai.pipestream.proto.search.service.RepoDocumentMapping;
@@ -145,6 +147,83 @@ class PlatformAccessPolicyTest {
         assertThatThrownBy(() -> DocumentPlatform.start(config, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(DocumentPlatformConfig.ENV_ACCESS_POLICY)
+                .hasMessageContaining(DocumentPlatformConfig.ENV_API_TOKEN);
+    }
+
+    @Test
+    void anExternalCallerStoreComposesBehindThePolicy() throws Exception {
+        HttpServer idp = HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        idp.createContext("/introspect", exchange -> {
+            String body = new String(
+                    exchange.getRequestBody().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            String token = java.net.URLDecoder.decode(
+                    body.replaceFirst("^token=", ""),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            byte[] payload = ("idp-querier-token".equals(token)
+                    ? """
+                      {"active": true, "username": "idp-querier",
+                       "protomolt_scopes": ["search-query"]}"""
+                    : "{\"active\": false}")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            try (java.io.OutputStream out = exchange.getResponseBody()) {
+                out.write(payload);
+            }
+        });
+        idp.start();
+        try {
+            Map<String, String> extra = Map.of(
+                    DocumentPlatformConfig.ENV_ACCESS_POLICY, policyFile().toString(),
+                    OidcCallerResolver.ENV_INTROSPECTION_URL,
+                    "http://127.0.0.1:" + idp.getAddress().getPort() + "/introspect",
+                    OidcCallerResolver.ENV_CLIENT_ID, "platform-resolver",
+                    OidcCallerResolver.ENV_CLIENT_SECRET, "resolver-secret");
+            try (DocumentPlatform platform = DocumentPlatform.start(config(extra), null)) {
+                int searchPort = platform.searchPort();
+
+                // The policy principal still resolves in front of the store.
+                assertThat(withChannel(searchPort, QUERIER,
+                        channel -> SearchServiceGrpc.newBlockingStub(channel)
+                                .search(anyQuery()))
+                        .getHitsList()).isEmpty();
+
+                // The IdP-issued token resolves through introspection and is
+                // scope-checked like any principal.
+                assertThat(withChannel(searchPort, "idp-querier-token",
+                        channel -> SearchServiceGrpc.newBlockingStub(channel)
+                                .search(anyQuery()))
+                        .getHitsList()).isEmpty();
+
+                // Inactive at the IdP means unauthenticated here.
+                StatusRuntimeException stale = withChannel(searchPort, "revoked-at-idp",
+                        channel -> catchThrowableOfType(StatusRuntimeException.class,
+                                () -> SearchServiceGrpc.newBlockingStub(channel)
+                                        .search(anyQuery())));
+                assertThat(stale.getStatus().getCode()).isEqualTo(Code.UNAUTHENTICATED);
+            }
+        } finally {
+            idp.stop(0);
+        }
+    }
+
+    @Test
+    void anExternalStoreWithoutTheOperatorTokenRefusesAtBoot() {
+        Map<String, String> environment = new HashMap<>();
+        environment.put("PROTOMOLT_REPO_TARGET", "127.0.0.1:1");
+        environment.put(OidcCallerResolver.ENV_INTROSPECTION_URL,
+                "http://127.0.0.1:1/introspect");
+        environment.put(OidcCallerResolver.ENV_CLIENT_ID, "id");
+        environment.put(OidcCallerResolver.ENV_CLIENT_SECRET, "secret");
+        DocumentPlatformConfig config = new DocumentPlatformConfig(
+                null, null, work.resolve("registry-git"), 0, 0, 0, 0,
+                null, null, null,
+                60L, 1, 0, work.resolve("search-index"), 0, 0,
+                List.of("registry", "search", "metric"), environment);
+        assertThatThrownBy(() -> DocumentPlatform.start(config, null))
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(DocumentPlatformConfig.ENV_API_TOKEN);
     }
 
