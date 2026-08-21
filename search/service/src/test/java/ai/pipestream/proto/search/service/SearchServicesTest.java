@@ -86,7 +86,8 @@ class SearchServicesTest {
         service = SearchServices.build(
                 new SearchServiceConfig(0, work.resolve("index"), Map.of(
                         RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(policy()),
-                        "repo-document-lexical", RepoDocumentMapping.served())),
+                        "repo-document-lexical", RepoDocumentMapping.served()))
+                        .vectorizing(RepoDocumentMapping.laneVectorization()),
                 address -> {
                     Document document = DOCUMENTS.get(address.getDocId());
                     if (document == null) {

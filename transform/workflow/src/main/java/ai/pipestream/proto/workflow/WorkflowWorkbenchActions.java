@@ -37,6 +37,27 @@ public final class WorkflowWorkbenchActions {
                                          WorkflowVersionRepository workflows,
                                          RecordSigning signing, TrustPin trust) {
         TrustSnapshot pinned = trust == null ? null : trust.snapshot();
+        return register(catalog, runner, artifacts, runs, workflows, signing,
+                () -> pinned);
+    }
+
+    /**
+     * Registers the workbench with a live trust source: the verifying verbs read the
+     * server's custody per request instead of the value it held at registration, so a
+     * snapshot arriving on the config lane applies without re-registering the catalog.
+     * A request's own {@code trust} always wins, whatever the source answers.
+     *
+     * @param trust the server's current trust snapshot, or one answering null when it
+     *        keeps none
+     */
+    public static ActionCatalog register(ActionCatalog catalog, WorkflowRunner runner,
+                                         ArtifactRepository artifacts,
+                                         RunEvidenceRepository runs,
+                                         WorkflowVersionRepository workflows,
+                                         RecordSigning signing,
+                                         java.util.function.Supplier<TrustSnapshot> trust) {
+        java.util.function.Supplier<TrustSnapshot> pinned =
+                trust == null ? () -> null : trust;
         return catalog.register(new CompileWorkflowAction())
                 .register(new SuggestMappingsAction())
                 .register(new RecordWorkflowRunAction(runner, artifacts, runs))

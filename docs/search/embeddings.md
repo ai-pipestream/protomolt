@@ -85,6 +85,37 @@ documents that carry text. A text field that is absent or empty leaves the
 document unchanged: there is nothing to embed, and a placeholder vector
 would poison similarity scores.
 
+## Vectorizing sensitive content
+
+An embedding leaves the process, is retained by whatever serves the model,
+and cannot be un-sent; a vector is also not the harmless summary it looks
+like, because inversion recovers a usable approximation of the source text.
+So content a schema marked sensitive is refused unless the deployment says
+otherwise, by name.
+
+Each mapped field carries its declared `meta.v1` sensitivity class, and a
+`VectorizationPolicy` says which classes may reach a provider.
+`unclassifiedOnly()` is the default and refuses every classified field;
+`permitting(...)` names the classes a deployment has cleared;
+`unrestricted()` is the single explicit decision for a model running inside
+its own trust boundary. Unclassified content is always permitted, so a
+schema that declares no sensitivity behaves exactly as it always has.
+
+The check runs in two places, both fail-closed. `MappingEmbedder` refuses
+before it reads the document, so a misconfigured embedder fails on every
+call. The search service refuses at **mount**: a subject whose chunk lane
+reads a classified field fails to open, beside the lane's other wiring
+errors, rather than sending restricted content on the first index call. On
+the document platform the policy is
+`DOCUMENT_PLATFORM_SEARCH_VECTORIZE_SENSITIVITY`, a comma-separated class
+list, or `*` for every class.
+
+The gate never masks, truncates, or rewrites: a permitted class embeds
+verbatim. When the content should be vectorized in redacted form, mask it
+first — that is the masking layer's job, and it runs earlier. A classified
+field that is indexed but never chunked is not this gate's business either;
+only what leaves for a provider is.
+
 The flow end to end: hints declare the two fields, the mapping resolves
 them, the mapper produces the document, the embedder fills the vector, and
 the sink lands it in OpenSearch:

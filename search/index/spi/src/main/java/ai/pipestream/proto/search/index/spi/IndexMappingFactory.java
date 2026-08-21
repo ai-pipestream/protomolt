@@ -1,5 +1,6 @@
 package ai.pipestream.proto.search.index.spi;
 
+import ai.pipestream.proto.meta.DescriptorMetadata;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 
@@ -96,7 +97,8 @@ public final class IndexMappingFactory {
                 continue;
             }
             out.add(new IndexMapping.IndexedField(
-                    path, fieldName, hint, field.isRepeated() || underRepeated));
+                    path, fieldName, hint, field.isRepeated() || underRepeated,
+                    sensitivityOf(field)));
             if (hint.blockRole() == BlockRole.CHUNKS && depth < maxDepth) {
                 // The chunk scope keeps its container entry (block engines key on it) AND
                 // expands its children into dotted paths, unlike plain NESTED which stays
@@ -150,6 +152,13 @@ public final class IndexMappingFactory {
             throw new IndexMappingException(
                     "null_value '" + hint.nullValue() + "' does not parse as " + hint.type(), path);
         }
+    }
+
+    /** The field's declared {@code meta.v1} sensitivity class, empty when it declares none. */
+    private static String sensitivityOf(FieldDescriptor field) {
+        return DescriptorMetadata.field(field)
+                .map(meta -> meta.getSensitivity())
+                .orElse("");
     }
 
     private static boolean shouldExpand(FieldDescriptor field, ResolvedFieldHint hint) {

@@ -4,6 +4,7 @@ import ai.pipestream.proto.search.chunk.PolicyDerivation;
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
 import ai.pipestream.proto.search.embedding.EmbeddingProvider;
 import ai.pipestream.proto.search.embedding.EmbeddingProviders;
+import ai.pipestream.proto.search.embedding.VectorizationPolicy;
 import ai.pipestream.proto.search.index.lucene.LuceneFieldSpecs;
 import ai.pipestream.proto.search.index.lucene.ProtoLuceneMapper;
 import ai.pipestream.proto.search.index.spi.DateResolution;
@@ -226,6 +227,28 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
      */
     public LuceneSearchStore(Path indexDir, Map<String, ServedMapping> served,
             IndexSnapshots snapshots, boolean readOnly) {
+        this(indexDir, served, snapshots, readOnly, VectorizationPolicy.unclassifiedOnly());
+    }
+
+    /**
+     * As {@link #LuceneSearchStore(Path, Map, IndexSnapshots, boolean)}, with the
+     * deployment's vectorization policy. A subject whose chunk lane reads a field the
+     * schema marked sensitive fails the mount unless the policy names that class: the
+     * lane would otherwise send restricted content to an embedding provider on every
+     * index call, and a vector is not the harmless summary it looks like.
+     *
+     * @param indexDir the root directory; each subject in its own subdirectory
+     * @param served the subjects to serve, keyed by subject name
+     * @param snapshots the snapshot component; null disables snapshots
+     * @param readOnly whether this store is a reader
+     * @param vectorization which sensitivity classes may reach an embedding provider
+     */
+    public LuceneSearchStore(Path indexDir, Map<String, ServedMapping> served,
+            IndexSnapshots snapshots, boolean readOnly,
+            VectorizationPolicy vectorization) {
+        if (vectorization == null) {
+            throw new IllegalArgumentException("vectorization policy must not be null");
+        }
         if (indexDir == null) {
             throw new IllegalArgumentException("indexDir must not be null");
         }
@@ -246,6 +269,7 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
         });
         try {
             for (Map.Entry<String, ServedMapping> subject : served.entrySet()) {
+                requireVectorizable(subject.getKey(), subject.getValue(), vectorization);
                 EmbeddingProvider embedder = subject.getValue().chunkLane() == null
                         ? null
                         : EmbeddingProviders.forSpec(
@@ -287,6 +311,32 @@ public final class LuceneSearchStore implements SubjectIndex, Closeable {
                     COMMIT_INTERVAL.toMillis(), COMMIT_INTERVAL.toMillis(),
                     TimeUnit.MILLISECONDS);
         }
+    }
+
+    /**
+     * Refuses a subject whose chunk lane would vectorize content the deployment has not
+     * cleared. The lane's source field is an index field name, so the check reads the
+     * mapping's declared sensitivity for that name; a lane reading a field the mapping
+     * does not declare is left to the mount's own wiring errors.
+     */
+    private static void requireVectorizable(String subjectName, ServedMapping served,
+            VectorizationPolicy vectorization) {
+        ServedMapping.ChunkLane lane = served.chunkLane();
+        if (lane == null) {
+            return;
+        }
+        served.mapping().fields().stream()
+                .filter(field -> field.fieldName().equals(lane.sourceField()))
+                .filter(field -> !vectorization.permits(field.sensitivity()))
+                .findFirst()
+                .ifPresent(field -> {
+                    throw new IllegalArgumentException("subject '" + subjectName
+                            + "' chunks '" + field.fieldName() + "', which the schema"
+                            + " classifies '" + field.sensitivity() + "', into an"
+                            + " embedding provider; permit that class explicitly for this"
+                            + " node, drop the subject's chunk lane, or mask the field"
+                            + " before it is served");
+                });
     }
 
     /**
