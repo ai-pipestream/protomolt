@@ -6,6 +6,7 @@ description = 'The document platform in one container: repo-service, the authent
 
 dependencies {
     implementation project(':protomolt-authz')
+    implementation project(':protomolt-authz-jdbc')
     implementation project(':protomolt-composer')
     implementation project(':protomolt-repo-service')
     implementation project(':protomolt-repo-container')

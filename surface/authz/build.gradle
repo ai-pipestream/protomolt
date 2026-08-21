@@ -10,4 +10,6 @@ dependencies {
     implementation project(':protomolt-protobuf-validation')
     // JSON policy files parse as canonical proto3 JSON.
     implementation libs.protobuf.java.util
+    // The OIDC resolver logs misconfigured grants loudly before refusing them.
+    implementation libs.slf4j.api
 }

@@ -54,6 +54,10 @@ import ai.pipestream.proto.sources.ProtoSourceSet;
 import ai.pipestream.proto.sources.publish.PublishOptions;
 import ai.pipestream.proto.authz.AccessPolicies;
 import ai.pipestream.proto.authz.AccessPolicyCallers;
+import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.OidcCallerResolver;
+import ai.pipestream.proto.authz.jdbc.CallerStoreConfig;
+import ai.pipestream.proto.authz.jdbc.JdbcCallerResolver;
 import io.grpc.Metadata;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.MetadataUtils;
@@ -122,6 +126,8 @@ public final class DocumentPlatform implements AutoCloseable {
     private final java.util.concurrent.ScheduledExecutorService configRefresher;
     private final String apiToken;
     private final SwappableCallers callers;
+    private final JdbcCallerResolver jdbcCallers;
+    private final CallerResolver callerResolver;
 
     private DocumentPlatform(DocumentPlatformConfig config, ApiKeyIdentityResolver resolver)
             throws IOException {
@@ -148,6 +154,41 @@ public final class DocumentPlatform implements AutoCloseable {
                         + accessPolicyFile + ": " + e.getMessage(), e);
             }
         }
+        // External caller stores compose behind the policy resolver, first match
+        // wins; the lane's access-policy swap keeps working unchanged in front.
+        OidcCallerResolver oidcCallers =
+                OidcCallerResolver.fromEnvironmentMap(config.environment());
+        this.jdbcCallers = config.environment()
+                .getOrDefault(CallerStoreConfig.ENV_JDBC_URL, "").isBlank()
+                ? null
+                : new JdbcCallerResolver(
+                        CallerStoreConfig.fromEnvironmentMap(config.environment()));
+        if ((oidcCallers != null || jdbcCallers != null) && apiToken == null) {
+            if (jdbcCallers != null) {
+                jdbcCallers.close();
+            }
+            throw new IllegalArgumentException("an external caller store is configured"
+                    + " but the operator token is not: "
+                    + OidcCallerResolver.ENV_INTROSPECTION_URL + " and "
+                    + CallerStoreConfig.ENV_JDBC_URL + " require "
+                    + DocumentPlatformConfig.ENV_API_TOKEN);
+        }
+        List<CallerResolver> resolverChain = new ArrayList<>();
+        if (callers != null) {
+            resolverChain.add(callers);
+        }
+        if (oidcCallers != null) {
+            resolverChain.add(oidcCallers);
+            LOG.info("OIDC caller store mounted at {}",
+                    config.environment().get(OidcCallerResolver.ENV_INTROSPECTION_URL));
+        }
+        if (jdbcCallers != null) {
+            resolverChain.add(jdbcCallers);
+            LOG.info("JDBC caller store mounted");
+        }
+        this.callerResolver = resolverChain.isEmpty() ? null
+                : resolverChain.size() == 1 ? resolverChain.get(0)
+                        : CallerResolver.chain(resolverChain);
         Composer.Builder composer = Composer.emptyBuilder()
                 .environment(config.environment())
                 .remoteOpener(target -> {
@@ -173,7 +214,7 @@ public final class DocumentPlatform implements AutoCloseable {
                         SchemaRegistryServerConfig.defaults()
                                 .withPort(config.registryPort())
                                 .withApiToken(apiToken),
-                        callers)
+                        callerResolver)
                 : null;
         if (config.mounts(ParseModule.ROLE)) {
             RoutingRules rules = config.rulesJson() != null
@@ -260,7 +301,7 @@ public final class DocumentPlatform implements AutoCloseable {
                         taxonomies,
                         screening,
                         postalCodes)
-                        .secured(apiToken, callers))
+                        .secured(apiToken, callerResolver))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricServiceModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -295,7 +336,7 @@ public final class DocumentPlatform implements AutoCloseable {
                                                         lakeConfig.namespace()))))),
                         rollupSink,
                         rollupSubjects)
-                        .secured(apiToken, callers))
+                        .secured(apiToken, callerResolver))
                 : null;
         // On a guarded node the console demands browser logins bound to access-policy
         // principals; the swappable resolver means a policy arriving on the config lane
@@ -306,7 +347,7 @@ public final class DocumentPlatform implements AutoCloseable {
                                 config.searchConsolePort(), actionsBaseUrl(config))
                         : new SearchConsoleModule.Config(
                                 config.searchConsolePort(), actionsBaseUrl(config))
-                                .secured(callers))
+                                .secured(callerResolver))
                 : null;
 
         List<ai.pipestream.proto.composer.ServiceModule> selected = new ArrayList<>();
@@ -648,6 +689,9 @@ public final class DocumentPlatform implements AutoCloseable {
         }
         if (distributedConfig != null) {
             distributedConfig.close();
+        }
+        if (jdbcCallers != null) {
+            jdbcCallers.close();
         }
     }
 

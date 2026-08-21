@@ -1,0 +1,14 @@
+description = 'The JDBC-backed caller store: authorization principals in the operator\'s own PostgreSQL, for air-gapped deployments with no IdP'
+
+dependencies {
+    api project(':protomolt-authz')
+    implementation libs.hikari
+    implementation libs.flyway.core
+    implementation libs.flyway.database.postgresql
+    implementation libs.postgresql
+    implementation libs.slf4j.api
+
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}

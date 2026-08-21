@@ -6,8 +6,10 @@ description = 'One-process launcher: ProtoMoltService over gRPC with reflection,
 
 dependencies {
     api project(':protomolt-grpc-service')
-    // The access-policy loader and resolver behind --access-policy.
+    // The access-policy loader and resolver behind --access-policy, and the
+    // external caller stores (OIDC introspection, the JDBC principal table).
     implementation project(':protomolt-authz')
+    implementation project(':protomolt-authz-jdbc')
 
     implementation project(':protomolt-http-json')
     implementation project(':protomolt-mcp')
