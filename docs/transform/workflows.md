@@ -130,10 +130,13 @@ REST, and MCP:
 | `evaluate-work-record` | Verify, match against stored evidence, and replay under one policy |
 
 `verify-work-record` and `evaluate-work-record` take the trust snapshot in the
-request, or default to the server's pinned snapshot file when
-`PROTOMOLT_TRUST_SNAPSHOT` names one (`.json`, `.binpb`, or `.pb`, verified at
-startup); a request's own snapshot always wins, and with neither the verb
-refuses naming both paths.
+request, or default to the server's own custody: the snapshot published on the
+[config lane](../design/config-distribution.md) when the server follows one,
+otherwise the pinned file `PROTOMOLT_TRUST_SNAPSHOT` names (`.json`, `.binpb`,
+or `.pb`, verified at startup). Custody is read per request, so a snapshot
+published after boot applies without a restart, and a lane the server cannot
+reach leaves the pinned file serving. A request's own snapshot always wins, and
+with none of the three the verb refuses naming the paths.
 
 The MCP initialize response describes this workflow, and MCP resources expose
 service profiles, method contracts, workflows, runs, and artifacts without

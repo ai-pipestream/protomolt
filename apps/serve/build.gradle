@@ -10,6 +10,10 @@ dependencies {
     // external caller stores (OIDC introspection, the JDBC principal table).
     implementation project(':protomolt-authz')
     implementation project(':protomolt-authz-jdbc')
+    // The config lane, so the verifying verbs can follow a trust snapshot
+    // published on it instead of only the operator's pinned file.
+    implementation project(':protomolt-config')
+    implementation project(':protomolt-config-registry')
 
     implementation project(':protomolt-http-json')
     implementation project(':protomolt-mcp')

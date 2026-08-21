@@ -8,6 +8,11 @@ import ai.pipestream.proto.authz.AccessPolicyCallers;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.authz.OidcCallerResolver;
+import ai.pipestream.proto.config.DistributedConfig;
+import ai.pipestream.proto.config.TrustSnapshotMounts;
+import ai.pipestream.proto.config.registry.RegistryConfigSource;
+import ai.pipestream.proto.receipt.TrustSnapshot;
+import ai.pipestream.proto.workflow.TrustPin;
 import ai.pipestream.proto.authz.jdbc.CallerStoreConfig;
 import ai.pipestream.proto.authz.jdbc.JdbcCallerResolver;
 import ai.pipestream.proto.workflow.WorkflowRepository;
@@ -69,6 +74,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ScheduledExecutorService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,7 +116,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                           OutboundChannelPolicy outboundPolicy, Path workflowWorkspace,
                           DelegationOptions delegation, TaskConsoleOptions taskConsole,
                           MeshClusterOptions meshCluster, Path accessPolicy,
-                          IdentityStoreOptions identityStores) {
+                          IdentityStoreOptions identityStores,
+                          ConfigLaneOptions configLane) {
 
         public Options {
             if (outboundPolicy == null) {
@@ -124,6 +134,20 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
         }
 
+        /** Binary/source-compatible constructor retaining the pre-config-lane surface. */
+        public Options(String host, int grpcPort, int httpPort, Path registryGit,
+                       int registryPort, String apiToken, boolean demo, Path gatherCache,
+                       JobsOptions jobs, java.util.List<String> inferenceModels,
+                       Path serviceWorkspace, OutboundChannelPolicy outboundPolicy,
+                       Path workflowWorkspace, DelegationOptions delegation,
+                       TaskConsoleOptions taskConsole, MeshClusterOptions meshCluster,
+                       Path accessPolicy, IdentityStoreOptions identityStores) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    workflowWorkspace, delegation, taskConsole, meshCluster, accessPolicy,
+                    identityStores, null);
+        }
+
         /** Binary/source-compatible constructor retaining the pre-identity-store surface. */
         public Options(String host, int grpcPort, int httpPort, Path registryGit,
                        int registryPort, String apiToken, boolean demo, Path gatherCache,
@@ -135,7 +159,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
                     gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
                     workflowWorkspace, delegation, taskConsole, meshCluster, accessPolicy,
-                    null);
+                    null, null);
         }
 
         /** Binary/source-compatible constructor retaining the pre-authorization options surface. */
@@ -147,7 +171,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                        TaskConsoleOptions taskConsole, MeshClusterOptions meshCluster) {
             this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
                     gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
-                    workflowWorkspace, delegation, taskConsole, meshCluster, null, null);
+                    workflowWorkspace, delegation, taskConsole, meshCluster, null, null,
+                    null);
         }
 
         public Options(String host, int grpcPort, int httpPort, Path registryGit, int registryPort) {
@@ -284,6 +309,8 @@ public final class ProtoMoltServe implements AutoCloseable {
             String delegationTranscriptObject =
                     System.getenv("PROTOMOLT_DELEGATION_TRANSCRIPT_OBJECT");
             String delegationStateKeyRef = System.getenv("PROTOMOLT_DELEGATION_STATE_KEY_REF");
+            String configUrl = System.getenv("PROTOMOLT_CONFIG_URL");
+            long configRefreshSeconds = envLong("PROTOMOLT_CONFIG_REFRESH_SECONDS", 0L);
             String oidcIntrospection = System.getenv(OidcCallerResolver.ENV_INTROSPECTION_URL);
             String oidcClientId = System.getenv(OidcCallerResolver.ENV_CLIENT_ID);
             String oidcClientSecret = System.getenv(OidcCallerResolver.ENV_CLIENT_SECRET);
@@ -436,6 +463,15 @@ public final class ProtoMoltServe implements AutoCloseable {
                 taskConsole = new TaskConsoleOptions(taskConsoleToken,
                         Duration.ofSeconds(taskConsoleSessionSeconds));
             }
+            ConfigLaneOptions configLane = null;
+            if (configUrl != null && !configUrl.isBlank()) {
+                configLane = new ConfigLaneOptions(configUrl.trim(), configRefreshSeconds);
+            } else if (configRefreshSeconds > 0) {
+                throw new IllegalArgumentException(
+                        "PROTOMOLT_CONFIG_REFRESH_SECONDS needs PROTOMOLT_CONFIG_URL: a"
+                                + " refresh interval with nowhere to pull from reads"
+                                + " nothing");
+            }
             IdentityStoreOptions identityStores = null;
             boolean oidcConfigured = oidcIntrospection != null && !oidcIntrospection.isBlank();
             boolean authzKeysConfigured = authzKeysJdbc != null && !authzKeysJdbc.isBlank();
@@ -481,7 +517,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
                     serviceWorkspace, outboundPolicy, workflowWorkspace, delegation, taskConsole,
-                    meshCluster, accessPolicy, identityStores);
+                    meshCluster, accessPolicy, identityStores, configLane);
         }
 
         private static int envInt(String name, int fallback) {
@@ -743,6 +779,27 @@ public final class ProtoMoltServe implements AutoCloseable {
     }
 
     /**
+     * The config lane this server follows. Today it carries one subject that matters
+     * here: the trust snapshot the verifying verbs fall back to, so custody can be
+     * published rather than pinned as a file on every node.
+     *
+     * @param registryUrl the registry's native route prefix, e.g.
+     *        {@code http://registry:8081/protomolt}
+     * @param refreshSeconds how often to pull; {@code 0} reads once at startup
+     */
+    public record ConfigLaneOptions(String registryUrl, long refreshSeconds) {
+
+        public ConfigLaneOptions {
+            if (registryUrl == null || registryUrl.isBlank()) {
+                throw new IllegalArgumentException("the config lane needs a registry url");
+            }
+            if (refreshSeconds < 0) {
+                throw new IllegalArgumentException("refreshSeconds must not be negative");
+            }
+        }
+    }
+
+    /**
      * External caller stores composed behind the access policy: OIDC introspection
      * (RFC 7662) and the JDBC caller store, mirroring the intake service's key stores.
      * Both are environment-configured — credentials do not ride argv. Either half may be
@@ -922,14 +979,16 @@ public final class ProtoMoltServe implements AutoCloseable {
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         workflows, jobStore, jobsConfig.maxAttemptsDefault(),
                         inference, serviceProfiles,
-                        outboundPolicy, artifacts, runEvidence, workflowVersions, store);
+                        outboundPolicy, artifacts, runEvidence, workflowVersions, store,
+                        trustSource(options));
                 return startWithJobsCatalog(options, context, catalog, store, workflows,
                         serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
             }
             // The catalog sees the store so run-workflow resolves stored workflow names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                     workflows, null, 0, inference, serviceProfiles,
-                    outboundPolicy, artifacts, runEvidence, workflowVersions, store);
+                    outboundPolicy, artifacts, runEvidence, workflowVersions, store,
+                    trustSource(options));
             return startWithJobsCatalog(options, context, catalog, store, workflows,
                     serviceProfiles, null, null, null);
         } catch (RuntimeException e) {
@@ -1190,6 +1249,53 @@ public final class ProtoMoltServe implements AutoCloseable {
             }
             return resolver.resolve(presented).orElse(null);
         };
+    }
+
+    /**
+     * The trust snapshot the verifying verbs fall back to. Without a config lane this is
+     * the operator's pinned file, resolved once, exactly as before. With one, the lane's
+     * snapshot takes precedence when a document has applied and the file remains the
+     * floor, so a node keeps verifying across a lane outage instead of losing custody.
+     * Either way a request's own {@code trust} still wins.
+     */
+    private static Supplier<TrustSnapshot> trustSource(Options options) {
+        TrustPin pinned = TrustPin.fromEnvironment();
+        TrustSnapshot file = pinned == null ? null : pinned.snapshot();
+        if (options.configLane() == null) {
+            return () -> file;
+        }
+        ConfigLaneOptions lane = options.configLane();
+        DistributedConfig config = DistributedConfig.over(
+                new RegistryConfigSource(lane.registryUrl(), options.apiToken()));
+        TrustSnapshotMounts mounts = TrustSnapshotMounts.follow(config);
+        refreshQuietly(config, "the boot pull");
+        if (lane.refreshSeconds() > 0) {
+            ScheduledExecutorService refresher = Executors.newSingleThreadScheduledExecutor(
+                    runnable -> {
+                        Thread thread = new Thread(runnable, "serve-config-refresh");
+                        thread.setDaemon(true);
+                        return thread;
+                    });
+            refresher.scheduleWithFixedDelay(
+                    () -> refreshQuietly(config, "a config refresh"),
+                    lane.refreshSeconds(), lane.refreshSeconds(), TimeUnit.SECONDS);
+        }
+        return () -> mounts.current()
+                .map(TrustSnapshotMounts.Mounted::snapshot)
+                .orElse(file);
+    }
+
+    /**
+     * A lane that cannot be reached must not take the server down or drop the custody it
+     * already has: the refresh logs and the previous snapshot stays live.
+     */
+    private static void refreshQuietly(DistributedConfig config, String what) {
+        try {
+            config.refresh();
+        } catch (RuntimeException e) {
+            LOG.warn("{} of the config lane failed; the previous trust snapshot stays"
+                    + " live", what, e);
+        }
     }
 
     private static void closeQuietly(AutoCloseable closeable) {

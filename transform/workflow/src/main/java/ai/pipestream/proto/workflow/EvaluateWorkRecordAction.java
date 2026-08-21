@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.util.function.Supplier;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -62,7 +63,7 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     private final ArtifactRepository artifacts;
     private final RunEvidenceRepository runs;
     private final Clock clock;
-    private final TrustSnapshot defaultTrust;
+    private final Supplier<TrustSnapshot> defaultTrust;
 
     EvaluateWorkRecordAction(ArtifactRepository artifacts, RunEvidenceRepository runs) {
         this(artifacts, runs, Clock.systemUTC(), null);
@@ -71,6 +72,12 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     /** With a pinned snapshot, requests may omit {@code trust}; a supplied one wins. */
     EvaluateWorkRecordAction(ArtifactRepository artifacts, RunEvidenceRepository runs,
                              TrustSnapshot defaultTrust) {
+        this(artifacts, runs, Clock.systemUTC(), () -> defaultTrust);
+    }
+
+    /** With a live trust source; see {@link VerifyWorkRecordAction}. */
+    EvaluateWorkRecordAction(ArtifactRepository artifacts, RunEvidenceRepository runs,
+                             Supplier<TrustSnapshot> defaultTrust) {
         this(artifacts, runs, Clock.systemUTC(), defaultTrust);
     }
 
@@ -80,11 +87,11 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     }
 
     EvaluateWorkRecordAction(ArtifactRepository artifacts, RunEvidenceRepository runs,
-                             Clock clock, TrustSnapshot defaultTrust) {
+                             Clock clock, Supplier<TrustSnapshot> defaultTrust) {
         this.artifacts = artifacts;
         this.runs = runs;
         this.clock = clock;
-        this.defaultTrust = defaultTrust;
+        this.defaultTrust = defaultTrust == null ? () -> null : defaultTrust;
     }
 
     static String policySha256() {
@@ -117,7 +124,7 @@ final class EvaluateWorkRecordAction implements ProtoAction {
         properties.putObject("recordBase64").put("type", "string")
                 .put("description", "Serialized SignedWorkRecord, base64.");
         properties.putObject("trust").put("type", "object")
-                .put("description", defaultTrust == null
+                .put("description", defaultTrust.get() == null
                         ? "TrustSnapshot encoded as protobuf JSON."
                         : "TrustSnapshot encoded as protobuf JSON; defaults to the "
                                 + "server's pinned snapshot when omitted.");
@@ -131,7 +138,8 @@ final class EvaluateWorkRecordAction implements ProtoAction {
         artifactBytes.put("description",
                 "Referenced artifact bytes by SHA-256, base64; runs the rehash check.");
         var required = schema.putArray("required").add("recordBase64");
-        if (defaultTrust == null) {
+        // Read live: see VerifyWorkRecordAction.
+        if (defaultTrust.get() == null) {
             required.add("trust");
         }
         required.add("workflow").add("schema");
@@ -153,7 +161,7 @@ final class EvaluateWorkRecordAction implements ProtoAction {
             throw WorkflowActionJson.invalid("'recordBase64' is not valid base64",
                     "/recordBase64");
         }
-        TrustSnapshot trust = TrustPin.resolve(input, defaultTrust);
+        TrustSnapshot trust = TrustPin.resolve(input, defaultTrust.get());
         Workflow workflow = (Workflow) WorkflowActionJson.parse(
                 WorkflowActionJson.object(input, "workflow"), Workflow.newBuilder(),
                 "/workflow");
