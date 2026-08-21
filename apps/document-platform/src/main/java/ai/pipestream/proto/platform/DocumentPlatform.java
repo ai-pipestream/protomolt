@@ -21,6 +21,7 @@ import ai.pipestream.proto.repo.service.RepoServiceModule;
 import ai.pipestream.proto.search.chunk.SentencePackedChunker;
 import ai.pipestream.proto.search.embedding.EmbeddingProvider;
 import ai.pipestream.proto.search.embedding.EmbeddingProviders;
+import ai.pipestream.proto.search.embedding.VectorizationPolicy;
 import ai.pipestream.proto.search.embedding.model2vec.Model2VecEmbeddingProvider;
 import ai.pipestream.proto.search.index.spi.ChunkingPolicy;
 import ai.pipestream.proto.search.index.spi.VectorSimilarity;
@@ -69,6 +70,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,6 +104,7 @@ public final class DocumentPlatform implements AutoCloseable {
     /** The registry subject the access-policy contract publishes under. */
     public static final String ACCESS_POLICY_SUBJECT =
             "ai/pipestream/proto/authz/v1/access_policy.proto";
+
 
     /** The config subject the parse role's routing rules read: {@value}. */
     public static final String PARSE_ROUTING_CONFIG_SUBJECT = "parse-routing";
@@ -308,7 +311,8 @@ public final class DocumentPlatform implements AutoCloseable {
                         taxonomies,
                         screening,
                         postalCodes)
-                        .secured(apiToken, callerResolver))
+                        .secured(apiToken, callerResolver)
+                        .vectorizing(vectorizationFromEnvironment(config.environment())))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricServiceModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -925,6 +929,43 @@ public final class DocumentPlatform implements AutoCloseable {
         String value = environment
                 .getOrDefault(DocumentPlatformConfig.ENV_API_TOKEN, "").trim();
         return value.isEmpty() ? null : value;
+    }
+
+    /**
+     * Which sensitivity classes this node may vectorize
+     * ({@code DOCUMENT_PLATFORM_SEARCH_VECTORIZE_SENSITIVITY}). Absent means
+     * unclassified content only; the single value {@code *} permits every class.
+     */
+    static VectorizationPolicy vectorizationFromEnvironment(
+            Map<String, String> environment) {
+        String value = environment.getOrDefault(
+                DocumentPlatformConfig.ENV_SEARCH_VECTORIZE_SENSITIVITY, "").trim();
+        if (value.isEmpty()) {
+            // The platform's own decision, stated once rather than assumed: the
+            // repo document's body is classified 'screened', which marks the
+            // screening policy that applies to it rather than a restriction, and
+            // indexing that body is what this product does. Every other class
+            // still has to be named.
+            return VectorizationPolicy.permitting(
+                    Set.of(RepoDocumentMapping.BODY_SENSITIVITY));
+        }
+        if (value.equals("*")) {
+            return VectorizationPolicy.unrestricted();
+        }
+        java.util.Set<String> classes = new java.util.LinkedHashSet<>();
+        for (String entry : value.split(",")) {
+            String sensitivity = entry.trim();
+            if (!sensitivity.isEmpty()) {
+                classes.add(sensitivity);
+            }
+        }
+        if (classes.isEmpty()) {
+            throw new IllegalArgumentException(
+                    DocumentPlatformConfig.ENV_SEARCH_VECTORIZE_SENSITIVITY
+                            + " names no sensitivity class; unset it to vectorize"
+                            + " unclassified content only");
+        }
+        return VectorizationPolicy.permitting(classes);
     }
 
     /** The boot access-policy file ({@code PROTOMOLT_ACCESS_POLICY}), or null. */

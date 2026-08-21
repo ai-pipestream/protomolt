@@ -50,7 +50,8 @@ class PolicyChangeReindexTest {
 
         ChunkingPolicy first = policy(8);
         try (LuceneSearchStore store = new LuceneSearchStore(work, Map.of(
-                RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(first)))) {
+                RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(first)),
+                null, false, RepoDocumentMapping.laneVectorization())) {
             LuceneSearchStore.IndexResult landed =
                     store.index(RepoDocumentMapping.SUBJECT, document);
             assertThat(landed.policyDigest()).isEqualTo(first.digest().substring(0, 12));
@@ -62,7 +63,8 @@ class PolicyChangeReindexTest {
         ChunkingPolicy second = policy(20);
         assertThat(second.digest()).isNotEqualTo(first.digest());
         try (LuceneSearchStore store = new LuceneSearchStore(work, Map.of(
-                RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(second)))) {
+                RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(second)),
+                null, false, RepoDocumentMapping.laneVectorization())) {
             LuceneSearchStore.IndexResult replayed =
                     store.index(RepoDocumentMapping.SUBJECT, document);
             assertThat(replayed.policyDigest()).isEqualTo(second.digest().substring(0, 12));

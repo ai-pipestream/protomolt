@@ -18,20 +18,39 @@ import java.util.stream.Collectors;
  * boxed {@code Float}s — the same shape engine mappers emit for a repeated float field.
  * The document map is mutated in place and returned.
  *
- * <p>Field resolution and the dimension check run before the document is consulted, so a
- * misconfigured embedder fails on every call, not only on documents that carry text. A text
- * field that is absent from the document or holds an empty string leaves the document
- * unchanged: there is nothing to embed, and a placeholder vector would poison similarity
- * scores.
+ * <p>Field resolution, the dimension check, and the {@link VectorizationPolicy} check all
+ * run before the document is consulted, so a misconfigured embedder fails on every call,
+ * not only on documents that carry text. A text field that is absent from the document or
+ * holds an empty string leaves the document unchanged: there is nothing to embed, and a
+ * placeholder vector would poison similarity scores.
+ *
+ * <p>This is the only path from a mapped document to an embedding provider, which is why
+ * the sensitivity gate lives here: a TEXT field carrying a {@code meta.v1} sensitivity
+ * class is refused unless the deployment's policy names that class.
  */
 public final class MappingEmbedder {
 
     private final EmbeddingProvider provider;
     private final IndexMapping mapping;
+    private final VectorizationPolicy policy;
 
+    /** An embedder that may vectorize unclassified content only. */
     public MappingEmbedder(EmbeddingProvider provider, IndexMapping mapping) {
+        this(provider, mapping, VectorizationPolicy.unclassifiedOnly());
+    }
+
+    /**
+     * An embedder governed by {@code policy}.
+     *
+     * @param provider the embedding provider
+     * @param mapping the index mapping locating the TEXT source and VECTOR target
+     * @param policy which sensitivity classes may reach the provider
+     */
+    public MappingEmbedder(EmbeddingProvider provider, IndexMapping mapping,
+                           VectorizationPolicy policy) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.mapping = Objects.requireNonNull(mapping, "mapping");
+        this.policy = Objects.requireNonNull(policy, "policy");
     }
 
     /**
@@ -71,6 +90,7 @@ public final class MappingEmbedder {
             IndexMapping.IndexedField vectorField) {
         Objects.requireNonNull(document, "document");
         checkDimension(vectorField);
+        checkSensitivity(textField);
         Object value = document.get(textField.fieldName());
         if (value == null) {
             return document; // no text, nothing to embed
@@ -94,6 +114,23 @@ public final class MappingEmbedder {
         }
         document.put(vectorField.fieldName(), vector);
         return document;
+    }
+
+    /**
+     * Refuses to send a classified source field to the provider unless the policy names
+     * its class. The refusal names the field and the class, never the content.
+     */
+    private void checkSensitivity(IndexMapping.IndexedField textField) {
+        if (policy.permits(textField.sensitivity())) {
+            return;
+        }
+        throw new IllegalStateException("Field '" + textField.fieldName()
+                + "' is classified '" + textField.sensitivity() + "' and this embedder"
+                + " vectorizes " + (policy.permitted().isEmpty()
+                        ? "unclassified content only"
+                        : "unclassified content and " + policy.permitted())
+                + "; permit the class explicitly with VectorizationPolicy.permitting(...)"
+                + " or mask the field before it reaches the embedder");
     }
 
     /**

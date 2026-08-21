@@ -6,6 +6,7 @@ import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
 import ai.pipestream.proto.composer.ServiceMount;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
+import ai.pipestream.proto.search.embedding.VectorizationPolicy;
 import ai.pipestream.proto.screening.Screener;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.spi.PostalCodeCatalog;
@@ -52,10 +53,14 @@ public final class SearchServiceModule implements ServiceModule {
             Supplier<Screener> screening,
             PostalCodeCatalog postalCodes,
             String apiToken,
-            CallerResolver callers) {
+            CallerResolver callers,
+            VectorizationPolicy vectorization) {
 
         /** Validates the configuration. */
         public Config {
+            if (vectorization == null) {
+                vectorization = VectorizationPolicy.unclassifiedOnly();
+            }
             if (callers != null && apiToken == null) {
                 throw new IllegalArgumentException(
                         "an access-policy resolver requires the operator api token");
@@ -93,7 +98,7 @@ public final class SearchServiceModule implements ServiceModule {
                 Supplier<Screener> screening,
                 PostalCodeCatalog postalCodes) {
             this(grpcPort, indexDir, subjects, snapshots, readOnly, refreshSeconds,
-                    taxonomies, screening, postalCodes, null, null);
+                    taxonomies, screening, postalCodes, null, null, null);
         }
 
         /**
@@ -102,7 +107,19 @@ public final class SearchServiceModule implements ServiceModule {
          */
         public Config secured(String token, CallerResolver resolver) {
             return new Config(grpcPort, indexDir, subjects, snapshots, readOnly,
-                    refreshSeconds, taxonomies, screening, postalCodes, token, resolver);
+                    refreshSeconds, taxonomies, screening, postalCodes, token, resolver,
+                    vectorization);
+        }
+
+        /**
+         * The same configuration with the deployment's vectorization policy. A subject
+         * whose chunk lane reads a field the schema classifies fails the mount unless
+         * the policy names that class.
+         */
+        public Config vectorizing(VectorizationPolicy policy) {
+            return new Config(grpcPort, indexDir, subjects, snapshots, readOnly,
+                    refreshSeconds, taxonomies, screening, postalCodes, apiToken, callers,
+                    policy);
         }
 
         /** A configuration without a postal-code pack. */
@@ -197,7 +214,8 @@ public final class SearchServiceModule implements ServiceModule {
         try {
             service = SearchServices.build(
                     new SearchServiceConfig(config.grpcPort(), config.indexDir(),
-                            config.subjects(), config.snapshots()),
+                            config.subjects(), config.snapshots())
+                            .vectorizing(config.vectorization()),
                     repo,
                     // A configured catalog turns the document gate on: fetched
                     // documents validate over the live mounts before indexing.
@@ -290,7 +308,8 @@ public final class SearchServiceModule implements ServiceModule {
         service = SearchServices.build(
                 new SearchServiceConfig(config.grpcPort(), config.indexDir(),
                         config.subjects(), config.snapshots(), true,
-                        config.refreshSeconds()),
+                        config.refreshSeconds())
+                        .vectorizing(config.vectorization()),
                 null);
         String name = ROLE + "-" + context.nodeId();
         inProcess = service.startInProcess(name);

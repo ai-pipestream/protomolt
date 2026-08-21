@@ -154,7 +154,8 @@ class IndexSnapshotsTest {
                 LuceneSearchStoreTest.policyNaming(SearchTestProvider.PROVIDER_ID));
         try (LuceneSearchStore reader = new LuceneSearchStore(work.resolve("reader"),
                 Map.of(RepoDocumentMapping.SUBJECT, reshaped),
-                new IndexSnapshots(blob))) {
+                new IndexSnapshots(blob), false,
+                RepoDocumentMapping.laneVectorization())) {
             assertThat(search(reader, "autumn ledger")).isEmpty();
         }
     }

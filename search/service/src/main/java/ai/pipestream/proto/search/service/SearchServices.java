@@ -39,7 +39,7 @@ public final class SearchServices implements AutoCloseable {
         this.config = config;
         this.fetcher = fetcher;
         this.store = new LuceneSearchStore(config.indexDir(), config.subjects(),
-                config.snapshots(), config.readOnly());
+                config.snapshots(), config.readOnly(), config.vectorization());
         // A read-only service has no write surface: the indexing service is
         // not mounted, so its RPCs answer UNIMPLEMENTED.
         this.index = config.readOnly()

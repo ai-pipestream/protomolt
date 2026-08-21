@@ -170,11 +170,6 @@ Define a protobuf `IndexShape` for one-to-many document projection and map
 carving. A shape should declare the target index, field definitions, protobuf
 or CEL value sources, split rules, and metadata propagation behavior.
 
-### Sensitive vectorization
-
-Require explicit opt-in before encrypted or otherwise restricted field content
-can feed an embedding provider.
-
 ## Evidence and receipts
 
 ### Signed work records
