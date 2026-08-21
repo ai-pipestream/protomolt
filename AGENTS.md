@@ -159,6 +159,9 @@ Current implementation and deployment snapshot, verified 2026-08-14:
 - krick-1 runs the GPU-only Muse Glimmer inference sidecar plus Kimi and
   Glimmer workers. Do not enable CPU inference or CPU model offload. CPU-only
   build and test containers are allowed.
+- krick-1 also runs an OpenVINO Model Server embeddings sidecar
+  (`deploy/krick-1/compose.embeddings.yml`, loopback port 8091) whose
+  embedding models share the same B70 with the Muse Glimmer sidecar.
 - `https://protomolt.rokkon.com/console/tasks` is the bounded task console.
   Its login credential is separate from the ProtoMolt API token. Do not print,
   commit, or copy either token into task messages.
