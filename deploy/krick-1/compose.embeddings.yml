@@ -1,0 +1,48 @@
+# Intel-GPU OpenVINO embeddings sidecar for the krick-1 workstation. OVMS
+# serves the MiniLM and MPNet sentence-embedding DAG pipelines from the pinned
+# host directory (extracted once from the embedder-ovms-models artifact image,
+# see README.md): tokenizers on CPU, embedding models compiled for the B70
+# (--target_device GPU in /models/config-gpu.json). The sidecar shares the
+# B70 with the glimmer-vllm service from compose.yml; both embedding models
+# together stay well under the free VRAM vLLM leaves unreserved.
+#
+#   docker compose -f deploy/krick-1/compose.embeddings.yml up -d
+#   docker compose -f deploy/krick-1/compose.embeddings.yml logs -f
+#
+# The REST endpoint publishes on the host loopback only. The stopped
+# pipeline-ovms container on host ports 9000 and 9002 belongs to the
+# ~/.pipeline stack and is not managed here.
+name: protomolt-krick-1-embeddings
+
+services:
+  embedder-ovms:
+    image: ${OVMS_IMAGE:-openvino/model_server:latest-gpu}
+    container_name: protomolt-embedder-ovms
+    # config-gpu.json declares both DAG pipelines: tokenizer models on CPU,
+    # embedding models on GPU.
+    command:
+      - --config_path=/models/config-gpu.json
+      - --port=8000
+      - --rest_port=8001
+    environment:
+      MODEL_LOADING_TIMEOUT: "300"
+    devices:
+      # The single B70 render nodes, same mapping as the glimmer sidecar.
+      - /dev/dri:/dev/dri
+    group_add:
+      # Host render group (GID 990 on krick-1) for /dev/dri access.
+      - "${OVMS_RENDER_GID:-990}"
+    ports:
+      # Host loopback only; only the REST port is published.
+      - 127.0.0.1:${EMBEDDER_HOST_PORT:-8091}:8001
+    volumes:
+      # Pinned local artifacts extracted from the embedder-ovms-models
+      # artifact image, mounted read-only.
+      - ${OVMS_MODELS_DIR:-/work/models/ovms-embedder}:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:8001/v1/models/mpnet_pipeline"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped

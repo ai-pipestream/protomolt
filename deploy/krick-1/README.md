@@ -31,6 +31,45 @@ The sidecar publishes `127.0.0.1:8011` on the host loopback only. The
 `pipeline-ovms` service on host ports 9000 and 9002 is not managed by this
 stack; it is currently stopped with user approval to free the B70.
 
+## OpenVINO embeddings sidecar
+
+`compose.embeddings.yml` is a separate Compose project running OpenVINO
+Model Server (`openvino/model_server:latest-gpu`, OVMS 2026.2.1 at
+verification time) for sentence embeddings on the same B70. The pinned
+artifacts in `/work/models/ovms-embedder` were extracted once from the
+cached `git.rokkon.com/ai-pipestream/embedder-ovms-models:minilm-mpnet-gpu`
+image:
+
+```shell
+docker create --name tmp-embedder-models git.rokkon.com/ai-pipestream/embedder-ovms-models:minilm-mpnet-gpu
+docker cp tmp-embedder-models:/models /work/models/ovms-embedder
+docker rm tmp-embedder-models
+```
+
+The `config-gpu.json` there declares two DAG pipelines: `mpnet_pipeline`
+(768-dimensional embeddings) and `minilm_pipeline` (384-dimensional). The
+tokenizer models run on CPU; the embedding models compile for the GPU. The
+REST endpoint publishes `127.0.0.1:8091` on the host loopback only:
+
+```shell
+docker compose -f deploy/krick-1/compose.embeddings.yml up -d
+curl -fsS -H 'content-type: application/json' \
+  -d '{"instances":[{"strings":"hello"}]}' \
+  http://127.0.0.1:8091/v1/models/mpnet_pipeline:predict
+```
+
+The sidecar shares the B70 with `glimmer-vllm`: both embedding models
+together used about 0.3 GiB of VRAM at verification, inside the headroom
+vLLM leaves unreserved. It is an always-on service (`restart:
+unless-stopped`), like the rest of this stack.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OVMS_IMAGE` | `openvino/model_server:latest-gpu` | OVMS image (2026.2.1 at verification time) |
+| `OVMS_MODELS_DIR` | `/work/models/ovms-embedder` | pinned artifacts mounted read-only at `/models` |
+| `EMBEDDER_HOST_PORT` | `8091` | loopback host port for the OVMS REST endpoint |
+| `OVMS_RENDER_GID` | `990` | host render group for `/dev/dri` access |
+
 ## Run
 
 ```shell
@@ -109,3 +148,8 @@ stay absent, and DFlash must remain opt-in only.
 `scripts/muse-glimmer-live.sh` checks the model list and one bounded chat
 completion against the running sidecar, then requires log or metrics evidence
 that the B70/XPU loaded the model. It deploys nothing and changes nothing.
+
+`scripts/krick1-embeddings-live.sh` checks the OVMS model status, runs one
+bounded embeddings request against `mpnet_pipeline`, requires the returned
+vector to be 768-dimensional, then requires log evidence that the embedding
+models compiled for the GPU. It deploys nothing and changes nothing.
