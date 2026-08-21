@@ -57,6 +57,73 @@ message Principal {
   // does not, or a duplicate) and caps what the principal may spend
   // there. Absent means unbudgeted; the operator is never budgeted.
   repeated ScopeBudget budgets = 4;
+  // Row and member security on metric mappings: what this principal may
+  // see and which rows its queries reduce over. Absent means the full
+  // mapping; the operator is never rewritten.
+  MetricAccess metric_access = 5;
+}
+
+// Row and member security on metric mappings for one principal: the
+// compile-time rewrite the metric service applies before a query runs.
+// Denied members disappear from DescribeMapping and refuse QueryMetrics
+// by name; row filters are ANDed into every query the principal runs on
+// the subject, using the metric layer's own equality-set filter shape —
+// no new policy language.
+message MetricAccess {
+  // Members the principal may not see or query, by mapping subject.
+  repeated MetricMemberDeny deny = 1;
+  // Rows every query by the principal reduces over, by mapping subject.
+  repeated MetricRowFilter row_filters = 2;
+}
+
+// Denied members on one mapping subject.
+message MetricMemberDeny {
+  // The mapping subject the denial applies to.
+  string mapping_subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    }
+  ];
+  // The denied member names; non-empty, unique.
+  repeated string members = 2 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        string: {min_len: 1, max_len: 128}
+      }
+    }
+  ];
+}
+
+// One equality-set row filter injected into every query the principal
+// runs on the subject.
+message MetricRowFilter {
+  // The mapping subject the filter applies to.
+  string mapping_subject = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    }
+  ];
+  // The dimension member the filter constrains.
+  string member = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128}
+    }
+  ];
+  // The values the member must equal (any of); non-empty.
+  repeated string equals = 3 [
+    (ai.pipestream.proto.validate.v1.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        string: {min_len: 1}
+      }
+    }
+  ];
 }
 
 // A budget on one scope of one principal. At least one limit must be

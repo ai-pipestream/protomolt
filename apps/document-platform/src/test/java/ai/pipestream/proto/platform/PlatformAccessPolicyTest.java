@@ -47,6 +47,7 @@ class PlatformAccessPolicyTest {
     private static final String QUERIER = "querier-credential";
     private static final String REBUILDER = "rebuilder-credential";
     private static final String LANE_READER = "lane-reader-credential";
+    private static final String NARROW = "narrow-credential";
 
     @TempDir
     Path work;
@@ -72,10 +73,17 @@ class PlatformAccessPolicyTest {
                    "scopes": ["search-query", "metrics-query", "schema-read"]},
                   {"name": "rebuilder",
                    "credentialSha256": ["%s"],
-                   "scopes": ["metrics-rebuild"]}
+                   "scopes": ["metrics-rebuild"]},
+                  {"name": "narrow",
+                   "credentialSha256": ["%s"],
+                   "scopes": ["metrics-query"],
+                   "metricAccess": {"deny": [
+                     {"mappingSubject": "%s", "members": ["language"]}]}}
                 ]}""".formatted(
                 AccessPolicyCallers.sha256Hex(QUERIER),
-                AccessPolicyCallers.sha256Hex(REBUILDER)));
+                AccessPolicyCallers.sha256Hex(REBUILDER),
+                AccessPolicyCallers.sha256Hex(NARROW),
+                RepoDocumentMapping.SUBJECT));
         return policy;
     }
 
@@ -350,6 +358,23 @@ class PlatformAccessPolicyTest {
                                     .setMappingSubject(RepoDocumentMapping.SUBJECT)
                                     .build()))
                     .getMembersCount()).isPositive();
+
+            // The narrow principal's metric access hides the denied member
+            // from the description; the unrestricted querier still sees it.
+            assertThat(withChannel(metricsPort, QUERIER,
+                    channel -> MetricServiceGrpc.newBlockingStub(channel)
+                            .describeMapping(DescribeMappingRequest.newBuilder()
+                                    .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                    .build()))
+                    .getMembersList()).extracting(member -> member.getName())
+                    .contains("language");
+            assertThat(withChannel(metricsPort, NARROW,
+                    channel -> MetricServiceGrpc.newBlockingStub(channel)
+                            .describeMapping(DescribeMappingRequest.newBuilder()
+                                    .setMappingSubject(RepoDocumentMapping.SUBJECT)
+                                    .build()))
+                    .getMembersList()).extracting(member -> member.getName())
+                    .isNotEmpty().doesNotContain("language");
 
             // The rebuilder holds metrics-rebuild alone: a query is refused
             // by principal, scope, and method name.

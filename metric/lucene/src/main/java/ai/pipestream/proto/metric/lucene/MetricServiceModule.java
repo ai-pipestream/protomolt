@@ -109,13 +109,19 @@ public final class MetricServiceModule implements ServiceModule {
             ai.pipestream.proto.metric.spi.RollupSink rollupSink,
             ai.pipestream.proto.metric.spi.MetricSubjectResolver subjectResolver,
             String apiToken,
-            CallerResolver callers) {
+            CallerResolver callers,
+            java.util.function.Supplier<ai.pipestream.proto.authz.AccessPolicy>
+                    accessPolicy) {
 
         /** Validates the configuration. */
         public Config {
             if (callers != null && apiToken == null) {
                 throw new IllegalArgumentException(
                         "an access-policy resolver requires the operator api token");
+            }
+            if (accessPolicy != null && apiToken == null) {
+                throw new IllegalArgumentException(
+                        "metric access rules require the operator api token");
             }
             if (subjects == null || subjects.isEmpty()) {
                 throw new IllegalArgumentException(
@@ -128,7 +134,7 @@ public final class MetricServiceModule implements ServiceModule {
         public Config(int grpcPort, Map<String, Subject> subjects,
                 ai.pipestream.proto.metric.spi.RollupSink rollupSink,
                 ai.pipestream.proto.metric.spi.MetricSubjectResolver subjectResolver) {
-            this(grpcPort, subjects, rollupSink, subjectResolver, null, null);
+            this(grpcPort, subjects, rollupSink, subjectResolver, null, null, null);
         }
 
         /**
@@ -138,18 +144,30 @@ public final class MetricServiceModule implements ServiceModule {
         public Config secured(String token,
                 CallerResolver resolver) {
             return new Config(grpcPort, subjects, rollupSink, subjectResolver,
-                    token, resolver);
+                    token, resolver, accessPolicy);
+        }
+
+        /**
+         * The same configuration with the policy's per-principal metric access
+         * rules rewriting descriptions and queries; the supplier is read per
+         * request, so a policy swapped on the config lane re-scopes live.
+         */
+        public Config withMetricAccess(
+                java.util.function.Supplier<ai.pipestream.proto.authz.AccessPolicy>
+                        policy) {
+            return new Config(grpcPort, subjects, rollupSink, subjectResolver,
+                    apiToken, callers, policy);
         }
 
         /** A configuration without a subject resolver. */
         public Config(int grpcPort, Map<String, Subject> subjects,
                 ai.pipestream.proto.metric.spi.RollupSink rollupSink) {
-            this(grpcPort, subjects, rollupSink, null, null, null);
+            this(grpcPort, subjects, rollupSink, null, null, null, null);
         }
 
         /** A configuration without a rollup sink. */
         public Config(int grpcPort, Map<String, Subject> subjects) {
-            this(grpcPort, subjects, null, null, null, null);
+            this(grpcPort, subjects, null, null, null, null, null);
         }
     }
 
@@ -229,7 +247,8 @@ public final class MetricServiceModule implements ServiceModule {
             served.put(subject, new ServedMetricSubject(spec.metricMapping(), engines));
         });
         service = MetricServices.build(
-                served, config.rollupSink(), config.subjectResolver());
+                served, config.rollupSink(), config.subjectResolver(),
+                config.accessPolicy());
         String name = ROLE + "-" + context.nodeId();
         inProcess = service.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);

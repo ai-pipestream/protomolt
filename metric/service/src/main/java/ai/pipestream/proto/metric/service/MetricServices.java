@@ -34,9 +34,10 @@ public final class MetricServices implements AutoCloseable {
     private MetricServices(
             Map<String, ServedMetricSubject> subjects,
             ai.pipestream.proto.metric.spi.RollupSink rollups,
-            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver,
+            java.util.function.Supplier<ai.pipestream.proto.authz.AccessPolicy> accessPolicy) {
         this.subjects = Map.copyOf(subjects);
-        this.service = new MetricGrpcService(this.subjects, rollups, resolver);
+        this.service = new MetricGrpcService(this.subjects, rollups, resolver, accessPolicy);
     }
 
     /**
@@ -76,11 +77,32 @@ public final class MetricServices implements AutoCloseable {
             Map<String, ServedMetricSubject> subjects,
             ai.pipestream.proto.metric.spi.RollupSink rollups,
             ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver) {
+        return build(subjects, rollups, resolver, null);
+    }
+
+    /**
+     * Builds the stack with metric access rules: a caller whose access-policy principal
+     * carries {@code metric_access} sees denied members dropped from descriptions,
+     * refused in queries by name, and its row filters ANDed into every reduction. The
+     * supplier is read per request, so a policy swapped on the config lane re-scopes
+     * the rewrite with no restart; null (the supplier or its answer) rewrites nothing.
+     *
+     * @param subjects the served subjects, keyed by subject name; non-empty
+     * @param rollups where rebuilt rollups land, or {@code null} for none
+     * @param resolver resolves subjects beyond the static set, or {@code null} for none
+     * @param accessPolicy the live access policy, or {@code null} for no rewrite
+     * @return the wired, not-yet-started stack
+     */
+    public static MetricServices build(
+            Map<String, ServedMetricSubject> subjects,
+            ai.pipestream.proto.metric.spi.RollupSink rollups,
+            ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver,
+            java.util.function.Supplier<ai.pipestream.proto.authz.AccessPolicy> accessPolicy) {
         if (subjects == null || subjects.isEmpty()) {
             throw new IllegalArgumentException(
                     "at least one served metric subject is required");
         }
-        return new MetricServices(subjects, rollups, resolver);
+        return new MetricServices(subjects, rollups, resolver, accessPolicy);
     }
 
     /** The served subjects, keyed by name. */

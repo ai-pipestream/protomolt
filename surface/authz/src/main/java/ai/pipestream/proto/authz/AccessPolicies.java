@@ -75,6 +75,33 @@ public final class AccessPolicies {
                             + " requests_per_minute or max_payload_bytes");
                 }
             }
+            if (principal.hasMetricAccess()) {
+                MetricAccess metricAccess = principal.getMetricAccess();
+                if (metricAccess.getDenyCount() == 0
+                        && metricAccess.getRowFiltersCount() == 0) {
+                    throw new IllegalArgumentException("principal '" + principal.getName()
+                            + "' metric access restricts nothing: add deny entries or"
+                            + " row filters");
+                }
+                Set<String> deniedSubjects = new HashSet<>();
+                for (MetricMemberDeny deny : metricAccess.getDenyList()) {
+                    if (!deniedSubjects.add(deny.getMappingSubject())) {
+                        throw new IllegalArgumentException("principal '"
+                                + principal.getName() + "' metric access lists subject '"
+                                + deny.getMappingSubject() + "' twice under deny");
+                    }
+                }
+                Set<String> filtered = new HashSet<>();
+                for (MetricRowFilter filter : metricAccess.getRowFiltersList()) {
+                    if (!filtered.add(filter.getMappingSubject() + " "
+                            + filter.getMember())) {
+                        throw new IllegalArgumentException("principal '"
+                                + principal.getName() + "' metric access filters member '"
+                                + filter.getMember() + "' on '"
+                                + filter.getMappingSubject() + "' twice");
+                    }
+                }
+            }
         }
         return policy;
     }

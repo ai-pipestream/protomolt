@@ -194,6 +194,11 @@ session's own credential to the operations panel's registry proxy —
 see [the console](../search/service.md#the-console). Both variables
 unset is the open, trusted-network node.
 
+A policy principal's `metric_access` section drives the metric role's
+compile-time rewrite on the same guarded node — denied members and
+injected row filters, following the lane like the rest of the policy
+(see [the metric service](../metric/metrics.md#querying-and-refusing)).
+
 External caller stores compose behind the policy on a guarded node
 (see [the design chapter](../design/authorization-scopes.md)): the
 `PROTOMOLT_AUTHZ_OIDC_*` family mounts RFC 7662 introspection, and the
