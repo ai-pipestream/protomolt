@@ -2,6 +2,7 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.Caller;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.delegation.DelegationBridge;
 import ai.pipestream.proto.delegation.DelegationReducer;
 import ai.pipestream.proto.delegation.InProcessDelegationCoordinator;
@@ -40,9 +41,9 @@ final class TaskConsoleApiHandler implements HttpHandler {
     private static final int MAX_EVENTS = 256;
 
     private final DelegationBridge bridge;
-    private final TaskConsoleSessions sessions;
+    private final ConsoleSessions sessions;
 
-    TaskConsoleApiHandler(DelegationBridge bridge, TaskConsoleSessions sessions) {
+    TaskConsoleApiHandler(DelegationBridge bridge, ConsoleSessions sessions) {
         this.bridge = java.util.Objects.requireNonNull(bridge, "delegation bridge");
         this.sessions = java.util.Objects.requireNonNull(sessions, "task console sessions");
     }

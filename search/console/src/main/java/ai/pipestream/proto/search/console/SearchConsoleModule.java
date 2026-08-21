@@ -1,9 +1,12 @@
 package ai.pipestream.proto.search.console;
 
+import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceMount;
 import ai.pipestream.proto.composer.ServiceModule;
 
+import java.time.Duration;
 import java.util.Set;
 import java.util.function.Supplier;
 
@@ -18,6 +21,9 @@ public final class SearchConsoleModule implements ServiceModule {
     /** The role name. */
     public static final String ROLE = "search-console";
 
+    /** How long a console login lasts before the browser signs in again. */
+    public static final Duration SESSION_TTL = Duration.ofHours(12);
+
     /**
      * Module configuration.
      *
@@ -26,8 +32,23 @@ public final class SearchConsoleModule implements ServiceModule {
      *        to, e.g. {@code http://127.0.0.1:8081/protomolt/actions} — a supplier because a
      *        co-mounted registry's port is only known once it starts; a blank answer disables
      *        the panel
+     * @param callers resolves login credentials to access-policy principals on a guarded
+     *        node; null mounts the open, trusted-network console
      */
-    public record Config(int port, Supplier<String> actionsBaseUrl) {
+    public record Config(int port, Supplier<String> actionsBaseUrl, CallerResolver callers) {
+
+        /** The open, trusted-network console. */
+        public Config(int port, Supplier<String> actionsBaseUrl) {
+            this(port, actionsBaseUrl, null);
+        }
+
+        /** This configuration with browser sessions bound to {@code callers} principals. */
+        public Config secured(CallerResolver callers) {
+            if (callers == null) {
+                throw new IllegalArgumentException("callers must not be null");
+            }
+            return new Config(port, actionsBaseUrl, callers);
+        }
     }
 
     private final Config config;
@@ -60,7 +81,11 @@ public final class SearchConsoleModule implements ServiceModule {
         server = new SearchConsoleServer(
                 config.port(),
                 context.channels().targetOf("search"),
-                config.actionsBaseUrl());
+                config.actionsBaseUrl(),
+                config.callers() == null
+                        ? ConsoleSessions.open(SearchConsoleServer.COOKIE)
+                        : ConsoleSessions.secured(SearchConsoleServer.COOKIE,
+                                SESSION_TTL, config.callers()));
         return new ServiceMount() {
             @Override
             public void start() {

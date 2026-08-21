@@ -2,6 +2,8 @@ description = 'The search console: a framework-free product page over the search
 
 dependencies {
     api project(':protomolt-composer')
+    // The session boundary and the scope vocabulary the secured console checks against.
+    api project(':protomolt-authz')
     implementation project(':protomolt-search-proto')
     implementation libs.protobuf.java.util
     implementation libs.grpc.netty.shaded

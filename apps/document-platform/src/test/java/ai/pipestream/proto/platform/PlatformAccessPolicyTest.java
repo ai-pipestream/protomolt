@@ -149,20 +149,96 @@ class PlatformAccessPolicyTest {
     }
 
     @Test
-    void aTokenGuardedNodeRefusesTheSearchConsoleRole() {
+    void aGuardedNodeServesTheConsoleThroughPrincipalSessions() throws Exception {
         Map<String, String> environment = new HashMap<>();
         environment.put("PROTOMOLT_REPO_TARGET", "127.0.0.1:1");
         environment.put(DocumentPlatformConfig.ENV_API_TOKEN, OPERATOR);
+        environment.put(DocumentPlatformConfig.ENV_ACCESS_POLICY,
+                policyFile().toString());
         DocumentPlatformConfig config = new DocumentPlatformConfig(
                 null, null, work.resolve("registry-git"), 0, 0, 0, 0,
                 null, null, null,
                 60L, 1, 0, work.resolve("search-index"), 0, 0,
                 List.of("registry", "search", "metric", "search-console"),
                 environment);
-        assertThatThrownBy(() -> DocumentPlatform.start(config, null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("search-console")
-                .hasMessageContaining(DocumentPlatformConfig.ENV_API_TOKEN);
+        try (DocumentPlatform platform = DocumentPlatform.start(config, null)) {
+            int consolePort = platform.searchConsolePort();
+            HttpClient http = HttpClient.newHttpClient();
+
+            // The page serves, the bridges demand a session.
+            assertThat(consoleGet(http, consolePort, "/", null).statusCode())
+                    .isEqualTo(200);
+            assertThat(consoleGet(http, consolePort, "/subjects", null).statusCode())
+                    .isEqualTo(401);
+
+            // The operator token is not a browser login; sessions bind to
+            // access-policy principals only.
+            assertThat(consoleLoginStatus(http, consolePort, OPERATOR)).isEqualTo(401);
+            assertThat(consoleLoginStatus(http, consolePort, "guessed")).isEqualTo(401);
+
+            // A querier signs in and searches through the console's bridge.
+            String querier = consoleLogin(http, consolePort, QUERIER);
+            assertThat(consoleGet(http, consolePort, "/subjects", querier).statusCode())
+                    .isEqualTo(200);
+            HttpResponse<String> hits = consolePost(http, consolePort, "/search", """
+                    {"mappingSubject": "%s", "query": "anything", "k": 1,
+                     "lane": "SEARCH_LANE_LEXICAL"}"""
+                    .formatted(RepoDocumentMapping.SUBJECT), querier);
+            assertThat(hits.statusCode()).isEqualTo(200);
+
+            // The operations proxy presents the session's own credential, so
+            // the guarded registry answers the principal, not the console.
+            assertThat(consoleGet(http, consolePort, "/actions", querier).statusCode())
+                    .isEqualTo(200);
+
+            // A principal without search-query is refused by name at the console.
+            String rebuilder = consoleLogin(http, consolePort, REBUILDER);
+            HttpResponse<String> refused =
+                    consoleGet(http, consolePort, "/subjects", rebuilder);
+            assertThat(refused.statusCode()).isEqualTo(403);
+            assertThat(refused.body()).contains("rebuilder").contains("search-query");
+        }
+    }
+
+    private static HttpResponse<String> consoleGet(HttpClient http, int port,
+            String path, String cookie) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(
+                URI.create("http://127.0.0.1:" + port + path)).GET();
+        if (cookie != null) {
+            request.header("Cookie", cookie);
+        }
+        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static HttpResponse<String> consolePost(HttpClient http, int port,
+            String path, String body, String cookie) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + port + path))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (cookie != null) {
+            request.header("Cookie", cookie);
+        }
+        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static int consoleLoginStatus(HttpClient http, int port, String credential)
+            throws Exception {
+        return http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + port + "/session"))
+                        .POST(HttpRequest.BodyPublishers.ofString(credential)).build(),
+                HttpResponse.BodyHandlers.ofString()).statusCode();
+    }
+
+    private static String consoleLogin(HttpClient http, int port, String credential)
+            throws Exception {
+        HttpResponse<String> login = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + port + "/session"))
+                        .POST(HttpRequest.BodyPublishers.ofString(credential)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(login.statusCode()).isEqualTo(200);
+        String setCookie = login.headers().firstValue("set-cookie").orElseThrow();
+        return setCookie.substring(0, setCookie.indexOf(';'));
     }
 
     @Test

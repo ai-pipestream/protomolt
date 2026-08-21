@@ -137,12 +137,6 @@ public final class DocumentPlatform implements AutoCloseable {
                     + " is set but the operator token is not: an access policy"
                     + " requires " + DocumentPlatformConfig.ENV_API_TOKEN);
         }
-        if (apiToken != null && config.mounts(SearchConsoleModule.ROLE)) {
-            throw new IllegalArgumentException("the search console has no principal"
-                    + " sessions yet, so a token-guarded node would serve it as an"
-                    + " unauthenticated bypass: unmount 'search-console' or run"
-                    + " without " + DocumentPlatformConfig.ENV_API_TOKEN);
-        }
         this.callers = apiToken == null ? null : new SwappableCallers();
         if (accessPolicyFile != null) {
             try {
@@ -303,9 +297,16 @@ public final class DocumentPlatform implements AutoCloseable {
                         rollupSubjects)
                         .secured(apiToken, callers))
                 : null;
+        // On a guarded node the console demands browser logins bound to access-policy
+        // principals; the swappable resolver means a policy arriving on the config lane
+        // starts admitting logins with no restart.
         this.searchConsole = config.mounts(SearchConsoleModule.ROLE)
-                ? new SearchConsoleModule(new SearchConsoleModule.Config(
-                        config.searchConsolePort(), actionsBaseUrl(config)))
+                ? new SearchConsoleModule(apiToken == null
+                        ? new SearchConsoleModule.Config(
+                                config.searchConsolePort(), actionsBaseUrl(config))
+                        : new SearchConsoleModule.Config(
+                                config.searchConsolePort(), actionsBaseUrl(config))
+                                .secured(callers))
                 : null;
 
         List<ai.pipestream.proto.composer.ServiceModule> selected = new ArrayList<>();

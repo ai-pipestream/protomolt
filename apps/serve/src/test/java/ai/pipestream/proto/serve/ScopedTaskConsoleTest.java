@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.AccessPolicy;
 import ai.pipestream.proto.authz.AccessPolicyCallers;
+import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.authz.Principal;
 import com.google.protobuf.util.JsonFormat;
 import java.net.URI;
@@ -123,8 +124,8 @@ class ScopedTaskConsoleTest {
 
     @Test
     void theConsoleIdentityIsBoundedNotTheOperator() {
-        TaskConsoleSessions sessions =
-                TaskConsoleSessions.secured(CONSOLE_TOKEN, Duration.ofHours(1));
+        ConsoleSessions sessions =
+                TaskConsoleSessions.secured(CONSOLE_TOKEN, Duration.ofHours(1), null);
         var caller = sessions.loginCaller(CONSOLE_TOKEN);
         assertThat(caller.unrestricted())
                 .as("the console token must never carry process authority")
