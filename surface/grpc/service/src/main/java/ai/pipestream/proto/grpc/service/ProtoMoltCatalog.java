@@ -6,6 +6,8 @@ import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.workflow.CheckWorkflowAction;
 import ai.pipestream.proto.workflow.RunWorkflowAction;
+import ai.pipestream.proto.receipt.TrustSnapshot;
+import ai.pipestream.proto.workflow.RecordSigning;
 import ai.pipestream.proto.workflow.WorkflowWorkbenchActions;
 import ai.pipestream.proto.codegen.GenerateStubsAction;
 import ai.pipestream.proto.emit.okf.EmitOkfAction;
@@ -32,6 +34,7 @@ import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
 
 import java.nio.file.Path;
+import java.util.function.Supplier;
 
 /**
  * The full catalog: the built-in actions from
@@ -166,6 +169,28 @@ public final class ProtoMoltCatalog {
                                      RunEvidenceRepository runEvidence,
                                      WorkflowVersionRepository workflowVersions,
                                      SchemaRegistryStore registry) {
+        return full(context, gatherCacheRoot, workflows, jobs, maxAttemptsDefault, inference,
+                serviceProfiles, outboundPolicy, artifacts, runEvidence, workflowVersions,
+                registry, null);
+    }
+
+    /**
+     * The complete catalog whose verifying verbs read their trust snapshot from
+     * {@code trust} per request rather than from the environment at registration, so a
+     * host following the config lane re-scopes trust live.
+     *
+     * @param trust the server's current trust snapshot; null keeps the environment pin
+     */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     WorkflowRepository workflows, WorkflowRunStore jobs,
+                                     int maxAttemptsDefault, InferenceEngines inference,
+                                     ServiceProfileRepository serviceProfiles,
+                                     OutboundChannelPolicy outboundPolicy,
+                                     ArtifactRepository artifacts,
+                                     RunEvidenceRepository runEvidence,
+                                     WorkflowVersionRepository workflowVersions,
+                                     SchemaRegistryStore registry,
+                                     Supplier<TrustSnapshot> trust) {
         OutboundChannelPolicy policy = outboundPolicy == null
                 ? OutboundChannelPolicy.defaults() : outboundPolicy;
         ChannelFactory channels = ChannelFactory.standard(policy);
@@ -188,7 +213,11 @@ public final class ProtoMoltCatalog {
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
         ServiceWorkspaceActions.register(catalog, serviceProfiles, registry, channels);
-        return WorkflowWorkbenchActions.register(catalog, runner, artifacts,
-                runEvidence, workflowVersions);
+        return trust == null
+                ? WorkflowWorkbenchActions.register(catalog, runner, artifacts,
+                        runEvidence, workflowVersions)
+                : WorkflowWorkbenchActions.register(catalog, runner, artifacts,
+                        runEvidence, workflowVersions,
+                        RecordSigning.fromEnvironment(), trust);
     }
 }

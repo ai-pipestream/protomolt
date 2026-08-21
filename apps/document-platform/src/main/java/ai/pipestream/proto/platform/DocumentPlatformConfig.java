@@ -202,6 +202,16 @@ public record DocumentPlatformConfig(
             "DOCUMENT_PLATFORM_SEARCH_REFRESH_SECONDS";
 
     /**
+     * Env var naming the {@code meta.v1} sensitivity classes this node may send to an
+     * embedding provider, comma-separated. Absent means unclassified content only, so a
+     * subject whose chunk lane reads a classified field fails the mount by name rather
+     * than quietly vectorizing it. The single value {@code *} permits every class, for a
+     * deployment whose model runs inside its own trust boundary.
+     */
+    public static final String ENV_SEARCH_VECTORIZE_SENSITIVITY =
+            "DOCUMENT_PLATFORM_SEARCH_VECTORIZE_SENSITIVITY";
+
+    /**
      * Env var for the default local metrics lake: where rebuilt rollups
      * land when no {@code DOCUMENT_PLATFORM_METRICS_ICEBERG_*} family is
      * set. The directory (a sqlite catalog plus Parquet data, created

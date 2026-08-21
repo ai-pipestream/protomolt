@@ -156,7 +156,8 @@ class LuceneSearchStoreTest {
         Map<String, ServedMapping> subjects = new LinkedHashMap<>();
         subjects.put("sound", RepoDocumentMapping.served());
         subjects.put("broken", RepoDocumentMapping.served(policyNaming("no-such-provider")));
-        assertThatThrownBy(() -> new LuceneSearchStore(work, subjects))
+        assertThatThrownBy(() -> new LuceneSearchStore(work, subjects, null, false,
+                RepoDocumentMapping.laneVectorization()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("no-such-provider");
 
@@ -172,7 +173,8 @@ class LuceneSearchStoreTest {
     void deletingADocumentRemovesItsWholeBlockAndLeavesOthers() {
         try (LuceneSearchStore store = new LuceneSearchStore(work, Map.of(
                 RepoDocumentMapping.SUBJECT,
-                RepoDocumentMapping.served(policyNaming(SearchTestProvider.PROVIDER_ID))))) {
+                RepoDocumentMapping.served(policyNaming(SearchTestProvider.PROVIDER_ID))),
+                null, false, RepoDocumentMapping.laneVectorization())) {
             store.index(RepoDocumentMapping.SUBJECT,
                     document("doc-keep", "The evergreen anchor stays behind."));
             LuceneSearchStore.IndexResult landed = store.index(RepoDocumentMapping.SUBJECT,

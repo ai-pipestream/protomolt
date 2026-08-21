@@ -170,11 +170,6 @@ Define a protobuf `IndexShape` for one-to-many document projection and map
 carving. A shape should declare the target index, field definitions, protobuf
 or CEL value sources, split rules, and metadata propagation behavior.
 
-### Sensitive vectorization
-
-Require explicit opt-in before encrypted or otherwise restricted field content
-can feed an embedding provider.
-
 ## Evidence and receipts
 
 ### Signed work records
@@ -187,10 +182,6 @@ projections, and the evaluation sidecar. Design of record:
 
 - **A second projector.** The delegation transcript, once the workflow-run
   corpus has aged.
-- **Lane custody for the trust mount.** The verifying verbs default to
-  the operator's pinned snapshot file (`PROTOMOLT_TRUST_SNAPSHOT`);
-  `TrustSnapshotMounts` follows the config lane, and a consumer that
-  re-scopes trust live from the lane is still open.
 - **Composable later, deliberately not in v1:** trusted timestamps
   (RFC 3161), transparency receipts (SCITT), environment attestation
   (RATS/EAT), countersignatures beyond the issuer.

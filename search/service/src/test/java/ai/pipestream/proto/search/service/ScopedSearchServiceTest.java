@@ -71,7 +71,8 @@ class ScopedSearchServiceTest {
                 .build();
         service = SearchServices.build(
                 new SearchServiceConfig(0, work.resolve("index"), Map.of(
-                        RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(policy()))),
+                        RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(policy())))
+                        .vectorizing(RepoDocumentMapping.laneVectorization()),
                 address -> document);
 
         CallerResolver resolver = credential -> switch (credential) {
@@ -178,7 +179,8 @@ class ScopedSearchServiceTest {
     void aTokenlessServiceStaysOpen() throws Exception {
         try (SearchServices open = SearchServices.build(
                 new SearchServiceConfig(0, work.resolve("open-index"), Map.of(
-                        RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(policy()))),
+                        RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(policy())))
+                        .vectorizing(RepoDocumentMapping.laneVectorization()),
                 address -> Document.newBuilder().setDocId("doc-1").build())) {
             String name = InProcessServerBuilder.generateName();
             open.startInProcess(name);
