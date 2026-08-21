@@ -1,6 +1,7 @@
 package ai.pipestream.proto.search.console;
 
 import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.search.v1.ListSubjectsRequest;
@@ -77,6 +78,7 @@ public final class SearchConsoleServer implements AutoCloseable {
     private final SearchServiceGrpc.SearchServiceBlockingStub service;
     private final Supplier<String> actionsBaseUrl;
     private final ConsoleSessions sessions;
+    private final ScopeBudgets budgets = new ScopeBudgets();
     private final HttpClient actionsClient = HttpClient.newHttpClient();
 
     /** Creates the open console (no login), for trusted-network nodes. */
@@ -224,6 +226,16 @@ public final class SearchConsoleServer implements AutoCloseable {
                     errorJson("caller '" + caller.name() + "' does not hold '"
                             + Scopes.SEARCH_QUERY + "', which the search console requires"));
             return null;
+        }
+        if (requireSearchQuery) {
+            // The in-process search bridge cannot budget for the console either,
+            // so the principal's search-query budget spends here.
+            Optional<String> refusal = budgets.refuse(caller, Scopes.SEARCH_QUERY, -1);
+            if (refusal.isPresent()) {
+                respond(exchange, 429, "application/json; charset=utf-8",
+                        errorJson(refusal.get()));
+                return null;
+            }
         }
         return caller;
     }

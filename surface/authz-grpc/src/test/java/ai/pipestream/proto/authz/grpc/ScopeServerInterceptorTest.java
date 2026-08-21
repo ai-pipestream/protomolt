@@ -181,4 +181,69 @@ class ScopeServerInterceptorTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("schema-red");
     }
+
+    @Test
+    void aBudgetedCallerExhaustsItsRateAndItsPayloadCap() throws Exception {
+        CallerResolver resolver = credential -> switch (credential) {
+            case "metered-credential" -> Optional.of(Caller.scoped("meterme",
+                    Set.of(Scopes.METRICS_QUERY),
+                    Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 0))));
+            case "capped-credential" -> Optional.of(Caller.scoped("capped",
+                    Set.of(Scopes.METRICS_QUERY),
+                    Map.of(Scopes.METRICS_QUERY, new Caller.Budget(0, 4))));
+            default -> Optional.empty();
+        };
+        HealthStatusManager health = new HealthStatusManager();
+        String name = InProcessServerBuilder.generateName();
+        Server budgeted = InProcessServerBuilder.forName(name)
+                .addService(health.getHealthService())
+                .intercept(new ScopeServerInterceptor(
+                        Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of()))
+                .intercept(new ApiTokenServerInterceptor(OPERATOR, resolver))
+                .build()
+                .start();
+        ManagedChannel budgetedChannel = InProcessChannelBuilder.forName(name).build();
+        try {
+            HealthGrpc.HealthBlockingStub metered = stubOn(budgetedChannel,
+                    "metered-credential");
+            assertThat(metered.check(HealthCheckRequest.getDefaultInstance())
+                    .getStatus().getNumber()).isEqualTo(1);
+            assertThat(metered.check(HealthCheckRequest.getDefaultInstance())
+                    .getStatus().getNumber()).isEqualTo(1);
+            assertThatThrownBy(() ->
+                    metered.check(HealthCheckRequest.getDefaultInstance()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                        assertThat(e.getStatus().getDescription())
+                                .contains("meterme").contains("2-per-minute")
+                                .contains(Scopes.METRICS_QUERY);
+                    });
+
+            HealthGrpc.HealthBlockingStub capped = stubOn(budgetedChannel,
+                    "capped-credential");
+            assertThat(capped.check(HealthCheckRequest.getDefaultInstance())
+                    .getStatus().getNumber()).isEqualTo(1);
+            assertThatThrownBy(() -> capped.check(HealthCheckRequest.newBuilder()
+                    .setService("a-service-name-past-the-cap").build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                        assertThat(e.getStatus().getDescription())
+                                .contains("capped").contains("4-byte");
+                    });
+        } finally {
+            budgetedChannel.shutdownNow();
+            budgeted.shutdownNow();
+        }
+    }
+
+    private static HealthGrpc.HealthBlockingStub stubOn(ManagedChannel target,
+            String credential) {
+        Metadata headers = new Metadata();
+        headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER),
+                credential);
+        return HealthGrpc.newBlockingStub(target)
+                .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+    }
 }

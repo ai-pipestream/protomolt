@@ -2,6 +2,7 @@ package ai.pipestream.proto.registry.service;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.registry.ConfigSupport;
@@ -95,6 +96,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private final ActionCatalog actions;
     private final CallerResolver resolver;
     private final ObjectMapper json = new ObjectMapper();
+    private final ScopeBudgets budgets = new ScopeBudgets();
     private final ProtoSourceCompiler compiler = new ProtoSourceCompiler();
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
     private volatile ExecutorService executor;
@@ -244,6 +246,24 @@ public final class SchemaRegistryServer implements AutoCloseable {
             writeError(exchange, 403, 403, "caller '" + caller.name() + "' does not hold '"
                     + required + "', which " + method + " " + rawPath + " requires");
             return;
+        }
+        if (required != null && caller.budgets().containsKey(required)) {
+            // The payload size is the declared body length; a chunked request
+            // without one skips the payload cap, never the rate.
+            long declared = -1;
+            String contentLength = exchange.getRequestHeaders().getFirst("Content-Length");
+            if (contentLength != null) {
+                try {
+                    declared = Long.parseLong(contentLength.trim());
+                } catch (NumberFormatException e) {
+                    declared = -1;
+                }
+            }
+            Optional<String> refusal = budgets.refuse(caller, required, declared);
+            if (refusal.isPresent()) {
+                writeError(exchange, 429, 429, refusal.get());
+                return;
+            }
         }
 
         if (matches(segments, "subjects")) {
@@ -888,6 +908,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 case "unknown-action" -> 404;
                 case "invalid-input" -> 400;
                 case "permission-denied" -> 403;
+                case "resource-exhausted" -> 429;
                 default -> 422;
             };
             writeJson(exchange, status, e.toJson(json));

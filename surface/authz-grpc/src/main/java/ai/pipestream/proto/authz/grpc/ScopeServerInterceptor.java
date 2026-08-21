@@ -1,7 +1,10 @@
 package ai.pipestream.proto.authz.grpc;
 
 import ai.pipestream.proto.actions.Caller;
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.actions.Scopes;
+import com.google.protobuf.MessageLite;
+import io.grpc.ForwardingServerCallListener;
 import io.grpc.Metadata;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
@@ -9,6 +12,7 @@ import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -24,6 +28,7 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     private final Map<String, String> serviceScopes;
     private final Map<String, String> methodScopes;
     private final Set<String> openServices;
+    private final ScopeBudgets budgets = new ScopeBudgets();
 
     /**
      * @param serviceScopes required scope by full service name
@@ -79,6 +84,55 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                     new Metadata());
             return new ServerCall.Listener<>() { };
         }
-        return next.startCall(call, headers);
+        // The caller's budget spends once per request. Without a payload cap that is
+        // decided here; with one, the whole consult waits for the message so payload
+        // and rate are one spend.
+        Caller.Budget budget = caller.budgets().get(scope);
+        if (budget == null) {
+            return next.startCall(call, headers);
+        }
+        String budgetScope = scope;
+        if (budget.maxPayloadBytes() == 0) {
+            Optional<String> refusal = budgets.refuse(caller, budgetScope, -1);
+            if (refusal.isPresent()) {
+                call.close(Status.RESOURCE_EXHAUSTED.withDescription(refusal.get()),
+                        new Metadata());
+                return new ServerCall.Listener<>() { };
+            }
+            return next.startCall(call, headers);
+        }
+        ServerCall.Listener<ReqT> delegate = next.startCall(call, headers);
+        return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(
+                delegate) {
+            private boolean refused;
+
+            @Override
+            public void onMessage(ReqT message) {
+                long size = message instanceof MessageLite proto
+                        ? proto.getSerializedSize() : -1;
+                Optional<String> refusal = budgets.refuse(caller, budgetScope, size);
+                if (refusal.isPresent()) {
+                    refused = true;
+                    call.close(Status.RESOURCE_EXHAUSTED
+                            .withDescription(refusal.get()), new Metadata());
+                    return;
+                }
+                super.onMessage(message);
+            }
+
+            @Override
+            public void onHalfClose() {
+                if (!refused) {
+                    super.onHalfClose();
+                }
+            }
+
+            @Override
+            public void onCancel() {
+                if (!refused) {
+                    super.onCancel();
+                }
+            }
+        };
     }
 }

@@ -57,6 +57,24 @@ public final class AccessPolicies {
                             + String.join(", ", Scopes.VOCABULARY));
                 }
             }
+            Set<String> budgeted = new HashSet<>();
+            for (ScopeBudget budget : principal.getBudgetsList()) {
+                if (!principal.getScopesList().contains(budget.getScope())) {
+                    throw new IllegalArgumentException("principal '" + principal.getName()
+                            + "' budgets scope '" + budget.getScope()
+                            + "', which it does not hold");
+                }
+                if (!budgeted.add(budget.getScope())) {
+                    throw new IllegalArgumentException("principal '" + principal.getName()
+                            + "' budgets scope '" + budget.getScope() + "' twice");
+                }
+                if (budget.getRequestsPerMinute() == 0
+                        && budget.getMaxPayloadBytes() == 0) {
+                    throw new IllegalArgumentException("principal '" + principal.getName()
+                            + "' budget on '" + budget.getScope() + "' caps nothing: set"
+                            + " requests_per_minute or max_payload_bytes");
+                }
+            }
         }
         return policy;
     }

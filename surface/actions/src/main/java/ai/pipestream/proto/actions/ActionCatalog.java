@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * A framework-agnostic catalog of {@link ProtoAction}s: one registry of JSON-in/JSON-out verbs,
@@ -21,6 +23,7 @@ public final class ActionCatalog {
 
     private final ActionContext context;
     private final Map<String, ProtoAction> actions = new LinkedHashMap<>();
+    private final ScopeBudgets budgets = new ScopeBudgets();
 
     private ActionCatalog(ActionContext context) {
         this.context = Objects.requireNonNull(context, "context");
@@ -148,6 +151,7 @@ public final class ActionCatalog {
         // get() takes the catalog monitor only long enough to resolve a stable action reference.
         ProtoAction action = get(name);
         requireScope(action, caller);
+        requireBudget(action, caller, input);
         return action.execute(Inputs.requireEnvelope(input), context);
     }
 
@@ -166,11 +170,36 @@ public final class ActionCatalog {
             StreamEmitter emitter) throws ActionException {
         ProtoAction action = get(name);
         requireScope(action, caller);
+        requireBudget(action, caller, input);
         ObjectNode envelope = Inputs.requireEnvelope(input);
         if (action instanceof StreamingAction streaming) {
             streaming.executeStreaming(envelope, context, emitter);
         } else {
             emitter.emit(action.execute(envelope, context));
+        }
+    }
+
+    /** Spends the caller's budget on the action's scope, refusing when it is exhausted. */
+    private void requireBudget(ProtoAction action, Caller caller, ObjectNode input)
+            throws ActionException {
+        if (caller.unrestricted() || caller.budgets().isEmpty()) {
+            return;
+        }
+        String scope = action.requiredScope();
+        Caller.Budget budget = caller.budgets().get(scope);
+        if (budget == null) {
+            return;
+        }
+        long payloadBytes = budget.maxPayloadBytes() > 0 && input != null
+                ? input.toString().getBytes(StandardCharsets.UTF_8).length
+                : -1;
+        Optional<String> refusal = budgets.refuse(caller, scope, payloadBytes);
+        if (refusal.isPresent()) {
+            ObjectNode details = JsonNodeFactory.instance.objectNode();
+            details.put("action", action.name());
+            details.put("caller", caller.name());
+            details.put("requiredScope", scope);
+            throw new ActionException("resource-exhausted", refusal.get(), details);
         }
     }
 

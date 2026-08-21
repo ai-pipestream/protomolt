@@ -52,4 +52,28 @@ message Principal {
       }
     }
   ];
+  // Per-scope budgets, following the intake scope's per-key caps: each
+  // entry names a scope the principal holds (the loader refuses one it
+  // does not, or a duplicate) and caps what the principal may spend
+  // there. Absent means unbudgeted; the operator is never budgeted.
+  repeated ScopeBudget budgets = 4;
+}
+
+// A budget on one scope of one principal. At least one limit must be
+// set — an entry with neither caps nothing and is refused at load as
+// the dead configuration it is.
+message ScopeBudget {
+  // The budgeted scope; must be one the principal holds.
+  string scope = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 64}
+    }
+  ];
+  // Requests per minute across every surface that checks this scope;
+  // zero means unlimited.
+  uint32 requests_per_minute = 2;
+  // Largest request payload in bytes on surfaces that know their
+  // payload size; zero means uncapped.
+  uint64 max_payload_bytes = 3;
 }

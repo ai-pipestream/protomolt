@@ -51,4 +51,26 @@ class AccessPolicyCallersTest {
         assertThatThrownBy(() -> resolver.resolve(null))
                 .isInstanceOf(NullPointerException.class);
     }
+
+    @Test
+    void aPrincipalsBudgetsRideItsCaller() {
+        AccessPolicy policy = AccessPolicy.newBuilder()
+                .addPrincipals(Principal.newBuilder()
+                        .setName("meterme")
+                        .addCredentialSha256(
+                                AccessPolicyCallers.sha256Hex("metered-credential"))
+                        .addScopes(Scopes.SEARCH_QUERY)
+                        .addScopes(Scopes.METRICS_QUERY)
+                        .addBudgets(ScopeBudget.newBuilder()
+                                .setScope(Scopes.SEARCH_QUERY)
+                                .setRequestsPerMinute(5)
+                                .setMaxPayloadBytes(1024)))
+                .build();
+        Caller caller = new AccessPolicyCallers(policy)
+                .resolve("metered-credential").orElseThrow();
+        assertThat(caller.budgets())
+                .containsOnlyKeys(Scopes.SEARCH_QUERY);
+        assertThat(caller.budgets().get(Scopes.SEARCH_QUERY))
+                .isEqualTo(new Caller.Budget(5, 1024));
+    }
 }
