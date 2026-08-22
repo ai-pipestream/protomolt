@@ -6,4 +6,7 @@ description = 'The external verifier for signed work records: pure JDK, zero dep
 dependencies {
     testImplementation project(':protomolt-receipt')
     testImplementation testFixtures(project(':protomolt-receipt'))
+    // Test-only, and the point of it: the rule formats here are restated by hand from
+    // the platform's parsers, so the tests hold the two side by side.
+    testImplementation project(':protomolt-formats')
 }
