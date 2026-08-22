@@ -1,6 +1,5 @@
 package ai.pipestream.proto.repo.service;
 
-import ai.pipestream.proto.repo.v1.DeleteDocumentByReferenceCommand;
 import ai.pipestream.proto.repo.v1.DeleteDocumentOutcome;
 import ai.pipestream.proto.repo.v1.DeleteDocumentRequest;
 import ai.pipestream.proto.repo.v1.DeleteDocumentResponse;
@@ -12,7 +11,6 @@ import ai.pipestream.proto.repo.v1.DocumentManifest;
 import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.DocumentPart;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
-import ai.pipestream.proto.repo.v1.FileStorageReference;
 import ai.pipestream.proto.repo.v1.GetBlobRequest;
 import ai.pipestream.proto.repo.v1.GetBlobResponse;
 import ai.pipestream.proto.repo.v1.GetDocumentByReferenceRequest;
@@ -31,7 +29,6 @@ import ai.pipestream.proto.repo.v1.PutBlobResponse;
 import ai.pipestream.proto.repo.v1.RemovedDocumentNode;
 import ai.pipestream.proto.repo.v1.SaveDocumentRequest;
 import ai.pipestream.proto.repo.v1.SaveDocumentResponse;
-import ai.pipestream.proto.repo.v1.WriteProvenance;
 import ai.pipestream.proto.repo.container.blob.BlobStore;
 import ai.pipestream.proto.repo.container.blob.DocumentIds;
 import ai.pipestream.proto.repo.container.blob.PartStorage;
@@ -53,20 +50,19 @@ import ai.pipestream.proto.repo.container.lifecycle.DocumentEventFactory;
 import ai.pipestream.proto.repo.container.lifecycle.JdbcEventOutbox;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeQueue;
 import ai.pipestream.proto.repo.container.lifecycle.PurgeSnapshots;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import io.grpc.stub.StreamObserver;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.Set;
 import java.util.UUID;
 
@@ -148,6 +144,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     private final PartLayout layout;
     private final PurgeQueue purgeQueue;
     private final JdbcEventOutbox events;
+    private final BlobOperations blobs;
 
     /**
      * @param documents the document-row ledger
@@ -193,6 +190,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         this.layout = PartLayouts.document();
         this.purgeQueue = purgeQueue;
         this.events = events;
+        this.blobs = new BlobOperations(blobStore, tx);
     }
 
     // ------------------------------------------------------------------ save
@@ -212,12 +210,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
      * @return the save response
      */
     SaveDocumentResponse saveBlocking(SaveDocumentRequest request) {
-        ResolvedSave r = resolve(request);
+        SaveResolution.Resolved r = SaveResolution.resolve(request);
         DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
                 .orElseThrow(() -> notFound("drive '" + request.getDrive() + "' not found for account '"
                         + r.address().getAccountId() + "'"));
         UUID nodeId = DocumentIds.nodeId(r.address());
-        String basePrefix = basePrefix(drive, r.address().getAccountId(), nodeId);
+        String basePrefix = SaveResolution.basePrefix(drive, r.address().getAccountId(), nodeId);
 
         if (request.getPartsWrittenList().isEmpty()) {
             return saveFull(r, request, drive, nodeId, basePrefix);
@@ -231,7 +229,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
      * because the Merkle root of the split is the dedupe key; identical
      * documents split into identical parts and therefore identical roots.
      */
-    private SaveDocumentResponse saveFull(ResolvedSave r, SaveDocumentRequest request,
+    private SaveDocumentResponse saveFull(SaveResolution.Resolved r, SaveDocumentRequest request,
             DriveRecord drive, UUID nodeId, String basePrefix) {
         List<PartObject> split = DocumentPartCodec.split(r.doc(), layout);
         String rootChecksum = DocumentPartCodec.rootChecksum(split);
@@ -250,7 +248,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 return new Decision(false, null, 1L);
             }
             DocumentRecord row = existing.get();
-            long nextVersion = manifestVersion(row) + 1;
+            long nextVersion = SaveResolution.manifestVersion(row) + 1;
             if (intake && !request.getForceSave()
                     && DocumentStatus.AVAILABLE.equals(row.status)
                     && rootChecksum.equals(row.checksum)) {
@@ -285,7 +283,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         PartStorage.WriteResult written = partStorage.writeParts(blobStore, drive.bucket, basePrefix,
                 r.doc(), layout, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
-                PART_CONTENT_TYPE, s3Metadata(r), request.getForceSave(), decision.nextDocVersion());
+                PART_CONTENT_TYPE, SaveResolution.s3Metadata(r), request.getForceSave(), decision.nextDocVersion());
 
         DocumentRecord row = upsertRow(r, request, drive, nodeId, basePrefix, written.manifest(),
                 written.rootChecksum(), written.totalSizeBytes(), written.coreEtag(),
@@ -293,7 +291,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         LOG.debug("Saved {} at {} (node_id={}, version={}, bytes={})",
                 r.address().getDocId(), r.address().getGraphAddressId(), nodeId,
                 decision.nextDocVersion(), written.totalSizeBytes());
-        return saveResponse(row, written.rootChecksum());
+        return SaveResolution.saveResponse(row, written.rootChecksum());
     }
 
     /**
@@ -302,34 +300,34 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
      * carry every other PRESENT part forward from the copy source's manifest.
      * No dedupe on partial saves — they are pipeline restages, not re-crawls.
      */
-    private SaveDocumentResponse savePartial(ResolvedSave r, SaveDocumentRequest request,
+    private SaveDocumentResponse savePartial(SaveResolution.Resolved r, SaveDocumentRequest request,
             DriveRecord drive, UUID nodeId, String basePrefix) {
-        Set<DocumentPart> partsWritten = partsOrThrow(request.getPartsWrittenList(), "parts_written");
+        Set<DocumentPart> partsWritten = DocumentRequests.partsOrThrow(request.getPartsWrittenList(), "parts_written");
         if (!request.hasCopyUnwrittenPartsFrom()) {
             throw invalidArgument("copy_unwritten_parts_from is required when parts_written is non-empty");
         }
-        NodeAddress srcRef = validateAddress(request.getCopyUnwrittenPartsFrom(),
+        NodeAddress srcRef = DocumentRequests.validateAddress(request.getCopyUnwrittenPartsFrom(),
                 "copy_unwritten_parts_from");
 
         // The copy source must be a live row with a manifest; a gone source is
         // FAILED_PRECONDITION (not NOT_FOUND) so the caller's
         // retry-as-full-save policy engages.
         DocumentRecord srcRow = documents.findByReference(srcRef)
-                .orElseThrow(() -> failedPrecondition("partial-save copy source row not found: " + describe(srcRef)));
+                .orElseThrow(() -> failedPrecondition("partial-save copy source row not found: " + DocumentRequests.describe(srcRef)));
         if (!DocumentStatus.AVAILABLE.equals(srcRow.status)) {
             throw failedPrecondition("partial-save copy source row is " + srcRow.status
-                    + " (need AVAILABLE): " + describe(srcRef));
+                    + " (need AVAILABLE): " + DocumentRequests.describe(srcRef));
         }
         DocumentManifest srcManifest = srcRow.readManifest();
         if (srcManifest == null) {
-            throw failedPrecondition("partial-save copy source row has no manifest: " + describe(srcRef));
+            throw failedPrecondition("partial-save copy source row has no manifest: " + DocumentRequests.describe(srcRef));
         }
         DriveRecord srcDrive = drives.findByName(srcRow.accountId, srcRow.driveName)
                 .orElseThrow(() -> failedPrecondition("partial-save copy source drive '"
                         + srcRow.driveName + "' not found for account '" + srcRow.accountId + "'"));
 
         DocumentRecord destExisting = documents.findByNodeId(nodeId).orElse(null);
-        long docVersion = manifestVersion(destExisting) + 1;
+        long docVersion = SaveResolution.manifestVersion(destExisting) + 1;
 
         Set<String> chunkSetsWritten = Set.copyOf(request.getChunkSetsWrittenList());
         List<PartObject> toWrite = DocumentPartCodec.split(r.doc(), layout).stream()
@@ -353,14 +351,14 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 // to the store; treat it exactly like a gone source.
                 throw failedPrecondition("partial-save copy source entry " + e.getPart()
                         + (e.getSubKey().isEmpty() ? "" : "/" + e.getSubKey())
-                        + " is PRESENT but carries a blank object_key: " + describe(srcRef));
+                        + " is PRESENT but carries a blank object_key: " + DocumentRequests.describe(srcRef));
             }
         }
 
         PartStorage.WriteResult written = partStorage.writePartObjects(blobStore, drive.bucket, basePrefix,
                 toWrite, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
-                PART_CONTENT_TYPE, s3Metadata(r), request.getForceSave(), docVersion);
+                PART_CONTENT_TYPE, SaveResolution.s3Metadata(r), request.getForceSave(), docVersion);
 
         // Copy-forward: same BlobStore on both ends (one storage backend per
         // service), so this is always a server-side copy — the bytes never
@@ -382,7 +380,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         try {
             partStorage.copyParts(blobStore, srcDrive.bucket, blobStore, drive.bucket, true, copies);
         } catch (RuntimeException e) {
-            if (hasNotFoundCause(e)) {
+            if (DocumentRequests.hasNotFoundCause(e)) {
                 throw failedPrecondition("partial-save copy source object already reclaimed: "
                         + e.getMessage());
             }
@@ -407,7 +405,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         LOG.debug("Partial save {} at {} (node_id={}, version={}, parts={}, copied={})",
                 r.address().getDocId(), r.address().getGraphAddressId(), nodeId, docVersion,
                 partsWritten, carried.size());
-        return saveResponse(row, rootChecksum);
+        return SaveResolution.saveResponse(row, rootChecksum);
     }
 
     /**
@@ -424,7 +422,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 .filter(e -> e.getState() == PartState.PART_STATE_PRESENT)
                 .toList();
         List<PartManifestEntry> ordered = new ArrayList<>();
-        Timestamp now = timestampNow();
+        Timestamp now = DocumentRequests.timestampNow();
         for (DocumentPart part : CANONICAL_ORDER) {
             if (part == DocumentPart.DOCUMENT_PART_CHUNKS) {
                 List<String> srcChunkOrder = source.getPartsList().stream()
@@ -487,10 +485,10 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     @Override
     public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> observer) {
         GrpcErrors.run(observer, () -> {
-            UUID nodeId = parseUuid(request.getNodeId(), "node_id");
+            UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
             DocumentRecord row = documents.findByNodeId(nodeId)
                     .orElseThrow(() -> notFound("no document row for node_id " + nodeId));
-            return assemble(row, partsOrThrow(request.getPartsList(), "parts"),
+            return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
                     Set.copyOf(request.getChunkSetsList()));
         });
     }
@@ -499,10 +497,10 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     public void getDocumentByReference(GetDocumentByReferenceRequest request,
             StreamObserver<GetDocumentResponse> observer) {
         GrpcErrors.run(observer, () -> {
-            NodeAddress address = validateAddress(request.getAddress(), "address");
+            NodeAddress address = DocumentRequests.validateAddress(request.getAddress(), "address");
             DocumentRecord row = documents.findByReference(address)
-                    .orElseThrow(() -> notFound("no document row for " + describe(address)));
-            return assemble(row, partsOrThrow(request.getPartsList(), "parts"),
+                    .orElseThrow(() -> notFound("no document row for " + DocumentRequests.describe(address)));
+            return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
                     Set.copyOf(request.getChunkSetsList()));
         });
     }
@@ -544,14 +542,14 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         GrpcErrors.run(observer, () -> {
             DocumentRecord row = switch (request.getCoordinateCase()) {
                 case NODE_ID -> {
-                    UUID nodeId = parseUuid(request.getNodeId(), "node_id");
+                    UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
                     yield documents.findByNodeId(nodeId)
                             .orElseThrow(() -> notFound("no document row for node_id " + nodeId));
                 }
                 case ADDRESS -> {
-                    NodeAddress address = validateAddress(request.getAddress(), "address");
+                    NodeAddress address = DocumentRequests.validateAddress(request.getAddress(), "address");
                     yield documents.findByReference(address)
-                            .orElseThrow(() -> notFound("no document row for " + describe(address)));
+                            .orElseThrow(() -> notFound("no document row for " + DocumentRequests.describe(address)));
                 }
                 default -> throw invalidArgument(
                         "exactly one coordinate (node_id or address) must be set");
@@ -593,7 +591,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         DeleteLogicalDocumentCommand logical = null;
         switch (request.getCommandCase()) {
             case BY_REFERENCE -> {
-                byRef = validateAddress(request.getByReference().getAddress(),
+                byRef = DocumentRequests.validateAddress(request.getByReference().getAddress(),
                         "by_reference.address");
                 targets = documents.findByReference(byRef)
                         .map(List::of)
@@ -692,9 +690,9 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         Instant requestedAt = Instant.now();
         // Cast disambiguates the Tx.inTransaction Function overload.
         return Optional.ofNullable(tx.inTransaction(
-                (java.util.function.Function<jakarta.persistence.EntityManager, DocumentRecord>) em -> {
+                (Function<EntityManager, DocumentRecord>) em -> {
                     DocumentRecord managed = em.find(DocumentRecord.class, row.nodeId,
-                            jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+                            LockModeType.PESSIMISTIC_WRITE);
                     if (managed == null) {
                         return null;
                     }
@@ -817,12 +815,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         GrpcErrors.run(observer, () -> {
             int limit = request.getLimit() <= 0 ? DEFAULT_LIST_LIMIT
                     : Math.min(request.getLimit(), MAX_LIST_LIMIT);
-            long offset = parseContinuationToken(request.getContinuationToken());
+            long offset = DocumentRequests.parseContinuationToken(request.getContinuationToken());
             ListDocumentsResult result = documents.list(new ListDocumentsFilter(
-                    blankToNull(request.getDrive()),
-                    blankToNull(request.getConnectorId()),
-                    blankToNull(request.getCrawlId()),
-                    blankToNull(request.getAccountId()),
+                    DocumentRequests.blankToNull(request.getDrive()),
+                    DocumentRequests.blankToNull(request.getConnectorId()),
+                    DocumentRequests.blankToNull(request.getCrawlId()),
+                    DocumentRequests.blankToNull(request.getAccountId()),
                     limit, offset));
 
             ListDocumentsResponse.Builder response = ListDocumentsResponse.newBuilder()
@@ -834,7 +832,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                         .setDrive(row.driveName)
                         .setSizeBytes(row.sizeBytes)
                         .setCreatedAtEpochMs(row.createdAt.toEpochMilli())
-                        .setAddress(addressOf(row));
+                        .setAddress(SaveResolution.addressOf(row));
                 if (row.connectorId != null) {
                     meta.setConnectorId(row.connectorId);
                 }
@@ -858,206 +856,20 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
 
     @Override
     public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> {
-            if (!request.hasStorageRef()) {
-                throw invalidArgument("storage_ref is required");
-            }
-            FileStorageReference ref = request.getStorageRef();
-            if (ref.getDriveName().isBlank()) {
-                throw invalidArgument("storage_ref.drive_name is required");
-            }
-            if (ref.getObjectKey().isBlank()) {
-                throw invalidArgument("storage_ref.object_key is required");
-            }
-            DriveRecord drive = findDriveByName(ref.getDriveName())
-                    .orElseThrow(() -> notFound("drive '" + ref.getDriveName() + "' not found"));
-            BlobStore.GetResult got = blobStore.get(drive.bucket, ref.getObjectKey(),
-                    ref.hasVersionId() && !ref.getVersionId().isBlank() ? ref.getVersionId() : null);
-            GetBlobResponse.Builder response = GetBlobResponse.newBuilder()
-                    .setData(ByteString.copyFrom(got.data()))
-                    .setSizeBytes(got.data().length)
-                    .setRetrievedAtEpochMs(System.currentTimeMillis());
-            if (got.contentType() != null) {
-                response.setMimeType(got.contentType());
-            }
-            return response.build();
-        });
+        GrpcErrors.run(observer, () -> blobs.get(request));
     }
 
     @Override
     public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> {
-            if (request.getDriveName().isBlank()) {
-                throw invalidArgument("drive_name is required");
-            }
-            DriveRecord drive = findDriveByName(request.getDriveName())
-                    .orElseThrow(() -> notFound("drive '" + request.getDriveName() + "' not found"));
-            byte[] data = request.getData().toByteArray();
-            String sha256 = DocumentPartCodec.sha256Hex(data);
-            // Content-addressed default key: identical puts land on the same
-            // object, so a retried upload is an idempotent overwrite, never a
-            // second randomly-keyed copy.
-            String objectKey = request.getObjectKey().isBlank()
-                    ? generatedBlobKey(drive, sha256)
-                    : request.getObjectKey();
-            String contentType = request.getMimeType().isBlank()
-                    ? "application/octet-stream" : request.getMimeType();
-            // Verified write: the store's checksum trailer makes it reject
-            // the PUT when the landed bytes mismatch the computed digest.
-            blobStore.put(new BlobStore.PutSpec(drive.bucket, objectKey, contentType, null, sha256),
-                    data);
-            return PutBlobResponse.newBuilder()
-                    .setStorageRef(FileStorageReference.newBuilder()
-                            .setDriveName(request.getDriveName())
-                            .setObjectKey(objectKey))
-                    .setSizeBytes(data.length)
-                    .setSha256(sha256)
-                    .build();
-        });
+        GrpcErrors.run(observer, () -> blobs.put(request));
     }
 
     @Override
     public void deleteBlob(DeleteBlobRequest request, StreamObserver<DeleteBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> {
-            if (!request.hasStorageRef()) {
-                throw invalidArgument("storage_ref is required");
-            }
-            FileStorageReference ref = request.getStorageRef();
-            if (ref.getDriveName().isBlank()) {
-                throw invalidArgument("storage_ref.drive_name is required");
-            }
-            if (ref.getObjectKey().isBlank()) {
-                throw invalidArgument("storage_ref.object_key is required");
-            }
-            DriveRecord drive = findDriveByName(ref.getDriveName())
-                    .orElseThrow(() -> notFound("drive '" + ref.getDriveName() + "' not found"));
-            // Idempotent: delete-of-absent reports deleted=false, not an error.
-            boolean deleted = blobStore.delete(drive.bucket, ref.getObjectKey());
-            return DeleteBlobResponse.newBuilder().setDeleted(deleted).build();
-        });
-    }
-
-    /** Content-addressed default blob key: {@code <drive.prefix>/blobs/<name-uuid of the sha256>}. */
-    private static String generatedBlobKey(DriveRecord drive, String sha256Hex) {
-        String prefix = drive.prefix == null ? "" : drive.prefix;
-        if (prefix.endsWith("/")) {
-            prefix = prefix.substring(0, prefix.length() - 1);
-        }
-        String nameUuid = UUID.nameUUIDFromBytes(
-                ("blob-content|" + sha256Hex).getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                .toString();
-        return (prefix.isBlank() ? "" : prefix + "/") + "blobs/" + nameUuid;
-    }
-
-    /**
-     * Drive lookup by bare name, across accounts. {@link FileStorageReference}
-     * carries no account, and drive names are unique only per account — v1
-     * trusts the caller's drive reference and takes the first match. Tighten
-     * this if multi-account name reuse becomes real.
-     */
-    private Optional<DriveRecord> findDriveByName(String name) {
-        return tx.readOnly(em -> em.createQuery(
-                        "SELECT d FROM DriveRecord d WHERE d.name = :name", DriveRecord.class)
-                .setParameter("name", name)
-                .setMaxResults(1)
-                .getResultStream()
-                .findFirst());
+        GrpcErrors.run(observer, () -> blobs.delete(request));
     }
 
     // ------------------------------------------------------------------ plumbing
-
-    /**
-     * Everything validation and defaulting settled about a save: the document
-     * (always carrying a doc id) plus the canonical {@link NodeAddress} of the
-     * storage identity, the row kind and the cluster hint. The address's
-     * {@code graph_id} is never blank on either kind — blank-graph rows are
-     * unrepresentable.
-     */
-    private record ResolvedSave(Document doc, NodeAddress address, String rowKind, String clusterId) {
-    }
-
-    /**
-     * Validation + defaulting half of a save: ownership/account required, a
-     * blank doc id mints a fresh UUID (the caller is intake and will persist
-     * the returned coordinates), and the {@code graph_address} oneof arm is
-     * the EXPLICIT origin discriminator with {@code graph_id} required on both
-     * arms — every rejection names the offending field.
-     */
-    private ResolvedSave resolve(SaveDocumentRequest request) {
-        if (!request.hasDocument()) {
-            throw invalidArgument("document is required");
-        }
-        Document doc = request.getDocument();
-        if (doc.getDocId().isBlank()) {
-            doc = doc.toBuilder().setDocId(UUID.randomUUID().toString()).build();
-        }
-        if (!doc.hasOwnership()) {
-            throw invalidArgument("document.ownership is required");
-        }
-        OwnershipContext ownership = doc.getOwnership();
-        String accountId = ownership.getAccountId();
-        if (accountId.isBlank()) {
-            throw invalidArgument("document.ownership.account_id is required");
-        }
-        if (request.getDrive().isBlank()) {
-            throw invalidArgument("drive is required");
-        }
-        String requestGraphId = request.hasGraphId() ? request.getGraphId() : "";
-
-        return switch (request.getGraphAddressCase()) {
-            case USE_DATASOURCE_ID -> {
-                if (request.hasClusterId() && !request.getClusterId().isBlank()) {
-                    throw invalidArgument("cluster_id must be absent on intake saves"
-                            + " (use_datasource_id); the intake layer is its own single-node graph");
-                }
-                String expected = "intake:" + accountId;
-                if (requestGraphId.isBlank()) {
-                    throw invalidArgument("graph_id is required on intake saves"
-                            + " (use_datasource_id): expected \"" + expected + "\"");
-                }
-                if (!expected.equals(requestGraphId)) {
-                    throw invalidArgument("graph_id must equal the account's intake graph \""
-                            + expected + "\" on intake saves (got \"" + requestGraphId + "\")");
-                }
-                String datasourceId = ownership.getDatasourceId();
-                if (datasourceId.isBlank()) {
-                    throw invalidArgument(
-                            "document.ownership.datasource_id is required on intake saves"
-                                    + " (use_datasource_id) — it is the storage address");
-                }
-                yield new ResolvedSave(doc, NodeAddress.newBuilder()
-                        .setDocId(doc.getDocId())
-                        .setGraphAddressId(datasourceId)
-                        .setAccountId(accountId)
-                        .setGraphId(requestGraphId)
-                        .build(), DocumentRowKind.INTAKE, null);
-            }
-            case GRAPH_LOCATION_ID -> {
-                String graphAddressId = request.getGraphLocationId();
-                if (graphAddressId.isBlank()) {
-                    throw invalidArgument("graph_location_id must not be blank");
-                }
-                if (requestGraphId.isBlank()) {
-                    throw invalidArgument("graph_id is required on pipeline saves"
-                            + " (graph_location_id=\"" + graphAddressId + "\")");
-                }
-                if (requestGraphId.startsWith("intake:")) {
-                    throw invalidArgument("graph_id must not be an intake graph id on pipeline saves"
-                            + " (got \"" + requestGraphId + "\")");
-                }
-                String clusterId = request.hasClusterId() && !request.getClusterId().isBlank()
-                        ? request.getClusterId() : null;
-                yield new ResolvedSave(doc, NodeAddress.newBuilder()
-                        .setDocId(doc.getDocId())
-                        .setGraphAddressId(graphAddressId)
-                        .setAccountId(accountId)
-                        .setGraphId(requestGraphId)
-                        .build(), DocumentRowKind.PIPELINE, clusterId);
-            }
-            default -> throw invalidArgument(
-                    "exactly one graph address arm (use_datasource_id or graph_location_id) must be set");
-        };
-    }
 
     /**
      * Insert-or-update the ledger row for a landed body. The body is already
@@ -1066,7 +878,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
      * re-saved tombstoned row. Bookkeeping columns (reprocess markers,
      * created_at) survive a rewrite from the existing row.
      */
-    private DocumentRecord upsertRow(ResolvedSave r, SaveDocumentRequest request, DriveRecord drive,
+    private DocumentRecord upsertRow(SaveResolution.Resolved r, SaveDocumentRequest request, DriveRecord drive,
             UUID nodeId, String basePrefix, DocumentManifest manifest, String rootChecksum,
             long totalSize, String coreEtag, String coreVersionId, DocumentRecord existing) {
         OwnershipContext ownership = r.doc().getOwnership();
@@ -1116,136 +928,11 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         // The DocumentSaved event commits with the row upsert: the event
         // stream cannot drift from the ledger (transactional outbox).
         // Cast disambiguates the Tx.inTransaction Function overload.
-        return tx.inTransaction(
-                (java.util.function.Function<jakarta.persistence.EntityManager, DocumentRecord>)
-                        em -> {
+        return tx.inTransaction((Function<EntityManager, DocumentRecord>) em -> {
                     DocumentRecord merged = em.merge(row);
                     events.enqueue(em, DocumentEventFactory.saved(merged, now));
                     return merged;
                 });
     }
 
-    private static SaveDocumentResponse saveResponse(DocumentRecord row, String rootChecksum) {
-        return SaveDocumentResponse.newBuilder()
-                .setNodeId(row.nodeId.toString())
-                .setDrive(row.driveName)
-                .setStoragePrefix(row.objectKey)
-                .setSizeBytes(row.sizeBytes)
-                .setChecksum(rootChecksum)
-                .setCreatedAtEpochMs(row.createdAt.toEpochMilli())
-                .setDeduplicated(false)
-                .setAddress(addressOf(row))
-                .build();
-    }
-
-    /** The row's canonical storage address, rebuilt from its identity columns. */
-    private static NodeAddress addressOf(DocumentRecord row) {
-        return NodeAddress.newBuilder()
-                .setDocId(row.docId)
-                .setGraphAddressId(row.graphAddressId)
-                .setAccountId(row.accountId)
-                .setGraphId(row.graphId)
-                .build();
-    }
-
-    /** Part-object key root: {@code <drive.prefix>/documents/<accountId>/<nodeId>}. */
-    private static String basePrefix(DriveRecord drive, String accountId, UUID nodeId) {
-        String prefix = drive.prefix == null ? "" : drive.prefix;
-        if (prefix.endsWith("/")) {
-            prefix = prefix.substring(0, prefix.length() - 1);
-        }
-        return (prefix.isBlank() ? "" : prefix + "/") + "documents/" + accountId + "/" + nodeId;
-    }
-
-    /** Provider metadata stamped on every part object for observability. */
-    private static Map<String, String> s3Metadata(ResolvedSave r) {
-        Map<String, String> metadata = new HashMap<>();
-        metadata.put("doc-id", r.address().getDocId());
-        metadata.put("account-id", r.address().getAccountId());
-        metadata.put("graph-id", r.address().getGraphId());
-        metadata.put("row-kind", r.rowKind());
-        metadata.put("graph-address-id", r.address().getGraphAddressId());
-        return metadata;
-    }
-
-    /** The row's current manifest doc_version, or 0 when absent/unparseable. */
-    private static long manifestVersion(DocumentRecord row) {
-        if (row == null) {
-            return 0;
-        }
-        try {
-            DocumentManifest manifest = row.readManifest();
-            return manifest == null ? 0 : manifest.getDocVersion();
-        } catch (RuntimeException e) {
-            return 0;
-        }
-    }
-
-    private static Set<DocumentPart> partsOrThrow(List<DocumentPart> parts, String field) {
-        Set<DocumentPart> out = EnumSet.noneOf(DocumentPart.class);
-        for (DocumentPart part : parts) {
-            if (part == DocumentPart.DOCUMENT_PART_UNSPECIFIED || part == DocumentPart.UNRECOGNIZED) {
-                throw invalidArgument(field + " must not contain DOCUMENT_PART_UNSPECIFIED");
-            }
-            out.add(part);
-        }
-        return out;
-    }
-
-    private static NodeAddress validateAddress(NodeAddress address, String field) {
-        if (address.getDocId().isBlank() || address.getGraphAddressId().isBlank()
-                || address.getAccountId().isBlank() || address.getGraphId().isBlank()) {
-            throw invalidArgument(field + " requires doc_id, graph_address_id, account_id and graph_id");
-        }
-        return address;
-    }
-
-    private static String describe(NodeAddress address) {
-        return "doc_id=" + address.getDocId() + ", graph_address_id=" + address.getGraphAddressId()
-                + ", account_id=" + address.getAccountId() + ", graph_id=" + address.getGraphId();
-    }
-
-    private static UUID parseUuid(String raw, String field) {
-        if (raw == null || raw.isBlank()) {
-            throw invalidArgument(field + " is required");
-        }
-        try {
-            return UUID.fromString(raw.trim());
-        } catch (IllegalArgumentException e) {
-            throw invalidArgument(field + " must be a UUID (got \"" + raw + "\")");
-        }
-    }
-
-    private static long parseContinuationToken(String token) {
-        if (token == null || token.isBlank()) {
-            return 0;
-        }
-        try {
-            long offset = Long.parseLong(token.trim());
-            if (offset < 0) {
-                throw invalidArgument("continuation_token must be a non-negative row offset");
-            }
-            return offset;
-        } catch (NumberFormatException e) {
-            throw invalidArgument("continuation_token must be a row offset (got \"" + token + "\")");
-        }
-    }
-
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
-    }
-
-    private static boolean hasNotFoundCause(Throwable t) {
-        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
-            if (cur instanceof BlobStore.BlobNotFoundException) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static Timestamp timestampNow() {
-        Instant now = Instant.now();
-        return Timestamp.newBuilder().setSeconds(now.getEpochSecond()).setNanos(now.getNano()).build();
-    }
 }
