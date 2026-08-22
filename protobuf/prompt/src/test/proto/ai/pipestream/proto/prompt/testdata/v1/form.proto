@@ -97,3 +97,99 @@ enum Posture {
   // The lower court was reversed.
   POSTURE_REVERSED = 2;
 }
+
+// The constraint families DecoratedOpinion does not reach. Each field carries one
+// family so a mistranslated rule names the field it came from, and every rule here is
+// deliberately asymmetric (different bounds, different words) because a prose mapper
+// fails by saying "at most" where it meant "at least", which symmetric fixtures hide.
+message WideForm {
+  string exact = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {const: "fixed"}}
+  ];
+
+  string sized = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {len: 5}}
+  ];
+
+  string affixed = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {prefix: "start", suffix: "end", contains: "mid", not_contains: "bad"}
+    }
+  ];
+
+  string chosen = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {in: ["alpha", "beta"], not_in: ["gamma"]}
+    }
+  ];
+
+  string patterned = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {pattern: "^[a-z]+$"}}
+  ];
+
+  string addressed = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {email: true}}
+  ];
+
+  int64 fixed_count = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {int64: {const: 7}}
+  ];
+
+  int64 open_range = 8 [
+    (ai.pipestream.proto.validate.v1.field) = {int64: {gt: 1, lt: 10}}
+  ];
+
+  int64 enumerated = 9 [
+    (ai.pipestream.proto.validate.v1.field) = {int64: {in: [11, 22], not_in: [33]}}
+  ];
+
+  double ratio = 10 [
+    (ai.pipestream.proto.validate.v1.field) = {double: {gte: 0.25, lte: 0.75}}
+  ];
+
+  bool agreed = 11 [
+    (ai.pipestream.proto.validate.v1.field) = {bool: {const: true}}
+  ];
+
+  Posture settled_posture = 12 [
+    (ai.pipestream.proto.validate.v1.field) = {enum: {const: 1}}
+  ];
+
+  Posture narrowed_posture = 13 [
+    (ai.pipestream.proto.validate.v1.field) = {enum: {in: [1, 2], not_in: [0]}}
+  ];
+
+  bytes digest = 14 [
+    (ai.pipestream.proto.validate.v1.field) = {bytes: {len: 32}}
+  ];
+
+  bytes payload = 15 [
+    (ai.pipestream.proto.validate.v1.field) = {bytes: {min_len: 1, max_len: 1024}}
+  ];
+
+  map<string, int32> tallies = 16 [
+    (ai.pipestream.proto.validate.v1.field) = {map: {min_pairs: 1, max_pairs: 8}}
+  ];
+
+  string reviewed = 17 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      cel: [{
+        id: "wide.reviewed"
+        message: "a reviewed form names its reviewer"
+        expression: "this != ''"
+      }]
+    }
+  ];
+
+  string unexplained = 18 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      cel: [{id: "wide.unexplained", expression: "this.size() < 100"}]
+    }
+  ];
+
+  repeated int32 years = 19 [
+    (ai.pipestream.proto.validate.v1.field) = {repeated: {items: {int32: {gte: 1600}}}}
+  ];
+
+  DecoratedOpinion nested = 20;
+}

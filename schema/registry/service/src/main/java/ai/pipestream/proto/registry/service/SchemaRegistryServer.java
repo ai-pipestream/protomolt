@@ -42,6 +42,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -220,7 +221,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
     }
 
     private void route(HttpExchange exchange) throws Exception {
-        String method = exchange.getRequestMethod().toUpperCase();
+        String method = exchange.getRequestMethod().toUpperCase(Locale.ROOT);
         String rawPath = exchange.getRequestURI().getRawPath();
         if (config.healthPath().equals(rawPath)) {
             requireMethod(exchange, method, "GET", () -> writeJson(exchange, 200,

@@ -17,6 +17,7 @@ import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * gRPC calls driven entirely by descriptors: the wire {@link MethodDescriptor} is built from a
@@ -69,7 +70,7 @@ public final class DynamicGrpcCalls {
         if (method.isClientStreaming()) {
             throw new IllegalArgumentException(
                     "Method " + method.getFullName() + " is "
-                            + methodType(method).name().toLowerCase().replace('_', '-')
+                            + methodType(method).name().toLowerCase(Locale.ROOT).replace('_', '-')
                             + "; only unary and server-streaming methods can be invoked with a single request");
         }
         Channel decorated = headers.keys().isEmpty()
@@ -121,7 +122,7 @@ public final class DynamicGrpcCalls {
         if (method.isClientStreaming() || !method.isServerStreaming()) {
             throw new IllegalArgumentException(
                     "Method " + method.getFullName() + " is "
-                            + methodType(method).name().toLowerCase().replace('_', '-')
+                            + methodType(method).name().toLowerCase(Locale.ROOT).replace('_', '-')
                             + "; openServerStream requires a server-streaming method");
         }
         DynamicGrpcStream stream = new DynamicGrpcStream();
@@ -148,7 +149,7 @@ public final class DynamicGrpcCalls {
         if (!method.isClientStreaming() || method.isServerStreaming()) {
             throw new IllegalArgumentException(
                     "Method " + method.getFullName() + " is "
-                            + methodType(method).name().toLowerCase().replace('_', '-')
+                            + methodType(method).name().toLowerCase(Locale.ROOT).replace('_', '-')
                             + "; callClientStreaming requires a client-streaming method");
         }
         ClientStreamingSink sink = new ClientStreamingSink();
@@ -190,7 +191,7 @@ public final class DynamicGrpcCalls {
         if (!method.isClientStreaming() || !method.isServerStreaming()) {
             throw new IllegalArgumentException(
                     "Method " + method.getFullName() + " is "
-                            + methodType(method).name().toLowerCase().replace('_', '-')
+                            + methodType(method).name().toLowerCase(Locale.ROOT).replace('_', '-')
                             + "; callBidiStreaming requires a bidirectional method");
         }
         if (maxResponses <= 0) {

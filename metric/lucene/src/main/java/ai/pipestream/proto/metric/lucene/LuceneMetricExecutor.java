@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
@@ -199,7 +200,7 @@ public final class LuceneMetricExecutor implements MetricExecutor {
         StringJoiner measures = new StringJoiner(", ");
         for (Measure measure : query.measures()) {
             String base = measure.aggregate().name().substring("AGGREGATE_".length())
-                    .toLowerCase() + (measure.fieldName().isEmpty()
+                    .toLowerCase(Locale.ROOT) + (measure.fieldName().isEmpty()
                             ? "()" : "(" + measure.fieldName() + ")");
             if (!measure.rowFilters().isEmpty()) {
                 StringJoiner where = new StringJoiner(" and ");
@@ -213,7 +214,7 @@ public final class LuceneMetricExecutor implements MetricExecutor {
         query.dimensions().forEach(d -> dims.add(d.member()
                 + (d.kind() == CompiledMetricQuery.DimensionKind.DATE
                         ? " by " + d.grain().name().substring("TIME_GRAIN_".length())
-                                .toLowerCase()
+                                .toLowerCase(Locale.ROOT)
                         : "")));
         boolean distinct = query.measures().stream().anyMatch(
                 m -> m.aggregate() == Aggregate.AGGREGATE_COUNT_DISTINCT);

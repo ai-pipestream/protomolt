@@ -279,6 +279,30 @@ class LuceneMetricExecutorTest {
         assertThat(response.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(180.0);
     }
 
+    /**
+     * The plan string is the engine's evidence: it goes back to the caller to say how the
+     * numbers were reached. It lowercases aggregate and grain names, and doing that in the
+     * default locale makes the evidence depend on the host's language settings, so a
+     * Turkish host reports "count_dstnct" with dotless i and two deployments disagree about
+     * what the same query did.
+     */
+    @Test
+    void thePlanReadsTheSameWhateverTheHostsLocale() {
+        java.util.Locale original = java.util.Locale.getDefault();
+        try {
+            QueryMetricsResponse inRoot = MetricQueries.query(mapping, executors,
+                    request("customers", "orders").build());
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"));
+            QueryMetricsResponse inTurkish = MetricQueries.query(mapping, executors,
+                    request("customers", "orders").build());
+
+            assertThat(inTurkish.getPhysicalPlan()).isEqualTo(inRoot.getPhysicalPlan());
+            assertThat(inTurkish.getPhysicalPlan()).contains("count_distinct");
+        } finally {
+            java.util.Locale.setDefault(original);
+        }
+    }
+
     @Test
     void anUngroupedQueryAnswersOneRowOverEverything() {
         QueryMetricsResponse response = MetricQueries.query(mapping, executors,

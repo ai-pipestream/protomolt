@@ -20,6 +20,7 @@ import com.google.protobuf.util.JsonFormat.TypeRegistry;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -247,7 +248,8 @@ final class InstructionRenderer {
             prose.add("must not be any of: " + joinQuoted(s.notIn()));
         }
         for (var format : s.formats()) {
-            prose.add("must be a valid " + format.name().toLowerCase().replace('_', ' '));
+            prose.add("must be a valid "
+                    + format.name().toLowerCase(Locale.ROOT).replace('_', ' '));
         }
     }
 
@@ -370,7 +372,7 @@ final class InstructionRenderer {
             case MESSAGE -> field.getMessageType().getFullName();
             case ENUM -> field.getEnumType().getFullName();
             case GROUP -> "group";
-            default -> field.getType().name().toLowerCase();
+            default -> field.getType().name().toLowerCase(Locale.ROOT);
         };
         return field.isRepeated() ? "repeated " + base : base;
     }
