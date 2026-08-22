@@ -1,6 +1,6 @@
 package ai.pipestream.proto.kafka.serde;
 
-import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
+import org.apache.kafka.common.errors.SerializationException;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -18,9 +18,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * A registry that cannot answer must not stop a producer whose schema has not changed. These
- * point the serde at a port nothing is listening on, which is the honest version of an outage:
- * every lookup fails, and the packaged descriptor set has to carry the traffic on its own.
+ * What a registry outage does, on each side of the serde. These point at a port nothing is
+ * listening on, which is the honest version of an outage: every lookup fails.
+ *
+ * <p>The two sides answer differently on purpose. A frame is bytes on a topic and outlives
+ * the outage that produced it, so a write with no id to stamp is refused rather than
+ * guessed at. A read has nothing durable at stake and a configured type to fall back on, so
+ * it keeps going.
+ *
+ * <p>Note what is <em>not</em> tested here, because it is not this file's job: a producer
+ * whose subject resolved before the outage is unaffected either way, since the id is cached
+ * for the serde's lifetime. That is the case people usually mean by "the registry went
+ * down", and {@code SchemaIdsTest} covers it. What is left here is the cold start, where
+ * nothing was ever resolved.
  */
 class SerdeRegistryFallbackTest {
 
@@ -69,33 +79,47 @@ class SerdeRegistryFallbackTest {
                 .build();
     }
 
-    /** The point: the registry is down and the producer keeps working. */
+    /**
+     * A cold-start producer is refused rather than stamping its configured id. That id names
+     * whatever the number happens to mean in the registry later, or nothing at all, and it
+     * would be baked into bytes that outlast the outage. Refusing is a retry; stamping is a
+     * topic nobody can read back.
+     */
     @Test
-    void producesWhenTheRegistryIsUnreachable() {
+    void refusesToProduceWhenTheRegistryCannotSupplyAnId() {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(config(Map.of(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 5)), false);
-            byte[] bytes = serializer.serialize("events", event("ok"));
-            assertThat(bytes).isNotEmpty();
-            // The configured id stands in for the one the registry could not supply.
-            assertThat(ConfluentWireFormat.schemaId(bytes)).isEqualTo(5);
+            assertThatThrownBy(() -> serializer.serialize("events", event("ok")))
+                    .isInstanceOf(SerializationException.class)
+                    .hasMessageContaining("could not supply an id")
+                    .hasMessageContaining("events-value");
         }
     }
 
+    /**
+     * The read side still carries on: the consumer has a configured type, the frame's index
+     * path matches it, and nothing durable is at stake in decoding.
+     */
     @Test
     void consumesWhenTheRegistryIsUnreachable() {
+        Map<String, Object> noRegistry = config(Map.of());
+        noRegistry.remove(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL);
         try (var serializer = new ProtoMoltProtobufSerializer();
              var deserializer = new ProtoMoltProtobufDeserializer()) {
-            serializer.configure(config(Map.of()), false);
+            // Written by a producer that never needed the registry, read by a consumer whose
+            // registry is down.
+            serializer.configure(noRegistry, false);
             deserializer.configure(config(Map.of()), false);
-            Message back = deserializer.deserialize("events", serializer.serialize("events", event("ok")));
+            Message back = deserializer.deserialize("events",
+                    serializer.serialize("events", event("ok")));
             assertThat(back.getField(back.getDescriptorForType().findFieldByName("id")))
                     .isEqualTo("ok");
         }
     }
 
-    /** Falling back supplies a schema; it does not suspend the contract that schema declares. */
+    /** The declared rules are judged before the frame is built, so a refusal cannot mask them. */
     @Test
-    void stillValidatesWhileFallingBack() {
+    void stillValidatesWhenTheRegistryIsDown() {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(config(Map.of()), false);
             assertThatThrownBy(() -> serializer.serialize("events", event("x")))
@@ -103,14 +127,15 @@ class SerdeRegistryFallbackTest {
         }
     }
 
-    /** An outage must cost one lookup per topic, not one per record. */
+    /** An outage must cost one lookup per topic, not one per record, refusals included. */
     @Test
     void doesNotRetryTheRegistryOnEveryRecord() {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(config(Map.of()), false);
             long start = System.nanoTime();
             for (int i = 0; i < 50; i++) {
-                serializer.serialize("events", event("ok"));
+                assertThatThrownBy(() -> serializer.serialize("events", event("ok")))
+                        .isInstanceOf(SerializationException.class);
             }
             long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
             // 50 connection refusals would not land inside this budget.
