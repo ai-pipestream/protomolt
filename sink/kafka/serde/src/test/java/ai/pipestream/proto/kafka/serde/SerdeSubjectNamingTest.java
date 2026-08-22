@@ -8,6 +8,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import com.sun.net.httpserver.HttpServer;
+import org.apache.kafka.common.errors.SerializationException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -113,13 +114,18 @@ class SerdeSubjectNamingTest {
     }
 
     /**
-     * The registry has never heard of these subjects (404), so every serialize falls back to
-     * the configured id — the point is the path the lookup took on the way.
+     * The registry has never heard of these subjects (404), so the write is refused. That is
+     * beside the point here: the lookup still went out, and the path it took is what these
+     * tests are about.
      */
     private static String subjectAskedFor(Map<String, Object> extra, boolean isKey) {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(config(extra), isKey);
-            serializer.serialize("orders", event("A-1"));
+            try {
+                serializer.serialize("orders", event("A-1"));
+            } catch (SerializationException expected) {
+                // An unregistered subject refuses the write; the request was still made.
+            }
         }
         return requestedPaths.stream()
                 .filter(p -> p.startsWith("/subjects/"))

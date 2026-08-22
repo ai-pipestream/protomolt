@@ -2,19 +2,18 @@ package ai.pipestream.proto.kafka.serde;
 
 import ai.pipestream.proto.descriptors.DescriptorLoader.DescriptorLoadException;
 import ai.pipestream.proto.kafka.wire.ConfluentWireFormat;
-import ai.pipestream.proto.schema.confluent.ConfluentSchemaRegistryLoader;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.util.List;
 import java.util.OptionalInt;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongSupplier;
 
 /**
  * Schema ids and schemas from a Confluent-compatible registry, with the packaged descriptor set
@@ -44,9 +43,11 @@ final class SchemaIds implements AutoCloseable {
     /** Bound on the retry maps; frames carrying garbage ids must not grow them without limit. */
     private static final int MAX_TRACKED_FAILURES = 1024;
 
-    private final ConfluentSchemaRegistryLoader registry;
+    private final SchemaLookup registry;
     private final long retryBackoffNanos;
     private final SerdeMetricsListener metrics;
+    // The backoff's clock. Injectable so a test can cross a window without waiting one.
+    private final LongSupplier nanoTime;
     private final AtomicBoolean warnedFallback = new AtomicBoolean();
     // Resolved subject ids, kept for the serde's lifetime; the frame is stamped once per subject.
     private final ConcurrentMap<String, OptionalInt> idsBySubject = new ConcurrentHashMap<>();
@@ -57,11 +58,12 @@ final class SchemaIds implements AutoCloseable {
     // rather than by the id: another type in the same schema may still resolve.
     private final ConcurrentMap<String, Long> missingTypeRetryAt = new ConcurrentHashMap<>();
 
-    private SchemaIds(ConfluentSchemaRegistryLoader registry, long retryBackoffMillis,
-                      SerdeMetricsListener metrics) {
+    SchemaIds(SchemaLookup registry, long retryBackoffMillis, SerdeMetricsListener metrics,
+              LongSupplier nanoTime) {
         this.registry = registry;
         this.retryBackoffNanos = TimeUnit.MILLISECONDS.toNanos(retryBackoffMillis);
         this.metrics = metrics;
+        this.nanoTime = nanoTime;
     }
 
     /** @return null when no registry is configured, which is a supported way to run */
@@ -69,8 +71,8 @@ final class SchemaIds implements AutoCloseable {
                             SerdeMetricsListener metrics) {
         return registryUrl == null || registryUrl.isBlank()
                 ? null
-                : new SchemaIds(new ConfluentSchemaRegistryLoader(URI.create(registryUrl.trim())),
-                        retryBackoffMillis, metrics);
+                : new SchemaIds(SchemaLookup.over(registryUrl), retryBackoffMillis, metrics,
+                        System::nanoTime);
     }
 
     /**
@@ -174,7 +176,7 @@ final class SchemaIds implements AutoCloseable {
         if (deadline == null) {
             return false;
         }
-        if (System.nanoTime() - deadline < 0) {
+        if (nanoTime.getAsLong() - deadline < 0) {
             return true;
         }
         retryAt.remove(key);
@@ -192,7 +194,7 @@ final class SchemaIds implements AutoCloseable {
         if (retryAt.size() >= MAX_TRACKED_FAILURES) {
             retryAt.clear();
         }
-        retryAt.put(key, System.nanoTime() + retryBackoffNanos);
+        retryAt.put(key, nanoTime.getAsLong() + retryBackoffNanos);
     }
 
     /** Once per serde: a per-record warning during an outage is its own incident. */

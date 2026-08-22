@@ -219,10 +219,10 @@ class SerdeFakeRegistryTest {
                     ProtoMoltSerdeConfig.USE_SCHEMA_ID, 7,
                     ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS, 50L)), false);
 
-            byte[] duringOutage = serializer.serialize("events", message("A-3", 4));
-            assertThat(ConfluentWireFormat.schemaId(duringOutage))
-                    .as("the configured id stands in while the registry is down")
-                    .isEqualTo(7);
+            assertThatThrownBy(() -> serializer.serialize("events", message("A-3", 4)))
+                    .as("a write with no id to stamp is refused, not guessed at")
+                    .isInstanceOf(SerializationException.class)
+                    .hasMessageContaining("could not supply an id");
 
             Thread.sleep(150);
 
@@ -261,7 +261,9 @@ class SerdeFakeRegistryTest {
             serializer.configure(config(Map.of(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 7)), false);
 
             for (int i = 0; i < 50; i++) {
-                assertThat(serializer.serialize("parcels", message("A-6", 1))).isNotNull();
+                assertThatThrownBy(() -> serializer.serialize("parcels", message("A-6", 1)))
+                        .isInstanceOf(SerializationException.class)
+                        .hasMessageContaining("does not declare");
             }
 
             assertThat(RecordingMetricsListener.EVENTS.stream().filter("fallback"::equals))

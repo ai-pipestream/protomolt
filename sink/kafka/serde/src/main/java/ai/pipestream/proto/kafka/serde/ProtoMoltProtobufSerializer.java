@@ -198,29 +198,49 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     /**
      * The id and index stamped into the frame, which must describe the same file.
      *
-     * <p>A message-index path is a position in the schema the frame's id names. When the registry
-     * supplies the id, the index is therefore computed against the <em>registry's</em> schema:
+     * <p>A message-index path is a position in the schema the frame's id names, so when a
+     * registry supplies the id the index is computed against the <em>registry's</em> schema:
      * the packaged file can declare the same type at a different position, and a consumer
-     * following the id would land on the wrong message. When the registry cannot supply both
-     * halves — no id for the subject, or a registered schema that does not declare this type —
-     * the frame falls back to the configured id and the packaged index, a pair consistent with
-     * itself.</p>
+     * following the id would land on the wrong message.
+     *
+     * <p>With a registry configured, a lookup it cannot answer refuses the write. It does not
+     * fall back to the configured id, because a frame is bytes on a topic and outlives the
+     * outage that produced it: the id would name whatever that number happens to mean in the
+     * registry later, or nothing at all ({@code use.schema.id} defaults to 0, which no
+     * registry ever assigns). Falling back would also route around
+     * {@link #ensureLatestCanRead}, so precisely the writes that check exists to refuse are
+     * the ones that would slip through. A producer already running is unaffected either way,
+     * because a subject resolved once is cached for the serde's lifetime; only a cold start
+     * during an outage is refused, and that is a retry rather than a corrupted topic.
+     *
+     * <p>With no registry configured, the deployment's own {@code use.schema.id} is the only
+     * id there is, which is a supported way to run and not a fallback.
      */
     private Frame frameFor(String topic, Descriptor packaged) {
-        if (schemaIds != null) {
-            String subject = subjectOverride != null ? subjectOverride
-                    : Subjects.of(subjectStrategy, topic, packaged.getFullName(), isKey);
-            OptionalInt id = schemaIds.idForSubject(subject);
-            if (id.isPresent()) {
-                Descriptor writerType = schemaIds.typeInSchema(id.getAsInt(),
-                        packaged.getFullName());
-                if (writerType != null) {
-                    ensureLatestCanRead(topic, packaged, writerType, subject, id.getAsInt());
-                    return new Frame(id.getAsInt(), ConfluentWireFormat.indexPath(writerType));
-                }
-            }
+        if (schemaIds == null) {
+            return new Frame(configuredSchemaId, ConfluentWireFormat.indexPath(packaged));
         }
-        return new Frame(configuredSchemaId, ConfluentWireFormat.indexPath(packaged));
+        String subject = subjectOverride != null ? subjectOverride
+                : Subjects.of(subjectStrategy, topic, packaged.getFullName(), isKey);
+        OptionalInt id = schemaIds.idForSubject(subject);
+        if (id.isEmpty()) {
+            metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_UNRESOLVED_ID);
+            throw new SerializationException("The registry could not supply an id for subject '"
+                    + subject + "', so a " + packaged.getFullName() + " bound for " + topic
+                    + " was not written: stamping " + ProtoMoltSerdeConfig.USE_SCHEMA_ID
+                    + " instead would put an id on the topic that no reader can resolve");
+        }
+        Descriptor writerType = schemaIds.typeInSchema(id.getAsInt(), packaged.getFullName());
+        if (writerType == null) {
+            metrics.onTypeRefused(topic, SerdeMetricsListener.REASON_UNRESOLVED_ID);
+            throw new SerializationException("Schema id " + id.getAsInt() + ", registered for '"
+                    + subject + "', does not declare " + packaged.getFullName()
+                    + " as far as this producer can tell, so a record bound for " + topic
+                    + " was not written: the message index would name a position in a schema"
+                    + " that does not hold this type");
+        }
+        ensureLatestCanRead(topic, packaged, writerType, subject, id.getAsInt());
+        return new Frame(id.getAsInt(), ConfluentWireFormat.indexPath(writerType));
     }
 
     /** A packaged file and the registered file whose id would be stamped over its bytes. */

@@ -125,10 +125,12 @@ class SerdeMetricsTest {
     @Test
     void reportsRegistryFallbacks() {
         try (var serializer = new ProtoMoltProtobufSerializer()) {
-            // Nothing listens here; the lookup fails and the packaged set carries the record.
+            // Nothing listens here, so the lookup fails and the write is refused. The metric
+            // still fires: an operator needs the outage visible, not just the refusal.
             serializer.configure(config(Map.of(
                     ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, "http://127.0.0.1:34998")), false);
-            assertThat(serializer.serialize("events", event("ok"))).isNotEmpty();
+            assertThatThrownBy(() -> serializer.serialize("events", event("ok")))
+                    .isInstanceOf(SerializationException.class);
             assertThat(RecordingMetricsListener.EVENTS).contains("fallback");
         }
     }
