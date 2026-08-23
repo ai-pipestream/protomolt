@@ -71,6 +71,8 @@ modules:
     name: buf.build/ai-pipestream/parse-grparse
   - path: acquire/confluence/src/main/proto
     name: buf.build/ai-pipestream/acquire-confluence
+  - path: acquire/pull/src/main/proto
+    name: buf.build/ai-pipestream/acquire-pull
   - path: transform/projection/src/main/proto
     name: buf.build/ai-pipestream/projection
   - path: surface/grpc/workflow/src/main/proto

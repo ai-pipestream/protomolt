@@ -3,6 +3,8 @@ package ai.pipestream.proto.registry.service;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.schema.registry.v1.PublishConfigRequest;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.registry.ConfigSupport;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
@@ -58,43 +60,21 @@ public final class PublishConfigAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectMapper mapper = new ObjectMapper();
-        ObjectNode schema = mapper.createObjectNode();
-        schema.put("type", "object");
-        schema.put("additionalProperties", false);
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("name")
-                .put("type", "string")
-                .put("description", "The config subject to publish under, for example "
-                        + "parse-routing or taxonomy:products.");
-        properties.putObject("messageType")
-                .put("type", "string")
-                .put("description", "Full name of the document's protobuf type; must "
-                        + "resolve from the registered schemas.");
-        properties.putObject("config")
-                .put("type", "object")
-                .put("description", "The document as proto3 JSON.");
-        schema.putArray("required").add("name").add("messageType").add("config");
-        return schema;
+        // Derived from the request message, so the caller sees that the type name must be a
+        // fully qualified protobuf name and that all three members are required.
+        return new ObjectMapper().valueToTree(ProtoJsonSchemaGenerator.create()
+                .generate(PublishConfigRequest.getDescriptor()));
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         ObjectMapper mapper = context.objectMapper();
+        // The message declares all three members required and the type name as a fully
+        // qualified protobuf name, so those checks live in the contract rather than here.
         JsonNode name = input.get("name");
-        if (name == null || !name.isTextual() || name.asText().isBlank()) {
-            throw new ActionException("invalid-input", "name is required");
-        }
         JsonNode messageType = input.get("messageType");
-        if (messageType == null || !messageType.isTextual()
-                || messageType.asText().isBlank()) {
-            throw new ActionException("invalid-input", "messageType is required");
-        }
         JsonNode config = input.get("config");
-        if (config == null || !config.isObject()) {
-            throw new ActionException("invalid-input",
-                    "config must be the document as a proto3 JSON object");
-        }
+        RegistryRequests.validate(input, PublishConfigRequest.newBuilder(), "publish-config");
         ObjectNode envelope = mapper.createObjectNode();
         envelope.put(ConfigSupport.MESSAGE_TYPE, messageType.asText());
         envelope.set(ConfigSupport.CONFIG, config);

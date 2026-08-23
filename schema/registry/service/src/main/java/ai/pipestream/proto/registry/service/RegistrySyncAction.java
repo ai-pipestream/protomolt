@@ -3,6 +3,8 @@ package ai.pipestream.proto.registry.service;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.schema.registry.v1.RegistrySyncRequest;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.registry.RegistryFederation;
 import ai.pipestream.proto.registry.RegistryStoreException;
@@ -57,19 +59,17 @@ public final class RegistrySyncAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = MAPPER.createObjectNode();
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("remote")
-                .put("type", "string")
-                .put("description", "Name of a remote added with registry-remotes");
-        schema.putArray("required").add("remote");
-        return schema;
+        // Derived from the request message, which declares the remote name as a slug so the
+        // accepted shape is stated rather than described.
+        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
+                .generate(RegistrySyncRequest.getDescriptor()));
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String remote = input.path("remote").asText("");
+        RegistrySyncRequest request = (RegistrySyncRequest) RegistryRequests.validate(
+                input, RegistrySyncRequest.newBuilder(), "registry-sync");
+        String remote = request.getRemote();
         if (remote.isBlank()) {
             throw new ActionException("invalid-input", "remote is required");
         }
