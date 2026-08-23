@@ -6,20 +6,36 @@ option java_multiple_files = true;
 option java_package = "demo.search.v1";
 option java_outer_classname = "DemoSearchProto";
 
-// A minimal server-streaming search: hits arrive one at a time, best first,
-// with a configurable delay between them so streaming is visible.
-service DemoSearch {
-  rpc Search(SearchRequest) returns (stream SearchHit);
+// A minimal server-streaming search service, used by the samples and by the
+// ACP streaming tests to exercise incremental delivery end to end. It performs
+// no retrieval: results are synthesized from the request so that a caller can
+// observe streaming behaviour without an index behind it.
+service DemoSearchService {
+  // Streams one result at a time, highest scoring first, pausing between
+  // messages by the request's delay so that incremental arrival is observable
+  // rather than instantaneous.
+  rpc Search(SearchRequest) returns (stream SearchResponse);
 }
 
+// What to search for and how the results should be paced.
 message SearchRequest {
+  // Free text to echo back into each synthesized result.
   string query = 1;
+  // Number of results to stream. A value of zero streams nothing.
   int32 hits = 2;
+  // Pause between consecutive results, in milliseconds. Zero streams all
+  // results without pausing.
   int32 delay_ms = 3;
 }
 
-message SearchHit {
+// One search result. The service streams these individually rather than
+// returning a collection, so each message carries a single hit.
+message SearchResponse {
+  // Identifier of the matched document, synthesized from the result position.
   string doc_id = 1;
+  // Relevance score. Scores descend across the stream so that callers can rely
+  // on best-first ordering.
   float score = 2;
+  // Result text, derived from the request query.
   string text = 3;
 }

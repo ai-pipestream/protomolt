@@ -1,5 +1,7 @@
-// Test fixture: a generated class the deserializer should hand back, with a rule the
-// serializer should enforce straight off the generated descriptor.
+// Fixture standing in for a foreign schema that has generated Java available.
+// The deserializer must hand back the generated class rather than a
+// DynamicMessage, and the serializer must enforce the declared rule read
+// straight off that generated descriptor.
 syntax = "proto3";
 
 package serde.gen.v1;
@@ -9,7 +11,14 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 option java_package = "ai.pipestream.proto.kafka.serde.testdata";
 option java_multiple_files = true;
 
+// An order carrying one declared rule, so a round trip proves the serializer
+// reads rules from the descriptor it was handed rather than from a separate
+// registration.
 message GenOrder {
+  // Constrained so that a value shorter than three characters is refused on
+  // serialize. This is the field the rule-enforcement test drives.
   string id = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 3];
+  // Unconstrained, so a round trip can show that an unruled field passes
+  // through untouched.
   int32 quantity = 2;
 }
