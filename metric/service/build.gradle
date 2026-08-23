@@ -5,6 +5,12 @@ dependencies {
     api project(':protomolt-authz-grpc')
     implementation project(':protomolt-grpc-validation')
     implementation project(':protomolt-actions')
+    // Action input schemas are derived from the request descriptors rather than
+    // hand-written, so the declared validation rules reach every caller.
+    implementation project(':protomolt-http-jsonschema')
+    // The catalog path is not behind the validating gRPC interceptor, so the verbs
+    // enforce the request message's declared rules themselves.
+    implementation project(':protomolt-protobuf-validation')
     implementation libs.protobuf.java.util
     implementation libs.jackson.databind
     implementation libs.grpc.netty.shaded

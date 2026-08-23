@@ -454,13 +454,12 @@ class MetricServiceModuleTest {
                             .all(ai.pipestream.proto.actions.ProtoAction.class).stream()
                             .filter(action -> action.name().equals("rebuild-rollup"))
                             .findFirst().orElseThrow();
+            // The envelope is the RebuildRollupRequest itself, not a wrapper around one.
             com.fasterxml.jackson.databind.node.ObjectNode input =
                     new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
-            com.fasterxml.jackson.databind.node.ObjectNode request =
-                    input.putObject("request");
-            request.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-            request.put("table", "documents_total");
-            request.putArray("measures").add("documents");
+            input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+            input.put("table", "documents_total");
+            input.putArray("measures").add("documents");
             com.fasterxml.jackson.databind.node.ObjectNode written = rebuild.execute(
                     input, ai.pipestream.proto.actions.ActionContext.create());
             assertThat(written.get("table").asText()).isEqualTo("protomolt.documents_total");
