@@ -92,6 +92,113 @@ catalog behind the gRPC service, its REST mount, and the console. The standalone
 var catalog = ProtoMoltCatalog.full(ActionContext.create());
 ```
 
+## Verbs contributed by a composed node
+
+A role module can contribute a `ProtoAction` at wire time, and the host
+registers it onto the catalog it built. These verbs therefore exist only on a
+node that mounts the owning role: a registry-only node has none of the search
+verbs, a node without the delegation runtime has none of the delegation verbs.
+They are ordinary catalog entries in every other respect: same envelope, same
+JSON Schema manifest, same scope check, same error codes.
+
+### Delegation
+
+Contributed by `protomolt-delegation` through `DelegationActions.register`,
+against the node's one delegation coordinator. Every one requires
+`worker-coordinate`.
+
+| Action | Does |
+|---|---|
+| `delegation-offer` | Offers a bounded task to an admitted worker: objective, scope, constraints, acceptance checks, context |
+| `delegation-accept` | The worker takes the open offer's attempt lease |
+| `delegation-cancel` | Cancels a task's open attempt with a bounded reason; terminal the moment the coordinator emits it |
+| `delegation-candidate` | Submits a completion candidate for review against an expected revision |
+| `delegation-checkpoint` | Records one resumable checkpoint on the leased attempt: resume token, note, optional state artifact |
+| `delegation-message` | Sends a non-transitioning task message in either direction, worker question or coordinator guidance |
+| `delegation-progress` | Reports one bounded progress note on the leased attempt, in a strictly increasing sequence |
+| `delegation-review` | Applies the verdict on an open candidate: accept with a verdict line, or revise with feedback |
+| `delegation-transcript` | Reads the recorded transcript from a cursor, optionally for one task |
+| `delegation-watch` | Long-polls the event feed: blocks until an event appears after a cursor, then returns a bounded batch |
+| `delegation-worker-list` | Lists registered workers with identity, admission and connection state, and lease state |
+| `delegation-worker-register` | Registers this agent as a worker: opens the worker stream and sends the hello |
+
+### Mesh cluster
+
+Contributed by `protomolt-mesh-cluster` through `ClusterActions.register`,
+against the node's cluster directory. Every one requires `worker-coordinate`.
+
+| Action | Does |
+|---|---|
+| `mesh-node-register` | Registers or refreshes one fenced mesh node advertisement after durable validation |
+| `mesh-node-heartbeat` | Extends one registered node's liveness window with a fenced heartbeat |
+| `mesh-processor-register` | Registers or renews one health-gated processor lease on a registered node |
+| `mesh-capacity-update` | Publishes a fenced point-in-time node or processor capacity snapshot |
+| `mesh-snapshot` | Returns the deterministic cluster directory snapshot and eligibility state |
+| `mesh-sweep` | Expires elapsed processor leases and node presence windows, cascading node loss |
+
+### Metrics
+
+Defined in `protomolt-metric-service` and contributed by the `metric` role
+module in `protomolt-metric-lucene`. See
+[metric mappings](../design/metric-mapping.md).
+
+| Action | Scope | Does |
+|---|---|---|
+| `describe-mapping` | `metrics-query` | One subject's queryable surface: members, roles, aggregates, descriptions, sensitivity, mounted backends |
+| `query-metrics` | `metrics-query` | One aggregate query over a subject: measures, group-by dimensions with grains, filters, bounded limit |
+| `rebuild-rollup` | `metrics-rebuild` | Runs a complete aggregate and atomically replaces a declared lake rollup table |
+
+### Registry
+
+Contributed by the registry role in `protomolt-registry-service`. Every one
+requires `schema-write`.
+
+| Action | Does |
+|---|---|
+| `publish-config` | Publishes one typed config document through the registry's config gate, parsed strictly as its declared message type |
+| `registry-remotes` | Manages the git remotes this registry federates from: list, add, remove |
+| `registry-sync` | Fetches a configured remote and imports its subjects as `<remote>:<subject>` with its descriptor artifacts |
+
+### Search
+
+Contributed by the search role in `protomolt-search-service`.
+
+| Action | Scope | Does |
+|---|---|---|
+| `search` | `search-query` | Searches one mapping subject on the lexical, vector, or hybrid lane and returns hits with typed stored fields |
+| `replay-documents` | `search-index` | Re-runs a stored workflow over every document a repository listing matches, one durable run each, to re-derive search state |
+
+### Pull connectors
+
+Contributed by the connector role modules. Both require `service-invoke`.
+
+| Action | Module | Does |
+|---|---|---|
+| `pull-s3` | `protomolt-acquire-s3` | Pulls objects new or changed past a watermark from an S3 bucket and feeds them through intake with stable identity |
+| `pull-jdbc` | `protomolt-acquire-jdbc` | Runs a watermark query against a source database and feeds each row through intake with stable identity |
+
+### How these are reached
+
+`ProtoMoltRestMount` mounts the typed surface by iterating the method
+descriptors of `ProtoMoltService`, the hand-maintained proto service contract.
+A contributed verb has no RPC there, so it does not appear on the typed gRPC
+service, the `/grpc-json` REST routes, the generated OpenAPI document, or
+Swagger UI. It is reached instead through:
+
+- the registry's actions route, `GET /protomolt/actions` and
+  `POST /protomolt/actions/{name}`, which serves whatever catalog the host
+  mounted on the node;
+- any surface the host hands that same catalog to, which on a composed node
+  is the MCP endpoint, and which is equally the ACP agent and the CLI when
+  they are constructed over it rather than over `ProtoMoltCatalog.full`.
+
+Note for anyone verifying this page: the generated
+[action inventory](../generated/action-inventory.json) enumerates the static
+catalogs only (defaults, standalone MCP, full). Contributed verbs are not in
+it, so the test that pins this document against the inventory cannot notice a
+contributed verb going undocumented. Adding one to a role module means adding
+it here by hand.
+
 Wherever an action takes a schema it accepts exactly one of three forms,
 `{"type": "fully.qualified.Name"}` (resolved from the context's descriptor
 registry), inline `{"sources": {...}, "root": ...}` (compiled per call), or
