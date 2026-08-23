@@ -11,6 +11,9 @@ dependencies {
     // The screening mount seam is API too: hosts hand the module a live
     // Screener supplier; OpenNLP stays behind the screening module.
     api project(':protomolt-screening')
+    // The verb's input schema is derived from SearchRequest rather than hand-written,
+    // so the declared rules reach every caller that reads the tool manifest.
+    implementation project(':protomolt-http-jsonschema')
     implementation project(':protomolt-search-index-lucene')
     implementation project(':protomolt-mapper')
     implementation project(':protomolt-descriptors')

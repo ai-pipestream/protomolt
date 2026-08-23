@@ -78,7 +78,22 @@ class SearchActionTest {
     }
 
     private static ObjectNode valid() {
-        return input("docs", "hello", 5, "lexical");
+        return input("docs", "hello", 5, LEXICAL);
+    }
+
+    private static final String LEXICAL = "SEARCH_LANE_LEXICAL";
+    private static final String VECTOR = "SEARCH_LANE_VECTOR";
+    private static final String HYBRID = "SEARCH_LANE_HYBRID";
+
+    /**
+     * The request message's own definition, resolved through the schema document's root
+     * reference. The generator emits a reference plus a definitions block so a message that
+     * reaches the same nested type twice describes it once.
+     */
+    private static com.fasterxml.jackson.databind.JsonNode rootOf(ObjectNode schema) {
+        String ref = schema.path("$ref").asText();
+        assertThat(ref).startsWith("#/$defs/");
+        return schema.path("$defs").path(ref.substring("#/$defs/".length()));
     }
 
     // --- the contract the catalog sees ------------------------------------------
@@ -89,17 +104,23 @@ class SearchActionTest {
         assertThat(action.requiredScope()).isEqualTo(Scopes.SEARCH_QUERY);
     }
 
+    /**
+     * The schema is derived from SearchRequest, so the rules the message declares have to be
+     * visible in it. A schema that merely described an object would still serve every request
+     * correctly while telling no caller what a legal one looks like.
+     */
     @Test
-    void theInputSchemaNamesTheThreeLanesAndTheHitCap() {
-        ObjectNode schema = action.inputSchema();
-        ObjectNode properties = (ObjectNode) schema.get("properties");
+    void theDerivedSchemaCarriesTheDeclaredLanesAndHitCap() {
+        com.fasterxml.jackson.databind.JsonNode root = rootOf(action.inputSchema());
+        com.fasterxml.jackson.databind.JsonNode properties = root.path("properties");
 
-        assertThat(properties.get("lane").get("enum").toString())
-                .isEqualTo("[\"lexical\",\"vector\",\"hybrid\"]");
-        assertThat(properties.get("k").get("maximum").asInt()).isEqualTo(10_000);
-        assertThat(schema.get("required").toString())
-                .isEqualTo("[\"mappingSubject\",\"query\",\"k\",\"lane\"]");
-        assertThat(schema.get("additionalProperties").asBoolean()).isFalse();
+        assertThat(properties.path("lane").toString())
+                .contains(LEXICAL).contains(VECTOR).contains(HYBRID);
+        assertThat(properties.path("k").path("maximum").asInt()).isEqualTo(10_000);
+        assertThat(properties.path("k").path("exclusiveMinimum").asInt()).isZero();
+        assertThat(root.path("required").toString())
+                .contains("mappingSubject").contains("query").contains("k").contains("lane");
+        assertThat(properties.path("fields").path("maxItems").asInt()).isEqualTo(100);
     }
 
     // --- the request that reaches the index -------------------------------------
@@ -120,23 +141,25 @@ class SearchActionTest {
     }
 
     @Test
-    void everyLaneNameMapsToItsEnum() throws Exception {
-        action.execute(input("docs", "q", 1, "vector"), context);
+    void everyDeclaredLaneReachesTheIndex() throws Exception {
+        action.execute(input("docs", "q", 1, VECTOR), context);
         assertThat(index.lastRequest.getLane()).isEqualTo(SearchLane.SEARCH_LANE_VECTOR);
 
-        action.execute(input("docs", "q", 1, "hybrid"), context);
+        action.execute(input("docs", "q", 1, HYBRID), context);
         assertThat(index.lastRequest.getLane()).isEqualTo(SearchLane.SEARCH_LANE_HYBRID);
 
-        action.execute(input("docs", "q", 1, "LEXICAL"), context);
+        action.execute(input("docs", "q", 1, LEXICAL), context);
         assertThat(index.lastRequest.getLane()).isEqualTo(SearchLane.SEARCH_LANE_LEXICAL);
     }
 
+    /** A lane the enum does not declare cannot be parsed, so it never reaches the index. */
     @Test
-    void anUnknownLaneIsRefusedByNameWithTheLegalSet() {
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 1, "fuzzy"), context))
+    void anUndeclaredLaneIsRefusedByName() {
+        assertThatThrownBy(() -> action.execute(input("docs", "q", 1, "SEARCH_LANE_FUZZY"),
+                context))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("fuzzy")
-                .hasMessageContaining("lexical, vector, hybrid");
+                .hasMessageContaining("SEARCH_LANE_FUZZY");
+        assertThat(index.lastRequest).as("refused before the index was touched").isNull();
     }
 
     // --- the same rules the gRPC door enforces ----------------------------------
@@ -148,23 +171,23 @@ class SearchActionTest {
      */
     @Test
     void theDeclaredRulesAreEnforcedHereToo() {
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 0, "lexical"), context))
+        assertThatThrownBy(() -> action.execute(input("docs", "q", 0, LEXICAL), context))
                 .as("k must be positive")
                 .isInstanceOf(ActionException.class);
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 10_001, "lexical"), context))
+        assertThatThrownBy(() -> action.execute(input("docs", "q", 10_001, LEXICAL), context))
                 .as("k is capped, and over-cap is refused rather than clamped")
                 .isInstanceOf(ActionException.class);
-        assertThatThrownBy(() -> action.execute(input("docs", "", 5, "lexical"), context))
+        assertThatThrownBy(() -> action.execute(input("docs", "", 5, LEXICAL), context))
                 .as("the query text is required")
                 .isInstanceOf(ActionException.class);
-        assertThatThrownBy(() -> action.execute(input("", "q", 5, "lexical"), context))
+        assertThatThrownBy(() -> action.execute(input("", "q", 5, LEXICAL), context))
                 .as("the subject is required")
                 .isInstanceOf(ActionException.class);
     }
 
     @Test
     void anOverCapRequestNeverReachesTheIndex() {
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 10_001, "lexical"), context))
+        assertThatThrownBy(() -> action.execute(input("docs", "q", 10_001, LEXICAL), context))
                 .isInstanceOf(ActionException.class);
         assertThat(index.lastRequest).as("refused before the index was touched").isNull();
     }
@@ -230,7 +253,7 @@ class SearchActionTest {
     void anUnknownSubjectComesBackWithTheSubjectsThatDoExist() {
         index.failure = new IllegalArgumentException("no subject 'nope'");
 
-        assertThatThrownBy(() -> action.execute(input("nope", "q", 5, "lexical"), context))
+        assertThatThrownBy(() -> action.execute(input("nope", "q", 5, LEXICAL), context))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.getMessage()).contains("nope");
                     ObjectNode details = e.details().orElseThrow();
@@ -247,7 +270,7 @@ class SearchActionTest {
     void aLaneTheSubjectCannotRunIsItsOwnRefusal() {
         index.failure = new IllegalStateException("subject 'docs' has no chunk lane");
 
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 5, "vector"), context))
+        assertThatThrownBy(() -> action.execute(input("docs", "q", 5, VECTOR), context))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("lane-unavailable");
                     assertThat(e.details().orElseThrow().has("servedSubjects")).isTrue();

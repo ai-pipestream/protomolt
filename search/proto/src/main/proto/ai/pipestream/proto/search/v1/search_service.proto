@@ -177,8 +177,13 @@ message SearchRequest {
   ];
   // Text fields to match in the lexical lane, named by their index field
   // names. Empty means every text field in the subject's mapping; a field
-  // outside the mapping is refused by name.
-  repeated string fields = 5;
+  // outside the mapping is refused by name. Bounded like every other field
+  // reference in the contract, so an unbounded list cannot reach the index.
+  repeated string fields = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 100, items: {string: {min_len: 1, max_len: 200}}}
+    }
+  ];
 }
 
 // One stored field value, typed by the mapping that declared the field.
