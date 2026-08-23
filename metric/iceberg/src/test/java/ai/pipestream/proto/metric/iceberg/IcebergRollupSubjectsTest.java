@@ -3,6 +3,7 @@ package ai.pipestream.proto.metric.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ai.pipestream.proto.iceberg.IcebergSink;
 import ai.pipestream.proto.iceberg.LocalFileIO;
 import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.MemberRef;
@@ -20,11 +21,14 @@ import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * Rollup tables as metric subjects: the sink stamps the declaration onto
@@ -144,11 +148,46 @@ class IcebergRollupSubjectsTest {
                 });
     }
 
+    /**
+     * The declaration is read off the table, so it is only as well-formed as whatever last
+     * wrote that table's properties: a hand-edited value, a half-finished migration, a
+     * sink from another build. Each of these used to leave the parse by an index or enum
+     * error, which tells an operator nothing about which table to go and look at.
+     */
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+        "no_colon          | hits",
+        "empty_member      | :AGGREGATE_COUNT",
+        "leading_comma     | ',hits:AGGREGATE_COUNT'",
+        "unknown_aggregate | hits:AGGREGATE_MEDIAN",
+        "lowercase         | hits:count",
+        "empty_aggregate   | 'hits:'",
+    })
+    void aMalformedMeasureDeclarationRefusesNamingTheEntry(String table, String measures) {
+        declare(table, "", measures);
+
+        assertThatThrownBy(() -> resolver.resolve("rollup:" + table))
+                .isInstanceOfSatisfying(MetricRefusal.class, refusal -> {
+                    assertThat(refusal.code()).isEqualTo(MetricRefusal.UNKNOWN_SUBJECT);
+                    assertThat(refusal.getMessage()).contains(table);
+                });
+    }
+
+    /** Stamps a rollup declaration onto a table directly, well-formed or not. */
+    private static void declare(String tableName, String dimensions, String measures) {
+        TableIdentifier id = TableIdentifier.of("protomolt", tableName);
+        IcebergSink.ensureTable(catalog, id, MetricRow.getDescriptor());
+        catalog.loadTable(id).updateProperties()
+                .set(IcebergRollupSink.PROPERTY_DIMENSIONS, dimensions)
+                .set(IcebergRollupSink.PROPERTY_MEASURES, measures)
+                .commit();
+    }
+
     @Test
     void aTableWithoutADeclarationRefusesInsteadOfGuessing() {
         // A lake table the sink did not write: real, but not a rollup.
-        ai.pipestream.proto.iceberg.IcebergSink.ensureTable(catalog,
-                org.apache.iceberg.catalog.TableIdentifier.of("protomolt", "foreign_table"),
+        IcebergSink.ensureTable(catalog,
+                TableIdentifier.of("protomolt", "foreign_table"),
                 MetricRow.getDescriptor());
         assertThatThrownBy(() -> resolver.resolve("rollup:foreign_table"))
                 .isInstanceOfSatisfying(MetricRefusal.class, refusal -> {

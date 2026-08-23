@@ -8,6 +8,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import org.junit.jupiter.api.BeforeAll;
+import org.apache.kafka.common.errors.SerializationException;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -23,6 +24,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The id lane against a genuine Confluent-compatible Schema Registry: a serializer stamps the id
@@ -172,14 +174,17 @@ class SerdeRegistryLiveIntegrationTest {
 
     /** An unregistered subject is not an outage: the configured id stands in. */
     @Test
-    void fallsBackWhenTheSubjectIsNotRegistered() {
+    void refusesWhenTheSubjectIsNotRegistered() {
         Map<String, Object> config = config();
         config.put(ProtoMoltSerdeConfig.SUBJECT, "serde-it-no-such-subject-value");
         config.put(ProtoMoltSerdeConfig.USE_SCHEMA_ID, 42);
         try (var serializer = new ProtoMoltProtobufSerializer()) {
             serializer.configure(config, false);
-            assertThat(ConfluentWireFormat.schemaId(serializer.serialize("orders", order("A", 1))))
-                    .isEqualTo(42);
+            // A live registry that answers "no such subject" is not an outage, and stamping
+            // 42 here would put an unresolvable id on a real topic.
+            assertThatThrownBy(() -> serializer.serialize("orders", order("A", 1)))
+                    .isInstanceOf(SerializationException.class)
+                    .hasMessageContaining("serde-it-no-such-subject-value");
         }
     }
 

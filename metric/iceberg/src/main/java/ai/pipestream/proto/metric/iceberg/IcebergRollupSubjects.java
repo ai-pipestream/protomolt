@@ -88,9 +88,8 @@ public final class IcebergRollupSubjects implements MetricSubjectResolver {
                     .build());
         }
         for (String entry : measuresCsv.split(",")) {
-            int colon = entry.indexOf(':');
-            String member = entry.substring(0, colon);
-            Aggregate source = Aggregate.valueOf(entry.substring(colon + 1));
+            String member = measureMember(entry, identifier);
+            Aggregate source = measureAggregate(entry, identifier);
             measureNames.add(member);
             Aggregate reaggregate = reaggregate(source);
             if (reaggregate != null) {
@@ -105,6 +104,34 @@ public final class IcebergRollupSubjects implements MetricSubjectResolver {
         MetricMapping mapping = MetricMappings.build(subject, descriptor, declarations);
         return new Resolved(mapping, new IcebergMetricExecutor(
                 requested -> catalog.loadTable(identifier)));
+    }
+
+    /**
+     * A measure entry is {@code <column>:<AGGREGATE_NAME>}. The declaration is read off a
+     * table in the lake, so it is only as well-formed as whatever last wrote that table's
+     * properties: a hand-edited or half-migrated value has to come back as a refusal
+     * naming the entry, not as an index or enum error from inside the parse.
+     */
+    private static String measureMember(String entry, TableIdentifier identifier) {
+        int colon = entry.indexOf(':');
+        if (colon <= 0) {
+            throw new MetricRefusal(MetricRefusal.UNKNOWN_SUBJECT,
+                    "table '" + identifier + "' declares the measure '" + entry
+                            + "', which is not '<column>:<aggregate>'", List.of());
+        }
+        return entry.substring(0, colon);
+    }
+
+    private static Aggregate measureAggregate(String entry, TableIdentifier identifier) {
+        String name = entry.substring(entry.indexOf(':') + 1);
+        try {
+            return Aggregate.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            throw new MetricRefusal(MetricRefusal.UNKNOWN_SUBJECT,
+                    "table '" + identifier + "' declares the measure '" + entry
+                            + "' with aggregate '" + name + "', which is not one this"
+                            + " build knows", List.of());
+        }
     }
 
     /**

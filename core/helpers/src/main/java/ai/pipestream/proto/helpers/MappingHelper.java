@@ -361,8 +361,8 @@ public class MappingHelper {
 
         if (sourceName.equalsIgnoreCase(targetName)) {
             score += 50;
-        } else if (sourceName.toLowerCase().contains(targetName.toLowerCase()) ||
-                   targetName.toLowerCase().contains(sourceName.toLowerCase())) {
+        } else if (sourceName.toLowerCase(Locale.ROOT).contains(targetName.toLowerCase(Locale.ROOT)) ||
+                   targetName.toLowerCase(Locale.ROOT).contains(sourceName.toLowerCase(Locale.ROOT))) {
             score += 25;
         }
 

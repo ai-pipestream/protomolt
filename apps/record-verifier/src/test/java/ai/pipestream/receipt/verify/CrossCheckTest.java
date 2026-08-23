@@ -118,6 +118,51 @@ class CrossCheckTest {
         assertBothRefuseAtCanonicality(padded);
     }
 
+    /**
+     * The value's varint is not the only one on the wire: the tag is a varint too, and it
+     * has the same non-minimal encodings. A record whose tags are padded decodes to exactly
+     * the same field values, so nothing downstream notices; only the canonicality account
+     * stands between it and acceptance.
+     */
+    @Test
+    void aNonMinimalTagRefusesAtCanonicalityInBothVerifiers() {
+        byte[] manifest = ConformanceCorpus.manifest().build().toByteArray();
+        assertThat(manifest[0]).isEqualTo((byte) 0x08);
+        // Re-encode the tag itself, not its value, as a two-byte varint.
+        byte[] padded = new byte[manifest.length + 1];
+        padded[0] = (byte) 0x88;
+        padded[1] = 0x00;
+        System.arraycopy(manifest, 1, padded, 2, manifest.length - 1);
+        assertBothRefuseAtCanonicality(padded);
+    }
+
+    /** The third varint on the wire, and the third way to pad one: a length prefix. */
+    @Test
+    void aNonMinimalLengthPrefixRefusesAtCanonicalityInBothVerifiers() throws Exception {
+        byte[] manifest = ConformanceCorpus.manifest().build().toByteArray();
+        // Find the first length-delimited field and pad the varint carrying its length.
+        com.google.protobuf.CodedInputStream in =
+                com.google.protobuf.CodedInputStream.newInstance(manifest);
+        int lengthAt = -1;
+        while (lengthAt < 0) {
+            int tag = in.readTag();
+            assertThat(tag).as("the manifest has a length-delimited field").isNotZero();
+            if ((tag & 7) == 2) {
+                lengthAt = in.getTotalBytesRead();
+            }
+            in.skipField(tag);
+        }
+        assertThat(manifest[lengthAt] & 0x80).as("the length fits one byte").isZero();
+
+        byte[] padded = new byte[manifest.length + 1];
+        System.arraycopy(manifest, 0, padded, 0, lengthAt);
+        padded[lengthAt] = (byte) (manifest[lengthAt] | 0x80);
+        padded[lengthAt + 1] = 0x00;
+        System.arraycopy(manifest, lengthAt + 1, padded, lengthAt + 2,
+                manifest.length - lengthAt - 1);
+        assertBothRefuseAtCanonicality(padded);
+    }
+
     @Test
     void reorderedFieldsRefuseAtCanonicalityInBothVerifiers() throws Exception {
         byte[] manifest = ConformanceCorpus.manifest().build().toByteArray();

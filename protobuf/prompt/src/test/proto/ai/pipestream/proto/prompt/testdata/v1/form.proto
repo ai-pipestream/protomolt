@@ -97,3 +97,119 @@ enum Posture {
   // The lower court was reversed.
   POSTURE_REVERSED = 2;
 }
+
+// The constraint families DecoratedOpinion does not reach. Each field carries one
+// family so a mistranslated rule names the field it came from, and every rule here is
+// deliberately asymmetric (different bounds, different words) because a prose mapper
+// fails by saying "at most" where it meant "at least", which symmetric fixtures hide.
+message WideForm {
+  // Exact string match: the value must be "fixed".
+  string exact = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {const: "fixed"}}
+  ];
+
+  // Exact length: the value must be exactly 5 characters.
+  string sized = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {len: 5}}
+  ];
+
+  // Affix and content rules: prefix, suffix, required and forbidden substrings.
+  string affixed = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {prefix: "start", suffix: "end", contains: "mid", not_contains: "bad"}
+    }
+  ];
+
+  // Set membership: an allowed list paired with a forbidden list.
+  string chosen = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {in: ["alpha", "beta"], not_in: ["gamma"]}
+    }
+  ];
+
+  // Pattern match: lowercase letters only.
+  string patterned = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {pattern: "^[a-z]+$"}}
+  ];
+
+  // Well-known format: the value must be an email address.
+  string addressed = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {string: {email: true}}
+  ];
+
+  // Exact integer match: the value must be 7.
+  int64 fixed_count = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {int64: {const: 7}}
+  ];
+
+  // Open range: strictly between 1 and 10, asymmetric on purpose.
+  int64 open_range = 8 [
+    (ai.pipestream.proto.validate.v1.field) = {int64: {gt: 1, lt: 10}}
+  ];
+
+  // Integer set membership: an allowed list paired with a forbidden list.
+  int64 enumerated = 9 [
+    (ai.pipestream.proto.validate.v1.field) = {int64: {in: [11, 22], not_in: [33]}}
+  ];
+
+  // Closed range: inclusive bounds on a fractional value.
+  double ratio = 10 [
+    (ai.pipestream.proto.validate.v1.field) = {double: {gte: 0.25, lte: 0.75}}
+  ];
+
+  // Exact boolean match: the value must be true.
+  bool agreed = 11 [
+    (ai.pipestream.proto.validate.v1.field) = {bool: {const: true}}
+  ];
+
+  // Exact enum match: the posture must be AFFIRMED.
+  Posture settled_posture = 12 [
+    (ai.pipestream.proto.validate.v1.field) = {enum: {const: 1}}
+  ];
+
+  // Enum set membership: allowed postures paired with a forbidden one.
+  Posture narrowed_posture = 13 [
+    (ai.pipestream.proto.validate.v1.field) = {enum: {in: [1, 2], not_in: [0]}}
+  ];
+
+  // Exact byte length: a fixed-size digest.
+  bytes digest = 14 [
+    (ai.pipestream.proto.validate.v1.field) = {bytes: {len: 32}}
+  ];
+
+  // Bounded byte length: non-empty with an upper bound.
+  bytes payload = 15 [
+    (ai.pipestream.proto.validate.v1.field) = {bytes: {min_len: 1, max_len: 1024}}
+  ];
+
+  // Map cardinality: at least one entry, at most eight.
+  map<string, int32> tallies = 16 [
+    (ai.pipestream.proto.validate.v1.field) = {map: {min_pairs: 1, max_pairs: 8}}
+  ];
+
+  // CEL with a custom message: a non-empty value names its reviewer.
+  string reviewed = 17 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      cel: [{
+        id: "wide.reviewed"
+        message: "a reviewed form names its reviewer"
+        expression: "this != ''"
+      }]
+    }
+  ];
+
+  // CEL without a message: the default wording carries the rule.
+  string unexplained = 18 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      cel: [{id: "wide.unexplained", expression: "this.size() < 100"}]
+    }
+  ];
+
+  // Item rule on a repeated field: every year is at least 1600.
+  repeated int32 years = 19 [
+    (ai.pipestream.proto.validate.v1.field) = {repeated: {items: {int32: {gte: 1600}}}}
+  ];
+
+  // No rule: a nested message carried without constraints.
+  DecoratedOpinion nested = 20;
+}

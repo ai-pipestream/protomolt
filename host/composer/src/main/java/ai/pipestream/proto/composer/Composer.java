@@ -18,6 +18,7 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,8 +26,9 @@ import org.slf4j.LoggerFactory;
  * Boots a protomolt node from a role list. Modules come from
  * {@link ServiceLoader} (or are injected for tests), are topologically
  * ordered by {@link ServiceModule#requires()}, wired in order, and started
- * in order; shutdown closes everything in reverse. See
- * {@code DESIGN-service-modules.md} for the architecture.
+ * in order; shutdown closes everything in reverse. See the
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/apps/role-nodes.md">role
+ * nodes guide</a> for the architecture.
  *
  * <p>The composer carries no transport: remote channels are opened through
  * the injected {@linkplain Builder#remoteOpener(Function) opener} under the
@@ -382,6 +384,17 @@ public final class Composer {
                     throw new IllegalArgumentException("contribution must not be null");
                 }
                 byKind.computeIfAbsent(kind, key -> new ArrayList<>()).add(contribution);
+            }
+
+            @Override
+            public synchronized <T> T shared(Class<T> kind, Supplier<T> factory) {
+                List<Object> existing = byKind.get(kind);
+                if (existing != null && !existing.isEmpty()) {
+                    return kind.cast(existing.getFirst());
+                }
+                T created = factory.get();
+                contribute(kind, created);
+                return created;
             }
 
             @Override

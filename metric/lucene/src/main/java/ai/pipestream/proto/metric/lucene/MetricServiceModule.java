@@ -2,6 +2,7 @@ package ai.pipestream.proto.metric.lucene;
 
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
 import ai.pipestream.proto.composer.ServiceMount;
@@ -270,13 +271,18 @@ public final class MetricServiceModule implements ServiceModule {
                     MetricWorkflows.rebuildRollupWorkflow(
                             context.channels().targetOf(ROLE), 60_000).toString());
         }
+        // One ledger per node: the metric actions this module contributes reach the
+        // same principal through the registry's actions route, so both enforcement
+        // points spend the same per-scope budget.
+        ScopeBudgets budgets = context.contributions()
+                .shared(ScopeBudgets.class, ScopeBudgets::new);
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
                 netty = config.apiToken() == null
                         ? service.startNetty(config.grpcPort())
                         : service.startNetty(config.grpcPort(),
-                                config.apiToken(), config.callers());
+                                config.apiToken(), config.callers(), budgets);
             }
 
             @Override

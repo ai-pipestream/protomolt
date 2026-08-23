@@ -91,7 +91,7 @@ import org.slf4j.LoggerFactory;
  * {@link IllegalStateException} (the request needs a lane the subject does
  * not serve); the gRPC layer maps them onto statuses.
  */
-public final class LuceneSearchStore implements SubjectIndex, Closeable {
+public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Closeable {
 
     /** Reciprocal-rank fusion constant for the hybrid lane. */
     private static final int RRF_K = 60;

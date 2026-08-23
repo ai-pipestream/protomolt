@@ -80,13 +80,13 @@ final class RecordWire {
             wire.ordered(number);
             switch (number) {
                 case 1 -> {
-                    if (expectLen(wire, number, wireType, seen, false)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         manifest = wire.readLengthDelimited("manifest").bytes();
                         if (manifest.length == 0) {
                             wire.noteNonCanonical("manifest encodes its default value");
                         }
                     } else {
-                        wire.skip(wireType, "manifest");
+                        wire.skip(wireType, number, "manifest");
                     }
                 }
                 case 2 -> {
@@ -94,12 +94,12 @@ final class RecordWire {
                         signatures.add(signature(wire.readLengthDelimited("signatures")));
                     } else {
                         wire.noteUnknown(number);
-                        wire.skip(wireType, "signatures");
+                        wire.skip(wireType, number, "signatures");
                     }
                 }
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -120,18 +120,18 @@ final class RecordWire {
                 case 1 -> keyId = string(wire, number, wireType, seen, "key_id");
                 case 2 -> algorithm = varint(wire, number, wireType, seen, "algorithm");
                 case 3 -> {
-                    if (expectLen(wire, number, wireType, seen, false)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         signature = wire.readLengthDelimited("signature").bytes();
                         if (signature.length == 0) {
                             wire.noteNonCanonical("signature encodes its default value");
                         }
                     } else {
-                        wire.skip(wireType, "signature");
+                        wire.skip(wireType, number, "signature");
                     }
                 }
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -164,18 +164,18 @@ final class RecordWire {
                 case 3 -> issuer = string(wire, number, wireType, seen, "issuer");
                 case 4 -> keyId = string(wire, number, wireType, seen, "key_id");
                 case 5 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         issuedAt = timestamp(wire.readLengthDelimited("issued_at"));
                         hasIssuedAt = true;
                     } else {
-                        wire.skip(wireType, "issued_at");
+                        wire.skip(wireType, number, "issued_at");
                     }
                 }
                 case 6 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         subject = subject(wire.readLengthDelimited("subject"));
                     } else {
-                        wire.skip(wireType, "subject");
+                        wire.skip(wireType, number, "subject");
                     }
                 }
                 case 7 -> {
@@ -183,7 +183,7 @@ final class RecordWire {
                         steps.add(step(wire.readLengthDelimited("steps")));
                     } else {
                         wire.noteUnknown(number);
-                        wire.skip(wireType, "steps");
+                        wire.skip(wireType, number, "steps");
                     }
                 }
                 case 8 -> {
@@ -191,28 +191,28 @@ final class RecordWire {
                         artifacts.add(artifact(wire.readLengthDelimited("artifacts")));
                     } else {
                         wire.noteUnknown(number);
-                        wire.skip(wireType, "artifacts");
+                        wire.skip(wireType, number, "artifacts");
                     }
                 }
                 case 9 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         completeness = completeness(wire.readLengthDelimited("completeness"));
                     } else {
-                        wire.skip(wireType, "completeness");
+                        wire.skip(wireType, number, "completeness");
                     }
                 }
                 case 10 -> prior = string(wire, number, wireType, seen,
                         "prior_manifest_sha256");
                 case 11 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         disclosure = disclosure(wire.readLengthDelimited("disclosure"));
                     } else {
-                        wire.skip(wireType, "disclosure");
+                        wire.skip(wireType, number, "disclosure");
                     }
                 }
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -241,7 +241,7 @@ final class RecordWire {
                 case 5 -> runId = string(wire, number, wireType, seen, "run_id");
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -272,31 +272,31 @@ final class RecordWire {
                 case 2 -> method = string(wire, number, wireType, seen, "method");
                 case 3 -> outcome = varint(wire, number, wireType, seen, "outcome");
                 case 4 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         started = timestamp(wire.readLengthDelimited("started_at"));
                     } else {
-                        wire.skip(wireType, "started_at");
+                        wire.skip(wireType, number, "started_at");
                     }
                 }
                 case 5 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         completed = timestamp(wire.readLengthDelimited("completed_at"));
                     } else {
-                        wire.skip(wireType, "completed_at");
+                        wire.skip(wireType, number, "completed_at");
                     }
                 }
                 case 6 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         request = artifact(wire.readLengthDelimited("request_artifact"));
                     } else {
-                        wire.skip(wireType, "request_artifact");
+                        wire.skip(wireType, number, "request_artifact");
                     }
                 }
                 case 7 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         response = artifact(wire.readLengthDelimited("response_artifact"));
                     } else {
-                        wire.skip(wireType, "response_artifact");
+                        wire.skip(wireType, number, "response_artifact");
                     }
                 }
                 case 8 -> promptTokens = varint(wire, number, wireType, seen, "prompt_tokens");
@@ -307,7 +307,7 @@ final class RecordWire {
                 case 12 -> summary = string(wire, number, wireType, seen, "summary");
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -333,7 +333,7 @@ final class RecordWire {
                 case 4 -> redacted = varint(wire, number, wireType, seen, "redacted") != 0;
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -360,7 +360,7 @@ final class RecordWire {
                                 .utf8("missing_reasons"));
                     } else {
                         wire.noteUnknown(number);
-                        wire.skip(wireType, "missing_reasons");
+                        wire.skip(wireType, number, "missing_reasons");
                     }
                 }
                 case 3 -> policyId = string(wire, number, wireType, seen, "policy_id");
@@ -369,7 +369,7 @@ final class RecordWire {
                 case 5 -> policySha256 = string(wire, number, wireType, seen, "policy_sha256");
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -391,7 +391,7 @@ final class RecordWire {
                 case 2 -> policy = string(wire, number, wireType, seen, "policy");
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -410,7 +410,7 @@ final class RecordWire {
                 issuers.add(issuer(wire.readLengthDelimited("issuers")));
             } else {
                 wire.noteUnknown(number);
-                wire.skip(wireType, "field " + number);
+                wire.skip(wireType, number, "field " + number);
             }
         }
         return new Trust(issuers);
@@ -433,7 +433,7 @@ final class RecordWire {
                         keys.add(key(wire.readLengthDelimited("keys")));
                     } else {
                         wire.noteUnknown(number);
-                        wire.skip(wireType, "keys");
+                        wire.skip(wireType, number, "keys");
                     }
                 }
                 case 3 -> {
@@ -442,12 +442,12 @@ final class RecordWire {
                                 .utf8("subject_kinds"));
                     } else {
                         wire.noteUnknown(number);
-                        wire.skip(wireType, "subject_kinds");
+                        wire.skip(wireType, number, "subject_kinds");
                     }
                 }
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -473,35 +473,35 @@ final class RecordWire {
                 case 1 -> keyId = string(wire, number, wireType, seen, "key_id");
                 case 2 -> algorithm = varint(wire, number, wireType, seen, "algorithm");
                 case 3 -> {
-                    if (expectLen(wire, number, wireType, seen, false)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         publicKey = wire.readLengthDelimited("public_key").bytes();
                         if (publicKey.length == 0) {
                             wire.noteNonCanonical("public_key encodes its default value");
                         }
                     } else {
-                        wire.skip(wireType, "public_key");
+                        wire.skip(wireType, number, "public_key");
                     }
                 }
                 case 4 -> state = varint(wire, number, wireType, seen, "state");
                 case 5 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         notBefore = timestamp(wire.readLengthDelimited("not_before"));
                         hasNotBefore = true;
                     } else {
-                        wire.skip(wireType, "not_before");
+                        wire.skip(wireType, number, "not_before");
                     }
                 }
                 case 6 -> {
-                    if (expectLen(wire, number, wireType, seen, true)) {
+                    if (expectLen(wire, number, wireType, seen)) {
                         notAfter = timestamp(wire.readLengthDelimited("not_after"));
                         hasNotAfter = true;
                     } else {
-                        wire.skip(wireType, "not_after");
+                        wire.skip(wireType, number, "not_after");
                     }
                 }
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -523,7 +523,7 @@ final class RecordWire {
                 case 2 -> nanos = varint(wire, number, wireType, seen, "nanos");
                 default -> {
                     wire.noteUnknown(number);
-                    wire.skip(wireType, "field " + number);
+                    wire.skip(wireType, number, "field " + number);
                 }
             }
         }
@@ -533,8 +533,8 @@ final class RecordWire {
     /** A singular string field: claims the slot, notes explicit defaults, decodes UTF-8. */
     private static String string(Wire wire, int number, int wireType, Set<Integer> seen,
                                  String field) throws MalformedException {
-        if (!expectLen(wire, number, wireType, seen, false)) {
-            wire.skip(wireType, field);
+        if (!expectLen(wire, number, wireType, seen)) {
+            wire.skip(wireType, number, field);
             return "";
         }
         String value = wire.readLengthDelimited(field).utf8(field);
@@ -549,7 +549,7 @@ final class RecordWire {
                                String field) throws MalformedException {
         if (wireType != 0) {
             wire.noteUnknown(number);
-            wire.skip(wireType, field);
+            wire.skip(wireType, number, field);
             return 0;
         }
         if (!seen.add(number)) {
@@ -564,11 +564,11 @@ final class RecordWire {
 
     /**
      * Claims a singular length-delimited slot. Returns false (and records the unknown)
-     * when the wire type is wrong; {@code messageField} suppresses the empty-default note,
-     * because a present-but-empty message is a canonical encoding.
+     * when the wire type is wrong. Emptiness is the caller's to judge: a present-but-empty
+     * message is canonical, while an empty string or bytes field is its default value, so
+     * only the scalar callers note it.
      */
-    private static boolean expectLen(Wire wire, int number, int wireType, Set<Integer> seen,
-                                     boolean messageField) {
+    private static boolean expectLen(Wire wire, int number, int wireType, Set<Integer> seen) {
         if (wireType != 2) {
             wire.noteUnknown(number);
             return false;

@@ -42,6 +42,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -96,7 +97,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private final ActionCatalog actions;
     private final CallerResolver resolver;
     private final ObjectMapper json = new ObjectMapper();
-    private final ScopeBudgets budgets = new ScopeBudgets();
+    private final ScopeBudgets budgets;
     private final ProtoSourceCompiler compiler = new ProtoSourceCompiler();
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
     private volatile ExecutorService executor;
@@ -133,6 +134,10 @@ public final class SchemaRegistryServer implements AutoCloseable {
         this.config = Objects.requireNonNull(config, "config");
         this.store = Objects.requireNonNull(store, "store");
         this.actions = actions;
+        // The route table and the mounted catalog are one enforcement boundary: they
+        // spend on the catalog's ledger so a caller cannot take its per-scope budget
+        // once on a schema route and again on an action.
+        this.budgets = actions == null ? new ScopeBudgets() : actions.budgets();
         if (resolver != null && config.apiToken() == null) {
             throw new IllegalArgumentException(
                     "an access-policy resolver requires the operator api token");
@@ -220,7 +225,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
     }
 
     private void route(HttpExchange exchange) throws Exception {
-        String method = exchange.getRequestMethod().toUpperCase();
+        String method = exchange.getRequestMethod().toUpperCase(Locale.ROOT);
         String rawPath = exchange.getRequestURI().getRawPath();
         if (config.healthPath().equals(rawPath)) {
             requireMethod(exchange, method, "GET", () -> writeJson(exchange, 200,

@@ -1,6 +1,7 @@
 package ai.pipestream.proto.search.service;
 
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
@@ -272,6 +273,11 @@ public final class SearchServiceModule implements ServiceModule {
                             .toString());
         }
 
+        // Querying is agent-operable wherever the service is mounted, read-only nodes
+        // included: a reader serves no indexing surface but is exactly what a search is for.
+        context.contributions().contribute(
+                ProtoAction.class, new SearchAction(service.store()));
+
         // With a co-mounted jobs module, replay rides its submit action: the
         // replay-documents action re-runs a stored workflow over a listing.
         context.contributions().all(ProtoAction.class).stream()
@@ -279,13 +285,18 @@ public final class SearchServiceModule implements ServiceModule {
                 .findFirst()
                 .ifPresent(submit -> context.contributions().contribute(
                         ProtoAction.class, new ReplayAction(repo, submit, service.store())));
+        // One ledger per node: the search action this module contributes reaches the
+        // same principal through the registry's actions route, so both enforcement
+        // points spend the same per-scope budget.
+        ScopeBudgets budgets = context.contributions()
+                .shared(ScopeBudgets.class, ScopeBudgets::new);
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
                 netty = config.apiToken() == null
                         ? service.startNetty(config.grpcPort())
                         : service.startNetty(config.grpcPort(),
-                                config.apiToken(), config.callers());
+                                config.apiToken(), config.callers(), budgets);
             }
 
             @Override
@@ -315,6 +326,8 @@ public final class SearchServiceModule implements ServiceModule {
         inProcess = service.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
         context.contributions().contribute(LuceneSearchStore.class, service.store());
+        ScopeBudgets budgets = context.contributions()
+                .shared(ScopeBudgets.class, ScopeBudgets::new);
         return new ServiceMount() {
             private java.util.concurrent.ScheduledExecutorService refresher;
 
@@ -323,7 +336,7 @@ public final class SearchServiceModule implements ServiceModule {
                 netty = config.apiToken() == null
                         ? service.startNetty(config.grpcPort())
                         : service.startNetty(config.grpcPort(),
-                                config.apiToken(), config.callers());
+                                config.apiToken(), config.callers(), budgets);
                 if (config.refreshSeconds() > 0) {
                     refresher = java.util.concurrent.Executors
                             .newSingleThreadScheduledExecutor(runnable -> {

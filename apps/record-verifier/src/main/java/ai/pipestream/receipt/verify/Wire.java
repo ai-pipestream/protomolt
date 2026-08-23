@@ -28,12 +28,21 @@ final class Wire {
         }
     }
 
+    /**
+     * How deeply groups may nest before the reader refuses, matching the standard parser's
+     * default recursion limit. A group costs one byte to open and recursion to skip, so
+     * without a bound a short hostile input walks the reader off the stack, and a thrown
+     * {@link StackOverflowError} is not a refusal a caller can act on.
+     */
+    private static final int MAX_GROUP_DEPTH = 100;
+
     private final byte[] data;
     private final Notes notes;
     private final String path;
     private int pos;
     private final int limit;
     private int lastFieldNumber;
+    private int groupDepth;
 
     Wire(byte[] data, Notes notes, String path) {
         this(data, notes, path, 0, data.length);
@@ -63,9 +72,16 @@ final class Wire {
         notes.unknownFields.add((path.isEmpty() ? "" : path + ".") + fieldNumber);
     }
 
-    /** Reads a tag, enforcing the ordering ledger; returns (number << 3 | wireType). */
+    /**
+     * Reads a tag, enforcing the ordering ledger; returns (number << 3 | wireType).
+     *
+     * <p>The tag is a varint like any other, so it has the same padded encodings, and a
+     * padded tag decodes to the same field: nothing downstream can tell. The canonicality
+     * account is the only thing standing between such bytes and acceptance, so the tag is
+     * read through the accounting reader rather than the raw one.
+     */
     int readTag() throws MalformedException {
-        long tag = readVarintRaw("tag");
+        long tag = readVarint("tag");
         if (tag > 0xFFFFFFFFL || tag < 0) {
             throw new MalformedException(at("tag overflows"));
         }
@@ -118,9 +134,13 @@ final class Wire {
         return length;
     }
 
-    /** Reads a length-delimited payload's bounds and returns them as a sub-reader. */
+    /**
+     * Reads a length-delimited payload's bounds and returns them as a sub-reader. The
+     * length prefix is a varint too, and a padded one is invisible in the decoded value;
+     * it is read through the accounting reader for the reason the tag is.
+     */
     Wire readLengthDelimited(String field) throws MalformedException {
-        long length = readVarintRaw(field + " length");
+        long length = readVarint(field + " length");
         if (length < 0 || length > limit - pos) {
             throw new MalformedException(at(field + " length overruns the buffer"));
         }
@@ -146,27 +166,49 @@ final class Wire {
         return decoded;
     }
 
-    /** Skips one value of {@code wireType}, including nested groups; used for unknowns. */
-    void skip(int wireType, String field) throws MalformedException {
+    /**
+     * Skips one value of {@code wireType}, including nested groups; used for unknowns.
+     * {@code number} is the field the value belongs to, which a group needs so its end tag
+     * can be matched against the tag that opened it.
+     */
+    void skip(int wireType, int number, String field) throws MalformedException {
         switch (wireType) {
             case 0 -> readVarintRaw(field);
             case 1 -> advance(8, field);
             case 2 -> readLengthDelimited(field);
-            case 3 -> skipGroup(field);
+            case 3 -> skipGroup(number, field);
             case 4 -> throw new MalformedException(at(field + " has an unmatched group end"));
             case 5 -> advance(4, field);
             default -> throw new MalformedException(at(field + " has wire type " + wireType));
         }
     }
 
-    private void skipGroup(String field) throws MalformedException {
-        while (true) {
-            int tag = readTag();
-            int wireType = tag & 7;
-            if (wireType == 4) {
-                return;
+    /**
+     * Skips a group's contents up to its end tag. The end tag must carry the same field
+     * number as the tag that opened the group, as the standard parser requires, and the
+     * nesting is bounded so hostile input cannot exhaust the stack.
+     */
+    private void skipGroup(int number, String field) throws MalformedException {
+        if (++groupDepth > MAX_GROUP_DEPTH) {
+            groupDepth--;
+            throw new MalformedException(at(field + " is nested too deeply"));
+        }
+        try {
+            while (true) {
+                int tag = readTag();
+                int inner = tag >>> 3;
+                int wireType = tag & 7;
+                if (wireType == 4) {
+                    if (inner != number) {
+                        throw new MalformedException(at(field + " ends group " + inner
+                                + " but opened group " + number));
+                    }
+                    return;
+                }
+                skip(wireType, inner, field);
             }
-            skip(wireType, field);
+        } finally {
+            groupDepth--;
         }
     }
 

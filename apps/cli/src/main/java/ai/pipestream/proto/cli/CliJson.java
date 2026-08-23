@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.Locale;
 
 /** JSON parsing shared by the CLI and the console. */
 final class CliJson {
@@ -22,7 +23,7 @@ final class CliJson {
         JsonNode node = mapper.readTree(json);
         if (!node.isObject()) {
             throw new IllegalArgumentException(
-                    "Input must be a JSON object, got " + node.getNodeType().name().toLowerCase());
+                    "Input must be a JSON object, got " + node.getNodeType().name().toLowerCase(Locale.ROOT));
         }
         return (ObjectNode) node;
     }
