@@ -171,7 +171,7 @@ class DelegationMcpAcceptanceTest {
 
         call(codex, "delegation-review", MAPPER.createObjectNode()
                 .put("taskId", taskId)
-                .put("decision", "revise")
+                .put("decision", "REVIEW_DECISION_REVISE")
                 .put("feedback", "prove the edge case too")
                 .set("failedChecks", MAPPER.createArrayNode().add("unit-tests")));
 
@@ -208,7 +208,7 @@ class DelegationMcpAcceptanceTest {
 
         call(codex, "delegation-review", MAPPER.createObjectNode()
                 .put("taskId", taskId)
-                .put("decision", "accept")
+                .put("decision", "REVIEW_DECISION_ACCEPT")
                 .put("verdict", "acceptance checks verified"));
 
         // The transcript is the truth: the reducer stays clean and the task is accepted.

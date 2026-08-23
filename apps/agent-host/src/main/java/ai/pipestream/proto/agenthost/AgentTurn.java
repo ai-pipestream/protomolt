@@ -20,6 +20,10 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_COMMANDS = 16;
     private static final int MAX_RESPONSE_CHARS = 256 * 1024;
+    /** The review decision that completes a task, as the review verb names it. */
+    private static final String ACCEPT = "REVIEW_DECISION_ACCEPT";
+    /** The review decision that returns a candidate for another revision. */
+    private static final String REVISE = "REVIEW_DECISION_REVISE";
     private static final Set<String> WORKER_TOOLS = Set.of(
             "host-ack", "delegation-accept", "delegation-message",
             "delegation-progress", "delegation-checkpoint", "delegation-candidate");
@@ -109,7 +113,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
 
     private static List<ObjectNode> commandSchemas(AgentRole role, String tool) {
         if ("delegation-review".equals(tool)) {
-            return List.of(reviewSchema("accept"), reviewSchema("revise"));
+            return List.of(reviewSchema(ACCEPT), reviewSchema(REVISE));
         }
         ObjectNode arguments = switch (tool) {
             case "host-ack" -> objectSchema()
@@ -129,8 +133,8 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                     .set("properties", properties(
                             field("taskId", uuidSchema()),
                             field("attempt", integerSchema(1, 1_024)),
-                            field("resumeToken", stringSchema(1, 4_096)),
-                            field("note", stringSchema(0, 4_096))));
+                            field("resumeToken", stringSchema(1, 512)),
+                            field("note", stringSchema(0, 1_024))));
             case "delegation-candidate" -> objectSchema()
                     .set("properties", properties(
                             field("taskId", uuidSchema()),
@@ -144,7 +148,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             case "delegation-cancel" -> objectSchema()
                     .set("properties", properties(
                             field("taskId", uuidSchema()),
-                            field("reason", stringSchema(1, 4_096))));
+                            field("reason", stringSchema(1, 2_048))));
             default -> throw new IllegalArgumentException("unknown agent-host tool: " + tool);
         };
         finishObject(arguments);
@@ -157,7 +161,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                 field("kind", enumSchema(
                         "TASK_MESSAGE_KIND_QUESTION", "TASK_MESSAGE_KIND_ANSWER",
                         "TASK_MESSAGE_KIND_GUIDANCE", "TASK_MESSAGE_KIND_NOTE")),
-                field("text", stringSchema(1, 16_384)));
+                field("text", stringSchema(1, 8_192)));
         if (role == AgentRole.COORDINATOR) {
             properties.set("recipient", identitySchema());
         }
@@ -168,16 +172,16 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
 
     private static ObjectNode reviewSchema(String decision) {
         ObjectNode arguments;
-        if ("accept".equals(decision)) {
+        if (ACCEPT.equals(decision)) {
             arguments = objectSchema().set("properties", properties(
                     field("taskId", uuidSchema()),
-                    field("decision", enumSchema("accept")),
-                    field("verdict", stringSchema(1, 4_096))));
+                    field("decision", enumSchema(ACCEPT)),
+                    field("verdict", stringSchema(1, 2_048))));
         } else {
             arguments = objectSchema().set("properties", properties(
                     field("taskId", uuidSchema()),
-                    field("decision", enumSchema("revise")),
-                    field("feedback", stringSchema(1, 16_384)),
+                    field("decision", enumSchema(REVISE)),
+                    field("feedback", stringSchema(1, 8_192)),
                     field("failedChecks", arraySchema(stringSchema(1, 128), 0, 64))));
         }
         finishObject(arguments);

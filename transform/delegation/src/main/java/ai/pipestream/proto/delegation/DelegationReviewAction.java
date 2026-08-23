@@ -2,11 +2,9 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import com.fasterxml.jackson.databind.JsonNode;
+import ai.pipestream.proto.delegation.v1.ReviewCandidateRequest;
+import ai.pipestream.proto.delegation.v1.ReviewCandidateResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /** Applies an external review decision to the open completion candidate. */
 final class DelegationReviewAction extends DelegationAction {
@@ -23,75 +21,41 @@ final class DelegationReviewAction extends DelegationAction {
     @Override
     public String description() {
         return "Applies the review verdict for a task's open completion candidate: "
-                + "'accept' with a verdict line, or 'revise' with feedback and the failed "
-                + "checks. The candidate must be under review (submitted, not yet decided).";
+                + "REVIEW_DECISION_ACCEPT with a verdict line, or REVIEW_DECISION_REVISE "
+                + "with feedback and the failed checks. The candidate must be under review "
+                + "(submitted, not yet decided).";
     }
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        putString(properties, "taskId", "The task uuid with an open candidate.");
-        properties.putObject("decision")
-                .put("type", "string")
-                .put("description", "'accept' or 'revise'.")
-                .putArray("enum").add("accept").add("revise");
-        putString(properties, "verdict",
-                "The one-line acceptance verdict; required when decision is 'accept'.");
-        putString(properties, "feedback",
-                "What must change; required when decision is 'revise'.");
-        properties.putObject("failedChecks")
-                .put("type", "array")
-                .put("description", "The required checks whose evidence did not convince "
-                        + "the reviewer; only with 'revise'.")
-                .putObject("items").put("type", "string");
-        require(schema, "taskId", "decision");
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(ReviewCandidateRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String taskId = DelegationActionJson.uuid(input, "taskId");
-        String decision = DelegationActionJson.text(input, "decision");
-        CandidateReviewer.ReviewDecision review;
-        switch (decision) {
-            case "accept" -> {
-                String verdict = DelegationActionJson.text(input, "verdict");
-                review = CandidateReviewer.ReviewDecision.accept(verdict);
-            }
-            case "revise" -> {
-                String feedback = DelegationActionJson.text(input, "feedback");
-                List<String> failedChecks = new ArrayList<>();
-                JsonNode checks = input.get("failedChecks");
-                if (checks != null && !checks.isNull()) {
-                    if (!checks.isArray()) {
-                        throw DelegationActionJson.invalid("'failedChecks' must be an array",
-                                "/failedChecks");
-                    }
-                    for (int i = 0; i < checks.size(); i++) {
-                        if (!checks.get(i).isTextual()) {
-                            throw DelegationActionJson.invalid(
-                                    "'failedChecks' entries must be strings",
-                                    "/failedChecks/" + i);
-                        }
-                        failedChecks.add(checks.get(i).asText());
-                    }
-                }
-                review = CandidateReviewer.ReviewDecision.revise(feedback, failedChecks);
-            }
-            default -> throw DelegationActionJson.invalid(
-                    "'decision' must be 'accept' or 'revise'", "/decision");
-        }
+        // Which fields each decision needs is declared as message-level CEL on the request:
+        // an acceptance carries its verdict, a revision request carries its feedback, and
+        // failed checks belong only to a revision request.
+        ReviewCandidateRequest request = DelegationActionJson
+                .parse(input, ReviewCandidateRequest.newBuilder(), name()).build();
+        CandidateReviewer.ReviewDecision review = switch (request.getDecision()) {
+            case REVIEW_DECISION_ACCEPT ->
+                    CandidateReviewer.ReviewDecision.accept(request.getVerdict());
+            case REVIEW_DECISION_REVISE ->
+                    CandidateReviewer.ReviewDecision.revise(request.getFeedback(),
+                            request.getFailedChecksList());
+            default -> throw DelegationActionJson.rejected(
+                    "delegation-review needs a decision the contract defines");
+        };
         try {
-            bridge.review(taskId, review);
+            bridge.review(request.getTaskId(), review);
         } catch (RuntimeException e) {
             throw failure(e);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        output.put("taskId", taskId);
-        output.put("decision", decision);
-        return output;
+        return DelegationActionJson.render(ReviewCandidateResponse.newBuilder()
+                .setOk(true)
+                .setTaskId(request.getTaskId())
+                .setDecision(request.getDecision())
+                .build(), context);
     }
 }

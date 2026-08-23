@@ -105,7 +105,7 @@ class DelegationMcpRestartTest {
                     .put("workerId", WORKER).put("taskId", taskId)
                     .set("candidate", candidate()));
             call(codex, "delegation-review", MAPPER.createObjectNode()
-                    .put("taskId", taskId).put("decision", "accept")
+                    .put("taskId", taskId).put("decision", "REVIEW_DECISION_ACCEPT")
                     .put("verdict", "acceptance checks verified"));
             assertThat(restored.state().clean())
                     .as(restored.state().findings().toString()).isTrue();

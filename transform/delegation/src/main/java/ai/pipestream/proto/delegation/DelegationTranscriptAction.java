@@ -2,6 +2,8 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.delegation.v1.ReadTranscriptRequest;
+import ai.pipestream.proto.delegation.v1.ReadTranscriptResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
@@ -9,8 +11,8 @@ import java.util.List;
 /** Reads a bounded slice of the recorded delegation transcript from a cursor. */
 final class DelegationTranscriptAction extends DelegationAction {
 
-    /** The largest transcript slice one call returns. */
-    static final int MAX_ENTRIES_PER_CALL = 500;
+    /** The slice size a request that does not choose one gets. */
+    static final int DEFAULT_ENTRIES_PER_CALL = 100;
 
     DelegationTranscriptAction(DelegationBridge bridge) {
         super(bridge);
@@ -30,30 +32,23 @@ final class DelegationTranscriptAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("afterCursor")
-                .put("type", "integer")
-                .put("minimum", 0)
-                .put("description", "Resume position; 0 reads from the beginning. Defaults "
-                        + "to 0.");
-        putString(properties, "taskId", "Optional task uuid restricting the read.");
-        putInteger(properties, "maxEntries",
-                "The largest slice one call returns.", 1, MAX_ENTRIES_PER_CALL);
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(ReadTranscriptRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        long afterCursor = DelegationActionJson.boundedLong(input, "afterCursor", 0,
-                Long.MAX_VALUE);
-        String taskId = DelegationActionJson.optionalUuid(input, "taskId");
-        int maxEntries = DelegationActionJson.boundedInt(input, "maxEntries", 100, 1,
-                MAX_ENTRIES_PER_CALL);
+        ReadTranscriptRequest request = DelegationActionJson
+                .parse(input, ReadTranscriptRequest.newBuilder(), name()).build();
+        // An omitted slice size arrives as 0, which the request's ignore_if_zero rule lets
+        // through so this default can apply; 0 itself is not a legal slice.
+        int maxEntries = request.getMaxEntries() == 0
+                ? DEFAULT_ENTRIES_PER_CALL
+                : request.getMaxEntries();
+        // An omitted task id arrives as the empty string, which reads every task.
+        String taskId = request.getTaskId().isEmpty() ? null : request.getTaskId();
         List<InProcessDelegationCoordinator.Event> events;
         try {
-            events = bridge.coordinator().eventsAfter(taskId, afterCursor);
+            events = bridge.coordinator().eventsAfter(taskId, request.getAfterCursor());
         } catch (RuntimeException e) {
             throw failure(e);
         }
@@ -61,6 +56,11 @@ final class DelegationTranscriptAction extends DelegationAction {
         if (truncated) {
             events = events.subList(0, maxEntries);
         }
-        return eventsJson(events, truncated, context);
+        ReadTranscriptResponse.Builder response = ReadTranscriptResponse.newBuilder()
+                .setOk(true)
+                .setCursor(resumeCursor(events))
+                .setTruncated(truncated);
+        events.forEach(event -> response.addEvents(observed(event)));
+        return DelegationActionJson.render(response.build(), context);
     }
 }
