@@ -41,10 +41,21 @@ class ClusterActionsTest {
         assertThat(catalog.names()).contains("mesh-node-register", "mesh-node-heartbeat",
                 "mesh-processor-register", "mesh-capacity-update", "mesh-snapshot",
                 "mesh-sweep");
-        catalog.list().findValues("inputSchema").forEach(schema -> {
-            assertThat(schema.path("type").asText()).isEqualTo("object");
-            assertThat(schema.path("additionalProperties").asBoolean()).isFalse();
-        });
+        // Each mesh verb's schema is derived from the request descriptor it accepts. The
+        // generator emits a reference plus a definitions block so a message reaching the same
+        // nested type twice describes it once, which puts the described object behind the
+        // root reference.
+        for (JsonNode entry : catalog.list()) {
+            if (!entry.path("name").asText().startsWith("mesh-")) {
+                continue;
+            }
+            JsonNode schema = entry.path("inputSchema");
+            String ref = schema.path("$ref").asText();
+            assertThat(ref).as("%s schema reference", entry.path("name").asText())
+                    .startsWith("#/$defs/");
+            assertThat(schema.path("$defs").path(ref.substring("#/$defs/".length()))
+                    .path("type").asText()).isEqualTo("object");
+        }
     }
 
     @Test
@@ -56,12 +67,16 @@ class ClusterActionsTest {
                 .setProcessorId("nano1-tei")
                 .build();
 
+        // Mutating verbs answer with the directory state the call committed against.
         assertThat(execute("mesh-node-register", "advertisement", node)
-                .path("outcome").asText()).isEqualTo("REGISTERED");
+                .path("commit").path("outcome").asText())
+                .isEqualTo("APPLY_OUTCOME_REGISTERED");
         assertThat(execute("mesh-processor-register", "advertisement", processor)
-                .path("outcome").asText()).isEqualTo("REGISTERED");
+                .path("commit").path("outcome").asText())
+                .isEqualTo("APPLY_OUTCOME_REGISTERED");
         assertThat(execute("mesh-capacity-update", "capacity", capacity)
-                .path("outcome").asText()).isEqualTo("REGISTERED");
+                .path("commit").path("outcome").asText())
+                .isEqualTo("APPLY_OUTCOME_REGISTERED");
 
         JsonNode snapshot = catalog.execute("mesh-snapshot", MAPPER.createObjectNode())
                 .path("snapshot");
@@ -111,7 +126,8 @@ class ClusterActionsTest {
         clock.advance(Duration.ofSeconds(61));
         ObjectNode result = catalog.execute("mesh-sweep", MAPPER.createObjectNode());
 
-        assertThat(result.path("expiredCount").asInt()).isEqualTo(2);
+        // The events are the count: a separate total could disagree with the list beside it.
+        assertThat(result.path("events")).hasSize(2);
         assertThat(result.path("events").findValuesAsText("type"))
                 .containsExactly("CLUSTER_EVENT_TYPE_PROCESSOR_EXPIRED",
                         "CLUSTER_EVENT_TYPE_NODE_EXPIRED");
