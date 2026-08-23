@@ -1,0 +1,150 @@
+// The cluster directory as a service: how a node joins the mesh, proves it is
+// still alive, publishes what it can run, and how any caller reads the result.
+//
+// Every mutating call is fenced. A record carries the position it was accepted
+// at, and the directory keeps the highest accepted position per identity even
+// after that identity expires, so a delayed message from an older position can
+// never revive or overwrite a newer one. Callers therefore get a stable answer
+// under retry: replaying an accepted message reports UNCHANGED rather than
+// applying twice.
+syntax = "proto3";
+
+package ai.pipestream.proto.mesh.cluster.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.mesh.cluster.v1";
+option java_outer_classname = "ClusterDirectoryServiceProto";
+
+import "ai/pipestream/proto/mesh/cluster/v1/cluster.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+
+// What applying one record did to the directory.
+enum ApplyOutcome {
+  // Unset. Never returned; present because proto3 requires a zero value.
+  APPLY_OUTCOME_UNSPECIFIED = 0;
+  // The identity was absent and the record was inserted.
+  APPLY_OUTCOME_REGISTERED = 1;
+  // The record replaced an existing one from an older position.
+  APPLY_OUTCOME_UPDATED = 2;
+  // The record was identical to the one already held, so nothing changed.
+  // A retry of an accepted message reports this rather than applying twice.
+  APPLY_OUTCOME_UNCHANGED = 3;
+}
+
+// The directory state a mutating call committed against.
+//
+// The sequence and fingerprint together identify one snapshot exactly. A
+// caller holding both can tell whether a later read reflects its own write
+// without comparing whole snapshots.
+message DirectoryCommit {
+  // What the call did to the directory.
+  ApplyOutcome outcome = 1;
+  // Monotonic sequence of the snapshot this call produced.
+  int64 snapshot_seq = 2;
+  // Deterministic fingerprint of that snapshot. Two directories holding the
+  // same records at the same sequence produce the same fingerprint.
+  string snapshot_fingerprint = 3;
+}
+
+// Registers a node, or refreshes one already registered.
+message RegisterNodeRequest {
+  // The node's advertisement: its identity, endpoints and capabilities.
+  NodeAdvertisement advertisement = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+}
+
+// Where the registration landed.
+message RegisterNodeResponse {
+  // The directory state this registration committed against.
+  DirectoryCommit commit = 1;
+}
+
+// Extends a registered node's liveness window.
+message HeartbeatRequest {
+  // The node's presence report, carrying the position it was observed at.
+  NodePresence presence = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+}
+
+// Where the heartbeat landed.
+message HeartbeatResponse {
+  // The directory state this heartbeat committed against.
+  DirectoryCommit commit = 1;
+}
+
+// Registers a processor lease on a registered node, or renews one.
+message RegisterProcessorRequest {
+  // The processor's advertisement, including the node it runs on.
+  ProcessorAdvertisement advertisement = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+}
+
+// Where the processor registration landed.
+message RegisterProcessorResponse {
+  // The directory state this registration committed against.
+  DirectoryCommit commit = 1;
+}
+
+// Publishes a point-in-time capacity reading for a node or a processor.
+message UpdateCapacityRequest {
+  // The capacity reading and the identity it describes.
+  CapacityAdvertisement capacity = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+}
+
+// Where the capacity reading landed.
+message UpdateCapacityResponse {
+  // The directory state this reading committed against.
+  DirectoryCommit commit = 1;
+}
+
+// Reads the directory. Takes no arguments: the snapshot is the whole
+// directory, and filtering it would give callers a partial view they could
+// not compare against another caller's.
+message GetSnapshotRequest {}
+
+// The directory as one deterministic reading.
+message GetSnapshotResponse {
+  // Every node and processor the directory holds, with its eligibility.
+  ClusterSnapshot snapshot = 1;
+}
+
+// Expires whatever has elapsed. Takes no arguments for the same reason
+// GetSnapshotRequest does: expiry is a property of the whole directory.
+message SweepRequest {}
+
+// What the sweep expired.
+message SweepResponse {
+  // One event per expiry, in the order they were applied. A node lost this
+  // way cascades to the processors leased on it, so a single elapsed
+  // presence window can produce several events.
+  repeated ClusterEvent events = 1;
+  // Sequence of the snapshot the sweep produced.
+  int64 snapshot_seq = 2;
+}
+
+// Membership and liveness for the mesh: who is here, what they can run, and
+// what has gone away.
+service ClusterDirectoryService {
+  // Registers a node or refreshes an existing registration.
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+
+  // Extends a registered node's liveness window.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Registers or renews a processor lease on a registered node.
+  rpc RegisterProcessor(RegisterProcessorRequest) returns (RegisterProcessorResponse);
+
+  // Publishes a capacity reading for a node or a processor.
+  rpc UpdateCapacity(UpdateCapacityRequest) returns (UpdateCapacityResponse);
+
+  // Reads the whole directory as one deterministic snapshot.
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+
+  // Expires elapsed processor leases and node presence windows.
+  rpc Sweep(SweepRequest) returns (SweepResponse);
+}

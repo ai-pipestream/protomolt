@@ -5,17 +5,30 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.mesh.cluster.v1.ApplyOutcome;
 import ai.pipestream.proto.mesh.cluster.v1.CapacityAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
+import ai.pipestream.proto.mesh.cluster.v1.DirectoryCommit;
+import ai.pipestream.proto.mesh.cluster.v1.GetSnapshotRequest;
+import ai.pipestream.proto.mesh.cluster.v1.HeartbeatRequest;
 import ai.pipestream.proto.mesh.cluster.v1.NodeAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.NodePresence;
 import ai.pipestream.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.pipestream.proto.mesh.cluster.v1.RegisterNodeRequest;
+import ai.pipestream.proto.mesh.cluster.v1.RegisterProcessorRequest;
+import ai.pipestream.proto.mesh.cluster.v1.SweepRequest;
+import ai.pipestream.proto.mesh.cluster.v1.UpdateCapacityRequest;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
 
@@ -47,6 +60,12 @@ public final class ClusterActions {
                 .register(new Sweep(directory));
     }
 
+    /**
+     * Enforces request contracts on the catalog path, which does not sit behind the
+     * validating interceptor the gRPC surface uses.
+     */
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
+
     private abstract static class ClusterAction implements ProtoAction {
         final PersistentClusterDirectory directory;
 
@@ -54,44 +73,50 @@ public final class ClusterActions {
             this.directory = directory;
         }
 
-        static ObjectNode schema(String field, String description) {
-            ObjectNode schema = JsonNodeFactory.instance.objectNode();
-            schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-            schema.put("type", "object");
-            schema.putObject("properties").putObject(field)
-                    .put("type", "object").put("description", description);
-            schema.putArray("required").add(field);
-            schema.put("additionalProperties", false);
-            return schema;
+        /**
+         * The input schema for a verb, derived from the request message it accepts.
+         *
+         * <p>The generator folds the message's declared rules into the schema, so a caller
+         * reading the manifest sees the same contract the directory enforces.
+         */
+        static ObjectNode schemaOf(Descriptor request) {
+            return new ObjectMapper().valueToTree(
+                    ProtoJsonSchemaGenerator.create().generate(request));
         }
 
-        static ObjectNode emptySchema() {
-            ObjectNode schema = JsonNodeFactory.instance.objectNode();
-            schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-            schema.put("type", "object");
-            schema.putObject("properties");
-            schema.put("additionalProperties", false);
-            return schema;
-        }
-
-        static ObjectNode object(ObjectNode input, String field) throws ActionException {
-            JsonNode node = input.get(field);
-            if (node instanceof ObjectNode object) {
-                return object;
-            }
-            throw invalid("'" + field + "' must be an object", "/" + field);
-        }
-
-        static <B extends Message.Builder> Message parse(ObjectNode input, String field,
-                                                          B builder) throws ActionException {
+        /**
+         * Reads the envelope into a request and holds it to the message's declared rules.
+         *
+         * <p>The envelope is the request message's canonical proto3 JSON form. Calls arriving
+         * over gRPC pass a validating interceptor; calls arriving through the catalog do not,
+         * so the rules are applied here rather than left to the directory to rediscover.
+         */
+        static <B extends Message.Builder> B parse(ObjectNode input, B builder)
+                throws ActionException {
             try {
-                JsonFormat.parser().merge(object(input, field).toString(), builder);
-                return builder.build();
-            } catch (ActionException e) {
-                throw e;
+                JsonFormat.parser().merge(input.toString(), builder);
             } catch (Exception e) {
-                throw invalid("Invalid protobuf JSON: " + e.getMessage(), "/" + field);
+                throw invalid("Invalid protobuf JSON: " + e.getMessage(), "/");
             }
+            ValidationResult result = VALIDATOR.validate(builder.build());
+            if (!result.valid()) {
+                ObjectNode details = JsonNodeFactory.instance.objectNode();
+                ArrayNode violations = details.putArray("violations");
+                StringBuilder prose = new StringBuilder();
+                for (ValidationResult.Violation violation : result.violations()) {
+                    ObjectNode node = violations.addObject();
+                    node.put("field", violation.path());
+                    node.put("ruleId", violation.ruleId());
+                    node.put("message", violation.message());
+                    if (prose.length() > 0) {
+                        prose.append("; ");
+                    }
+                    prose.append(violation.path()).append(' ').append(violation.message());
+                }
+                throw new ActionException("invalid-input",
+                        "The request does not satisfy its contract: " + prose, details);
+            }
+            return builder;
         }
 
         static ObjectNode render(Message message, ActionContext context) throws ActionException {
@@ -112,12 +137,14 @@ public final class ClusterActions {
         static ObjectNode outcome(ClusterDirectory.ApplyOutcome outcome,
                                   PersistentClusterDirectory directory,
                                   ActionContext context) throws ActionException {
-            ObjectNode result = context.objectMapper().createObjectNode();
-            result.put("ok", true);
-            result.put("outcome", outcome.name());
             ClusterSnapshot snapshot = directory.snapshot();
-            result.put("snapshotSeq", snapshot.getSnapshotSeq());
-            result.put("snapshotFingerprint", snapshot.getFingerprint());
+            DirectoryCommit commit = DirectoryCommit.newBuilder()
+                    .setOutcome(ApplyOutcome.valueOf("APPLY_OUTCOME_" + outcome.name()))
+                    .setSnapshotSeq(snapshot.getSnapshotSeq())
+                    .setSnapshotFingerprint(snapshot.getFingerprint())
+                    .build();
+            ObjectNode result = context.objectMapper().createObjectNode();
+            result.set("commit", render(commit, context));
             return result;
         }
 
@@ -147,13 +174,13 @@ public final class ClusterActions {
         }
 
         @Override public ObjectNode inputSchema() {
-            return schema("advertisement", "NodeAdvertisement in canonical proto3 JSON.");
+            return schemaOf(RegisterNodeRequest.getDescriptor());
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
-            NodeAdvertisement advertisement = (NodeAdvertisement) parse(input, "advertisement",
-                    NodeAdvertisement.newBuilder());
+            NodeAdvertisement advertisement =
+                    parse(input, RegisterNodeRequest.newBuilder()).build().getAdvertisement();
             try {
                 return outcome(directory.register(advertisement), directory, context);
             } catch (RuntimeException e) {
@@ -176,13 +203,13 @@ public final class ClusterActions {
         }
 
         @Override public ObjectNode inputSchema() {
-            return schema("presence", "NodePresence in canonical proto3 JSON.");
+            return schemaOf(HeartbeatRequest.getDescriptor());
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
-            NodePresence presence = (NodePresence) parse(input, "presence",
-                    NodePresence.newBuilder());
+            NodePresence presence =
+                    parse(input, HeartbeatRequest.newBuilder()).build().getPresence();
             try {
                 return outcome(directory.heartbeat(presence), directory, context);
             } catch (RuntimeException e) {
@@ -205,13 +232,13 @@ public final class ClusterActions {
         }
 
         @Override public ObjectNode inputSchema() {
-            return schema("advertisement", "ProcessorAdvertisement in canonical proto3 JSON.");
+            return schemaOf(RegisterProcessorRequest.getDescriptor());
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
-            ProcessorAdvertisement advertisement = (ProcessorAdvertisement) parse(
-                    input, "advertisement", ProcessorAdvertisement.newBuilder());
+            ProcessorAdvertisement advertisement = parse(
+                    input, RegisterProcessorRequest.newBuilder()).build().getAdvertisement();
             try {
                 return outcome(directory.registerProcessor(advertisement), directory, context);
             } catch (RuntimeException e) {
@@ -234,13 +261,13 @@ public final class ClusterActions {
         }
 
         @Override public ObjectNode inputSchema() {
-            return schema("capacity", "CapacityAdvertisement in canonical proto3 JSON.");
+            return schemaOf(UpdateCapacityRequest.getDescriptor());
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
-            CapacityAdvertisement capacity = (CapacityAdvertisement) parse(input, "capacity",
-                    CapacityAdvertisement.newBuilder());
+            CapacityAdvertisement capacity =
+                    parse(input, UpdateCapacityRequest.newBuilder()).build().getCapacity();
             try {
                 return outcome(directory.updateCapacity(capacity), directory, context);
             } catch (RuntimeException e) {
@@ -262,7 +289,9 @@ public final class ClusterActions {
             return "Returns the deterministic cluster directory snapshot and eligibility state.";
         }
 
-        @Override public ObjectNode inputSchema() { return emptySchema(); }
+        @Override public ObjectNode inputSchema() {
+            return schemaOf(SweepRequest.getDescriptor());
+        }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
@@ -286,7 +315,9 @@ public final class ClusterActions {
             return "Expires elapsed processor leases and node presence windows, cascading node loss.";
         }
 
-        @Override public ObjectNode inputSchema() { return emptySchema(); }
+        @Override public ObjectNode inputSchema() {
+            return schemaOf(SweepRequest.getDescriptor());
+        }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
@@ -297,12 +328,10 @@ public final class ClusterActions {
                 throw rejected(e);
             }
             ObjectNode result = context.objectMapper().createObjectNode();
-            result.put("ok", true);
             ArrayNode events = result.putArray("events");
             for (ClusterEvent event : expired) {
                 events.add(render(event, context));
             }
-            result.put("expiredCount", expired.size());
             result.put("snapshotSeq", directory.snapshot().getSnapshotSeq());
             return result;
         }
