@@ -1,7 +1,7 @@
 package ai.pipestream.proto.samples;
 
-import demo.search.v1.DemoSearchGrpc;
-import demo.search.v1.SearchHit;
+import demo.search.v1.DemoSearchServiceGrpc;
+import demo.search.v1.SearchResponse;
 import demo.search.v1.SearchRequest;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
@@ -29,13 +29,13 @@ public final class DemoSearchServer {
 
     public static void main(String[] args) throws Exception {
         Server server = ServerBuilder.forPort(PORT)
-                .addService(new DemoSearchGrpc.DemoSearchImplBase() {
+                .addService(new DemoSearchServiceGrpc.DemoSearchServiceImplBase() {
                     @Override
-                    public void search(SearchRequest request, StreamObserver<SearchHit> out) {
+                    public void search(SearchRequest request, StreamObserver<SearchResponse> out) {
                         int hits = request.getHits() <= 0 ? 5 : request.getHits();
                         long delayMs = request.getDelayMs() <= 0 ? 400 : request.getDelayMs();
                         for (int i = 0; i < hits; i++) {
-                            out.onNext(SearchHit.newBuilder()
+                            out.onNext(SearchResponse.newBuilder()
                                     .setDocId("doc-" + (i + 1))
                                     .setScore(0.98f - 0.07f * i)
                                     .setText(TEXTS[i % TEXTS.length])

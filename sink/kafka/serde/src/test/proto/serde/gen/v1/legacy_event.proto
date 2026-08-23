@@ -1,12 +1,19 @@
-// Test fixture: no java_multiple_files and a message named after the file, so protoc derives
-// the outer class name and then appends OuterClass to dodge the clash — the naming case the
-// class derivation has to get right.
+// Fixture standing in for a foreign schema that omits java_multiple_files.
+// The file base name camel-cases to LegacyEvent, which a top-level message in
+// this file already claims, so protoc appends OuterClass and generates
+// LegacyEventOuterClass. That collision path is the one branch of the class
+// derivation no other fixture reaches, so this file must keep both the missing
+// option and the name clash to stay useful.
 syntax = "proto3";
 
 package serde.gen.v1;
 
 option java_package = "ai.pipestream.proto.kafka.serde.testdata";
 
+// Named identically to the file so that protoc's outer class name collides
+// with it, which is the condition under test.
 message LegacyEvent {
+  // Sole payload field. Its value is irrelevant to the derivation; the message
+  // exists for its name.
   string name = 1;
 }

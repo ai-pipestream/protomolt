@@ -17,15 +17,15 @@ public final class AcpStreamingDemo {
     private static final String SCHEMA_TEXT = """
             syntax = "proto3";
             package demo.search.v1;
-            service DemoSearch {
-              rpc Search(SearchRequest) returns (stream SearchHit);
+            service DemoSearchService {
+              rpc Search(SearchRequest) returns (stream SearchResponse);
             }
             message SearchRequest {
               string query = 1;
               int32 hits = 2;
               int32 delay_ms = 3;
             }
-            message SearchHit {
+            message SearchResponse {
               string doc_id = 1;
               float score = 2;
               string text = 3;
@@ -47,12 +47,12 @@ public final class AcpStreamingDemo {
             client.initialize();
             String sessionId = client.newSession("/");
             String line = "grpc-invoke {\"target\":\"localhost:9777\","
-                    + "\"method\":\"demo.search.v1.DemoSearch/Search\","
+                    + "\"method\":\"demo.search.v1.DemoSearchService/Search\","
                     + "\"schema\":{\"sources\":{\"demo.proto\":"
                     + toJsonString(SCHEMA_TEXT) + "}},"
                     + "\"request\":{\"query\":\"nearest neighbor search\",\"hits\":5,"
                     + "\"delayMs\":400}}";
-            System.out.println("prompt: " + "grpc-invoke demo.search.v1.DemoSearch/Search"
+            System.out.println("prompt: " + "grpc-invoke demo.search.v1.DemoSearchService/Search"
                     + " (5 hits, 400ms apart)");
             client.prompt(sessionId, line);
         }
