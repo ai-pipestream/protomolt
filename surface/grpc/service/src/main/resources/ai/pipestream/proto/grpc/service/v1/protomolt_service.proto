@@ -13,6 +13,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.grpc.service.v1;
 
+import "ai/pipestream/proto/grpc/profile/v1/service_profile.proto";
 import "google/protobuf/struct.proto";
 
 // The ProtoMolt toolkit: compile, introspect, validate, diff, render,
@@ -37,18 +38,18 @@ service ProtoMoltService {
 
   // Renders the JSON Schema (draft 2020-12) for a message type. The response
   // is the schema document itself.
-  rpc RenderJsonSchema(RenderJsonSchemaRequest) returns (google.protobuf.Struct);
+  rpc RenderJsonSchema(RenderJsonSchemaRequest) returns (RenderJsonSchemaResponse);
 
   // Renders the prompt packet for a message type: the complete LLM
   // form-filling briefing (instruction prose from the schema's metadata,
   // validation, quality and llm.v1 annotations, plus the JSON Schema decoder
   // constraint, plus an optional resolved persona).
-  rpc RenderPrompt(RenderPromptRequest) returns (google.protobuf.Struct);
+  rpc RenderPrompt(RenderPromptRequest) returns (RenderPromptResponse);
 
   // Renders the search-index artifact for a message type from its indexing
   // hints. The response shape is engine-specific (OpenSearch mappings, Solr
   // schema pieces, or Lucene field specs).
-  rpc RenderIndexMappings(RenderIndexMappingsRequest) returns (google.protobuf.Struct);
+  rpc RenderIndexMappings(RenderIndexMappingsRequest) returns (RenderIndexMappingsResponse);
 
   // Evaluates a CEL expression against a message bound as 'input'.
   rpc EvalCel(EvalCelRequest) returns (EvalCelResponse);
@@ -138,20 +139,20 @@ service ProtoMoltService {
 
   // Registers a stable service profile, reflects its selected endpoint, and
   // stores the descriptor set outside the response as a content-addressed artifact.
-  rpc ServiceRegister(ServiceRegisterRequest) returns (google.protobuf.Struct);
+  rpc ServiceRegister(ServiceRegisterRequest) returns (ServiceRegisterResponse);
 
   // Lists registered service identities, endpoint names, and descriptor fingerprints.
-  rpc ServiceList(ServiceListRequest) returns (google.protobuf.Struct);
+  rpc ServiceList(ServiceListRequest) returns (ServiceListResponse);
 
   // Describes one registered profile and its reflected service/method contracts.
-  rpc ServiceInspect(ServiceInspectRequest) returns (google.protobuf.Struct);
+  rpc ServiceInspect(ServiceInspectRequest) returns (ServiceInspectResponse);
 
   // Re-reflects a registered endpoint and advances its descriptor fingerprint.
-  rpc ServiceRefresh(ServiceRefreshRequest) returns (google.protobuf.Struct);
+  rpc ServiceRefresh(ServiceRefreshRequest) returns (ServiceRefreshResponse);
 
   // Invokes a registered service while resolving its endpoint and pinned
   // descriptor inside ProtoMolt.
-  rpc ServiceInvoke(ServiceInvokeRequest) returns (google.protobuf.Struct);
+  rpc ServiceInvoke(ServiceInvokeRequest) returns (ServiceInvokeResponse);
 
   // Renders a schema as an Open Knowledge Format (OKF v0.1) bundle: markdown
   // concept documents with YAML frontmatter for every message, enum, and
@@ -225,14 +226,105 @@ message ServiceRegisterRequest {
   int32 deadline_ms = 3;
 }
 
+// One field of a reflected message, as the service workspace reports it.
+message ReflectedField {
+  // Field name as declared in the .proto source.
+  string name = 1;
+  // Name this field carries in canonical proto3 JSON, which differs from
+  // 'name' whenever the declared name contains an underscore.
+  string json_name = 2;
+  // Field number on the wire.
+  int32 number = 3;
+  // Protobuf type in lower case, for example 'string', 'int64' or 'message'.
+  string type = 4;
+  // Either 'singular' or 'repeated'. Map fields report as repeated, because
+  // that is how they are encoded.
+  string cardinality = 5;
+  // Fully qualified name of the message or enum this field carries. Empty for
+  // scalar fields, which have no named type.
+  string type_name = 6;
+}
+
+// One method of a reflected service, with both sides of its contract expanded
+// so a caller can build a request without a second reflection round trip.
+message ReflectedMethod {
+  // Method name on its own, as declared.
+  string name = 1;
+  // Fully qualified 'package.Service/Method' form used to address the call.
+  string full_name = 2;
+  // Fully qualified name of the request message type.
+  string input_type = 3;
+  // Fully qualified name of the response message type.
+  string output_type = 4;
+  // True when the client sends a stream of requests.
+  bool client_streaming = 5;
+  // True when the server returns a stream of responses.
+  bool server_streaming = 6;
+  // Fields of the request message.
+  repeated ReflectedField input_fields = 7;
+  // Fields of the response message.
+  repeated ReflectedField output_fields = 8;
+}
+
+// One service found by reflecting a registered endpoint.
+message ReflectedService {
+  // Fully qualified service name.
+  string name = 1;
+  // Every method the service declares.
+  repeated ReflectedMethod methods = 2;
+}
+
+// A registered profile as it appears in a listing: enough to choose one, not
+// the whole contract. Use ServiceInspect for the expanded form.
+message ServiceSummary {
+  // Profile name, unique within the workspace.
+  string name = 1;
+  // Operator-supplied description. Empty when none was given.
+  string description = 2;
+  // Names of the endpoints this profile declares.
+  repeated string endpoints = 3;
+  // Fingerprint of the descriptor set currently pinned for this profile.
+  string descriptor_fingerprint = 4;
+}
+
+// Outcome of registering a profile and reflecting its endpoint.
+message ServiceRegisterResponse {
+  // True when the profile was stored and its endpoint reflected.
+  bool ok = 1;
+  // Why registration failed. Empty when 'ok' is true.
+  string error = 2;
+  // The stored profile, including the descriptor identity reflection
+  // resolved for it.
+  ai.pipestream.proto.grpc.profile.v1.ServiceProfile profile = 3;
+  // Contracts found at the reflected endpoint.
+  repeated ReflectedService services = 4;
+}
+
+
 // The service-list action has no input fields.
 message ServiceListRequest {}
+
+// Every profile the workspace holds.
+message ServiceListResponse {
+  // One entry per registered profile, in registration order.
+  repeated ServiceSummary services = 1;
+}
+
 
 // Identifies one stored service profile to inspect.
 message ServiceInspectRequest {
   // Stable profile name.
   string name = 1;
 }
+
+// One profile and the contracts reflection found behind it.
+message ServiceInspectResponse {
+  // The stored profile.
+  ai.pipestream.proto.grpc.profile.v1.ServiceProfile profile = 1;
+  // Contracts found at the profile's endpoint.
+  repeated ReflectedService services = 2;
+}
+
 
 // Selects a registered endpoint to reflect again.
 message ServiceRefreshRequest {
@@ -243,6 +335,22 @@ message ServiceRefreshRequest {
   // Reflection deadline in milliseconds; zero selects the action default.
   int32 deadline_ms = 3;
 }
+
+// Outcome of re-reflecting a registered endpoint.
+message ServiceRefreshResponse {
+  // True when reflection succeeded.
+  bool ok = 1;
+  // True when the descriptor fingerprint moved, meaning the remote contract
+  // changed since it was last pinned.
+  bool changed = 2;
+  // Why the refresh failed. Empty when 'ok' is true.
+  string error = 3;
+  // The profile after refreshing, carrying the new descriptor identity.
+  ai.pipestream.proto.grpc.profile.v1.ServiceProfile profile = 4;
+  // Contracts found at the endpoint on this pass.
+  repeated ReflectedService services = 5;
+}
+
 
 // Invokes a method through a stored service profile. The action contract
 // validates the profile and method names, requires a request object, and
@@ -261,6 +369,32 @@ message ServiceInvokeRequest {
   // Maximum server-streaming responses; zero selects the action default.
   int32 max_responses = 6;
 }
+
+// Outcome of invoking a method on a registered profile. The invocation fields
+// mirror GrpcInvokeResponse, because the call is performed by the same
+// machinery once the profile has resolved the endpoint and descriptor.
+message ServiceInvokeResponse {
+  // Name of the profile that resolved the endpoint.
+  string service_profile = 1;
+  // Name of the endpoint the call was placed against.
+  string endpoint = 2;
+  // Fingerprint of the descriptor set the call was encoded with, so a caller
+  // can tell which contract version answered.
+  string descriptor_fingerprint = 3;
+  // The invoked method, echoed back as 'package.Service/Method'.
+  string method = 4;
+  // UNARY or SERVER_STREAMING.
+  string method_type = 5;
+  // True when the call completed with gRPC status OK.
+  bool ok = 6;
+  // The gRPC status name, 'OK' on success.
+  string status = 7;
+  // Response messages as proto3 JSON.
+  repeated google.protobuf.Struct responses = 8;
+  // Status detail, when the call failed.
+  string description = 9;
+}
+
 
 // The input of compile: the inline .proto sources to compile.
 message CompileRequest {
@@ -425,6 +559,15 @@ message RenderJsonSchemaRequest {
   string type = 2;
 }
 
+// The rendered JSON Schema document.
+message RenderJsonSchemaResponse {
+  // The schema itself, as a JSON object. The content is a JSON Schema
+  // document rather than a protobuf contract, so it is carried as a structure
+  // instead of being modelled field by field.
+  google.protobuf.Struct schema = 1;
+}
+
+
 // The input of render-prompt.
 message RenderPromptRequest {
   // The schema declaring the message type.
@@ -439,6 +582,29 @@ message RenderPromptRequest {
   string descriptor_set_ref = 4;
 }
 
+// A rendered prompt packet: everything a model needs to fill the target
+// message in one turn.
+message RenderPromptResponse {
+  // Fully qualified name of the message the model is being asked to produce.
+  string target_type = 1;
+  // Reference to the descriptor set the target type was resolved from.
+  string descriptor_set_ref = 2;
+  // Instruction prose assembled from the target's metadata, validation,
+  // quality and language-model annotations.
+  string instructions = 3;
+  // JSON Schema constraining the model's reply, so the answer can be decoded
+  // back into the target message. Carried as a structure because a JSON
+  // Schema document has no protobuf contract.
+  google.protobuf.Struct response_json_schema = 4;
+  // The resolved persona, when the request named one. This is the canonical
+  // proto3 JSON form of ai.pipestream.proto.prompt.v1.Persona.
+  google.protobuf.Struct persona = 5;
+  // Worked examples, each the canonical proto3 JSON form of a
+  // google.protobuf.Any holding one example message.
+  repeated google.protobuf.Struct few_shot = 6;
+}
+
+
 // The input of render-index-mappings.
 message RenderIndexMappingsRequest {
   // The schema declaring the message type and its indexing hints.
@@ -448,6 +614,16 @@ message RenderIndexMappingsRequest {
   // 'opensearch', 'solr', or 'lucene'.
   string engine = 3;
 }
+
+// The rendered search-index artifact for one engine.
+message RenderIndexMappingsResponse {
+  // Engine the artifact was rendered for, echoed from the request.
+  string engine = 1;
+  // The artifact itself. Its shape is defined by the target engine rather
+  // than by ProtoMolt, so it is carried as a structure.
+  google.protobuf.Struct mappings = 2;
+}
+
 
 // The input of eval-cel.
 message EvalCelRequest {
