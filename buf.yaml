@@ -118,10 +118,6 @@ lint:
     # GetDocumentResponse: same payload, two coordinate systems.
     RPC_REQUEST_RESPONSE_UNIQUE:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
-      # ProtoMoltService returns google.protobuf.Struct from its render/invoke
-      # verbs by design: the service is descriptor-native and the canonical
-      # proto3 JSON form of each action envelope IS the response payload.
-      - surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto
     # Every ProtoMolt proto that generates Java sets java_multiple_files. These
     # two fixtures are deliberately inconsistent with each other because they
     # stand in for FOREIGN descriptors, which ProtoMolt must consume whatever
@@ -135,8 +131,6 @@ lint:
       - sink/kafka/serde/src/test/proto/serde/gen/v1/legacy_event.proto
     RPC_RESPONSE_STANDARD_NAME:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
-      # Same deliberate Struct responses as RPC_REQUEST_RESPONSE_UNIQUE above.
-      - surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto
 breaking:
   use:
     - FILE

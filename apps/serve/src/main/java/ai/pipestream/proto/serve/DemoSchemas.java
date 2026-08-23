@@ -1,6 +1,7 @@
 package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.descriptors.DescriptorRegistry;
+import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
 import ai.pipestream.proto.search.index.spi.ProtoOptionsIndexingHintSource;
 import ai.pipestream.proto.meta.DescriptorMetadata;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
@@ -9,6 +10,7 @@ import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
 import ai.pipestream.proto.validate.ValidationResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors;
@@ -56,12 +58,14 @@ final class DemoSchemas {
      */
     static void seedWorkflow(GitSchemaRegistryStore store, int grpcPort) {
         try {
-            String schema = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .writeValueAsString(
-                            ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema.protoSource());
+            // The service definition imports first-party contracts, so the workflow's schema
+            // carries the whole source closure. Registering the entry file alone would store a
+            // schema that cannot be compiled.
+            String sources = new ObjectMapper()
+                    .writeValueAsString(ProtoMoltServiceSchema.protoSources());
             String workflow = """
                     {"name": "compile-and-list",
-                     "schema": {"sources": {"%s": %s}},
+                     "schema": {"sources": %s},
                      "inputType": "ai.pipestream.proto.grpc.service.v1.CompileRequest",
                      "steps": [
                        {"name": "compiled", "target": "127.0.0.1:%d",
@@ -71,9 +75,7 @@ final class DemoSchemas {
                         "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
                         "rules": ["schema.descriptor_set_base64 = compiled.descriptor_set_base64"]}
                      ]}
-                    """.formatted(
-                    ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema.RESOURCE_PATH,
-                    schema, grpcPort, grpcPort);
+                    """.formatted(sources, grpcPort, grpcPort);
             store.putWorkflow("compile-and-list", workflow);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to seed the demo workflow", e);
