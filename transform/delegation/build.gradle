@@ -25,6 +25,9 @@ dependencies {
     // DelegationBridge and the delegation catalog actions implement ProtoAction
     // from this module.
     api project(':protomolt-actions')
+    // Action input schemas are derived from the request descriptors rather than
+    // hand-written, so the declared validation rules reach every caller.
+    implementation project(':protomolt-http-jsonschema')
 
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
