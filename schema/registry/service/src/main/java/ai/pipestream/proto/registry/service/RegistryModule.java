@@ -4,6 +4,7 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.composer.NodeContext;
 import ai.pipestream.proto.composer.ServiceModule;
 import ai.pipestream.proto.composer.ServiceMount;
@@ -86,6 +87,10 @@ public final class RegistryModule implements ServiceModule {
         store = GitSchemaRegistryStore.builder().repositoryDir(repositoryDir).build();
         context.contributions().contribute(GitSchemaRegistryStore.class, store);
         context.contributions().contribute(WorkflowRepository.class, workflowRepository(store));
+        // The node's one spending ledger, taken at wire so the catalog built at start
+        // shares it with the roles that guard their own gRPC surfaces.
+        ScopeBudgets budgets = context.contributions()
+                .shared(ScopeBudgets.class, ScopeBudgets::new);
         return new ServiceMount() {
             @Override
             public void start() {
@@ -96,7 +101,7 @@ public final class RegistryModule implements ServiceModule {
                         : context.contributions().all(Descriptors.FileDescriptor.class)) {
                     actionContext.registry().registerFile(descriptor);
                 }
-                ActionCatalog catalog = ActionCatalog.defaults(actionContext);
+                ActionCatalog catalog = ActionCatalog.defaults(actionContext, budgets);
                 for (ProtoAction action : context.contributions().all(ProtoAction.class)) {
                     catalog = catalog.register(action);
                 }

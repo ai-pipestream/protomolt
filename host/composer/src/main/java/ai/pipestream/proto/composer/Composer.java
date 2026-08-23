@@ -18,6 +18,7 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -382,6 +383,17 @@ public final class Composer {
                     throw new IllegalArgumentException("contribution must not be null");
                 }
                 byKind.computeIfAbsent(kind, key -> new ArrayList<>()).add(contribution);
+            }
+
+            @Override
+            public synchronized <T> T shared(Class<T> kind, Supplier<T> factory) {
+                List<Object> existing = byKind.get(kind);
+                if (existing != null && !existing.isEmpty()) {
+                    return kind.cast(existing.getFirst());
+                }
+                T created = factory.get();
+                contribute(kind, created);
+                return created;
             }
 
             @Override

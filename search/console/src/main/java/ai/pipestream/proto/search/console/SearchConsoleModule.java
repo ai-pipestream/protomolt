@@ -1,5 +1,6 @@
 package ai.pipestream.proto.search.console;
 
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.composer.NodeContext;
@@ -85,7 +86,10 @@ public final class SearchConsoleModule implements ServiceModule {
                 config.callers() == null
                         ? ConsoleSessions.open(SearchConsoleServer.COOKIE)
                         : ConsoleSessions.secured(SearchConsoleServer.COOKIE,
-                                SESSION_TTL, config.callers()));
+                                SESSION_TTL, config.callers()),
+                // The console's login boundary spends the same ledger as the search
+                // role it fronts: one allowance per principal, not one per door.
+                context.contributions().shared(ScopeBudgets.class, ScopeBudgets::new));
         return new ServiceMount() {
             @Override
             public void start() {

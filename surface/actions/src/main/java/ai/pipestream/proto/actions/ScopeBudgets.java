@@ -8,11 +8,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
 /**
- * The spending ledger behind {@link Caller.Budget}: each enforcement point (the action
- * catalog, the scope interceptor, the registry's route table) owns one and consults it
- * where it already checks scopes. The ledger is pure mechanism — the limits ride the
- * resolved caller, so a re-scoped policy changes budgets with no rewiring, and a caller
- * without a budget on the scope passes untouched.
+ * The spending ledger behind {@link Caller.Budget}: one per node, shared by every
+ * enforcement point that checks scopes (the action catalog, the scope interceptor, the
+ * registry's route table, the search console's login boundary), so a principal's budget
+ * is one allowance across the node's transports rather than one per surface. The ledger
+ * is pure mechanism — the limits ride the resolved caller, so a re-scoped policy changes
+ * budgets with no rewiring, and a caller without a budget on the scope passes untouched.
  *
  * <p>Rate is a fixed one-minute window per principal and scope: admitted requests count,
  * refused ones do not, and the window resets sixty seconds after its first admitted
