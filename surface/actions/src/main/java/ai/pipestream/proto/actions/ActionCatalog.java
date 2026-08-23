@@ -23,15 +23,25 @@ public final class ActionCatalog {
 
     private final ActionContext context;
     private final Map<String, ProtoAction> actions = new LinkedHashMap<>();
-    private final ScopeBudgets budgets = new ScopeBudgets();
+    private final ScopeBudgets budgets;
 
-    private ActionCatalog(ActionContext context) {
+    private ActionCatalog(ActionContext context, ScopeBudgets budgets) {
         this.context = Objects.requireNonNull(context, "context");
+        this.budgets = Objects.requireNonNull(budgets, "budgets");
     }
 
-    /** A catalog with every built-in action registered. */
+    /** A catalog with every built-in action registered, spending on its own ledger. */
     public static ActionCatalog defaults(ActionContext context) {
-        ActionCatalog catalog = new ActionCatalog(context);
+        return defaults(context, new ScopeBudgets());
+    }
+
+    /**
+     * A catalog with every built-in action registered, spending on {@code budgets}: the
+     * node's other enforcement points take the same ledger, so a principal's per-scope
+     * budget is one allowance however it reaches the node.
+     */
+    public static ActionCatalog defaults(ActionContext context, ScopeBudgets budgets) {
+        ActionCatalog catalog = new ActionCatalog(context, budgets);
         catalog.register(new CompileAction());
         catalog.register(new ValidateMessageAction());
         catalog.register(new DiffSchemasAction());
@@ -103,11 +113,21 @@ public final class ActionCatalog {
     /**
      * Returns an independent catalog with the same context, action references, and registration
      * order. Subsequent registration or replacement on either catalog does not mutate the other.
+     * The fork spends on the same ledger: a fork per session or per plugin set is one more way
+     * into the same node, not a second allowance.
      */
     public synchronized ActionCatalog fork() {
-        ActionCatalog fork = new ActionCatalog(context);
+        ActionCatalog fork = new ActionCatalog(context, budgets);
         fork.actions.putAll(actions);
         return fork;
+    }
+
+    /**
+     * The ledger this catalog spends on, for a host wiring another enforcement point over
+     * the same node.
+     */
+    public ScopeBudgets budgets() {
+        return budgets;
     }
 
     /** The tool manifest: {@code [{name, description, inputSchema}, ...]}. */

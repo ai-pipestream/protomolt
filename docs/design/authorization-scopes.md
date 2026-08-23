@@ -266,9 +266,18 @@ ride the resolved `Caller`, so every enforcement point that already
 checks scopes — the action catalog behind gRPC, REST, MCP, and the
 CLI; the scope interceptor on the search and metric services; the
 registry's route table; the search console's login boundary — consults
-its own spending ledger with no new wiring, and a policy re-scoped on
+the ledger where it already checks the scope, and a policy re-scoped on
 the config lane re-budgets the same way. The operator is never
 budgeted, and an unbudgeted scope is untouched.
+
+The ledger is one per node, not one per surface: a budget a caller
+could take again by switching transport would bound nothing. The node
+builds a single `ScopeBudgets` and hands it to every enforcement point
+it wires — the composer shares it as a node contribution, the registry
+server takes the ledger of the catalog it mounts, and a forked catalog
+keeps the ledger it forked from. Enforcement points constructed
+without one keep a private ledger, which is correct only for a surface
+that is the node's sole enforcement point.
 
 Rate is a fixed one-minute window per principal and scope: admitted
 requests count, refusals do not. Payload caps apply on surfaces that

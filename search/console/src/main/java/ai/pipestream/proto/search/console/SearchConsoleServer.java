@@ -30,6 +30,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -78,7 +79,7 @@ public final class SearchConsoleServer implements AutoCloseable {
     private final SearchServiceGrpc.SearchServiceBlockingStub service;
     private final Supplier<String> actionsBaseUrl;
     private final ConsoleSessions sessions;
-    private final ScopeBudgets budgets = new ScopeBudgets();
+    private final ScopeBudgets budgets;
     private final HttpClient actionsClient = HttpClient.newHttpClient();
 
     /** Creates the open console (no login), for trusted-network nodes. */
@@ -101,6 +102,25 @@ public final class SearchConsoleServer implements AutoCloseable {
      */
     public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl,
                                ConsoleSessions sessions) throws IOException {
+        this(port, serviceTarget, actionsBaseUrl, sessions, new ScopeBudgets());
+    }
+
+    /**
+     * The same server spending on {@code budgets}: a node that also mounts the search
+     * service or the action catalog passes the ledger it wired there, so a principal's
+     * search budget is one allowance whether it arrives through the console or straight
+     * at the service.
+     *
+     * @param port the HTTP port (0 for ephemeral)
+     * @param serviceTarget the search service: a {@code host:port} authority or
+     *        {@code inprocess:<name>}
+     * @param actionsBaseUrl supplies the registry actions route to proxy operations to
+     * @param sessions the console's session boundary
+     * @param budgets the node's spending ledger
+     */
+    public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl,
+                               ConsoleSessions sessions, ScopeBudgets budgets)
+            throws IOException {
         if (serviceTarget == null || serviceTarget.isBlank()) {
             throw new IllegalArgumentException("serviceTarget must not be blank");
         }
@@ -108,6 +128,7 @@ public final class SearchConsoleServer implements AutoCloseable {
             throw new IllegalArgumentException("sessions must not be null");
         }
         this.sessions = sessions;
+        this.budgets = Objects.requireNonNull(budgets, "budgets");
         this.channel = serviceTarget.startsWith(INPROCESS_TARGET_PREFIX)
                 ? InProcessChannelBuilder.forName(
                         serviceTarget.substring(INPROCESS_TARGET_PREFIX.length())).build()

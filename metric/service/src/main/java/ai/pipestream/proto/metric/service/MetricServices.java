@@ -1,5 +1,6 @@
 package ai.pipestream.proto.metric.service;
 
+import ai.pipestream.proto.actions.ScopeBudgets;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.authz.grpc.ApiTokenServerInterceptor;
@@ -129,10 +130,19 @@ public final class MetricServices implements AutoCloseable {
      */
     public Server startInProcess(String name, String apiToken, CallerResolver resolver)
             throws IOException {
+        return startInProcess(name, apiToken, resolver, new ScopeBudgets());
+    }
+
+    /**
+     * Starts in-process with service identity, spending on the node's ledger; see
+     * {@link #startNetty(int, String, CallerResolver, ScopeBudgets)}.
+     */
+    public Server startInProcess(String name, String apiToken, CallerResolver resolver,
+            ScopeBudgets budgets) throws IOException {
         InProcessServerBuilder builder = InProcessServerBuilder.forName(name)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .intercept(ValidatingServerInterceptor.create());
-        identity(builder::intercept, apiToken, resolver);
+        identity(builder::intercept, apiToken, resolver, budgets);
         server = builder.addService(service)
                 .build()
                 .start();
@@ -154,11 +164,21 @@ public final class MetricServices implements AutoCloseable {
      * {@link #startInProcess(String, String, CallerResolver)}. */
     public Server startNetty(int port, String apiToken, CallerResolver resolver)
             throws IOException {
+        return startNetty(port, apiToken, resolver, new ScopeBudgets());
+    }
+
+    /**
+     * Starts on Netty with service identity, spending on {@code budgets}: a node that also
+     * mounts the metric actions passes the ledger it wired into the action catalog, so a
+     * principal's metric budget is one allowance across both transports.
+     */
+    public Server startNetty(int port, String apiToken, CallerResolver resolver,
+            ScopeBudgets budgets) throws IOException {
         HealthStatusManager health = new HealthStatusManager();
         NettyServerBuilder builder = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .intercept(ValidatingServerInterceptor.create());
-        identity(builder::intercept, apiToken, resolver);
+        identity(builder::intercept, apiToken, resolver, budgets);
         server = builder.addService(service)
                 .addService(health.getHealthService())
                 .addService(ProtoReflectionServiceV1.newInstance())
@@ -172,7 +192,7 @@ public final class MetricServices implements AutoCloseable {
      * credential check runs first on the wire, the scope table second, validation third.
      */
     private void identity(Consumer<ServerInterceptor> intercept, String apiToken,
-                          CallerResolver resolver) {
+                          CallerResolver resolver, ScopeBudgets budgets) {
         if (apiToken == null) {
             if (resolver != null) {
                 throw new IllegalArgumentException(
@@ -185,7 +205,8 @@ public final class MetricServices implements AutoCloseable {
                 Map.of(serviceName, Scopes.METRICS_QUERY),
                 Map.of(serviceName + "/RebuildRollup", Scopes.METRICS_REBUILD),
                 Set.of("grpc.health.v1.Health",
-                        "grpc.reflection.v1.ServerReflection")));
+                        "grpc.reflection.v1.ServerReflection"),
+                budgets));
         intercept.accept(new ApiTokenServerInterceptor(apiToken, resolver));
     }
 

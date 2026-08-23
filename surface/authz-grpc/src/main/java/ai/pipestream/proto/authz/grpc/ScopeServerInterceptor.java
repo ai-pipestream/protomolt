@@ -28,9 +28,12 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     private final Map<String, String> serviceScopes;
     private final Map<String, String> methodScopes;
     private final Set<String> openServices;
-    private final ScopeBudgets budgets = new ScopeBudgets();
+    private final ScopeBudgets budgets;
 
     /**
+     * An interceptor spending on its own ledger, for a surface that is the node's only
+     * enforcement point.
+     *
      * @param serviceScopes required scope by full service name
      * @param methodScopes overrides by full method name ({@code pkg.Service/Method})
      * @param openServices full service names served under authentication alone
@@ -38,6 +41,24 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     public ScopeServerInterceptor(Map<String, String> serviceScopes,
                                   Map<String, String> methodScopes,
                                   Set<String> openServices) {
+        this(serviceScopes, methodScopes, openServices, new ScopeBudgets());
+    }
+
+    /**
+     * An interceptor spending on {@code budgets}: the node's action catalog and its other
+     * guarded surfaces take the same ledger, so a caller cannot spend a per-scope budget
+     * once per transport.
+     *
+     * @param serviceScopes required scope by full service name
+     * @param methodScopes overrides by full method name ({@code pkg.Service/Method})
+     * @param openServices full service names served under authentication alone
+     * @param budgets the node's spending ledger
+     */
+    public ScopeServerInterceptor(Map<String, String> serviceScopes,
+                                  Map<String, String> methodScopes,
+                                  Set<String> openServices,
+                                  ScopeBudgets budgets) {
+        this.budgets = Objects.requireNonNull(budgets, "budgets");
         for (String scope : serviceScopes.values()) {
             requireKnown(scope);
         }

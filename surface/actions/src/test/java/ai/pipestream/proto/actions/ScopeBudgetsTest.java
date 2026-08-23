@@ -67,6 +67,32 @@ class ScopeBudgetsTest {
     }
 
     @Test
+    void everyPrincipalAndScopePairGetsItsOwnWindow() {
+        // The key joins the principal name and the scope over a NUL separator. Both halves
+        // are load-bearing: two principals on one scope, and one principal on two scopes,
+        // are four windows, not one shared allowance and not two.
+        Map<String, Budget> two = Map.of(
+                Scopes.SCHEMA_READ, new Budget(1, 0),
+                Scopes.SEARCH_QUERY, new Budget(1, 0));
+        Caller first = Caller.scoped("alice",
+                Set.of(Scopes.SCHEMA_READ, Scopes.SEARCH_QUERY), two);
+        Caller second = Caller.scoped("alicia",
+                Set.of(Scopes.SCHEMA_READ, Scopes.SEARCH_QUERY), two);
+        ScopeBudgets budgets = new ScopeBudgets(() -> 0);
+
+        assertThat(budgets.refuse(first, Scopes.SCHEMA_READ, -1)).isEmpty();
+        assertThat(budgets.refuse(first, Scopes.SEARCH_QUERY, -1)).isEmpty();
+        assertThat(budgets.refuse(second, Scopes.SCHEMA_READ, -1)).isEmpty();
+        assertThat(budgets.refuse(second, Scopes.SEARCH_QUERY, -1)).isEmpty();
+
+        // Each of the four is now exhausted on its own.
+        assertThat(budgets.refuse(first, Scopes.SCHEMA_READ, -1)).isPresent();
+        assertThat(budgets.refuse(first, Scopes.SEARCH_QUERY, -1)).isPresent();
+        assertThat(budgets.refuse(second, Scopes.SCHEMA_READ, -1)).isPresent();
+        assertThat(budgets.refuse(second, Scopes.SEARCH_QUERY, -1)).isPresent();
+    }
+
+    @Test
     void budgetsValidateAtConstruction() {
         assertThatThrownBy(() -> new Budget(0, 0))
                 .isInstanceOf(IllegalArgumentException.class)
