@@ -31,8 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The agent as a real child process, driven over stdio exactly as an IDE drives it:
  * initialize, open a session, prompt with console lines, read the streamed session/update
  * chunks. The unary leg runs the local {@code compile} verb; the streaming leg points
- * {@code grpc-invoke} at a DemoSearch-shaped dynamic server (a local stand-in for the
- * samples module's demo service) and asserts each hit arrives as its own chunk.
+ * {@code grpc-invoke} at a dynamic server declared inline here, shaped like the
+ * samples module's DemoSearchService, and asserts each hit arrives as its own
+ * chunk.
  */
 // Forking a JVM and running protoc under a fully parallel build is slow; this bound only has
 // to catch a genuine hang, so it sits above the client's own request timeout.
@@ -43,7 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("acp-protocol")
 class ProtoMoltAcpAgentProcessTest {
 
-    // Same shape as the samples module's DemoSearch service.
+    // Same shape as the samples module DemoSearchService, declared inline so the
+    // test needs no generated stubs.
     private static final String PROTO = """
             syntax = "proto3";
             package demo.search.v1;

@@ -1,9 +1,9 @@
 package ai.pipestream.proto.screening;
 
-import ai.pipestream.proto.screening.testdata.Contact;
+import ai.pipestream.proto.screening.testdata.v1.Contact;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
-import ai.pipestream.proto.screening.testdata.Profile;
+import ai.pipestream.proto.screening.testdata.v1.Profile;
 import ai.pipestream.proto.types.ScreeningConfig;
 import ai.pipestream.proto.types.ScreeningPolicy;
 import org.junit.jupiter.api.Test;

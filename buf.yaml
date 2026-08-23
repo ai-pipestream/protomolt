@@ -85,6 +85,20 @@ modules:
     name: buf.build/ai-pipestream/mesh-testdata
   - path: mesh/cluster/src/main/proto
     name: buf.build/ai-pipestream/mesh-cluster
+  - path: surface/grpc/service-profile/src/main/proto
+    name: buf.build/ai-pipestream/grpc-service-profile
+  - path: transform/receipt/src/main/proto
+    name: buf.build/ai-pipestream/receipt
+  - path: protobuf/quality/src/test/proto
+    name: buf.build/ai-pipestream/protobuf-quality-testdata
+  - path: transform/projection/src/test/proto
+    name: buf.build/ai-pipestream/projection-testdata
+  - path: transform/screening/src/test/proto
+    name: buf.build/ai-pipestream/screening-testdata
+  - path: sink/kafka/serde/src/test/proto
+    name: buf.build/ai-pipestream/kafka-serde-testdata
+  - path: samples/src/main/proto
+    name: buf.build/ai-pipestream/samples
 lint:
   use:
     - STANDARD
@@ -108,6 +122,17 @@ lint:
       # verbs by design: the service is descriptor-native and the canonical
       # proto3 JSON form of each action envelope IS the response payload.
       - surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto
+    # Every ProtoMolt proto that generates Java sets java_multiple_files. These
+    # two fixtures are deliberately inconsistent with each other because they
+    # stand in for FOREIGN descriptors, which ProtoMolt must consume whatever
+    # options they carry. GeneratedMessages reads the option off the descriptor
+    # and reconstructs protoc's outer-class rule when it is absent, including
+    # the OuterClass suffix protoc appends when a top-level type already claims
+    # the file's derived name. legacy_event.proto is the only fixture that
+    # reaches that branch. Aligning the option would delete the case under test.
+    PACKAGE_SAME_JAVA_MULTIPLE_FILES:
+      - sink/kafka/serde/src/test/proto/serde/gen/v1/gen_order.proto
+      - sink/kafka/serde/src/test/proto/serde/gen/v1/legacy_event.proto
     RPC_RESPONSE_STANDARD_NAME:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
       # Same deliberate Struct responses as RPC_REQUEST_RESPONSE_UNIQUE above.
