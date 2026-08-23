@@ -136,9 +136,19 @@ class SearchConsoleServerTest {
             byte[] answer;
             int status = 200;
             if (path.endsWith("/actions")) {
-                answer = "[{\"name\":\"list-jobs\"}]".getBytes(StandardCharsets.UTF_8);
+                // The manifest shape the catalog tab renders from: name, description, schema.
+                answer = ("[{\"name\":\"list-jobs\",\"description\":\"List jobs.\","
+                        + "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}]")
+                        .getBytes(StandardCharsets.UTF_8);
             } else if (path.endsWith("/echo-input")) {
                 answer = body;
+            } else if (path.endsWith("/describe-mapping")) {
+                answer = ("{\"mappingSubject\":\"repo-document\","
+                        + "\"messageType\":\"ai.pipestream.proto.repo.v1.Document\","
+                        + "\"members\":[{\"name\":\"documents\",\"role\":\"MEMBER_ROLE_MEASURE\","
+                        + "\"aggregate\":\"AGGREGATE_COUNT\"}],"
+                        + "\"backends\":[\"METRIC_BACKEND_LUCENE\"]}")
+                        .getBytes(StandardCharsets.UTF_8);
             } else {
                 status = 404;
                 answer = "{\"error\":\"unknown-action\"}".getBytes(StandardCharsets.UTF_8);
@@ -198,6 +208,69 @@ class SearchConsoleServerTest {
         assertThat(page.headers().firstValue("Content-Type")).contains("text/html; charset=utf-8");
         assertThat(page.body()).contains("Search Console").contains("/subjects");
         assertThat(get(console, "/nowhere").statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    void theFourTabsAreDeclaredAndOnlySearchStartsVisible() throws Exception {
+        String page = get(console, "/").body();
+        for (String tab : new String[] {"search", "metrics", "catalog", "operations"}) {
+            assertThat(page).as("tab button for " + tab).contains("data-tab=\"" + tab + "\"");
+            assertThat(page).as("panel for " + tab).contains("id=\"panel-" + tab + "\"");
+        }
+        // Search is the landing tab, so its panel alone carries no hidden attribute.
+        assertThat(page).contains("<section class=\"panel\" id=\"panel-search\">");
+        assertThat(page).contains("id=\"panel-metrics\" hidden")
+                .contains("id=\"panel-catalog\" hidden")
+                .contains("id=\"panel-operations\" hidden");
+    }
+
+    /**
+     * The metrics tab is purpose-built on three declared actions and must not invent a fourth.
+     * Naming them here means a rename on the service side fails visibly rather than leaving a
+     * tab that refuses at the first click.
+     */
+    @Test
+    void theMetricsTabDrivesTheDeclaredMetricActions() throws Exception {
+        String page = get(console, "/").body();
+        assertThat(page).contains("'describe-mapping'")
+                .contains("'query-metrics'")
+                .contains("'rebuild-rollup'");
+        // The query is built from the mapping's own members, so the roles it splits on are
+        // the enum names the service returns.
+        assertThat(page).contains("MEMBER_ROLE_MEASURE").contains("MEMBER_ROLE_DIMENSION");
+    }
+
+    /** The catalog form is rendered from each action's declared schema, not from a hardcoded list. */
+    @Test
+    void theCatalogRendersFromTheDeclaredInputSchema() throws Exception {
+        String page = get(console, "/").body();
+        assertThat(page).contains("inputSchema").contains("schema.required");
+    }
+
+    /**
+     * The guard on the tab restructure: everything the page drove before still has its element
+     * and still names the same action, so moving surfaces into tabs removed no functionality.
+     */
+    @Test
+    void theSurfacesThatExistedBeforeTheTabsSurvive() throws Exception {
+        String page = get(console, "/").body();
+        assertThat(page).contains("'replay-documents'").contains("'list-jobs'");
+        for (String id : new String[] {"searchForm", "subject", "lane", "k", "query", "hits",
+                "status", "replayForm", "replayWorkflow", "replayDrive", "replayAccount",
+                "jobsForm", "opsOut", "jobs", "loginForm", "credential", "signout"}) {
+            assertThat(page).as("element " + id).contains("id=\"" + id + "\"");
+        }
+        assertThat(page).contains("/subjects").contains("/search").contains("/session");
+    }
+
+    /** A metrics call reaches the actions route by the same proxy the operations panel uses. */
+    @Test
+    void metricActionsReachTheActionsRouteThroughTheSameProxy() throws Exception {
+        HttpResponse<String> described = post(console, "/actions/describe-mapping",
+                "{\"mappingSubject\":\"repo-document\"}");
+        assertThat(described.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(described.body()).get("mappingSubject").asText())
+                .isEqualTo("repo-document");
     }
 
     @Test
