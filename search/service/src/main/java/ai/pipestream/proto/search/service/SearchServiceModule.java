@@ -272,6 +272,11 @@ public final class SearchServiceModule implements ServiceModule {
                             .toString());
         }
 
+        // Querying is agent-operable wherever the service is mounted, read-only nodes
+        // included: a reader serves no indexing surface but is exactly what a search is for.
+        context.contributions().contribute(
+                ProtoAction.class, new SearchAction(service.store()));
+
         // With a co-mounted jobs module, replay rides its submit action: the
         // replay-documents action re-runs a stored workflow over a listing.
         context.contributions().all(ProtoAction.class).stream()
