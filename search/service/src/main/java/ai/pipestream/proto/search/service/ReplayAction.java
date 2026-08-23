@@ -4,13 +4,18 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
+import ai.pipestream.proto.search.v1.ReplayDocumentsRequest;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
@@ -43,6 +48,12 @@ public final class ReplayAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "replay-documents";
+
+    /**
+     * Enforces the request contract on the catalog path, which does not sit behind the
+     * validating interceptor the gRPC surface uses.
+     */
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int PAGE_SIZE = 100;
@@ -93,66 +104,31 @@ public final class ReplayAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = MAPPER.createObjectNode();
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("workflowName")
-                .put("type", "string")
-                .put("description", "Stored workflow to run per document, e.g. parse-and-index");
-        properties.putObject("mappingSubject")
-                .put("type", "string")
-                .put("description", "Mapping subject the workflow indexes under");
-        properties.putObject("drive")
-                .put("type", "string")
-                .put("description", "Drive whose documents replay; required unless prune,"
-                        + " refused with it");
-        properties.putObject("accountId")
-                .put("type", "string")
-                .put("description", "Optional account (tenant) filter; refused with prune");
-        properties.putObject("replayId")
-                .put("type", "string")
-                .put("description", "Optional replay identifier; when set, every document's"
-                        + " run gets a deterministic jobId derived from it, so re-running"
-                        + " the same replay resubmits nothing");
-        properties.putObject("prune")
-                .put("type", "boolean")
-                .put("description", "Reconcile: replay the whole repository listing and"
-                        + " remove indexed documents the listing no longer contains;"
-                        + " unscoped by design, so drive and accountId are refused");
-        schema.putArray("required").add("workflowName").add("mappingSubject");
-        return schema;
+        // Derived from the request message, so the schema states the two cross-field rules the
+        // gate enforces rather than describing them only in prose.
+        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
+                .generate(ReplayDocumentsRequest.getDescriptor()));
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String workflowName = requiredString(input, "workflowName");
-        String mappingSubject = requiredString(input, "mappingSubject");
-        boolean prune = input.path("prune").asBoolean(false);
-        JsonNode account = input.get("accountId");
-        String drive;
+        // The message declares that a scoped replay names a drive and a reconciling one takes
+        // neither drive nor account. Those rules are checked here because the catalog path does
+        // not sit behind the validating interceptor the gRPC surface uses.
+        ReplayDocumentsRequest request = parse(input, context);
+        String workflowName = request.getWorkflowName();
+        String mappingSubject = request.getMappingSubject();
+        boolean prune = request.getPrune();
+        String accountId = request.getAccountId();
+        String drive = request.getDrive();
         Set<String> indexedBefore = null;
         if (prune) {
-            if (optionalString(input, "drive") != null) {
-                throw new ActionException("invalid-input", "'drive' cannot be set with"
-                        + " 'prune': prune reconciles the whole mapping subject against"
-                        + " the whole repository listing, and a drive-scoped listing"
-                        + " would prune other drives' documents");
-            }
-            if (account != null && !account.asText().isBlank()) {
-                throw new ActionException("invalid-input", "'accountId' cannot be set"
-                        + " with 'prune': prune reconciles the whole mapping subject"
-                        + " against the whole repository listing, and an account-scoped"
-                        + " listing would prune other accounts' documents");
-            }
-            drive = "";
             // Captured before the listing pages: a document indexed while
             // the replay runs is never a prune candidate. Also refuses an
             // unknown subject before anything resubmits.
             indexedBefore = index.indexedDocIds(mappingSubject);
-        } else {
-            drive = requiredString(input, "drive");
         }
-        String replayId = optionalString(input, "replayId");
+        String replayId = request.getReplayId();
 
         ObjectNode output = MAPPER.createObjectNode();
         ArrayNode jobIds = output.putArray("jobIds");
@@ -164,8 +140,8 @@ public final class ReplayAction implements ProtoAction {
                     .setDrive(drive)
                     .setLimit(PAGE_SIZE)
                     .setContinuationToken(continuation);
-            if (account != null && !account.asText().isBlank()) {
-                page.setAccountId(account.asText());
+            if (!accountId.isEmpty()) {
+                page.setAccountId(accountId);
             }
             ListDocumentsResponse listing = lister.list(page.build());
             for (DocumentMetadata document : listing.getDocumentsList()) {
@@ -176,7 +152,10 @@ public final class ReplayAction implements ProtoAction {
                 ObjectNode envelope = MAPPER.createObjectNode();
                 envelope.put("workflowName", workflowName);
                 envelope.set("input", workflowInput);
-                if (replayId != null) {
+                // Absent means an empty string on the wire, not null. Treating the empty
+                // string as a name would give every replay a deterministic job id and make
+                // an unnamed replay silently idempotent.
+                if (!replayId.isEmpty()) {
                     envelope.put("jobId", runJobId(
                             replayId, workflowName, mappingSubject, drive,
                             document.getDocId()));
@@ -237,5 +216,44 @@ public final class ReplayAction implements ProtoAction {
                         replayId, workflowName, mappingSubject, drive, docId)
                 .getBytes(StandardCharsets.UTF_8))
                 .toString();
+    }
+
+    /**
+     * Reads the envelope into a request and holds it to the message's declared rules.
+     *
+     * <p>The envelope is the request message's canonical proto3 JSON form, so one document
+     * works over gRPC, over the JSON gateway, and as a tool call.
+     */
+    private ReplayDocumentsRequest parse(ObjectNode input, ActionContext context)
+            throws ActionException {
+        ReplayDocumentsRequest.Builder request = ReplayDocumentsRequest.newBuilder();
+        try {
+            JsonFormat.parser().merge(input.toString(), request);
+        } catch (InvalidProtocolBufferException e) {
+            throw new ActionException("invalid-input",
+                    "the replay is not a valid ReplayDocumentsRequest: " + e.getMessage());
+        }
+        ReplayDocumentsRequest built = request.build();
+        ValidationResult result = VALIDATOR.validate(built);
+        if (!result.valid()) {
+            ObjectNode details = context.objectMapper().createObjectNode();
+            ArrayNode violations = details.putArray("violations");
+            for (ValidationResult.Violation violation : result.violations()) {
+                ObjectNode node = violations.addObject();
+                node.put("field", violation.path());
+                node.put("ruleId", violation.ruleId());
+                node.put("message", violation.message());
+            }
+            StringBuilder prose = new StringBuilder();
+            for (ValidationResult.Violation violation : result.violations()) {
+                if (prose.length() > 0) {
+                    prose.append("; ");
+                }
+                prose.append(violation.path()).append(' ').append(violation.message());
+            }
+            throw new ActionException("invalid-input",
+                    "The replay does not satisfy its contract: " + prose, details);
+        }
+        return built;
     }
 }
