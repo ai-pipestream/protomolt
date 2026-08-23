@@ -777,7 +777,7 @@ final class SearchConsolePage {
                 metricSay('Querying', 'working');
                 el('metricOut').innerHTML = '';
                 let answer;
-                try { answer = await action('query-metrics', { request }); }
+                try { answer = await action('query-metrics', request); }
                 catch (err) { metricSay(err.message, 'error'); return; }
                 const rows = answer.rowCount || 0;
                 metricSay(`${rows} row${rows === 1 ? '' : 's'} via `
@@ -852,7 +852,7 @@ final class SearchConsolePage {
                 }
                 metricSay('Rebuilding', 'working');
                 try {
-                  const answer = await action('rebuild-rollup', { request });
+                  const answer = await action('rebuild-rollup', request);
                   metricSay(`Rebuilt ${answer.table} via `
                       + `${shortEnum(answer.backend) || 'mount default'}`);
                   el('metricOut').innerHTML = '';

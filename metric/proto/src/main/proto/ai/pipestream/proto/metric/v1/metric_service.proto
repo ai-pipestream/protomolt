@@ -101,16 +101,33 @@ message QueryMetricsRequest {
   // mount's engine; unset on a multi-engine mount is refused naming the
   // mounted engines. A backend the subject was not mounted with is refused.
   MetricBackend backend = 2;
-  // Measure member names to compute. Required, at least one.
+  // Measure member names to compute. Required, at least one. Each name is
+  // bounded like every other member reference, so an unbounded string cannot
+  // reach the executor through this field.
   repeated string measures = 3 [
     (ai.pipestream.proto.validate.v1.field) = {
-      repeated: {min_items: 1}
+      repeated: {
+        min_items: 1
+        max_items: 100
+        items: {string: {min_len: 1, max_len: 200}}
+      }
     }
   ];
-  // Group-by dimensions; empty means one row over all matching rows.
-  repeated MemberRef dimensions = 4;
-  // Row filters, all of which must match (AND).
-  repeated MetricFilter filters = 5;
+  // Group-by dimensions; empty means one row over all matching rows. Bounded
+  // because the group cardinality a query can request is the cost the
+  // executor pays.
+  repeated MemberRef dimensions = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 32}
+    }
+  ];
+  // Row filters, all of which must match. Bounded for the same reason as
+  // the dimensions above.
+  repeated MetricFilter filters = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64}
+    }
+  ];
   // Maximum result rows. Required; must be positive and bounded — over-cap
   // requests are refused, not clamped.
   int32 limit = 6 [
@@ -204,16 +221,33 @@ message RebuildRollupRequest {
   ];
   // Explicit engine selector, resolved exactly like QueryMetrics.
   MetricBackend backend = 2;
-  // Measure member names to compute. Required, at least one.
+  // Measure member names to compute. Required, at least one. Each name is
+  // bounded like every other member reference, so an unbounded string cannot
+  // reach the executor through this field.
   repeated string measures = 3 [
     (ai.pipestream.proto.validate.v1.field) = {
-      repeated: {min_items: 1}
+      repeated: {
+        min_items: 1
+        max_items: 100
+        items: {string: {min_len: 1, max_len: 200}}
+      }
     }
   ];
-  // Group-by dimensions; empty means one row over all matching rows.
-  repeated MemberRef dimensions = 4;
-  // Row filters, all of which must match (AND).
-  repeated MetricFilter filters = 5;
+  // Group-by dimensions; empty means one row over all matching rows. Bounded
+  // because the group cardinality a query can request is the cost the
+  // executor pays.
+  repeated MemberRef dimensions = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 32}
+    }
+  ];
+  // Row filters, all of which must match. Bounded for the same reason as
+  // the dimensions above.
+  repeated MetricFilter filters = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64}
+    }
+  ];
   // The rollup table name inside the mount's lake namespace. Required.
   string table = 6 [
     (ai.pipestream.proto.validate.v1.field) = {

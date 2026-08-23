@@ -134,6 +134,14 @@ lint:
 breaking:
   use:
     - FILE
+  except:
+    # Temporary, for the response-type change that gave every ProtoMoltService
+    # method a declared response message in place of google.protobuf.Struct.
+    # Eight RPCs changed response type, which FILE correctly reports as a wire
+    # break. Nothing consumes these responses yet, so the break is deliberate.
+    # Drop this block in the next pull request that touches this file, per the
+    # convention recorded below.
+    - RPC_SAME_RESPONSE_TYPE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore
