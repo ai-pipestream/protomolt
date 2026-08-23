@@ -68,6 +68,9 @@ project(':protomolt-acquire-jdbc').projectDir = file('acquire/jdbc')
 
 // schema/ — the registry and its wire-compatible backends.
 
+include 'protomolt-registry-proto'
+project(':protomolt-registry-proto').projectDir = file('schema/registry/proto')
+
 include 'protomolt-registry'
 project(':protomolt-registry').projectDir = file('schema/registry/core')
 

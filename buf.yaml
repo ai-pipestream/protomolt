@@ -52,6 +52,8 @@ modules:
     name: buf.build/ai-pipestream/metric
   - path: search/proto/src/main/proto
     name: buf.build/ai-pipestream/search
+  - path: schema/registry/proto/src/main/proto
+    name: buf.build/ai-pipestream/schema-registry
   # The canonical parser-fleet document model; fleet repos re-vendor it from
   # here, byte-identical. It keeps the fleet's docling-parity lint bar, so it
   # is exempted from lint (in the TOP-LEVEL lint.ignore below: a
