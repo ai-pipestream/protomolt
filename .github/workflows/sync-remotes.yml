@@ -1,0 +1,34 @@
+name: Sync remotes
+
+# Keeps the forgejo and github mains identical without ever rewriting
+# either. The state machine lives in scripts/sync-remotes.sh; this job only
+# supplies credentials. Runs hourly and on demand.
+#
+# Secrets used:
+#   GITEA_TOKEN    (org) forgejo credential with push scope on this repo
+#   FORGEJO_ACTOR  (repo) forgejo user name for the push URL
+#   GH_PAT         (org) GitHub PAT, used for gh pr create because PRs opened
+#                  with the ambient GITHUB_TOKEN do not trigger CI
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync forgejo and github mains
+        env:
+          FORGEJO_REMOTE: https://${{ secrets.FORGEJO_ACTOR }}:${{ secrets.GITEA_TOKEN }}@git.rokkon.com/ai-pipestream/protomolt.git
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: bash scripts/sync-remotes.sh
