@@ -2,6 +2,10 @@ description = 'S3 pull connector: lists a bucket, pulls new and changed objects 
 
 dependencies {
     api project(':protomolt-acquire-pull')
+    // The verb's input schema is derived from its request message rather than
+    // hand-written, so the declared rules reach every caller.
+    implementation project(':protomolt-http-jsonschema')
+    implementation project(':protomolt-protobuf-validation')
     api project(':protomolt-composer')
     implementation project(':protomolt-actions')
     implementation platform(libs.awssdk.bom)

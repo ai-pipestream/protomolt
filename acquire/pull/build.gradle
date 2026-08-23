@@ -1,10 +1,25 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
 description = 'Shared pull-connector core: the intake feed seam (gRPC submission with the API key), the stable-identity document wrap, and the pull report'
 
 dependencies {
+    api libs.protobuf.java
     api project(':protomolt-intake-proto')
+    // The pull request contracts carry the house validation options.
+    api project(':protomolt-protobuf-validation')
+    // Verb input schemas are derived from those contracts rather than hand-written.
+    implementation project(':protomolt-http-jsonschema')
     api project(':protomolt-repo-proto')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.inprocess
 
     testRuntimeOnly libs.slf4j.simple
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.1"
+    }
 }

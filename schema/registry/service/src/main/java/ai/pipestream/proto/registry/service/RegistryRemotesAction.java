@@ -3,6 +3,8 @@ package ai.pipestream.proto.registry.service;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.schema.registry.v1.RegistryRemotesRequest;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.registry.RegistryFederation;
 import ai.pipestream.proto.registry.RegistryStoreException;
@@ -56,36 +58,29 @@ public final class RegistryRemotesAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = MAPPER.createObjectNode();
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        ObjectNode op = properties.putObject("op");
-        op.put("type", "string");
-        op.putArray("enum").add("list").add("add").add("remove");
-        op.put("description", "The operation");
-        properties.putObject("name")
-                .put("type", "string")
-                .put("description", "Remote name, [a-z][a-z0-9-]*; required for add and remove");
-        properties.putObject("url")
-                .put("type", "string")
-                .put("description", "Git URL of the remote registry; required for add");
-        schema.putArray("required").add("op");
-        return schema;
+        // Derived from the request message. The three cross-field rules it declares state
+        // which members each operation needs, so the caller learns them from the schema
+        // rather than from a refusal.
+        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
+                .generate(RegistryRemotesRequest.getDescriptor()));
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String op = input.path("op").asText("");
+        // The message declares the operation required and states which members each one
+        // needs, so those checks live in the contract rather than being repeated here.
+        RegistryRemotesRequest request = (RegistryRemotesRequest) RegistryRequests.validate(
+                input, RegistryRemotesRequest.newBuilder(), "registry-remotes");
         try {
-            switch (op) {
-                case "list" -> {
-                    // list takes no other input
+            switch (request.getOperation()) {
+                case REMOTE_OPERATION_LIST -> {
+                    // Listing changes nothing; the response below is the whole answer.
                 }
-                case "add" -> federation.addRemote(
-                        requiredString(input, "name"), requiredString(input, "url"));
-                case "remove" -> federation.removeRemote(requiredString(input, "name"));
+                case REMOTE_OPERATION_ADD ->
+                        federation.addRemote(request.getName(), request.getUrl());
+                case REMOTE_OPERATION_REMOVE -> federation.removeRemote(request.getName());
                 default -> throw new ActionException("invalid-input",
-                        "op must be list, add or remove; got '" + op + "'");
+                        "operation must name one of the declared values");
             }
         } catch (IllegalArgumentException e) {
             throw new ActionException("invalid-input", e.getMessage());

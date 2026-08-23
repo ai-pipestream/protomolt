@@ -5,6 +5,12 @@ import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.acquire.pull.PullReport;
+import ai.pipestream.proto.acquire.pull.v1.PullFromJdbcRequest;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.ValidationResult;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -19,6 +25,9 @@ public final class JdbcPullAction implements ProtoAction {
     public static final String NAME = "pull-jdbc";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** Enforces the request contract on the catalog path. */
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private final JdbcPull pull;
 
@@ -55,48 +64,25 @@ public final class JdbcPullAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = MAPPER.createObjectNode();
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("query")
-                .put("type", "string")
-                .put("description", "Source query; one ? placeholder for incremental pulls,"
-                        + " none for a first pull; must order by the watermark column");
-        properties.putObject("idColumn")
-                .put("type", "string")
-                .put("description", "Result-set column carrying the row's stable identity");
-        properties.putObject("watermarkColumn")
-                .put("type", "string")
-                .put("description", "Result-set column the watermark advances along");
-        properties.putObject("datasourceId")
-                .put("type", "string")
-                .put("description", "Datasource pulled documents belong to");
-        properties.putObject("drive")
-                .put("type", "string")
-                .put("description", "Target drive; omit for intake's default");
-        properties.putObject("watermark")
-                .put("type", "string")
-                .put("description", "The previous pull's watermark; omit for a first pull");
-        properties.putObject("maxRows")
-                .put("type", "integer")
-                .put("description", "Cap on rows processed this pass; omit for no cap");
-        schema.putArray("required")
-                .add("query").add("idColumn").add("watermarkColumn").add("datasourceId");
-        return schema;
+        // Derived from the request message, so the bounds and the required columns the pass
+        // relies on are visible to a caller before it starts one.
+        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
+                .generate(PullFromJdbcRequest.getDescriptor()));
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        PullFromJdbcRequest request = parse(input);
         PullReport report;
         try {
             report = pull.pull(
-                    input.path("query").asText(""),
-                    input.path("idColumn").asText(""),
-                    input.path("watermarkColumn").asText(""),
-                    input.path("datasourceId").asText(""),
-                    input.path("drive").asText(""),
-                    input.path("watermark").asText(""),
-                    input.path("maxRows").asInt(0));
+                    request.getQuery(),
+                    request.getIdColumn(),
+                    request.getWatermarkColumn(),
+                    request.getDatasourceId(),
+                    request.getDrive(),
+                    request.getWatermark(),
+                    request.getMaxRows());
         } catch (IllegalArgumentException e) {
             throw new ActionException("invalid-input", e.getMessage());
         } catch (RuntimeException e) {
@@ -110,5 +96,36 @@ public final class JdbcPullAction implements ProtoAction {
         report.errors().forEach(errors::add);
         output.put("watermark", report.watermark());
         return output;
+    }
+
+    /**
+     * Reads the envelope into a request and holds it to the message's declared rules.
+     *
+     * <p>Calls arriving through the catalog do not pass the validating interceptor the gRPC
+     * surface uses, so the rules are applied here rather than left to the pass to discover
+     * after it has opened a connection.
+     */
+    private static PullFromJdbcRequest parse(ObjectNode input) throws ActionException {
+        PullFromJdbcRequest.Builder request = PullFromJdbcRequest.newBuilder();
+        try {
+            JsonFormat.parser().merge(input.toString(), request);
+        } catch (InvalidProtocolBufferException e) {
+            throw new ActionException("invalid-input",
+                    "the pull is not a valid PullFromJdbcRequest: " + e.getMessage());
+        }
+        PullFromJdbcRequest built = request.build();
+        ValidationResult result = VALIDATOR.validate(built);
+        if (!result.valid()) {
+            StringBuilder prose = new StringBuilder();
+            for (ValidationResult.Violation violation : result.violations()) {
+                if (prose.length() > 0) {
+                    prose.append("; ");
+                }
+                prose.append(violation.path()).append(' ').append(violation.message());
+            }
+            throw new ActionException("invalid-input",
+                    "The pull does not satisfy its contract: " + prose);
+        }
+        return built;
     }
 }

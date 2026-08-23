@@ -5,6 +5,11 @@ dependencies {
     api project(':protomolt-workflow')
     api project(':protomolt-registry')
     api project(':protomolt-actions')
+    // The administrative verbs take declared request messages.
+    api project(':protomolt-registry-proto')
+    // Their input schemas are derived from those messages rather than hand-written.
+    implementation project(':protomolt-http-jsonschema')
+    implementation project(':protomolt-protobuf-validation')
     api project(':protomolt-authz')
 
     implementation project(':protomolt-emit-parquet')
