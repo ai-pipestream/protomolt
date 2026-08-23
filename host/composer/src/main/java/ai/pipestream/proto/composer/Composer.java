@@ -26,8 +26,9 @@ import org.slf4j.LoggerFactory;
  * Boots a protomolt node from a role list. Modules come from
  * {@link ServiceLoader} (or are injected for tests), are topologically
  * ordered by {@link ServiceModule#requires()}, wired in order, and started
- * in order; shutdown closes everything in reverse. See
- * {@code DESIGN-service-modules.md} for the architecture.
+ * in order; shutdown closes everything in reverse. See the
+ * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/apps/role-nodes.md">role
+ * nodes guide</a> for the architecture.
  *
  * <p>The composer carries no transport: remote channels are opened through
  * the injected {@linkplain Builder#remoteOpener(Function) opener} under the

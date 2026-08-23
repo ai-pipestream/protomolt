@@ -1,14 +1,28 @@
 # Metric mappings and the Cube comparison
 
-Status: design record, 2026-08-17. Rewritten from the first-draft notes,
-which underread both sides: they treated Cube as "a semantic layer plus
-out-of-scope chrome" and ProtoMolt as "a toolkit missing a query." The
-grounded position is different. ProtoMolt already carries most of what
-Cube's platform does, several pieces more rigorously; Cube's real edge is
-the analytics half (aggregate compiler, pre-aggregations, BI surfaces).
-That half is deliberately sequenced **after search lands fully**. Nothing
-in this note is implemented; feature guides belong under `docs/search/`
-once code exists.
+Status: design of record. The framing it argues is unchanged: ProtoMolt
+carries most of what Cube's platform does, several pieces more
+rigorously, and the analytics half is where Cube led.
+
+The v1 described here **is implemented**, and further than the sketch:
+the option dialect, the query contract, the SPI, both executors, the
+three catalog verbs, declared rollups with rebuild-time enrichment, and
+the `metric` role all ship. What still separates the two is the BI
+surface and automatic aggregate awareness, both deliberate non-goals.
+Every section below carries its own state.
+
+| Section | State |
+|---|---|
+| The playing field, What Cube is in 2026, Vocabulary | Position; unchanged |
+| Where ProtoMolt already stands | Comparison, refreshed against shipped code |
+| The gap, precisely | Closed; kept as the record of what the work answered |
+| Sequencing: search lands first | Honored; history |
+| Decisions of record | In force; the no-joins decision superseded and marked as such |
+| Thin v1 (options, query contract, actions, SPI, execution, mounting, snapshots) | Shipped, with the deltas named per section |
+| Out of scope | In force, minus the joins line that [metric joins](metric-joins.md) answered |
+| Module layout | Shipped; the table is the built layout |
+| Acceptance for v1 | Met |
+| Open questions for the scoping pass | Settled; answers recorded inline |
 
 ## The playing field
 
@@ -73,9 +87,12 @@ through everything below.
 
 ## Vocabulary (ADR-001)
 
-The metric work is a **mapping** (the queryable surface) plus, later, a
-**workflow** (optional refresh). Do not introduce semantic layer, cube,
-rollup, pre-aggregation, or metric store as product nouns.
+The metric work is a **mapping** (the queryable surface) plus a
+**workflow** (optional rebuild). Do not introduce semantic layer, cube,
+pre-aggregation, or metric store as product nouns. **Rollup** is the
+one exception this list originally refused: it is the shipped name for
+a declared, durably materialized aggregate table, and it appears on
+the wire (`RebuildRollup`, `rollup:<table>`). Nothing else joins it.
 
 | Word | Means here | Does not mean |
 |---|---|---|
@@ -84,6 +101,7 @@ rollup, pre-aggregation, or metric store as product nouns.
 | metric query | Request: subject, measures, group-by members, filters, grain, limit | Ad-hoc warehouse SQL |
 | grain | Time truncation on a `DATE` member (`DAY`, `WEEK`, `MONTH`, ...) | A Cube time dimension object |
 | backend | Physical executor (Lucene or Iceberg/DuckDB) | A second database product |
+| rollup | A lake table an explicit rebuild replaced with a complete aggregate | A Cube pre-aggregation matched to queries automatically |
 
 `measure` and `dimension` appear only as **member roles** on the wire.
 Quality's `QualityDimension` stays a per-message CEL score; the two
@@ -118,8 +136,8 @@ Cube's views (consumer facades) map to mapping subjects, descriptor
 projections, and synthesized shapes; join-shapes registers a join's
 output contract as a real `.proto` with history and compatibility
 checks, which is the structural answer to a SQL join's SELECT list
-evaporating. What ProtoMolt does not have is Cube's aggregate-member
-grammar; that is the gap, treated below.
+evaporating. The aggregate-member grammar this note treated as the gap
+is now `metric.v1` on the same descriptors.
 
 ### Serving surfaces: equivalent by different means
 
@@ -138,10 +156,11 @@ This is where the first draft was most wrong. Cube's agentic platform
 is Cloud-gated and chat-first; its MCP server is a paid-tier feature.
 ProtoMolt's agent surface is core, free, and protocol-plural:
 
-- A self-describing action catalog: 17 descriptor-only defaults, 31 in
-  the stdio MCP binary, 41 in the full catalog, plus host-contributed
-  verbs (delegation, mesh, federation, search replay, connector pulls) to
-  roughly sixty on a composed platform. Every verb declares name,
+- A self-describing action catalog: descriptor-only defaults, a larger
+  standalone MCP catalog, the full catalog
+  ([counts](../generated/action-inventory.json)), plus host-contributed
+  verbs (delegation, mesh, metrics, federation, search replay, connector
+  pulls) on a composed platform. Every verb declares name,
   tool-grade description, and JSON Schema input, so the catalog **is**
   the MCP manifest with no translation layer. Stable kebab-case error
   codes are distinct per repair strategy, so a model knows whether to
@@ -171,9 +190,11 @@ ProtoMolt's agent surface is core, free, and protocol-plural:
   multi-agent coordination Cube schedules as "agent tasks."
 
 What Cube's agent suite has that ProtoMolt does not: tenant/user agent
-memories, markdown behavior rules, BYO-LLM routing as a product
-feature, and above all agents that can answer **aggregate** questions.
-The last one is the analytics gap, not an agentic gap.
+memories, markdown behavior rules, and BYO-LLM routing as a product
+feature. Aggregate answers were the fourth item on that list until
+`describe-mapping`, `query-metrics`, and `rebuild-rollup` joined the
+catalog; an agent on any of these protocols now asks aggregate
+questions with no chat-specific code.
 
 ### The substrate: not comparable, and ours
 
@@ -202,50 +223,43 @@ of overlap rather than product-versus-product.
 | Views / consumer facades | Mapping subjects, projections, synthesized shapes | Match |
 | Member metadata / `ai_context` | `meta.v1` + `extract-metadata` + `render-prompt` | Match |
 | Masking / member security | `mask-message` on sensitivity classes | Match (authorization scopes landed; the caller-derived policy rewrite is not built) |
-| Row-level derived values | CEL mapping, quality CEL, projection CEL | Match, not aggregate-aware |
-| Measures / dimensions / group-by compiler | Nothing computes a measure | **Gap** |
-| Time grain queries | `DATE` hints exist; no grain execution | **Gap** |
-| Pre-aggregations / Cube Store / aggregate awareness | Parquet column metrics are file-skipping stats only | **Gap** (mostly stays out of scope) |
+| Row-level derived values | CEL mapping, quality CEL, projection CEL | Match |
+| Measures / dimensions / group-by compiler | `metric.v1` members, the SPI's compiler, `QueryMetrics` on Lucene and Iceberg/DuckDB | Match |
+| Time grain queries | `TimeGrain` on `DATE` dimensions, executed by both engines | Match |
+| Pre-aggregations / Cube Store / aggregate awareness | Declared rollups: `rebuild-rollup` writes a complete aggregate to a lake table, served back as `rollup:<table>` | Partial by design (declared and durable; no automatic query rewriting onto rollups, and no refresh worker) |
 | REST / metadata APIs | REST gateway, OpenAPI, JSON Schema, `list-types` | Match |
 | SQL / GraphQL / DAX / MDX wires | None | Deliberate non-goal |
-| MCP | Core and free, 41+ verbs, resources, stdio + HTTP | Ahead (theirs is paid Cloud) |
-| Analytics Chat / certified queries / evals | Workbench: check, record, replay, promote with proto-validated requests and replies | Ahead on rigor; no aggregate answers until the gap closes |
+| MCP | Core and free, resources, stdio + HTTP | Ahead (theirs is paid Cloud) |
+| Analytics Chat / certified queries / evals | Workbench: check, record, replay, promote with proto-validated requests and replies, over a catalog that now aggregates | Ahead on rigor |
 | Agent memories, rules, BYO-LLM product | Inference module has provider config; no memory/rules product | Behind (low priority) |
 | Workbooks, dashboards, charts, embeds | Search console (8096) and registry console only | Behind, out of scope |
 | Row-level security with JWT query rewrite | The access policy's `metric_access` rewrites at compile time: denied members and injected row filters per principal, fail-closed rollups | Match ([authorization scopes](authorization-scopes.md)) |
 | Ingest / parse / RAG / lake write | The whole acquire-to-sink platform | Ours alone |
 
-One asterisk on our own column: the search service's `validate.v1`
-annotations on
-`search.v1` are machine-readable contract, but the validating server
-interceptors are not yet installed in any production server; live
-enforcement is the service's hand-written refusals. Closing that is part
-of landing search, not part of the metric work.
+## The gap, precisely (closed)
 
-## The gap, precisely
+The gap this note was written around: `facetable` hints reached the
+index (SortedSet/SortedNumeric doc values) and the Iceberg sink stamped
+column metrics, but nothing read any of it back as an answer. A storage
+layer that was aggregation-ready under a query surface that could not
+sum.
 
-Aggregation. `facetable` hints are honored all the way into the index
-(SortedSet/SortedNumeric doc values, exercised by the SEO schemas), and
-the Iceberg sink stamps column metrics, but nothing reads any of it
-back as an answer: no faceting collector runs at query time,
-`SearchRequest` has no group-by, filter, or aggregation field, and
-`describe-mapping` / `query-metrics` appear in zero Java files. A
-storage layer that is aggregation-ready and a query surface that cannot
-sum: that is the whole gap, and it is exactly shaped like the thin v1
-below.
+The metric service closes it. `SearchRequest` still has no group-by,
+filter, or aggregation field, by decision 4 below: aggregation is a
+sibling service reading the same doc values, not an overload of
+retrieval.
 
-## Sequencing: search lands first
+## Sequencing: search lands first (honored)
 
-Decision of record: the metric work does not start until the search
-surface is finished. "Finished" means the open search-service items in
-[planned-work](planned-work.md), at minimum: typed `SearchHit.stored`
-values (aggregating over stringified values is how metric layers rot),
-validating interceptors installed so `validate.v1` is enforced where it
-is declared, coordinator-side body derivation, and retrieval evidence.
-Those items make the service trustworthy; the metric layer then reuses its
-nouns (subjects, refusal voice, mount pattern) and its hardened store.
-Starting metrics before that just builds a second service with the same
-unfinished edges.
+Decision of record, kept as the record of why the metric work waited:
+it did not start until the search surface carried typed
+`SearchHit.stored` values (aggregating over stringified values is how
+metric layers rot) and had the validating interceptor installed so
+`validate.v1` is enforced where it is declared. Both landed first, and
+the metric layer reuses the search service's nouns (subjects, refusal
+voice, mount pattern) and its store. Retrieval evidence remains open in
+[planned-work](planned-work.md); it is a search-service item, not a
+metric prerequisite.
 
 ## Decisions of record
 
@@ -279,11 +293,15 @@ unfinished edges.
    rows. `paying / total` is in-grain (quality already evaluates CEL on
    descriptors). Window functions, rankings, time-shifts, and Cube's
    multi-stage measures are out of v1.
-7. **No metric joins in v1.** One message type per subject. Fan-out
+7. **No joins at query time.** One message type per subject. Fan-out
    (`orders join line_items`) is how Cube metrics historically went
-   wrong, which is why Tesseract needed multi-fact views; skip it until
-   a declared grain exists. Use an authored or synthesized projection
-   as the subject if two sources must already be one row.
+   wrong, which is why Tesseract needed multi-fact views. Superseding
+   the original "no metric joins in v1": joins land at **rebuild**
+   time, as `RollupEnrichment` on `rebuild-rollup`, strictly
+   one-to-at-most-one and refused on fan-out. The query surface stays
+   single-subject. See [metric joins](metric-joins.md). An authored or
+   synthesized projection is still the answer when two sources must
+   already be one row before aggregation.
 8. **Row/member security is the access policy's, not a query
    feature.** The policy document's `metric_access` section declares
    per-principal denied members and injected equality row filters (the
@@ -299,13 +317,25 @@ unfinished edges.
     are separate artifacts; `describe-mapping` must work with no index
     and no table on the classpath.
 
-## Thin v1
+## Thin v1 (shipped)
+
+Everything under this heading is built. The sketches below are kept as
+the reasoning; where the shipped shape differs, the difference is named
+in the section. The proto of record is
+`protobuf/metric/src/main/proto/ai/pipestream/proto/metric/v1/metric.proto`
+for the options and
+`metric/proto/src/main/proto/ai/pipestream/proto/metric/v1/metric_service.proto`
+for the service.
 
 ### Option dialect
 
-New package `ai.pipestream.proto.metric.v1`, living next to the other
-descriptor-option standards (proposed extension ids `59100541` field,
-`59100542` message; confirm unused at implementation time).
+Package `ai.pipestream.proto.metric.v1`, beside the other
+descriptor-option standards, on extension ids `59100541` (field) and
+`59100542` (message). Two deltas from the sketch: the message extension
+is named `metric_message` (a `MessageOptions` extension cannot share
+the `metric` name with the `FieldOptions` one), and synthetic members
+shipped in v1 as `repeated FieldMetric MessageMetric.members` rather
+than waiting for v1.1.
 
 ```protobuf
 syntax = "proto3";
@@ -362,6 +392,8 @@ message MessageMetric {
   string subject = 1;
   // Identity field used to count rows / dedupe; empty = no default COUNT(*).
   string identity_field = 2;
+  // Synthetic measures with no backing field.
+  repeated FieldMetric members = 3;
 }
 
 extend google.protobuf.FieldOptions {
@@ -369,7 +401,7 @@ extend google.protobuf.FieldOptions {
 }
 
 extend google.protobuf.MessageOptions {
-  MessageMetric metric = 59100542;
+  MessageMetric metric_message = 59100542;
 }
 ```
 
@@ -382,7 +414,7 @@ import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "google/protobuf/timestamp.proto";
 
 message Order {
-  option (ai.pipestream.proto.metric.v1.metric) = {
+  option (ai.pipestream.proto.metric.v1.metric_message) = {
     subject: "orders"
     identity_field: "id"
   };
@@ -424,10 +456,12 @@ message Order {
 
 A filtered or calculated measure that is not a physical field is a
 **synthetic member** declared on the message option, not a phantom
-field. v1 can start without synthetics and add them as a repeated
-`MessageMetric.members` list if the first implementation needs
-`paying_count` without a dedicated proto field. Prefer a real field
-when the value already exists.
+field. These shipped in v1 as `repeated FieldMetric
+MessageMetric.members`: each needs an explicit name and the `MEASURE`
+role and is either a `COUNT` (optionally row-filtered by `filter_cel`)
+or a calculated `cel` over sibling member names. Anything needing
+storage stays a field; prefer a real field when the value already
+exists.
 
 Schema errors (fail the mapping build, not the first query):
 
@@ -448,8 +482,13 @@ you cannot annotate still serve.
 
 ### Query contract
 
-New package `ai.pipestream.proto.metric.v1` (service file, may live in
-`metric/proto` the way `search.v1` lives in `search/proto`).
+Package `ai.pipestream.proto.metric.v1`, in `metric/proto` the way
+`search.v1` lives in `search/proto`. The sketch below is what shipped,
+with three additions: `MetricFilter` grew a `DateRange range` and a
+`TreePath prefix` beside the equality set (exactly one form per
+filter), and `RebuildRollup` joined the service with
+`RebuildRollupRequest` / `RollupEnrichment` /
+`RebuildRollupResponse`. Read the proto for those.
 
 ```protobuf
 enum MetricBackend {
@@ -467,8 +506,10 @@ message MemberRef {
 
 message MetricFilter {
   string member = 1;
-  // Equality set. Empty values refused. RANGE / CEL filters are v1.1.
+  // Equality set. Empty values refused. Exactly one of these three forms.
   repeated string equals = 2;
+  ai.pipestream.proto.types.v1.DateRange range = 3;   // DATE dimensions
+  ai.pipestream.proto.types.v1.TreePath prefix = 4;   // TREE_PATH dimensions
 }
 
 message QueryMetricsRequest {
@@ -520,16 +561,15 @@ message DescribeMappingResponse {
 }
 ```
 
-The request messages carry `validate.v1` annotations from day one, and
-the metric service mounts the validating interceptor from day one; the
-search service's annotate-now-enforce-later split is a debt this surface
-does not
+The request messages carry `validate.v1` annotations and the metric
+service mounts the validating interceptor; the search service's
+annotate-now-enforce-later split is a debt this surface does not
 inherit.
 
-`ListSubjects` already exists on the search service. Metric mounts either
-reuse it (same subject names) or add `ListMetricSubjects` if the served
-sets diverge. Prefer reuse: a subject that is indexed and metric-mapped
-is one name.
+Subjects are shared with the search service by name: the metric role's
+subject keys name mapping subjects the co-mounted search role serves,
+so `ListSubjects` covers both and no `ListMetricSubjects` exists.
+Rollup tables are the one addition, resolved as `rollup:<table>`.
 
 gRPC service (sibling, not a new RPC on `SearchService`):
 
@@ -537,35 +577,46 @@ gRPC service (sibling, not a new RPC on `SearchService`):
 service MetricService {
   rpc DescribeMapping(DescribeMappingRequest) returns (DescribeMappingResponse);
   rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+  rpc RebuildRollup(RebuildRollupRequest) returns (RebuildRollupResponse);
 }
 ```
 
 ### Actions and MCP
 
-Two verbs, same envelope as the rest of the catalog. They become MCP
+Three verbs, same envelope as the rest of the catalog. They become MCP
 tools with no translation layer, which also means they land in every
-agent surface at once: stdio MCP, streamable HTTP, ACP, CLI, gRPC,
-REST. This is the moment the workbench chat can answer an aggregate
-question, and it costs zero chat-specific code.
+agent surface at once: stdio MCP, streamable HTTP, ACP, CLI, and the
+registry's actions route. This is the moment the workbench chat can
+answer an aggregate question, and it costs zero chat-specific code.
+They are contributed by the metric service module, so they are not on
+the typed gRPC or REST surface; see
+[the action surface](../surface/actions.md).
 
-| Action | Does |
-|---|---|
-| `describe-mapping` | Members, roles, descriptions, sensitivity, backends for one subject |
-| `query-metrics` | Run a `QueryMetricsRequest` (proto3 JSON) and return rows plus plan |
+| Action | Scope | Does |
+|---|---|---|
+| `describe-mapping` | `metrics-query` | Members, roles, descriptions, sensitivity, backends for one subject |
+| `query-metrics` | `metrics-query` | Run a `QueryMetricsRequest` (proto3 JSON) and return rows plus plan |
+| `rebuild-rollup` | `metrics-rebuild` | Run a complete aggregate and atomically replace a declared lake table |
 
-Refuse with stable kebab-case codes: `unknown-subject`, `unknown-member`,
-`unknown-backend`, `ambiguous-backend` (unset on a multi-engine mount),
+Refuse with stable kebab-case codes, the legal set in `details`. The
+sketch named `unknown-subject`, `unknown-member`, `unknown-backend`,
+`ambiguous-backend` (unset on a multi-engine mount),
 `unsupported-aggregate` (executor capability), `invalid-grain`,
-`invalid-limit`, `empty-measures`, `role-mismatch`. The legal set goes
-in `details`.
+`invalid-limit`, `empty-measures`, and `role-mismatch`. Shipped
+alongside them: `unsupported-filter`, `missing-table`,
+`distinct-bound`, `missing-sink`, `rollup-budget`, `join-fanout`, and
+`invalid-enrichment`.
 
 ### Executor SPI
 
-Execution sits behind one interface in `protomolt-metric-spi`, loaded
-via ServiceLoader the same way chunker, embeddings, and rerank
-providers are. The SPI owns mapping build, member resolution, and every
-schema and query refusal; an executor receives a **compiled,
-already-validated** query and returns rows plus its physical plan:
+Execution sits behind one interface in `protomolt-metric-spi`. The SPI
+owns mapping build, member resolution, and every schema and query
+refusal; an executor receives a **compiled, already-validated** query
+and returns rows plus its physical plan. Executors are wired by the
+mount rather than discovered by ServiceLoader as this sketch expected:
+the metric role builds the Lucene executor over the co-mounted search
+role's store itself, and the host passes any other engine in under its
+own named backend.
 
 - `MetricExecutor.capabilities()` declares what the engine can run
   (which aggregates, whether `COUNT_DISTINCT` stays bounded, grain
@@ -578,8 +629,10 @@ already-validated** query and returns rows plus its physical plan:
 Because everything is gRPC, the SPI seam can be crossed by a wire: an
 executor implementation that is a gRPC client pointed at a remote
 metric node is indistinguishable from the in-process one, the same move
-parse made with `ParserPluginService` and embeddings made with TEI. A
-`metric` role node then slots into the existing role pattern
+parse made with `ParserPluginService` and embeddings made with TEI. No
+such client executor is built; the shipped remote node is the whole
+`metric` role beside a read-only search role instead (see index
+snapshots below). The role slots into the existing pattern
 (`PROTOMOLT_ROLES`, `PROTOMOLT_METRIC_TARGET`). Swapping or scaling
 the analytics engine never touches the contract.
 
@@ -590,9 +643,9 @@ indexed by the search service. Group-by members must be `facetable` (or
 `sortable` for single-valued numerics); the doc values are already
 written today, so this backend is a read path over existing storage.
 `COUNT` is document count in the filter. `SUM`/`AVG`/`MIN`/`MAX` need
-numeric doc values. `COUNT_DISTINCT` is v1 only if a collector exists
-that stays bounded; otherwise refuse that aggregate on the Lucene
-backend by name.
+numeric doc values. `COUNT_DISTINCT` shipped: it counts exactly up to a
+per-measure distinct bound and refuses as `distinct-bound` rather than
+approximating past it.
 
 **Iceberg + DuckDB (lake-native).** Requires a table the Iceberg sink
 already wrote from the same descriptor. Compiler emits a single `SELECT
@@ -600,7 +653,8 @@ already wrote from the same descriptor. Compiler emits a single `SELECT
 line up with group-by members so the existing column metrics do their
 file-skipping work. DuckDB is an in-process reader over the table's
 files, not a warehouse product we operate. Trino/Spark stay external
-consumers of the same table; they are not v1 backends.
+consumers of the same table; they are not backends. `COUNT_DISTINCT`
+is supported here because the reduction spills.
 
 A subject may mount one or both backends. On a single-engine mount an
 unset backend resolves to that engine; on a multi-engine mount it is a
@@ -613,23 +667,29 @@ is the DuckDB SQL. Both are evidence.
 ### Mounting
 
 Follow the search service: a host lists metric subjects at boot
-(`ServedMetricMapping`: subject, message type, backends, optional
-Iceberg table identifier). Unknown configuration fails the mount, not
-the first query. The document platform is the first host that should
-grow a `metric` role; `apps/serve` does not need it for v1.
+(`ServedMetricSubject`: the built mapping and the engines mounted for
+it, keyed by the search mapping subject they aggregate over). Unknown
+configuration fails the mount, not the first query. The document
+platform is the host that grew the `metric` role; `apps/serve` does
+not mount it. The role refuses to wire without the search role on the
+same node, because the executor borrows that role's store in process.
 
-No durable refresh workflow in v1. Lucene is already NRT from
-`IndexDocument`. Iceberg is already snapshot-append. A later workflow
-that rebuilds a declared aggregate table is a **workflow**, and only
-when a subject is too large for on-the-fly GROUP BY. That later
-workflow, not Cube Store, is this platform's answer to
-pre-aggregations: declared, durable, evidenced, and optional.
+No continuous refresh worker: Lucene is NRT from `IndexDocument` and
+Iceberg is snapshot-append. The declared-rollup answer landed as the
+`rebuild-rollup` verb and its `MetricWorkflows.rebuildRollupWorkflow`,
+for subjects too large for on-the-fly GROUP BY. That workflow, not
+Cube Store, is this platform's answer to pre-aggregations: declared,
+durable, evidenced, and optional. Rebuilt tables are self-describing
+(`rollup:<table>` subjects carrying each column's source aggregate),
+so a rollup serves back through the ordinary query path and
+re-aggregation over it is only offered where it is honest.
 
 ### Index snapshots to S3
 
 A search-store feature that metrics inherits, not a metric module. Per
-the separation rule it lands with the search store and is useful with
-no metric code on the classpath.
+the separation rule it landed with the search store
+(`SnapshotStore`, `IndexSnapshots`, and `protomolt-search-snapshot-s3`)
+and is useful with no metric code on the classpath.
 
 - **The repository stays the source of truth; a snapshot is a cache.**
   `replay-documents` already rebuilds any subject's index from the
@@ -667,8 +727,14 @@ no metric code on the classpath.
   stays out for the same reason: our chat is the client the user
   already has.
 - Postgres wire / Semantic SQL / GraphQL / DAX / MDX
-- Cube Store, aggregate awareness, refresh workers, lambda pre-aggs
-- Multi-fact views, join paths, fan-out grain, multi-stage measures
+- Cube Store, aggregate awareness, refresh workers, lambda pre-aggs.
+  Declared rollups are the exception this list already anticipated:
+  they are written by an explicit verb, never matched to a query
+  behind the caller's back.
+- Multi-fact views, join paths, fan-out grain, multi-stage measures.
+  Rebuild-time enrichment is the answer to the join question and is
+  none of these; see [metric joins](metric-joins.md), which keeps all
+  four out with reasons.
 - Window functions, running totals, time-shift measures
 - Ad-hoc calculated members in the query (only schema-declared `cel`)
 - Caller-submitted SQL
@@ -676,32 +742,35 @@ no metric code on the classpath.
 - A row-level policy language beyond the access policy's per-principal
   deny lists and equality row filters (JWT claim mapping stays the
   OIDC resolver's job)
-- RANGE / CEL query filters (v1.1; v1 is equality sets)
+- CEL query filters. Date ranges and tree-path prefixes shipped as
+  typed filter forms; arbitrary caller CEL over rows did not.
 - Mixing retrieval hits into an aggregate in one RPC
 - Default subject, default limit, and any backend guess on a
   multi-engine mount (a single-engine mount resolving an unset backend
   is configuration, not a default)
 
-## Suggested module layout
+## Module layout
 
-Sketch for the scoping pass, not a commitment. Each artifact stands
-alone per the platform rule; none requires the others at runtime.
+The built layout. Each artifact stands alone per the platform rule;
+none requires the others at runtime.
 
 | Path | Artifact | Role |
 |---|---|---|
-| `protobuf/metric/` or `metric/options/` | `protomolt-protobuf-metric` | Option proto + reader, sibling to `protobuf-metadata` |
-| `metric/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` SPI |
-| `metric/lucene/` | `protomolt-metric-lucene` | Collector backend |
-| `metric/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend |
-| `metric/service/` | `protomolt-metric-service` | `MetricService`, subject mount, refusals |
-| actions registered by the metric service module | `describe-mapping`, `query-metrics` | Catalog + MCP |
+| `protobuf/metric/` | `protomolt-protobuf-metric` | Option proto, sibling to `protobuf-metadata` |
+| `metric/proto/` | `protomolt-metric-proto` | `MetricService` contract and its messages |
+| `metric/spi/` | `protomolt-metric-spi` | Member resolution, `MetricHintSource`, mapping build, schema errors, `MetricExecutor` and `RollupSink` SPIs, `MetricSubjectResolver` |
+| `metric/lucene/` | `protomolt-metric-lucene` | Collector backend and the `metric` role module |
+| `metric/iceberg/` | `protomolt-metric-iceberg` | DuckDB/Iceberg backend and the Iceberg rollup sink |
+| `metric/service/` | `protomolt-metric-service` | Service implementation, subject mount, refusals, the catalog verbs |
 
-Keep option reading independent of any backend so `describe-mapping`
-works in unit tests with no index and no table.
+The role module lives in `metric/lucene` rather than `metric/service`
+because it builds the Lucene executor over the co-mounted search
+role's store. Option reading stays independent of any backend, so
+`describe-mapping` works in unit tests with no index and no table.
 
-## Acceptance for v1
+## Acceptance for v1 (met)
 
-A later implementation is done when all of the following hold:
+The bar the implementation was held to. All of it holds:
 
 1. A descriptor with valid `metric.v1` options builds a mapping; each
    schema error in the list above fails the build with the field path.
@@ -722,48 +791,37 @@ A later implementation is done when all of the following hold:
    `validate.v1` annotations on the request messages are what enforces
    the shape rules, with the hand-written refusals covering only what
    annotations cannot express (membership, role checks).
-7. `describe-mapping` and `query-metrics` appear in the action
-   inventory and answer on the MCP catalog when the metric service module
-   is
-   mounted.
+7. The metric verbs answer on the MCP catalog when the metric service
+   module is mounted. They are contributed, so they are absent from
+   `docs/generated/action-inventory.json`, which covers the static
+   catalogs only.
 8. No new noun appears in user-facing strings except mapping, member,
-   measure/dimension as roles, grain, backend, and the two action names.
+   measure/dimension as roles, grain, backend, rollup, and the action
+   names.
 
-## Open questions for the scoping pass
+## Open questions for the scoping pass (settled)
 
-These are the only product choices left. Do not reopen the out-of-scope
-list to answer them.
+Kept with their answers; do not reopen them, and do not reopen the
+out-of-scope list.
 
-1. **Synthetic members in v1 or v1.1?** Needed for `paying_count` and
-   `paying_percentage` without extra proto fields. If v1, add
-   `repeated FieldMetric members` on `MessageMetric`.
-2. **Where does `MetricService` live?** Own module vs. second service
-   inside `protomolt-search-service`. Own module keeps retrieval and
-   aggregation independently mountable; the search service already owns
-   subjects.
-3. **DuckDB dependency.** Acceptable in `protomolt-metric-iceberg` if
-   it stays Hadoop-free and isolated the way the Iceberg module already
-   tests. Alternative: generate SQL only and require a caller-supplied
-   `SqlBackend` SPI, with DuckDB as one implementation.
-4. **Result types.** v1 uses `map<string, double>` for measures.
-   `COUNT` that exceeds a double's integer exactness, or money that
-   must stay integer cents, may want `google.protobuf.Value` or a
-   typed cell. The search service's typed-`stored` work should settle the
-   cell
-   representation first; decide before the proto freezes.
+1. **Synthetic members in v1 or v1.1?** v1. `repeated FieldMetric
+   members` on `MessageMetric`.
+2. **Where does `MetricService` live?** Its own modules
+   (`protomolt-metric-proto`, `-spi`, `-service`), independently
+   mountable from retrieval.
+3. **DuckDB dependency.** Taken, Hadoop-free, isolated in
+   `protomolt-metric-iceberg`. No caller-supplied `SqlBackend` SPI.
+4. **Result types.** `map<string, double>` stands: counts stay exact
+   through 2^53, and the typed-cell question was settled for stored
+   search fields, not for aggregates.
 5. **Shared subjects with the search service.** Same name and same
-   descriptor, or a parallel metric-subject list? Same name is simpler
-   for `parse-and-index` then `query-metrics`.
-6. **`COUNT(*)` without a measure field.** `MessageMetric.identity_field`
-   plus a reserved member name (`count`) vs. requiring an explicit
-   measure field. Prefer explicit: a field or a synthetic member named
-   `count` with `AGGREGATE_COUNT`.
-7. **Extension id confirmation** at implementation: `59100541` /
-   `59100542` must still be free.
+   descriptor. Rollup tables are the one added namespace,
+   `rollup:<table>`.
+6. **`COUNT(*)` without a measure field.** Explicit, as preferred: a
+   real field or a synthetic member carrying `AGGREGATE_COUNT`.
+7. **Extension ids.** `59100541` / `59100542` were free and are taken.
 
-## What not to write in the first PR
+## What the surface still does not carry
 
-Do not land a console page, a default demo cube, a SQL proxy, or a
-"semantic layer" README section. Land the option proto, the SPI, one
-backend, the two actions, and the refusal tests. The document platform
-can mount it in a follow-up the way it mounted the search service.
+No console page, no default demo cube, no SQL proxy, and no "semantic
+layer" README section. The rule stands for anything added here later.
