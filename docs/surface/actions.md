@@ -107,6 +107,13 @@ Contributed by `protomolt-delegation` through `DelegationActions.register`,
 against the node's one delegation coordinator. Every one requires
 `worker-coordinate`.
 
+Each verb's envelope is the canonical proto3 JSON of a request message
+declared in `delegation_actions.proto`, and its published input schema is
+derived from that message, so the bounds a caller reads are the bounds the
+verb enforces. The verbs carry the stream contract's own payload types
+(`TaskSpec`, `CompletionCandidate`, `CheckpointReference`, `WorkerCapability`)
+rather than restating them.
+
 | Action | Does |
 |---|---|
 | `delegation-offer` | Offers a bounded task to an admitted worker: objective, scope, constraints, acceptance checks, context |

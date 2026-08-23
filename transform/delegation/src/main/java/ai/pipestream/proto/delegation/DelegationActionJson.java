@@ -2,135 +2,101 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
+import ai.pipestream.proto.validate.ProtoValidator;
+import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
 
 /**
- * Shared JSON assembly for the delegation catalog actions: envelope validation, proto3
- * JSON parsing and rendering, and the stable error codes the tools report.
+ * Shared contract plumbing for the delegation catalog actions: derived input schemas,
+ * envelope parsing against the declared request message, proto3 JSON rendering, and the
+ * stable error codes the tools report.
  */
 final class DelegationActionJson {
 
-    private static final String IDENTITY_PATTERN = "[A-Za-z0-9][A-Za-z0-9._-]{0,127}";
-    private static final String UUID_PATTERN =
-            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+    /**
+     * Enforces the request contract on the catalog path.
+     *
+     * <p>Calls arriving over gRPC pass a validating interceptor before they reach a handler.
+     * Calls arriving as catalog verbs do not, so without this the same request would be
+     * refused on one surface and accepted on the other.
+     */
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private DelegationActionJson() {
     }
 
-    /** The 2020-12 envelope skeleton every delegation action schema starts from. */
-    static ObjectNode schema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        return schema;
+    /**
+     * The input schema for a verb, derived from the request message it accepts.
+     *
+     * <p>Deriving rather than hand-writing keeps one description of the contract. The generator
+     * folds the message's declared validation rules into the schema, so a caller reading the
+     * tool manifest sees the same bounds the verb enforces, and a rule added to the proto
+     * reaches every surface without a second edit.
+     */
+    static ObjectNode schemaFor(Descriptor request) {
+        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create().generate(request));
     }
 
-    static String text(ObjectNode input, String field) throws ActionException {
-        JsonNode node = input.get(field);
-        if (node != null && node.isTextual() && !node.asText().isBlank()) {
-            return node.asText();
-        }
-        throw invalid("'" + field + "' must be a non-empty string", "/" + field);
-    }
-
-    static String optionalText(ObjectNode input, String field) throws ActionException {
-        JsonNode node = input.get(field);
-        if (node == null || node.isNull()) {
-            return null;
-        }
-        if (node.isTextual() && !node.asText().isBlank()) {
-            return node.asText();
-        }
-        throw invalid("'" + field + "' must be a non-empty string", "/" + field);
-    }
-
-    /** A required worker-identity-shaped string. */
-    static String identity(ObjectNode input, String field) throws ActionException {
-        String value = text(input, field);
-        if (!value.matches(IDENTITY_PATTERN)) {
-            throw invalid("'" + field + "' must be a path-safe identity", "/" + field);
-        }
-        return value;
-    }
-
-    /** A required uuid-shaped string. */
-    static String uuid(ObjectNode input, String field) throws ActionException {
-        String value = text(input, field);
-        if (!value.matches(UUID_PATTERN)) {
-            throw invalid("'" + field + "' must be a uuid", "/" + field);
-        }
-        return value;
-    }
-
-    /** An optional uuid-shaped string. */
-    static String optionalUuid(ObjectNode input, String field) throws ActionException {
-        String value = optionalText(input, field);
-        if (value == null) {
-            return null;
-        }
-        if (!value.matches(UUID_PATTERN)) {
-            throw invalid("'" + field + "' must be a uuid", "/" + field);
-        }
-        return value;
-    }
-
-    static ObjectNode object(ObjectNode input, String field) throws ActionException {
-        JsonNode node = input.get(field);
-        if (node instanceof ObjectNode object) {
-            return object;
-        }
-        throw invalid("'" + field + "' must be an object", "/" + field);
-    }
-
-    /** A bounded integer with a default when absent. */
-    static int boundedInt(ObjectNode input, String field, int fallback, int min, int max)
+    /**
+     * Parses an action envelope into the request message it must satisfy.
+     *
+     * <p>The envelope is the message's canonical proto3 JSON form, so the same document works
+     * over the catalog, over the JSON gateway, and as a tool call. Unknown members are refused
+     * rather than ignored: a caller that misspells a field has written a request it did not
+     * mean, and silently dropping it would do something else.
+     */
+    static <B extends Message.Builder> B parse(ObjectNode input, B builder, String verb)
             throws ActionException {
-        JsonNode node = input.get(field);
-        if (node == null || node.isNull()) {
-            return fallback;
-        }
-        if (!node.isIntegralNumber()) {
-            throw invalid("'" + field + "' must be an integer", "/" + field);
-        }
-        long value = node.asLong();
-        if (value < min || value > max) {
-            throw invalid("'" + field + "' must be between " + min + " and " + max,
-                    "/" + field);
-        }
-        return (int) value;
-    }
-
-    /** A bounded non-negative long with a default when absent. */
-    static long boundedLong(ObjectNode input, String field, long fallback, long max)
-            throws ActionException {
-        JsonNode node = input.get(field);
-        if (node == null || node.isNull()) {
-            return fallback;
-        }
-        if (!node.isIntegralNumber()) {
-            throw invalid("'" + field + "' must be an integer", "/" + field);
-        }
-        long value = node.asLong();
-        if (value < 0 || value > max) {
-            throw invalid("'" + field + "' must be between 0 and " + max, "/" + field);
-        }
-        return value;
-    }
-
-    /** Parses a proto3 JSON object into a concrete message. */
-    static <B extends Message.Builder> Message parse(ObjectNode node, B builder,
-                                                     String pointer) throws ActionException {
         try {
-            JsonFormat.parser().merge(node.toString(), builder);
-            return builder.build();
-        } catch (Exception e) {
-            throw invalid("Invalid protobuf JSON: " + e.getMessage(), pointer);
+            JsonFormat.parser().merge(input.toString(), builder);
+        } catch (InvalidProtocolBufferException e) {
+            throw new ActionException("invalid-input",
+                    verb + " expects a " + builder.getDescriptorForType().getName()
+                            + ": " + e.getMessage());
         }
+        ValidationResult result = VALIDATOR.validate(builder.build());
+        if (!result.valid()) {
+            throw new ActionException("invalid-input",
+                    verb + " does not satisfy the request contract: " + describe(result),
+                    violations(result));
+        }
+        return builder;
+    }
+
+    /** The violations as machine-readable details, each naming its field and its rule. */
+    private static ObjectNode violations(ValidationResult result) {
+        ObjectNode details = MAPPER.createObjectNode();
+        ArrayNode listed = details.putArray("violations");
+        for (ValidationResult.Violation violation : result.violations()) {
+            ObjectNode node = listed.addObject();
+            node.put("field", violation.path());
+            node.put("ruleId", violation.ruleId());
+            node.put("message", violation.message());
+        }
+        return details;
+    }
+
+    private static String describe(ValidationResult result) {
+        StringBuilder out = new StringBuilder();
+        for (ValidationResult.Violation violation : result.violations()) {
+            if (out.length() > 0) {
+                out.append("; ");
+            }
+            out.append(violation.path()).append(' ').append(violation.message());
+        }
+        return out.toString();
     }
 
     /** Renders a protobuf message as a Jackson tree via canonical proto3 JSON. */
@@ -147,12 +113,6 @@ final class DelegationActionJson {
         } catch (Exception e) {
             throw new ActionException("render-failed", e.getMessage(), null);
         }
-    }
-
-    static ActionException invalid(String message, String pointer) {
-        ObjectNode details = JsonNodeFactory.instance.objectNode();
-        details.put("pointer", pointer);
-        return new ActionException("invalid-input", message, details);
     }
 
     /** The named worker has no live bridge session. */

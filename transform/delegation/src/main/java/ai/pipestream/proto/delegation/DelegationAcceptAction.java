@@ -2,6 +2,8 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.delegation.v1.AcceptTaskRequest;
+import ai.pipestream.proto.delegation.v1.AcceptTaskResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** The worker takes the open offer for a task's current attempt. */
@@ -25,33 +27,22 @@ final class DelegationAcceptAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        putString(properties, "workerId", "The registered worker taking the lease.");
-        putString(properties, "taskId", "The offered task uuid.");
-        putInteger(properties, "attempt", "The open offer's attempt number.", 1, 1_024);
-        require(schema, "workerId", "taskId", "attempt");
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(AcceptTaskRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String workerId = DelegationActionJson.identity(input, "workerId");
-        String taskId = DelegationActionJson.uuid(input, "taskId");
-        int attempt = DelegationActionJson.boundedInt(input, "attempt", -1, 1, 1_024);
-        if (attempt < 0) {
-            throw DelegationActionJson.invalid("'attempt' is required", "/attempt");
-        }
+        AcceptTaskRequest request =
+                DelegationActionJson.parse(input, AcceptTaskRequest.newBuilder(), name()).build();
         try {
-            bridge.accept(workerId, taskId, attempt);
+            bridge.accept(request.getWorkerId(), request.getTaskId(), request.getAttempt());
         } catch (RuntimeException e) {
-            throw failure(workerId, e);
+            throw failure(request.getWorkerId(), e);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        output.put("taskId", taskId);
-        output.put("attempt", attempt);
-        return output;
+        return DelegationActionJson.render(AcceptTaskResponse.newBuilder()
+                .setOk(true)
+                .setTaskId(request.getTaskId())
+                .setAttempt(request.getAttempt())
+                .build(), context);
     }
 }

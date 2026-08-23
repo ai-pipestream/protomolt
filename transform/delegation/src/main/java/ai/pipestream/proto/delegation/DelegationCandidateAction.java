@@ -3,6 +3,8 @@ package ai.pipestream.proto.delegation;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.delegation.v1.CompletionCandidate;
+import ai.pipestream.proto.delegation.v1.SubmitCandidateRequest;
+import ai.pipestream.proto.delegation.v1.SubmitCandidateResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** Submits one revision of completion evidence for coordinator review. */
@@ -28,37 +30,24 @@ final class DelegationCandidateAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        putString(properties, "workerId", "The registered worker submitting the candidate.");
-        putString(properties, "taskId", "The task uuid.");
-        properties.putObject("candidate")
-                .put("type", "object")
-                .put("description", "The CompletionCandidate as canonical proto3 JSON: "
-                        + "attempt, revision, summary, evidence (one passing entry per "
-                        + "required check), commits and/or artifacts.");
-        require(schema, "workerId", "taskId", "candidate");
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(SubmitCandidateRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String workerId = DelegationActionJson.identity(input, "workerId");
-        String taskId = DelegationActionJson.uuid(input, "taskId");
-        CompletionCandidate candidate = (CompletionCandidate) DelegationActionJson.parse(
-                DelegationActionJson.object(input, "candidate"),
-                CompletionCandidate.newBuilder(), "/candidate");
+        SubmitCandidateRequest request = DelegationActionJson
+                .parse(input, SubmitCandidateRequest.newBuilder(), name()).build();
+        CompletionCandidate candidate = request.getCandidate();
         try {
-            bridge.submitCandidate(workerId, taskId, candidate);
+            bridge.submitCandidate(request.getWorkerId(), request.getTaskId(), candidate);
         } catch (RuntimeException e) {
-            throw failure(workerId, e);
+            throw failure(request.getWorkerId(), e);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        output.put("taskId", taskId);
-        output.put("attempt", candidate.getAttempt());
-        output.put("revision", candidate.getRevision());
-        return output;
+        return DelegationActionJson.render(SubmitCandidateResponse.newBuilder()
+                .setOk(true)
+                .setTaskId(request.getTaskId())
+                .setAttempt(candidate.getAttempt())
+                .setRevision(candidate.getRevision())
+                .build(), context);
     }
 }

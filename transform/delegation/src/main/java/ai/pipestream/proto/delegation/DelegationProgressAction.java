@@ -2,6 +2,8 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.delegation.v1.ReportProgressRequest;
+import ai.pipestream.proto.delegation.v1.ReportProgressResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** Reports one monotonic progress note from the worker on its leased attempt. */
@@ -25,35 +27,23 @@ final class DelegationProgressAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        putString(properties, "workerId", "The registered worker reporting progress.");
-        putString(properties, "taskId", "The task uuid.");
-        putInteger(properties, "attempt", "The leased attempt.", 1, 1_024);
-        putString(properties, "message", "What advanced, in bounded prose.");
-        require(schema, "workerId", "taskId", "attempt", "message");
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(ReportProgressRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String workerId = DelegationActionJson.identity(input, "workerId");
-        String taskId = DelegationActionJson.uuid(input, "taskId");
-        int attempt = DelegationActionJson.boundedInt(input, "attempt", -1, 1, 1_024);
-        if (attempt < 0) {
-            throw DelegationActionJson.invalid("'attempt' is required", "/attempt");
-        }
-        String message = DelegationActionJson.text(input, "message");
+        ReportProgressRequest request = DelegationActionJson
+                .parse(input, ReportProgressRequest.newBuilder(), name()).build();
         int progressSeq;
         try {
-            progressSeq = bridge.progress(workerId, taskId, attempt, message);
+            progressSeq = bridge.progress(request.getWorkerId(), request.getTaskId(),
+                    request.getAttempt(), request.getMessage());
         } catch (RuntimeException e) {
-            throw failure(workerId, e);
+            throw failure(request.getWorkerId(), e);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        output.put("progressSeq", progressSeq);
-        return output;
+        return DelegationActionJson.render(ReportProgressResponse.newBuilder()
+                .setOk(true)
+                .setProgressSeq(progressSeq)
+                .build(), context);
     }
 }
