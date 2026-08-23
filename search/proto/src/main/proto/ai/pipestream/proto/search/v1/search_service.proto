@@ -232,7 +232,82 @@ message SearchResponse {
   repeated SearchHit hits = 1;
 }
 
-// The indexing half of the service, driven by durable workflow steps.
+// A request to replay a repository's documents through a stored workflow.
+//
+// Replay runs one workflow per document, which is how a subject is rebuilt
+// after its mapping or its chunking policy changes. Reconciliation is the
+// second mode: it replays the whole repository listing and removes indexed
+// documents the listing no longer contains, so a subject converges on what
+// the repository actually holds.
+message ReplayDocumentsRequest {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "replay.scope_or_reconcile"
+      message: "a scoped replay sets drive; a replay with prune covers the whole repository and must not set drive or accountId"
+      expression: "this.prune ? (this.drive == '' && this.account_id == '') : this.drive != ''"
+    }
+  };
+
+  // Stored workflow to run for each document, by name.
+  string workflow_name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Mapping subject the workflow indexes into.
+  string mapping_subject = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Drive whose documents replay. Required for a scoped replay and refused
+  // for a reconciling one, which is unscoped by definition.
+  string drive = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+    }
+  ];
+  // Restricts a scoped replay to one account. Refused for a reconciling
+  // replay for the same reason as the drive.
+  string account_id = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+    }
+  ];
+  // Names this replay. Each document's run then takes a job identifier
+  // derived from the name and the document, so repeating a replay with the
+  // same name resubmits nothing already accepted.
+  string replay_id = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+    }
+  ];
+  // Reconcile rather than replay a scope: cover the whole repository listing
+  // and unindex documents it no longer contains.
+  bool prune = 6;
+}
+
+// What one replay submitted, and what it removed.
+message ReplayDocumentsResponse {
+  // Workflow runs submitted, one per document replayed.
+  int32 submitted = 1;
+  // Identifier of each submitted run, in submission order, so a caller can
+  // follow the replay through the jobs service without listing it again.
+  repeated string job_ids = 2;
+  // Indexed documents removed because the repository listing no longer
+  // contained them. Zero unless the request asked to reconcile.
+  int32 pruned = 3;
+  // The documents removed, named. A reconcile that removes anything is worth
+  // being able to audit, so the identifiers travel with the count rather than
+  // only the total.
+  repeated string pruned_doc_ids = 4;
+}
+
+// The indexing half of the service, driven by durable workflow steps: putting
+// documents into a served index, taking them out, and rebuilding a subject
+// from the repository behind it.
 service SearchIndexService {
   // (Re-)indexes one stored document under a mapping subject. Idempotent:
   // re-indexing a document atomically replaces its previous index state.
@@ -241,6 +316,10 @@ service SearchIndexService {
   // Removes one document's block (parent and chunk children) from a
   // mapping subject's index. Idempotent: deleting an absent id succeeds.
   rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+
+  // Replays a repository's documents through a stored workflow, or
+  // reconciles the subject against the repository listing.
+  rpc ReplayDocuments(ReplayDocumentsRequest) returns (ReplayDocumentsResponse);
 }
 
 // Asks the service what it serves. Deliberately empty: the served surface is

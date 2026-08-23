@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -148,7 +149,14 @@ class ReplayActionTest {
     void everyIdentityIsRequiredByName() {
         ReplayAction replay = replay(
                 request -> ListDocumentsResponse.getDefaultInstance(), new RecordingSubmit());
-        for (String missing : new String[] {"workflowName", "mappingSubject", "drive"}) {
+        // Violations name the field as the contract declares it. Both that form and its
+        // lowerCamelCase spelling are accepted on the wire, so the refusal quotes the
+        // declared name rather than whichever spelling the caller happened to use.
+        Map<String, String> declaredNames = Map.of(
+                "workflowName", "workflow_name",
+                "mappingSubject", "mapping_subject",
+                "drive", "drive");
+        for (String missing : declaredNames.keySet()) {
             ObjectNode input = MAPPER.createObjectNode();
             input.put("workflowName", "parse-and-index");
             input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
@@ -156,7 +164,7 @@ class ReplayActionTest {
             input.remove(missing);
             assertThatThrownBy(() -> replay.execute(input, ActionContext.create()))
                     .isInstanceOf(ActionException.class)
-                    .hasMessageContaining(missing);
+                    .hasMessageContaining(declaredNames.get(missing));
         }
     }
 
