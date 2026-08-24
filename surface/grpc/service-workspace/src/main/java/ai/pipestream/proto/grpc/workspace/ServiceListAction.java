@@ -36,15 +36,15 @@ public final class ServiceListAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ServiceActionSupport.baseSchema();
-        schema.putObject("properties");
-        schema.put("additionalProperties", false);
-        return schema;
+        return ServiceActionJson.schemaFor("ServiceListRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         ServiceProfileRepository store = ServiceActionSupport.requireRepository(repository);
+        // The request carries no fields, so parsing exists to refuse one that does: a caller
+        // sending a filter this verb does not have has asked for something it will not get.
+        ServiceActionJson.parse(input, "ServiceListRequest", name());
         ObjectNode result = context.objectMapper().createObjectNode();
         var services = result.putArray("services");
         try {
