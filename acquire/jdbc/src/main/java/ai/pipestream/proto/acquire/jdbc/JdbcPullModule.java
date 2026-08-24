@@ -89,7 +89,8 @@ public final class JdbcPullModule implements ServiceModule {
     @Override
     public ServiceMount wire(NodeContext context) {
         GrpcIntakeFeed feed = new GrpcIntakeFeed(
-                context.channels().targetOf("intake"), config.apiKey());
+                context.channels().targetOf("intake"), config.apiKey(),
+                GrpcIntakeFeed.plaintextRequested(context.environment()));
         JdbcPull.ConnectionFactory connections = () -> DriverManager.getConnection(
                 config.jdbcUrl(), config.username(), config.password());
         context.contributions().contribute(ProtoAction.class,
