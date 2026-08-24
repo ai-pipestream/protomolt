@@ -1,6 +1,7 @@
 package ai.pipestream.proto.grpc.invoke;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
@@ -77,51 +78,12 @@ public final class GrpcInvokeAction implements StreamingAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("target")
-                .put("type", "string")
-                .put("description", "gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.");
-        properties.putObject("method")
-                .put("type", "string")
-                .put("description", "Fully qualified method as 'package.Service/Method', "
-                        + "e.g. 'grpc.health.v1.Health/Check'.");
-        ObjectNode schemaSource = properties.putObject("schema");
-        schemaSource.put("type", "object");
-        schemaSource.put("description", "Schema source declaring the service; provide exactly one "
-                + "of 'type', 'sources', 'descriptorSetBase64'. Reading the subject's resource from "
-                + "the registry and passing its text as 'sources' works for any registered service.");
-        properties.putObject("request")
-                .put("type", "object")
-                .put("description", "The request message as canonical proto3 JSON.");
-        ObjectNode metadata = properties.putObject("metadata");
-        metadata.put("type", "object");
-        metadata.put("description", "Optional ASCII request headers, e.g. {\"authorization\": \"Bearer ...\"}.");
-        metadata.putObject("additionalProperties").put("type", "string");
-        properties.putObject("deadlineMs")
-                .put("type", "integer")
-                .put("description", "Call deadline in milliseconds; default " + DEFAULT_DEADLINE_MS + ".");
-        properties.putObject("maxResponses")
-                .put("type", "integer")
-                .put("description", "Cap on collected server-streaming responses; default "
-                        + DEFAULT_MAX_RESPONSES + ".");
-        properties.putObject("tls")
-                .put("type", "boolean")
-                .put("default", false)
-                .put("description", "Connect with TLS (system trust roots); plaintext by default.");
-        ArrayNode required = schema.putArray("required");
-        required.add("target");
-        required.add("method");
-        required.add("schema");
-        required.add("request");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("GrpcInvokeRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "GrpcInvokeRequest", name());
         CallPlan plan = prepare(input, context);
 
         ObjectNode result = context.objectMapper().createObjectNode();

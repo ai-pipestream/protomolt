@@ -45,7 +45,7 @@ class GatherGitActionTest {
     }
 
     @Test
-    void unreachableRepoIsAStructuredFailureNotAnError(@TempDir Path tmp) {
+    void unreachableRepoIsAStructuredFailureNotAnError(@TempDir Path tmp) throws Exception {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("repo", tmp.resolve("does-not-exist").toUri().toString());
         ObjectNode result = new GatherGitAction().execute(input, ActionContext.create());

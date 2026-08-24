@@ -984,11 +984,15 @@ message ExtractMetadataResponse {
 
 // The input of reflect: where the server is and how to reach it.
 message ReflectRequest {
-  // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
+  // gRPC target, for example 'localhost:9090', 'dns:///svc:443', or an
+  // in-process name. Which forms are permitted is the outbound channel
+  // policy's decision, not this message's: it owns the scheme, host and port
+  // allow-lists, and a narrower rule here would refuse targets the policy
+  // allows.
   string target = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {min_len: 1, max_len: 512, endpoint_address: true}
+      string: {min_len: 1, max_len: 512}
     }
   ];
   // Reflection deadline in milliseconds; zero selects 15000, and 60000 is the
@@ -1019,11 +1023,15 @@ message ReflectResponse {
 
 // The input of grpc-invoke.
 message GrpcInvokeRequest {
-  // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
+  // gRPC target, for example 'localhost:9090', 'dns:///svc:443', or an
+  // in-process name. Which forms are permitted is the outbound channel
+  // policy's decision, not this message's: it owns the scheme, host and port
+  // allow-lists, and a narrower rule here would refuse targets the policy
+  // allows.
   string target = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
-      string: {min_len: 1, max_len: 512, endpoint_address: true}
+      string: {min_len: 1, max_len: 512}
     }
   ];
   // Fully qualified 'package.Service/Method'.
@@ -1083,17 +1091,54 @@ message GrpcInvokeResponse {
   string description = 6;
 }
 
+// A code generator embedded in the bundled protoc module.
+enum CodeGenerator {
+  // Unset. An empty generator list selects JAVA.
+  CODE_GENERATOR_UNSPECIFIED = 0;
+  // Java message classes.
+  CODE_GENERATOR_JAVA = 1;
+  // Kotlin DSL builders, which need the Java classes alongside them.
+  CODE_GENERATOR_KOTLIN = 2;
+  // Java gRPC service stubs.
+  CODE_GENERATOR_GRPC_JAVA = 3;
+  // Python message modules.
+  CODE_GENERATOR_PYTHON = 4;
+  // C++ message classes.
+  CODE_GENERATOR_CPP = 5;
+  // C# message classes.
+  CODE_GENERATOR_CSHARP = 6;
+  // Ruby message classes.
+  CODE_GENERATOR_RUBY = 7;
+  // PHP message classes.
+  CODE_GENERATOR_PHP = 8;
+  // Objective-C message classes.
+  CODE_GENERATOR_OBJC = 9;
+}
+
 // The input of generate-stubs.
 message GenerateStubsRequest {
   // The schema to generate code from.
-  SchemaSource schema = 1;
-  // 'java', 'kotlin', 'grpc-java', 'python', 'cpp', 'csharp', 'ruby', 'php',
-  // 'objc'; defaults to ['java'].
-  repeated string generators = 2;
-  // Proto file paths to generate for; defaults to every non-google file.
-  repeated string files = 3;
-  // Optional generator parameter, as protoc's --<gen>_opt.
-  string parameter = 4;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Generators to run; empty selects JAVA.
+  repeated CodeGenerator generators = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 9, unique: true, items: {enum: {defined_only: true, not_in: [0]}}}
+    }
+  ];
+  // Proto file paths to generate for; empty selects every non-google file.
+  repeated string files = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512, items: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
+  // Generator parameter, passed as protoc's --<gen>_opt.
+  string parameter = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 2048}
+    }
+  ];
 }
 
 // One generated source file.
@@ -1123,15 +1168,33 @@ message GenerateStubsResponse {
 // The input of gather-git: where the repository is and which .proto files
 // to take.
 message GatherGitRequest {
-  // Git repository URL (https or ssh).
-  string repo = 1;
-  // Branch, tag, or commit SHA; default 'main'.
-  string ref = 2;
-  // Specific files or directories relative to 'subdir'; default: every
-  // .proto under 'subdir'.
-  repeated string paths = 3;
-  // Directory import paths are relative to; default 'proto', '.' for root.
-  string subdir = 4;
+  // Git repository URL, https or ssh.
+  string repo = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 2048}
+    }
+  ];
+  // Branch, tag, or commit SHA; empty selects 'main'.
+  string ref = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 256}
+    }
+  ];
+  // Specific files or directories relative to 'subdir'; empty gathers every
+  // .proto under it.
+  repeated string paths = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512, items: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
+  // Directory import paths are relative to; empty selects 'proto', and '.'
+  // means the repository root.
+  string subdir = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+    }
+  ];
 }
 
 // The gathered and compiled schema.
@@ -1151,9 +1214,16 @@ message GatherGitResponse {
 // The input of emit-okf.
 message EmitOkfRequest {
   // The schema to render as an OKF bundle.
-  SchemaSource schema = 1;
-  // Heading of the bundle's root index.md; default 'Schema knowledge bundle'.
-  string title = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Heading of the bundle's root index.md; empty selects 'Schema knowledge
+  // bundle'.
+  string title = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    }
+  ];
 }
 
 // The rendered OKF bundle.
@@ -1978,17 +2048,37 @@ message EvaluateWorkRecordResponse {
 // The input of submit-workflow: an inline workflow or the name of a stored one,
 // the workflow input, and an optional client-generated job id.
 message SubmitWorkflowRequest {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "submit_workflow.one_definition"
+      message: "name either an inline workflow or a stored workflowName, not both and not neither"
+      expression: "has(this.workflow) != (this.workflow_name != '')"
+    }
+  };
+
   // The inline workflow definition to execute.
   CompiledWorkflow workflow = 1;
-  // A stored workflow to run instead of an inline 'workflow' (registered via the
-  // registry's workflows endpoint).
-  string workflow_name = 2;
-  // The workflow input, as proto3 JSON of input_type.
-  google.protobuf.Struct input = 3;
-  // Optional client-generated job id (a UUID). Supplying one makes submit
-  // idempotent: a second submit with the same id returns the existing job.
-  // The server mints one when empty.
-  string job_id = 4;
+  // A stored workflow to run instead of an inline one, registered through the
+  // registry's workflows endpoint.
+  string workflow_name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
+  // The workflow input, as proto3 JSON of the workflow's declared input type.
+  google.protobuf.Struct input = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Client-generated job id. Supplying one makes submit idempotent: a second
+  // submit with the same id returns the existing job rather than starting a
+  // second one. The server mints one when empty.
+  string job_id = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {uuid: true}
+    }
+  ];
 }
 
 // The outcome of submit-workflow.
@@ -2051,7 +2141,12 @@ message WorkflowRun {
 // The input of get-job.
 message GetJobRequest {
   // The job id returned by submit-workflow.
-  string job_id = 1;
+  string job_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    }
+  ];
 }
 
 // The outcome of get-job.
@@ -2064,17 +2159,54 @@ message GetJobResponse {
   string error = 3;
 }
 
+// Where a workflow run has got to.
+enum JobStatus {
+  // No filter: every status is listed.
+  JOB_STATUS_UNSPECIFIED = 0;
+  // Accepted and waiting for a worker.
+  JOB_STATUS_QUEUED = 1;
+  // A worker is executing it.
+  JOB_STATUS_RUNNING = 2;
+  // Parked on an external step until complete-step supplies the response.
+  JOB_STATUS_WAITING = 3;
+  // Finished successfully.
+  JOB_STATUS_COMPLETED = 4;
+  // Finished unsuccessfully, and may still be retried.
+  JOB_STATUS_FAILED = 5;
+  // Out of attempts; no further retry will be made.
+  JOB_STATUS_DEAD = 6;
+}
+
 // The input of list-jobs.
 message ListJobsRequest {
-  // Optional status filter (QUEUED, RUNNING, WAITING, COMPLETED, FAILED,
-  // DEAD); empty lists every status.
-  string status = 1;
-  // Optional workflow-name filter.
-  string workflow_name = 2;
-  // Maximum jobs returned; default 50, capped at 500.
-  int32 limit = 3;
+  // Status filter; unspecified lists every status.
+  JobStatus status = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true}
+    }
+  ];
+  // Workflow-name filter; empty lists every workflow.
+  string workflow_name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
+  // Maximum jobs returned; zero selects the default of 50. A larger value is
+  // clamped to the ceiling of 500 rather than refused, so a caller asking for
+  // everything gets a page instead of an error. The ceiling is not declared as
+  // a rule for that reason: it bounds the answer, not the request.
+  int32 limit = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0}
+    }
+  ];
   // Offset into the created_at-descending ordering.
-  int32 offset = 4;
+  int32 offset = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0}
+    }
+  ];
 }
 
 // The outcome of list-jobs.
@@ -2092,9 +2224,19 @@ message ListJobsResponse {
 // whoever the job was parked for.
 message CompleteStepRequest {
   // The job id.
-  string job_id = 1;
-  // The parked step's name; must match the job's outstanding_step.
-  string step_name = 2;
+  string job_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    }
+  ];
+  // The parked step's name; must match the job's outstanding step.
+  string step_name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
   // The step's response, as proto3 JSON of the step's output type. When the
   // step declares 'validate', the response is checked against its declared
   // rules before the workflow resumes — a rejection fails the job as a verdict.
@@ -2230,16 +2372,39 @@ message InferenceChatTurn {
 
 // The input of inference-generate.
 message InferenceGenerateRequest {
-  // The catalog id of the model to run (see inference-list-models).
-  string model = 1;
-  // The conversation, oldest first.
-  repeated InferenceChatTurn messages = 2;
-  // Sampling temperature; 0 is the provider's default.
-  double temperature = 3;
-  // Nucleus sampling mass; 0 is the provider's default.
-  double top_p = 4;
-  // Hard cap on generated tokens; 0 lets the provider apply its own cap.
-  int32 max_output_tokens = 5;
+  // The catalog id of the model to run; inference-list-models names them.
+  string model = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
+  // The conversation, oldest first. At least one turn: a generation with no
+  // conversation has nothing to continue.
+  repeated InferenceChatTurn messages = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 1000}
+    }
+  ];
+  // Sampling temperature; zero selects the provider's default. The range is
+  // the one every supported provider accepts.
+  double temperature = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      double: {gte: 0.0, lte: 2.0}
+    }
+  ];
+  // Nucleus sampling mass; zero selects the provider's default.
+  double top_p = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      double: {gte: 0.0, lte: 1.0}
+    }
+  ];
+  // Hard cap on generated tokens; zero lets the provider apply its own.
+  int32 max_output_tokens = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0}
+    }
+  ];
   // Requests the model's deliberation mode when it has one.
   bool enable_thinking = 6;
 }
@@ -2308,7 +2473,12 @@ message InferenceModelEntry {
 // The input of inference-list-models.
 message InferenceListModelsRequest {
   // When set, only entries executed by this provider are returned.
-  string provider = 1;
+  string provider = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 128, path_safe_name: true}
+    }
+  ];
 }
 
 // The outcome of inference-list-models.
@@ -2326,7 +2496,12 @@ message InferenceListModelsResponse {
 // The input of inference-describe-model.
 message InferenceDescribeModelRequest {
   // The catalog id to describe.
-  string model = 1;
+  string model = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The outcome of inference-describe-model.

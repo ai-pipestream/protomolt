@@ -58,34 +58,7 @@ public final class ServiceInvokeAction implements StreamingAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ServiceActionSupport.baseSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("name")
-                .put("type", "string")
-                .put("pattern", "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-                .put("description", "Registered service profile name.");
-        properties.putObject("method")
-                .put("type", "string")
-                .put("description", "Fully qualified method as package.Service/Method.");
-        properties.putObject("request")
-                .put("type", "object")
-                .put("description", "Request message as canonical proto3 JSON.");
-        properties.putObject("endpoint")
-                .put("type", "string")
-                .put("description", "Named profile endpoint; defaults to the first endpoint.");
-        properties.putObject("deadlineMs")
-                .put("type", "integer")
-                .put("minimum", 1)
-                .put("maximum", ServiceActionSupport.MAX_DEADLINE_MS)
-                .put("description", "Call deadline. A configured method deadline is a ceiling.");
-        properties.putObject("maxResponses")
-                .put("type", "integer")
-                .put("minimum", 1)
-                .put("maximum", MAX_RESPONSES)
-                .put("description", "Maximum server-streaming responses to collect.");
-        schema.putArray("required").add("name").add("method").add("request");
-        schema.put("additionalProperties", false);
-        return schema;
+        return ServiceActionJson.schemaFor("ServiceInvokeRequest");
     }
 
     @Override
@@ -106,6 +79,9 @@ public final class ServiceInvokeAction implements StreamingAction {
     }
 
     private Invocation prepare(ObjectNode input, ActionContext context) throws ActionException {
+        // Both the unary and the streaming path come through here, so the contract is
+        // enforced once for either.
+        ServiceActionJson.parse(input, "ServiceInvokeRequest", name());
         ServiceProfileRepository profiles = ServiceActionSupport.requireRepository(repository);
         String name = ServiceActionSupport.requireString(input, "name");
         String method = ServiceActionSupport.requireString(input, "method");

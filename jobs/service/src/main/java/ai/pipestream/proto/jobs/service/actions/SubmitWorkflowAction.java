@@ -1,6 +1,7 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -64,37 +65,15 @@ public final class SubmitWorkflowAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = baseSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("workflow")
-                .put("type", "object")
-                .put("description", "The workflow definition: a schema declaring every "
-                        + "step's service, an inputType, and serial steps whose requests "
-                        + "are mapped from 'input' plus prior steps' responses (by step "
-                        + "name). Steps: {name, target, method, tls?, when?, rules?, "
-                        + "celRules?, validate?, deadlineMs?, completion?}; completion "
-                        + "'external' parks the job until complete-step supplies the "
-                        + "response.");
-        properties.putObject("workflowName")
-                .put("type", "string")
-                .put("description", "A stored workflow to run instead of an inline 'workflow' — "
-                        + "registered via the registry's workflows endpoint.");
-        properties.putObject("input")
-                .put("type", "object")
-                .put("description", "The workflow input, as proto3 JSON of the workflow's "
-                        + "inputType.");
-        properties.putObject("jobId")
-                .put("type", "string")
-                .put("description", "Client-generated uuid; the idempotency key. Minted "
-                        + "when absent.");
-        schema.putArray("required").add("input");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("SubmitWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        // Availability first: a node with no job store cannot serve any request, so
+        // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
+        CatalogContract.check(input, "SubmitWorkflowRequest", name());
         ObjectNode workflow = ActionSupport.optionalObject(input, "workflow");
         String workflowName = ActionSupport.optionalString(input, "workflowName");
         String jobId = ActionSupport.optionalString(input, "jobId");

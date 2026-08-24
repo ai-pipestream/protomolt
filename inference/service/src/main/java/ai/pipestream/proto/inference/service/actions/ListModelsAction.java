@@ -1,6 +1,7 @@
 package ai.pipestream.proto.inference.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -50,18 +51,12 @@ public final class ListModelsAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        schema.putObject("properties").putObject("provider")
-                .put("type", "string")
-                .put("description", "When set, only entries executed by this provider.");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("InferenceListModelsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "InferenceListModelsRequest", name());
         InferenceActionSupport.requireEngines(engines);
         String provider = InferenceActionSupport.optionalString(input, "provider");
         ListModelsResponse response = engines.listModels(ListModelsRequest.newBuilder()

@@ -129,7 +129,7 @@ class InferenceActionsTest {
                 "messages", List.of(Map.of("role", "user", "content", "hi")))),
                 ActionContext.create()))
                 .isInstanceOfSatisfying(ActionException.class, e ->
-                        assertThat(e.getMessage()).contains("declared rules"));
+                        assertThat(e.getMessage()).contains("temperature must be within"));
     }
 
     @Test

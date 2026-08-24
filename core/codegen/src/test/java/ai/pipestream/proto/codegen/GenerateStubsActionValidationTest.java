@@ -79,7 +79,7 @@ class GenerateStubsActionValidationTest {
         assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
-                    assertThat(e.getMessage()).contains("/generators");
+                    assertThat(e.getMessage()).contains("generators");
                 });
     }
 
@@ -105,14 +105,16 @@ class GenerateStubsActionValidationTest {
     }
 
     @Test
-    void generatorNamesAreCaseInsensitive() throws Exception {
+    void generatorNamesAreTheDeclaredEnumValues() {
+        // The generator vocabulary is a proto enum, so a value is written exactly as the
+        // enum declares it. A lowercase or differently-cased spelling is refused rather
+        // than guessed at, and the published schema lists the values a caller may use.
         ObjectNode input = singleFileInput();
-        input.putArray("generators").add("JAVA");
+        input.putArray("generators").add("java");
 
-        ObjectNode result = action.execute(input, ActionContext.create());
-
-        assertThat(result.get("ok").asBoolean()).isTrue();
-        assertThat(result.get("files").findValuesAsText("generator")).containsOnly("java");
+        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+                .isInstanceOf(ActionException.class)
+                .hasMessageContaining("CodeGenerator");
     }
 
     @Test
@@ -123,7 +125,7 @@ class GenerateStubsActionValidationTest {
         assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
-                    assertThat(e.getMessage()).contains("/files");
+                    assertThat(e.getMessage()).contains("files");
                 });
     }
 
@@ -208,7 +210,7 @@ class GenerateStubsActionValidationTest {
     @Test
     void grpcJavaOnMessageOnlySchemaGeneratesNoFiles() throws Exception {
         ObjectNode input = singleFileInput();
-        input.putArray("generators").add("grpc-java");
+        input.putArray("generators").add("CODE_GENERATOR_GRPC_JAVA");
 
         ObjectNode result = action.execute(input, ActionContext.create());
 

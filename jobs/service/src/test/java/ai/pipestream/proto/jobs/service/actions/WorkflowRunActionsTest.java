@@ -192,7 +192,7 @@ class WorkflowRunActionsTest {
         assertThat(summary.get("status").asText()).isEqualTo("QUEUED");
 
         ObjectNode filtered = listJobs.execute(
-                envelope("{\"status\": \"COMPLETED\"}"), context);
+                envelope("{\"status\": \"JOB_STATUS_COMPLETED\"}"), context);
         assertThat(filtered.get("jobs")).isEmpty();
 
         // The limit clamps to the ceiling instead of failing.

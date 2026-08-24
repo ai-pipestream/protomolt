@@ -95,11 +95,13 @@ class ServiceWorkspaceContractTest {
     }
 
     @Test
-    void aReflectTargetMustBeAnEndpointAddress() {
+    void aReflectTargetIsBoundedButNotNarrowedToAnAuthority() {
         assertThat(validate("ReflectRequest", "target", "localhost:9090").valid()).isTrue();
         assertThat(validate("ReflectRequest", "target", "dns:///svc:443").valid()).isTrue();
-        // A port outside the valid range refuses rather than falling back to a URI reading.
-        assertThat(validate("ReflectRequest", "target", "localhost:99999").valid()).isFalse();
+        // An in-process name is a target the channel factory resolves, so the message must
+        // not refuse it; which forms are permitted is the channel policy's decision.
+        assertThat(validate("ReflectRequest", "target", "in-process-7f3a").valid()).isTrue();
+        assertThat(validate("ReflectRequest", "target", null).valid()).isFalse();
     }
 
     @Test

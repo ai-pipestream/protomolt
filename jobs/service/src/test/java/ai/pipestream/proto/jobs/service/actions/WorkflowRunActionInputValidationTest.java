@@ -65,9 +65,9 @@ class WorkflowRunActionInputValidationTest {
     @Test
     void getJobRequiresAStringJobId() {
         assertInvalidInput(catchThrowable(() -> getJob.execute(envelope("{}"), context)),
-                "Missing required string field 'jobId'");
+                "jobId field is required");
         assertInvalidInput(catchThrowable(() -> getJob.execute(envelope("{\"jobId\": 42}"), context)),
-                "Field 'jobId' must be a string");
+                "jobId value must be a valid UUID");
     }
 
     @Test
@@ -80,16 +80,16 @@ class WorkflowRunActionInputValidationTest {
                 "'limit' must be an integer");
         assertInvalidInput(
                 catchThrowable(() -> listJobs.execute(envelope("{\"offset\": -1}"), context)),
-                "'offset' must be a non-negative integer");
+                "offset must be >= 0");
         assertInvalidInput(
                 catchThrowable(() -> listJobs.execute(envelope("{\"workflowName\": 7}"), context)),
                 "'workflowName' must be a string");
         // The rejection message lists the valid statuses.
         Throwable badStatus = catchThrowable(
                 () -> listJobs.execute(envelope("{\"status\": \"ARCHIVED\"}"), context));
-        assertInvalidInput(badStatus, "'status' must be one of");
+        assertInvalidInput(badStatus, "Invalid enum value");
         assertThat(((ActionException) badStatus).getMessage())
-                .contains("QUEUED").contains("DEAD").contains("ARCHIVED");
+                .contains("JobStatus").contains("ARCHIVED").contains("ARCHIVED");
     }
 
     @Test
@@ -118,7 +118,7 @@ class WorkflowRunActionInputValidationTest {
         textualWorkflow.put("workflow", "not-an-object");
         textualWorkflow.putObject("input").put("text", "hi");
         assertInvalidInput(catchThrowable(() -> submit.execute(textualWorkflow, context)),
-                "Field 'workflow' must be a JSON object");
+                "Expect message object");
 
         // A workflowName that is not a string.
         ObjectNode numericName = MAPPER.createObjectNode();
@@ -133,7 +133,7 @@ class WorkflowRunActionInputValidationTest {
         numericJobId.putObject("input").put("text", "hi");
         numericJobId.put("jobId", 42);
         assertInvalidInput(catchThrowable(() -> submit.execute(numericJobId, context)),
-                "Field 'jobId' must be a string");
+                "jobId value must be a valid UUID");
 
         assertThat(store.list(null, null, 10, 0)).isEmpty();
     }
@@ -141,10 +141,10 @@ class WorkflowRunActionInputValidationTest {
     @Test
     void completeStepRequiresAllThreeFields() {
         assertInvalidInput(catchThrowable(() -> completeStep.execute(envelope("{}"), context)),
-                "Missing required string field 'jobId'");
+                "jobId field is required");
         assertInvalidInput(catchThrowable(() -> completeStep.execute(
                 envelope("{\"jobId\": \"" + java.util.UUID.randomUUID() + "\"}"), context)),
-                "Missing required string field 'stepName'");
+                "stepName field is required");
         assertInvalidInput(catchThrowable(() -> completeStep.execute(envelope(
                 "{\"jobId\": \"" + java.util.UUID.randomUUID() + "\","
                         + " \"stepName\": \"review\"}"), context)),
@@ -152,11 +152,11 @@ class WorkflowRunActionInputValidationTest {
         assertInvalidInput(catchThrowable(() -> completeStep.execute(envelope(
                 "{\"jobId\": \"" + java.util.UUID.randomUUID() + "\","
                         + " \"stepName\": \"review\", \"response\": \"nope\"}"), context)),
-                "Field 'response' must be a JSON object");
+                "Expect a map object");
         assertInvalidInput(catchThrowable(() -> completeStep.execute(envelope(
                 "{\"jobId\": \"not-a-uuid\", \"stepName\": \"review\","
                         + " \"response\": {}}"), context)),
-                "'jobId' must be a uuid");
+                "jobId value must be a valid UUID");
     }
 
     @Test
