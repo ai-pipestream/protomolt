@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
@@ -39,33 +40,12 @@ final class SuggestMappingsAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        ObjectNode sources = properties.putObject("sources").put("type", "array")
-                .put("description", "Named source descriptors: {name, schema, type?}.")
-                .put("minItems", 1).put("maxItems", MAX_SOURCES);
-        ObjectNode sourceItem = sources.putObject("items").put("type", "object");
-        ObjectNode sourceProperties = sourceItem.putObject("properties");
-        sourceProperties.putObject("name").put("type", "string")
-                .put("pattern", SOURCE_NAME_PATTERN).put("maxLength", 128);
-        sourceProperties.putObject("schema").put("type", "object");
-        sourceProperties.putObject("type").put("type", "string").put("minLength", 1);
-        sourceItem.putArray("required").add("name").add("schema");
-        sourceItem.put("additionalProperties", false);
-        ObjectNode target = properties.putObject("target").put("type", "object")
-                .put("description", "Target descriptor: {schema, type?}.");
-        ObjectNode targetProperties = target.putObject("properties");
-        targetProperties.putObject("schema").put("type", "object");
-        targetProperties.putObject("type").put("type", "string").put("minLength", 1);
-        target.putArray("required").add("schema");
-        target.put("additionalProperties", false);
-        schema.putArray("required").add("sources").add("target");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("SuggestMappingsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "SuggestMappingsRequest", name());
         JsonNode sourceNode = input.get("sources");
         if (!(sourceNode instanceof ArrayNode array) || array.isEmpty()) {
             throw WorkflowActionJson.invalid("'sources' must be a non-empty array", "/sources");

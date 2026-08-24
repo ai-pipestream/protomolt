@@ -1,6 +1,8 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
@@ -61,24 +63,13 @@ public final class RunWorkflowAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = baseSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("workflow", workflowSchema());
-        properties.putObject("workflowName")
-                .put("type", "string")
-                .put("description", "A stored workflow to run instead of an inline 'workflow' — "
-                        + "registered via the registry's workflows endpoint.");
-        properties.putObject("input")
-                .put("type", "object")
-                .put("description", "The workflow input, as proto3 JSON of the workflow's "
-                        + "inputType.");
-        schema.putArray("required").add("input");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("RunWorkflowRequest");
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) {
+    public ObjectNode execute(ObjectNode input, ActionContext context)
+            throws ActionException {
+        CatalogContract.check(input, "RunWorkflowRequest", name());
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         JsonNode workflowNode = input.get("workflow");
         JsonNode nameNode = input.get("workflowName");

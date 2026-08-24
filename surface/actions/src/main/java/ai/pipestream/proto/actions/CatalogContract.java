@@ -56,6 +56,27 @@ public final class CatalogContract {
     }
 
     /**
+     * The schema with {@code field} added to its required list.
+     *
+     * <p>For a field whose necessity depends on how the node is configured rather than on
+     * the message: the contract cannot state it, because the same message is correct with
+     * and without the field depending on what the node has to fall back on. The verb knows
+     * which case it is in and says so in what it publishes.
+     */
+    public static ObjectNode requiring(ObjectNode schema, String field) {
+        ArrayNode required = schema.has("required")
+                ? (ArrayNode) schema.get("required")
+                : schema.putArray("required");
+        for (var element : required) {
+            if (field.equals(element.asText())) {
+                return schema;
+            }
+        }
+        required.add(field);
+        return schema;
+    }
+
+    /**
      * Refuses an envelope the request message does not accept.
      *
      * <p>The envelope is the message's canonical proto3 JSON form, so the same document works

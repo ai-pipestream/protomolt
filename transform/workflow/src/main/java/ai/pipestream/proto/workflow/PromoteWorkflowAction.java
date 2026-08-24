@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -49,17 +50,12 @@ final class PromoteWorkflowAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("workflow").put("type", "object");
-        WorkflowActionJson.identitySchema(properties, "version");
-        schema.putArray("required").add("workflow").add("version");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("PromoteWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "PromoteWorkflowRequest", name());
         if (workflows == null) {
             throw WorkflowActionJson.unavailable("workflow promotion",
                     "start protomolt-serve with --registry-git");

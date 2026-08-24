@@ -1,6 +1,8 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -39,16 +41,13 @@ public final class CheckWorkflowAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = RunWorkflowAction.baseSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("workflow", RunWorkflowAction.workflowSchema());
-        schema.putArray("required").add("workflow");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("CheckWorkflowRequest");
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) {
+    public ObjectNode execute(ObjectNode input, ActionContext context)
+            throws ActionException {
+        CatalogContract.check(input, "CheckWorkflowRequest", name());
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         ArrayNode findingsNode = result.putArray("findings");
         JsonNode workflowNode = input.get("workflow");
