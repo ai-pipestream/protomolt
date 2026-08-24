@@ -145,8 +145,14 @@ class WorkflowWorkbenchMcpTest {
             record.putObject("input").put("text", "hello");
             record.put("runId", "run-1");
             JsonNode evidence = mcp.tool("record-workflow-run", record);
+            // Lead with the step and kind the answer already names. A truncated CI
+            // summary line then still says why the run failed, which matters because a
+            // rerun replaces the job log and the full report with it.
             assertThat(evidence.path("ok").asBoolean())
-                    .as("record response: %s", evidence.toString())
+                    .as("run failed at step '%s' (%s): %s",
+                            evidence.path("failedStep").asText("none"),
+                            evidence.path("failureKind").asText("unknown"),
+                            evidence)
                     .isTrue();
             assertThat(evidence.path("evidence").path("steps")).hasSize(2);
             assertThat(evidence.path("evidence").path("workflowFingerprint").asText())
