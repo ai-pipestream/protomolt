@@ -610,3 +610,48 @@ message RegisterWorkerResponse {
   // Why admission was refused; empty when the worker was admitted.
   string reason = 5;
 }
+
+// The delegation coordinator's task protocol as a typed service.
+//
+// Every verb the delegation role contributes to the action catalog is one
+// method here, taking the same request message the verb accepts. A caller may
+// reach the coordinator as an RPC or as a catalog verb; the contract is the
+// same either way, because it is stated once.
+service DelegationService {
+  // Offers a bounded task to an admitted worker.
+  rpc OfferTask(OfferTaskRequest) returns (OfferTaskResponse);
+
+  // Takes the open offer's attempt lease.
+  rpc AcceptTask(AcceptTaskRequest) returns (AcceptTaskResponse);
+
+  // Cancels a task's open attempt; terminal the moment the coordinator emits it.
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+
+  // Submits a completion candidate for review against an expected revision.
+  rpc SubmitCandidate(SubmitCandidateRequest) returns (SubmitCandidateResponse);
+
+  // Records one resumable checkpoint on the leased attempt.
+  rpc RecordCheckpoint(RecordCheckpointRequest) returns (RecordCheckpointResponse);
+
+  // Sends a non-transitioning task message in either direction.
+  rpc SendTaskMessage(SendTaskMessageRequest) returns (SendTaskMessageResponse);
+
+  // Reports one bounded progress note in a strictly increasing sequence.
+  rpc ReportProgress(ReportProgressRequest) returns (ReportProgressResponse);
+
+  // Applies the verdict on an open candidate: accept, or revise with feedback.
+  rpc ReviewCandidate(ReviewCandidateRequest) returns (ReviewCandidateResponse);
+
+  // Reads the recorded transcript from a cursor.
+  rpc ReadTranscript(ReadTranscriptRequest) returns (ReadTranscriptResponse);
+
+  // Long-polls the event feed: blocks until an event appears after a cursor,
+  // then returns a bounded batch.
+  rpc WatchEvents(WatchEventsRequest) returns (WatchEventsResponse);
+
+  // Lists registered workers with identity, admission and lease state.
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+
+  // Registers this agent as a worker and opens its stream.
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+}
