@@ -134,6 +134,15 @@ rather than restating them.
 Contributed by `protomolt-mesh-cluster` through `ClusterActions.register`,
 against the node's cluster directory. Every one requires `worker-coordinate`.
 
+Each verb's envelope is the canonical proto3 JSON of a request message
+declared in `cluster_directory_service.proto`, and its published input schema
+is derived from that message. The same file declares
+`ClusterDirectoryService`, so a caller may reach the directory either as a
+catalog verb or as a typed RPC over that service, against one contract. Every
+mutating answer carries a `DirectoryCommit` and an `ApplyOutcome`, which
+distinguishes a change that was applied from one refused by a stale fencing
+token.
+
 | Action | Does |
 |---|---|
 | `mesh-node-register` | Registers or refreshes one fenced mesh node advertisement after durable validation |
@@ -149,6 +158,14 @@ Defined in `protomolt-metric-service` and contributed by the `metric` role
 module in `protomolt-metric-lucene`. See
 [metric mappings](../design/metric-mapping.md).
 
+Each verb's envelope is the canonical proto3 JSON of a request message
+declared in `metric_service.proto` (`QueryMetricsRequest`,
+`DescribeMappingRequest`, `RebuildRollupRequest`), and its published input
+schema is derived from that message. The bounds the schema advertises are the
+declared ones: a query names at most 100 measures, 32 group-by dimensions, and
+64 filters, and the same limits hold whether the request arrives on the
+catalog route or as a `MetricService` RPC.
+
 | Action | Scope | Does |
 |---|---|---|
 | `describe-mapping` | `metrics-query` | One subject's queryable surface: members, roles, aggregates, descriptions, sensitivity, mounted backends |
@@ -160,6 +177,15 @@ module in `protomolt-metric-lucene`. See
 Contributed by the registry role in `protomolt-registry-service`. Every one
 requires `schema-write`.
 
+Each verb's envelope is the canonical proto3 JSON of a request message
+declared in `registry_admin.proto`, and its published input schema is derived
+from that message. `registry-remotes` names its operation with the
+`RemoteOperation` enum rather than a bare string, and the message states in
+its own rules which fields each operation requires, so an add without a URL or
+a remove naming no remote is refused by the contract rather than by a check
+inside the verb. `registry-sync` answers with per-subject `ImportedSubject`
+detail, not a count.
+
 | Action | Does |
 |---|---|
 | `publish-config` | Publishes one typed config document through the registry's config gate, parsed strictly as its declared message type |
@@ -170,6 +196,15 @@ requires `schema-write`.
 
 Contributed by the search role in `protomolt-search-service`.
 
+Each verb's envelope is the canonical proto3 JSON of a request message
+declared in `search_service.proto` (`SearchRequest`,
+`ReplayDocumentsRequest`), and its published input schema is derived from that
+message. `search` names its lane with the `SearchLane` enum, the same
+vocabulary the RPC surface uses. `ReplayDocuments` is also an RPC on
+`SearchIndexService`; its contract states that a scoped replay sets a drive
+while a replay that prunes covers the whole repository and sets neither drive
+nor account, so the two modes cannot be combined by accident.
+
 | Action | Scope | Does |
 |---|---|---|
 | `search` | `search-query` | Searches one mapping subject on the lexical, vector, or hybrid lane and returns hits with typed stored fields |
@@ -178,6 +213,12 @@ Contributed by the search role in `protomolt-search-service`.
 ### Pull connectors
 
 Contributed by the connector role modules. Both require `service-invoke`.
+
+Each verb's envelope is the canonical proto3 JSON of a request message
+declared in `pull.proto` (`PullFromS3Request`, `PullFromJdbcRequest`), and its
+published input schema is derived from that message. Both answer with a
+`PullReport`: `submitted`, `deduplicated`, `failed`, per-item `errors`, and the
+`watermark` to hand back on the next pass.
 
 | Action | Module | Does |
 |---|---|---|

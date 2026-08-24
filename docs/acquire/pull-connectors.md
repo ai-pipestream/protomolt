@@ -63,7 +63,11 @@ config (the `acquire-jdbc` role): `PROTOMOLT_ACQUIRE_JDBC_URL` (required),
 Both connectors are [actions](../surface/actions.md) contributed by their
 role modules, so a mounted registry serves them on the actions route:
 `POST /protomolt/actions/pull-s3` and `POST /protomolt/actions/pull-jdbc`.
-The answer is the pull report: `submitted`, `deduplicated`, `failed`,
-per-item `errors`, and the `watermark` to hand back next time. For recurring
+The request and the answer are declared in `pull.proto`
+(`PullFromS3Request`, `PullFromJdbcRequest`, `PullReport`), and each verb's
+published input schema is derived from its request message, so the bounds a
+caller reads are the bounds the verb enforces. The answer is the pull report:
+`submitted`, `deduplicated`, `failed`, per-item `errors`, and the `watermark`
+to hand back next time. For recurring
 pulls, drive the verb from whatever owns operations cadence (a durable
 workflow, cron, a pipeline) and persist the watermark there.

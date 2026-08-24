@@ -18,6 +18,23 @@ A repository failure therefore leaves membership, event sequence, fencing
 tombstones, and capacity unchanged. Reconstructing the facade loads and
 replays the stored log before serving queries.
 
+## The wire contract
+
+`cluster_directory_service.proto` declares `ClusterDirectoryService`, the
+typed surface over that reducer: `RegisterNode`, `Heartbeat`,
+`RegisterProcessor`, `UpdateCapacity`, `GetSnapshot`, and `Sweep`. The same
+request messages back the `mesh-*` catalog verbs, whose published input
+schemas are derived from them, so the directory presents one contract whether
+it is reached as an RPC or as a verb.
+
+Every mutating answer carries two things the caller needs in order to reason
+about what happened. `DirectoryCommit` reports the event sequence the mutation
+landed at, which is what makes a retry safe to distinguish from a duplicate.
+`ApplyOutcome` reports whether the mutation was applied or refused, and a
+refusal from a stale fencing token is a distinct outcome rather than an error:
+a node that was fenced out while a request was in flight learns that its write
+did not take effect, without the caller having to infer it from a failure.
+
 ## Storage adapters
 
 `ClusterEventRepository` is the persistence interface.
