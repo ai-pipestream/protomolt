@@ -25,6 +25,6 @@ dependencies {
 // Test fixture protos only; the module's own contract lives in mesh/proto.
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.35.1"
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
     }
 }

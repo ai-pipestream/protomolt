@@ -14,6 +14,6 @@ dependencies {
 // Messages only: the fleet's parse services own the RPC surfaces.
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.35.1"
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
     }
 }
