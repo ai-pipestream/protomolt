@@ -1,14 +1,16 @@
 package ai.pipestream.proto.jobs.service.actions;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.workflow.WorkflowRunner;
-import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.jobs.service.TestWorkflows;
+import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.jobs.service.store.InMemoryWorkflowRunStore;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunEventRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
-import ai.pipestream.proto.jobs.service.store.InMemoryWorkflowRunStore;
 import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
+import ai.pipestream.proto.workflow.WorkflowRunner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -81,7 +83,7 @@ class WorkflowRunActionsTest {
         ObjectNode request = MAPPER.createObjectNode();
         request.set("workflow", workflows.twoStepWorkflow("in-process", null));
         request.putObject("input").put("text", text).put("fail", fail);
-        return submit.execute(request, context);
+        return dispatch(submit, request);
     }
 
     @Test
@@ -90,19 +92,29 @@ class WorkflowRunActionsTest {
         GetJobAction noGet = new GetJobAction(null);
         ListJobsAction noList = new ListJobsAction(null);
         CompleteStepAction noComplete = new CompleteStepAction(null);
+        // Requests the contract accepts, so each verb is reached and answers for itself:
+        // the catalog checks the request before dispatch, and an unavailable node has
+        // nothing to say about a request that was never valid.
         ObjectNode request = MAPPER.createObjectNode();
-        assertThatThrownBy(() -> noSubmit.execute(request, context))
+        request.put("workflowName", "embed-text");
+        request.putObject("input");
+        assertThatThrownBy(() -> dispatch(noSubmit, request))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("unavailable");
                     assertThat(e.getMessage()).isEqualTo(ActionSupport.UNAVAILABLE_MESSAGE);
                 });
-        assertThatThrownBy(() -> noGet.execute(request, context))
+        ObjectNode byId = MAPPER.createObjectNode();
+        byId.put("jobId", java.util.UUID.randomUUID().toString());
+        assertThatThrownBy(() -> dispatch(noGet, byId))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("unavailable"));
-        assertThatThrownBy(() -> noList.execute(request, context))
+        assertThatThrownBy(() -> dispatch(noList, MAPPER.createObjectNode()))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("unavailable"));
-        assertThatThrownBy(() -> noComplete.execute(request, context))
+        ObjectNode step = byId.deepCopy();
+        step.put("stepName", "review");
+        step.putObject("response");
+        assertThatThrownBy(() -> dispatch(noComplete, step))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("unavailable"));
     }
@@ -115,14 +127,14 @@ class WorkflowRunActionsTest {
         String jobId = UUID.randomUUID().toString();
         request.put("jobId", jobId);
 
-        ObjectNode first = submit.execute(request, context);
+        ObjectNode first = dispatch(submit, request);
         assertThat(first.get("ok").asBoolean()).isTrue();
         assertThat(first.get("jobId").asText()).isEqualTo(jobId);
         assertThat(first.get("status").asText()).isEqualTo("QUEUED");
         assertThat(store.events()).hasSize(1);
 
         // The resubmit returns the existing row and writes nothing.
-        ObjectNode second = submit.execute(request, context);
+        ObjectNode second = dispatch(submit, request);
         assertThat(second.get("ok").asBoolean()).isTrue();
         assertThat(second.get("jobId").asText()).isEqualTo(jobId);
         assertThat(store.events()).hasSize(1);
@@ -135,7 +147,7 @@ class WorkflowRunActionsTest {
         ObjectNode broken = MAPPER.createObjectNode();
         broken.set("workflow", workflows.brokenWorkflow("in-process"));
         broken.putObject("input").put("text", "hi");
-        ObjectNode result = submit.execute(broken, context);
+        ObjectNode result = dispatch(submit, broken);
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("failedStep").asText()).isEqualTo("embed");
         assertThat(result.get("error").asText()).contains("does not verify");
@@ -145,7 +157,7 @@ class WorkflowRunActionsTest {
         ObjectNode named = MAPPER.createObjectNode();
         named.put("workflowName", "court-decoration");
         named.putObject("input").put("text", "hi");
-        ObjectNode refused = submit.execute(named, context);
+        ObjectNode refused = dispatch(submit, named);
         assertThat(refused.get("ok").asBoolean()).isFalse();
         assertThat(refused.get("error").asText()).contains("No workflow repository is mounted");
     }
@@ -154,7 +166,7 @@ class WorkflowRunActionsTest {
     void getJobAnswersTheFullRowAndMissesCleanly() throws Exception {
         String jobId = submitTwoStep("hi", false).get("jobId").asText();
 
-        ObjectNode found = getJob.execute(envelope("{\"jobId\": \"" + jobId + "\"}"), context);
+        ObjectNode found = dispatch(getJob, envelope("{\"jobId\": \"" + jobId + "\"}"));
         assertThat(found.get("ok").asBoolean()).isTrue();
         JsonNode job = found.get("job");
         assertThat(job.get("jobId").asText()).isEqualTo(jobId);
@@ -166,12 +178,11 @@ class WorkflowRunActionsTest {
         assertThat(job.has("result")).isFalse();
         assertThat(job.get("createdAt").asText()).isNotBlank();
 
-        ObjectNode missing = getJob.execute(
-                envelope("{\"jobId\": \"" + UUID.randomUUID() + "\"}"), context);
+        ObjectNode missing = dispatch(getJob, envelope("{\"jobId\": \"" + UUID.randomUUID() + "\"}"));
         assertThat(missing.get("ok").asBoolean()).isFalse();
         assertThat(missing.get("error").asText()).contains("no workflow run");
 
-        assertThatThrownBy(() -> getJob.execute(envelope("{\"jobId\": \"not-a-uuid\"}"), context))
+        assertThatThrownBy(() -> dispatch(getJob, envelope("{\"jobId\": \"not-a-uuid\"}")))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
@@ -181,26 +192,25 @@ class WorkflowRunActionsTest {
         submitTwoStep("one", false);
         submitTwoStep("two", false);
 
-        ObjectNode all = listJobs.execute(MAPPER.createObjectNode(), context);
+        ObjectNode all = dispatch(listJobs, MAPPER.createObjectNode());
         assertThat(all.get("ok").asBoolean()).isTrue();
         assertThat(all.get("jobs")).hasSize(2);
         JsonNode summary = all.get("jobs").get(0);
-        // Summaries carry no input/checkpoints/result — get-job owns those.
+        // Summaries carry no input/checkpoints/result — get-job owns those. input and
+        // result carry presence, so they are absent; checkpoints is repeated and has none.
         assertThat(summary.has("input")).isFalse();
-        assertThat(summary.has("checkpoints")).isFalse();
+        assertThat(summary.get("checkpoints")).isEmpty();
         assertThat(summary.has("result")).isFalse();
         assertThat(summary.get("status").asText()).isEqualTo("QUEUED");
 
-        ObjectNode filtered = listJobs.execute(
-                envelope("{\"status\": \"JOB_STATUS_COMPLETED\"}"), context);
+        ObjectNode filtered = dispatch(listJobs, envelope("{\"status\": \"JOB_STATUS_COMPLETED\"}"));
         assertThat(filtered.get("jobs")).isEmpty();
 
         // The limit clamps to the ceiling instead of failing.
-        ObjectNode clamped = listJobs.execute(envelope("{\"limit\": 100000}"), context);
+        ObjectNode clamped = dispatch(listJobs, envelope("{\"limit\": 100000}"));
         assertThat(clamped.get("ok").asBoolean()).isTrue();
 
-        assertThatThrownBy(() -> listJobs.execute(
-                envelope("{\"status\": \"SLEEPING\"}"), context))
+        assertThatThrownBy(() -> dispatch(listJobs, envelope("{\"status\": \"SLEEPING\"}")))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
@@ -211,33 +221,32 @@ class WorkflowRunActionsTest {
         ObjectNode request = MAPPER.createObjectNode();
         request.set("workflow", workflows.threeStepWorkflow("in-process"));
         request.putObject("input").put("text", "hi");
-        String jobId = submit.execute(request, context).get("jobId").asText();
+        String jobId = dispatch(submit, request).get("jobId").asText();
         assertThat(worker.workOnce()).isTrue();
         assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
                 .isEqualTo(WorkflowRunRecord.STATUS_WAITING);
 
         // Wrong step name: fail fast with the state, nothing mutates.
-        ObjectNode wrong = completeStep.execute(envelope(
+        ObjectNode wrong = dispatch(completeStep, envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"embed\","
-                        + " \"response\": {}}"), context);
+                        + " \"response\": {}}"));
         assertThat(wrong.get("ok").asBoolean()).isFalse();
         assertThat(wrong.get("status").asText()).isEqualTo("WAITING");
         assertThat(wrong.get("outstandingStep").asText()).isEqualTo("review");
 
         // A malformed response is the caller's error; the job stays parked.
-        assertThatThrownBy(() -> completeStep.execute(envelope(
+        assertThatThrownBy(() -> dispatch(completeStep, envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
-                        + " \"response\": {\"notes\": \"ok\", \"score\": \"not-a-number\"}}"),
-                context))
+                        + " \"response\": {\"notes\": \"ok\", \"score\": \"not-a-number\"}}")))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
         assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
                 .isEqualTo(WorkflowRunRecord.STATUS_WAITING);
 
         // The valid completion: checkpointed and requeued.
-        ObjectNode done = completeStep.execute(envelope(
+        ObjectNode done = dispatch(completeStep, envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
-                        + " \"response\": {\"notes\": \"ship it\"}}"), context);
+                        + " \"response\": {\"notes\": \"ship it\"}}"));
         assertThat(done.get("ok").asBoolean()).isTrue();
         assertThat(done.get("status").asText()).isEqualTo("QUEUED");
         WorkflowRunRecord job = store.get(UUID.fromString(jobId)).orElseThrow();
@@ -249,9 +258,9 @@ class WorkflowRunActionsTest {
                 .contains(WorkflowRunEventRecord.TYPE_STEP_CHECKPOINT);
 
         // The redelivery answers the current status and changes nothing.
-        ObjectNode again = completeStep.execute(envelope(
+        ObjectNode again = dispatch(completeStep, envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
-                        + " \"response\": {\"notes\": \"ship it\"}}"), context);
+                        + " \"response\": {\"notes\": \"ship it\"}}"));
         assertThat(again.get("ok").asBoolean()).isTrue();
         assertThat(again.get("status").asText()).isEqualTo("QUEUED");
         assertThat(MAPPER.readTree(
@@ -268,11 +277,22 @@ class WorkflowRunActionsTest {
     @Test
     void completeStepOnANonWaitingJobAnswersWrongState() throws Exception {
         String jobId = submitTwoStep("hi", false).get("jobId").asText();
-        ObjectNode result = completeStep.execute(envelope(
+        ObjectNode result = dispatch(completeStep, envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
-                        + " \"response\": {}}"), context);
+                        + " \"response\": {}}"));
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("status").asText()).isEqualTo("QUEUED");
         assertThat(result.get("error").asText()).contains("not waiting on step 'review'");
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

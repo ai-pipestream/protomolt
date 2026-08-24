@@ -159,7 +159,7 @@ class WorkflowRunActionInputValidationTest {
         assertInvalidInput(catchThrowable(() -> dispatch("complete-step", envelope(
                 "{\"jobId\": \"" + java.util.UUID.randomUUID() + "\","
                         + " \"stepName\": \"review\"}"))),
-                "Missing required object field 'response'");
+                "response field is required");
         assertInvalidInput(catchThrowable(() -> dispatch("complete-step", envelope(
                 "{\"jobId\": \"" + java.util.UUID.randomUUID() + "\","
                         + " \"stepName\": \"review\", \"response\": \"nope\"}"))),

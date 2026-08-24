@@ -3,15 +3,15 @@ package ai.pipestream.proto.inference.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.spi.UnknownModelException;
 import ai.pipestream.proto.inference.v1.DescribeModelRequest;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * The {@code inference-describe-model} verb: one catalog entry, capabilities
@@ -20,7 +20,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * A null facade means inference is not configured on this server; every call
  * then answers {@code unavailable}.
  */
-public final class DescribeModelAction implements JsonAction {
+public final class DescribeModelAction implements ProtoAction {
 
     private final InferenceEngines engines;
 
@@ -59,19 +59,18 @@ public final class DescribeModelAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         InferenceActionSupport.requireEngines(engines);
-        String model = InferenceActionSupport.requireString(input, "model");
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
+        String model = Fields.string(input, "model");
         try {
-            result.put("ok", true);
-            result.set("entry", InferenceActionSupport.entryJson(
+            Reply result = Reply.of(responseType()).set("ok", true);
+            InferenceActionSupport.writeEntry(result.nest("entry"),
                     engines.describe(DescribeModelRequest.newBuilder().setModel(model).build())
-                            .getEntry()));
+                            .getEntry());
+            return result.build();
         } catch (UnknownModelException e) {
-            result.put("ok", false);
-            result.put("error", e.getMessage());
+            return Reply.of(responseType())
+                    .set("ok", false).set("error", e.getMessage()).build();
         }
-        return result;
     }
 }

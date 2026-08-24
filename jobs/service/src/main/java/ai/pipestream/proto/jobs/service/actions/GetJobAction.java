@@ -3,13 +3,13 @@ package ai.pipestream.proto.jobs.service.actions;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Optional;
@@ -23,7 +23,7 @@ import java.util.UUID;
  * A null store means workflow runs are not configured on this server; every
  * call then answers {@code unavailable}.
  */
-public final class GetJobAction implements JsonAction {
+public final class GetJobAction implements ProtoAction {
 
     private final WorkflowRunStore store;
 
@@ -62,26 +62,20 @@ public final class GetJobAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // Availability first: a node with no job store cannot serve any request, so
         // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
-        String jobIdText = ActionSupport.requireString(input, "jobId");
-        UUID jobId;
-        try {
-            jobId = UUID.fromString(jobIdText.trim());
-        } catch (IllegalArgumentException e) {
-            throw ActionSupport.invalidInput("'jobId' must be a uuid; got '" + jobIdText + "'");
-        }
+        UUID jobId = ActionSupport.jobId(Fields.string(input, "jobId"));
         Optional<WorkflowRunRecord> job = store.get(jobId);
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
         if (job.isEmpty()) {
-            result.put("ok", false);
-            result.put("error", "no workflow run " + jobId);
-            return result;
+            return Reply.of(responseType())
+                    .set("ok", false)
+                    .set("error", "no workflow run " + jobId)
+                    .build();
         }
-        result.put("ok", true);
-        result.set("job", ActionSupport.jobJson(job.get(), true));
-        return result;
+        Reply result = Reply.of(responseType()).set("ok", true);
+        ActionSupport.writeJob(result.nest("job"), job.get(), true);
+        return result.build();
     }
 }
