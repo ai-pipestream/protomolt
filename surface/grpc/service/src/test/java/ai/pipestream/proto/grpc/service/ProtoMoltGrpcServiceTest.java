@@ -301,9 +301,9 @@ class ProtoMoltGrpcServiceTest {
         JsonNode result = call("CheckCompat", """
                 {"old": {"sources": {"shop/v1/order.proto": %s}},
                  "new": {"sources": {"shop/v1/order.proto": %s}},
-                 "mode": "BACKWARD"}
+                 "mode": "COMPATIBILITY_MODE_BACKWARD"}
                 """.formatted(oldProto, newProto));
-        assertThat(result.path("mode").asText()).isEqualTo("BACKWARD");
+        assertThat(result.path("mode").asText()).isEqualTo("COMPATIBILITY_MODE_BACKWARD");
         assertThat(result.path("changes").findValuesAsText("ruleId")).isNotEmpty();
     }
 
