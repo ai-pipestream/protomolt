@@ -46,55 +46,12 @@ final class JoinMessagesAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        ObjectNode sources = properties.putObject("sources");
-        sources.put("type", "array");
-        sources.put("description", "The named source messages.");
-        ObjectNode source = sources.putObject("items");
-        source.put("type", "object");
-        ObjectNode sourceProperties = source.putObject("properties");
-        sourceProperties.putObject("name")
-                .put("type", "string")
-                .put("description", "Scope name rules and CEL expressions reference.");
-        sourceProperties.set("schema", ActionJson.schemaSourceSchema());
-        sourceProperties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type; required unless the schema identifies one."));
-        sourceProperties.putObject("message")
-                .put("type", "object")
-                .put("description", "The source message, as canonical proto3 JSON.");
-        source.putArray("required").add("name").add("schema").add("message");
-        ObjectNode target = properties.putObject("target");
-        target.put("type", "object");
-        target.put("description", "Authored output type: a schema plus type name. Give "
-                + "either 'target' or 'shape'.");
-        ObjectNode targetProperties = target.putObject("properties");
-        targetProperties.set("schema", ActionJson.schemaSourceSchema());
-        targetProperties.set("type", ActionJson.typeProperty(
-                "Fully qualified output message type."));
-        ObjectNode shape = properties.putObject("shape");
-        shape.put("type", "object");
-        shape.put("description", "Synthesized output shape: {mode, name, fields?} as in "
-                + "synthesize-shape, where mode is a ShapeMode value. Give either 'target' or "
-                + "'shape'.");
-        ObjectNode rules = properties.putObject("rules");
-        rules.put("type", "array");
-        rules.put("description", "Scoped text rules applied in order: 'target.path = "
-                + "source.path', 'target.path += source.path', '-target.to.clear'; a bare "
-                + "source name copies the whole message.");
-        rules.putObject("items").put("type", "string");
-        ObjectNode celRules = properties.putObject("celRules");
-        celRules.put("type", "array");
-        celRules.put("description", "CEL rules applied after 'rules'; expressions see each "
-                + "source by name plus 'target', the progressive output.");
-        celRules.putObject("items").put("type", "object");
-        ActionJson.required(schema, "sources");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("JoinMessagesRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "JoinMessagesRequest", name());
         List<ShapeSynthesizer.NamedType> named =
                 SynthesizeShapeAction.namedSources(input, context);
         MessageScope scope = buildScope(input, named, context);

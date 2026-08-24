@@ -38,7 +38,7 @@ class RenderIndexMappingsActionTest {
 
     @Test
     void opensearchMappingsHonorHintsAndInference() throws Exception {
-        ObjectNode result = render("opensearch");
+        ObjectNode result = render("INDEX_ENGINE_OPENSEARCH");
         JsonNode properties = result.get("properties");
         JsonNode title = properties.get("title");
         assertThat(title.get("type").asText()).isEqualTo("text");
@@ -53,7 +53,7 @@ class RenderIndexMappingsActionTest {
     void sensitivityRendersSecurityFragmentAndEncryptedContainers() throws Exception {
         // mask: the field stays searchable; the security plugin hashes it at query time.
         ObjectNode masked = mappingsOf(catalog.execute("render-index-mappings", obj("""
-                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "INDEX_ENGINE_OPENSEARCH",
                  "sensitivity": {"mask": ["pii"]}}
                 """)));
         assertThat(masked.get("security").get("maskedFields"))
@@ -63,7 +63,7 @@ class RenderIndexMappingsActionTest {
 
         // encrypt: the field becomes a store-only ciphertext container.
         ObjectNode encrypted = mappingsOf(catalog.execute("render-index-mappings", obj("""
-                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "INDEX_ENGINE_OPENSEARCH",
                  "sensitivity": {"encrypt": ["pii"], "exclude": ["secret"]}}
                 """)));
         JsonNode title = encrypted.get("mappings").get("properties").get("title");
@@ -77,7 +77,7 @@ class RenderIndexMappingsActionTest {
     @Test
     void sensitivityRoleRendersAnApplyableRoleBody() throws Exception {
         ObjectNode result = mappingsOf(catalog.execute("render-index-mappings", obj("""
-                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "INDEX_ENGINE_OPENSEARCH",
                  "sensitivity": {"mask": ["pii"],
                                  "maskFormat": {"pii": "::SHA-512"},
                                  "role": {"indexPatterns": ["docs-*"]}}}
@@ -102,7 +102,7 @@ class RenderIndexMappingsActionTest {
     @Test
     void sensitivityRoleRequiresIndexPatterns() {
         assertThatThrownBy(() -> catalog.execute("render-index-mappings", obj("""
-                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
+                {"schema": {"type": "actions.test.HintedDoc"}, "engine": "INDEX_ENGINE_OPENSEARCH",
                  "sensitivity": {"mask": ["pii"], "role": {}}}
                 """)))
                 .hasMessageContaining("indexPatterns");
@@ -110,7 +110,7 @@ class RenderIndexMappingsActionTest {
 
     @Test
     void solrSchemaHonorsHintsAndInference() throws Exception {
-        ObjectNode result = render("solr");
+        ObjectNode result = render("INDEX_ENGINE_SOLR");
         assertThat(result.has("fieldTypes")).isTrue();
         assertThat(result.has("copyFields")).isTrue();
         JsonNode fields = result.get("fields");
@@ -123,7 +123,7 @@ class RenderIndexMappingsActionTest {
 
     @Test
     void luceneFieldSpecsHonorHintsAndInference() throws Exception {
-        ObjectNode result = render("lucene");
+        ObjectNode result = render("INDEX_ENGINE_LUCENE");
         assertThat(result.get("messageFullName").asText()).isEqualTo("actions.test.HintedDoc");
         JsonNode fields = result.get("fields");
         JsonNode title = fieldNamed(fields, "title");
@@ -137,7 +137,7 @@ class RenderIndexMappingsActionTest {
 
     @Test
     void qdrantCollectionSchemaHonorsHintsAndInference() throws Exception {
-        ObjectNode result = render("qdrant");
+        ObjectNode result = render("INDEX_ENGINE_QDRANT");
         // The VECTOR hint renders the named vector with its declared size and distance.
         JsonNode vectors = result.get("vectors");
         assertThat(vectors).hasSize(1);
@@ -163,7 +163,7 @@ class RenderIndexMappingsActionTest {
     void dimensionlessVectorHintIsInvalidInputForQdrant() {
         context.registry().registerFile(TestFixtures.dimensionlessVectorFile());
         assertThatThrownBy(() -> catalog.execute("render-index-mappings", obj("""
-                {"schema": {"type": "actions.test.DimensionlessVectorDoc"}, "engine": "qdrant"}
+                {"schema": {"type": "actions.test.DimensionlessVectorDoc"}, "engine": "INDEX_ENGINE_QDRANT"}
                 """)))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
@@ -176,7 +176,7 @@ class RenderIndexMappingsActionTest {
     @Test
     void unhintedInlineSchemaFallsBackToInference() throws Exception {
         ObjectNode input = obj("""
-                {"schema": {"sources": {}}, "engine": "opensearch"}
+                {"schema": {"sources": {}}, "engine": "INDEX_ENGINE_OPENSEARCH"}
                 """);
         ((ObjectNode) input.get("schema").get("sources")).put("doc.proto", """
                 syntax = "proto3";
@@ -198,10 +198,13 @@ class RenderIndexMappingsActionTest {
 
     @Test
     void unknownEngineIsInvalidInput() {
-        assertThatThrownBy(() -> render("elasticsearch"))
+        assertThatThrownBy(() -> render("INDEX_ENGINE_ELASTICSEARCH"))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
-                    assertThat(e.details().orElseThrow().get("pointer").asText()).isEqualTo("/engine");
+                    // A value the parser cannot read at all is refused ahead of any rule,
+                    // so the refusal names the enum whose vocabulary it failed. The legal
+                    // values are on the published schema, derived from that same enum.
+                    assertThat(e.getMessage()).contains("IndexEngine");
                 });
     }
 
