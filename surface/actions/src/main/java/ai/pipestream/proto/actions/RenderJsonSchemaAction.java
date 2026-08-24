@@ -28,19 +28,12 @@ final class RenderJsonSchemaAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type to render; required unless the schema already "
-                        + "identifies a single message."));
-        ActionJson.required(schema, "schema");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("RenderJsonSchemaRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "RenderJsonSchemaRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         Map<String, Object> document = ProtoJsonSchemaGenerator.create().generate(descriptor);

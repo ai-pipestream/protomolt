@@ -602,9 +602,13 @@ message ValidateMessageResponse {
 // The input of diff-schemas: the two schema versions to compare.
 message DiffSchemasRequest {
   // The old schema version.
-  SchemaSource old = 1;
+  SchemaSource old = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // The new schema version.
-  SchemaSource new = 2;
+  SchemaSource new = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One typed change between two schema versions.
@@ -630,21 +634,49 @@ message DiffSchemasResponse {
   repeated SchemaChange changes = 1;
 }
 
+// How much compatibility a schema change must preserve.
+//
+// A transitive variant checks the new version against every earlier version
+// rather than only the one it is compared with, which is what catches a
+// change that is compatible with its immediate predecessor but not with a
+// version still in the field.
+enum CompatibilityMode {
+  // Selects BACKWARD, the mode most callers want and the one the verb has
+  // always defaulted to.
+  COMPATIBILITY_MODE_UNSPECIFIED = 0;
+  // Any change is allowed.
+  COMPATIBILITY_MODE_NONE = 1;
+  // New readers can read data written by the old schema.
+  COMPATIBILITY_MODE_BACKWARD = 2;
+  // Old readers can read data written by the new schema.
+  COMPATIBILITY_MODE_FORWARD = 3;
+  // Both directions hold.
+  COMPATIBILITY_MODE_FULL = 4;
+  // BACKWARD against every earlier version.
+  COMPATIBILITY_MODE_BACKWARD_TRANSITIVE = 5;
+  // FORWARD against every earlier version.
+  COMPATIBILITY_MODE_FORWARD_TRANSITIVE = 6;
+  // FULL against every earlier version.
+  COMPATIBILITY_MODE_FULL_TRANSITIVE = 7;
+}
+
 // The input of check-compat: both versions plus the mode and the optional
 // rule families.
 message CheckCompatRequest {
   // The old schema version.
-  SchemaSource old = 1;
+  SchemaSource old = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // The new schema version.
-  SchemaSource new = 2;
-  // NONE, BACKWARD, FORWARD, FULL, or a _TRANSITIVE variant; defaults to
-  // BACKWARD.
-  string mode = 3;
-  // Also treat canonical proto3 JSON payload breaks (field/enum name
-  // changes, removals) as violations; default false.
+  SchemaSource new = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Compatibility to enforce; unspecified selects BACKWARD.
+  CompatibilityMode mode = 3;
+  // Also treat canonical proto3 JSON payload breaks (field and enum name
+  // changes, removals) as violations.
   bool include_json_rules = 4;
-  // Also treat generated-code and gRPC surface breaks as violations;
-  // default false.
+  // Also treat generated-code and gRPC surface breaks as violations.
   bool include_source_rules = 5;
 }
 
@@ -652,8 +684,10 @@ message CheckCompatRequest {
 message CheckCompatResponse {
   // True when no violation was found under 'mode'.
   bool compatible = 1;
-  // The compatibility mode that was enforced.
-  string mode = 2;
+  // The compatibility mode that was enforced, in the same vocabulary the
+  // request names it in, so a caller can compare what it asked for with what
+  // was applied.
+  CompatibilityMode mode = 2;
   // The changes that break 'mode'.
   repeated SchemaChange violations = 3;
   // The full change list, informational entries included.
@@ -663,9 +697,17 @@ message CheckCompatResponse {
 // The input of render-json-schema.
 message RenderJsonSchemaRequest {
   // The schema declaring the message type.
-  SchemaSource schema = 1;
-  // Fully qualified message type to render.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to render; not required, because a schema
+  // declaring exactly one message identifies it on its own.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 }
 
 // The rendered JSON Schema document.
@@ -680,15 +722,28 @@ message RenderJsonSchemaResponse {
 // The input of render-prompt.
 message RenderPromptRequest {
   // The schema declaring the message type.
-  SchemaSource schema = 1;
-  // Fully qualified message type to render the prompt packet for.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to render the prompt packet for; not
+  // required, because a schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // The resolved persona to render for, as canonical proto3 JSON of
-  // ai.pipestream.proto.prompt.v1.Persona. Absent renders persona-free.
+  // ai.pipestream.proto.prompt.v1.Persona. Absent renders persona-free,
+  // meaning schema instructions only.
   google.protobuf.Struct persona = 3;
   // Opaque registry reference echoed into the packet so the receiver can
   // rebuild the descriptor set; empty when the caller has no registry context.
-  string descriptor_set_ref = 4;
+  string descriptor_set_ref = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+    }
+  ];
 }
 
 // A rendered prompt packet: everything a model needs to fill the target

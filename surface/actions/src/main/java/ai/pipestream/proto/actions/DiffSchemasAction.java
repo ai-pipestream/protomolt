@@ -29,17 +29,12 @@ final class DiffSchemasAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("old", ActionJson.schemaSourceSchema());
-        properties.set("new", ActionJson.schemaSourceSchema());
-        ActionJson.required(schema, "old", "new");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("DiffSchemasRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "DiffSchemasRequest", name());
         SchemaResolver.ResolvedSchema oldSchema = SchemaResolver.resolve(input, "old", context);
         SchemaResolver.ResolvedSchema newSchema = SchemaResolver.resolve(input, "new", context);
         List<SchemaChange> changes =

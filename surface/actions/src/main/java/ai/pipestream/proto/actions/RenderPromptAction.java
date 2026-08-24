@@ -36,29 +36,12 @@ final class RenderPromptAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type to render; required unless the schema already "
-                        + "identifies a single message."));
-        properties.putObject("persona")
-                .put("type", "object")
-                .put("description", "The resolved persona to render for, as canonical proto3 "
-                        + "JSON of ai.pipestream.proto.prompt.v1.Persona. Absent renders "
-                        + "persona-free (schema instructions only).");
-        properties.putObject("descriptor_set_ref")
-                .put("type", "string")
-                .put("description", "Opaque registry reference echoed into the packet so the "
-                        + "receiver can rebuild the descriptor set; empty when the caller has "
-                        + "no registry context.");
-        ActionJson.required(schema, "schema");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("RenderPromptRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "RenderPromptRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
 
