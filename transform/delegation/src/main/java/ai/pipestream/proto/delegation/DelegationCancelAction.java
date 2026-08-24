@@ -2,10 +2,11 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.CancelTaskRequest;
 import ai.pipestream.proto.delegation.v1.CancelTaskResponse;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /** Cancels a task's open offer, lease, or candidate review. */
 final class DelegationCancelAction extends DelegationAction {
@@ -37,17 +38,17 @@ final class DelegationCancelAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CancelTaskRequest request =
-                DelegationActionJson.parse(input, CancelTaskRequest.newBuilder(), name()).build();
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        CancelTaskRequest request = CatalogContract.as(
+                input, CancelTaskRequest.getDefaultInstance(), name());
         try {
             bridge.cancel(request.getTaskId(), request.getReason());
         } catch (RuntimeException e) {
             throw failure(e);
         }
-        return DelegationActionJson.render(CancelTaskResponse.newBuilder()
+        return CancelTaskResponse.newBuilder()
                 .setOk(true)
                 .setTaskId(request.getTaskId())
-                .build(), context);
+                .build();
     }
 }

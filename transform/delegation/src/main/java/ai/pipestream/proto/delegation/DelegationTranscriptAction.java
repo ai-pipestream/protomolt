@@ -2,9 +2,10 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.ReadTranscriptRequest;
 import ai.pipestream.proto.delegation.v1.ReadTranscriptResponse;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.util.List;
@@ -42,9 +43,9 @@ final class DelegationTranscriptAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        ReadTranscriptRequest request = DelegationActionJson
-                .parse(input, ReadTranscriptRequest.newBuilder(), name()).build();
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        ReadTranscriptRequest request = CatalogContract.as(
+                input, ReadTranscriptRequest.getDefaultInstance(), name());
         // An omitted slice size arrives as 0, which the request's ignore_if_zero rule lets
         // through so this default can apply; 0 itself is not a legal slice.
         int maxEntries = request.getMaxEntries() == 0
@@ -67,6 +68,6 @@ final class DelegationTranscriptAction extends DelegationAction {
                 .setCursor(resumeCursor(events))
                 .setTruncated(truncated);
         events.forEach(event -> response.addEvents(observed(event)));
-        return DelegationActionJson.render(response.build(), context);
+        return response.build();
     }
 }

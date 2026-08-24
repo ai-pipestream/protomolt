@@ -1,7 +1,6 @@
 package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.delegation.v1.ObservedEvent;
@@ -10,7 +9,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Shared base for the delegation catalog actions: the bridge plus event rendering. */
-abstract class DelegationAction implements JsonAction {
+abstract class DelegationAction implements ProtoAction {
 
     final DelegationBridge bridge;
 
@@ -43,12 +42,12 @@ abstract class DelegationAction implements JsonAction {
     static ActionException failure(String workerId, RuntimeException e) {
         String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
         if (message.startsWith("worker is not registered")) {
-            return DelegationActionJson.unknownWorker(workerId);
+            return DelegationFailures.unknownWorker(workerId);
         }
         if (message.startsWith("worker stream")) {
-            return DelegationActionJson.streamFailed(workerId, message);
+            return DelegationFailures.streamFailed(workerId, message);
         }
-        return DelegationActionJson.rejected(message);
+        return DelegationFailures.rejected(message);
     }
 
     /** Maps coordinator-side failures onto the stable delegation error codes. */

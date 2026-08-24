@@ -2,11 +2,12 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.CompletionCandidate;
 import ai.pipestream.proto.delegation.v1.SubmitCandidateRequest;
 import ai.pipestream.proto.delegation.v1.SubmitCandidateResponse;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /** Submits one revision of completion evidence for coordinator review. */
 final class DelegationCandidateAction extends DelegationAction {
@@ -40,20 +41,20 @@ final class DelegationCandidateAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        SubmitCandidateRequest request = DelegationActionJson
-                .parse(input, SubmitCandidateRequest.newBuilder(), name()).build();
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        SubmitCandidateRequest request = CatalogContract.as(
+                input, SubmitCandidateRequest.getDefaultInstance(), name());
         CompletionCandidate candidate = request.getCandidate();
         try {
             bridge.submitCandidate(request.getWorkerId(), request.getTaskId(), candidate);
         } catch (RuntimeException e) {
             throw failure(request.getWorkerId(), e);
         }
-        return DelegationActionJson.render(SubmitCandidateResponse.newBuilder()
+        return SubmitCandidateResponse.newBuilder()
                 .setOk(true)
                 .setTaskId(request.getTaskId())
                 .setAttempt(candidate.getAttempt())
                 .setRevision(candidate.getRevision())
-                .build(), context);
+                .build();
     }
 }

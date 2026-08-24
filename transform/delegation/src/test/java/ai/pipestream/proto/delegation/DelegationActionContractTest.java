@@ -1,5 +1,6 @@
 package ai.pipestream.proto.delegation;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
@@ -20,10 +21,12 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 /**
  * The delegation verbs enforce their request messages' declared rules.
  *
- * <p>The catalog path does not sit behind the validating gRPC interceptor, so a rule the
- * request declares only reaches a caller if the verb runs the validator itself. These tests
- * pin that, and pin the two places where an omitted value has to keep meaning what it meant
- * before the envelopes became protobuf messages: proto3 delivers an absent scalar as its zero.
+ * <p>The rules are checked where every surface converges, so these dispatch through the
+ * catalog rather than calling a verb directly: a verb reached over gRPC and a verb reached as
+ * a JSON tool call are held to the same contract, and calling one in isolation would test
+ * neither. They also pin the two places where an omitted value has to keep meaning what it
+ * meant before the envelopes became protobuf messages: proto3 delivers an absent scalar as
+ * its zero.
  */
 class DelegationActionContractTest {
 
@@ -32,13 +35,14 @@ class DelegationActionContractTest {
 
     private InProcessDelegationCoordinator coordinator;
     private DelegationBridge bridge;
-    private ActionContext context;
+    private ActionCatalog catalog;
 
     @BeforeEach
     void open() {
         coordinator = new InProcessDelegationCoordinator();
         bridge = new DelegationBridge(coordinator);
-        context = ActionContext.create();
+        catalog = DelegationActions.register(
+                ActionCatalog.defaults(ActionContext.create()), bridge);
         bridge.registerWorker(WorkerHello.newBuilder()
                 .setWorkerId(WORKER)
                 .setProtocolVersion(1)
@@ -60,7 +64,7 @@ class DelegationActionContractTest {
     /** An offer with no lease still runs on the coordinator's default, not on zero seconds. */
     @Test
     void anOmittedLeaseKeepsMeaningTheDefaultRatherThanZero() throws Exception {
-        ObjectNode output = new DelegationOfferAction(bridge).execute(offerEnvelope(), context);
+        ObjectNode output = dispatch("delegation-offer", offerEnvelope());
         assertThat(output.path("offer").path("leaseDuration").asText())
                 .isEqualTo(DelegationOfferAction.DEFAULT_LEASE_SECONDS + "s");
     }
@@ -68,7 +72,7 @@ class DelegationActionContractTest {
     /** An offer with no task id still opens a new task under a generated uuid. */
     @Test
     void anOmittedTaskIdStillOpensANewTask() throws Exception {
-        ObjectNode output = new DelegationOfferAction(bridge).execute(offerEnvelope(), context);
+        ObjectNode output = dispatch("delegation-offer", offerEnvelope());
         assertThat(UUID.fromString(output.path("taskId").asText())).isNotNull();
     }
 
@@ -77,11 +81,13 @@ class DelegationActionContractTest {
     void aLeaseBeyondADayIsRefusedByTheDeclaredRule() {
         ObjectNode envelope = offerEnvelope().put("leaseSeconds", 86_401);
         ActionException refusal = catchThrowableOfType(
-                () -> new DelegationOfferAction(bridge).execute(envelope, context),
+                () -> dispatch("delegation-offer", envelope),
                 ActionException.class);
         assertThat(refusal.code()).isEqualTo("invalid-input");
+        // The field is named as the caller wrote it, not by its proto path, so a pointer
+        // into the envelope leads to the member that was refused.
         assertThat(refusal.details().orElseThrow().toString())
-                .contains("lease_seconds").contains("int32.gte_lte");
+                .contains("leaseSeconds").contains("int32.gte_lte");
     }
 
     /** Accepting a candidate without the verdict that accepted it is refused by the CEL rule. */
@@ -91,7 +97,7 @@ class DelegationActionContractTest {
                 .put("taskId", UUID.randomUUID().toString())
                 .put("decision", "REVIEW_DECISION_ACCEPT");
         ActionException refusal = catchThrowableOfType(
-                () -> new DelegationReviewAction(bridge).execute(envelope, context),
+                () -> dispatch("delegation-review", envelope),
                 ActionException.class);
         assertThat(refusal.code()).isEqualTo("invalid-input");
         assertThat(refusal.details().orElseThrow().toString())
@@ -107,7 +113,7 @@ class DelegationActionContractTest {
                 .put("kind", "TASK_MESSAGE_KIND_GUIDANCE")
                 .put("text", "keep going");
         ActionException refusal = catchThrowableOfType(
-                () -> new DelegationMessageAction(bridge).execute(envelope, context),
+                () -> dispatch("delegation-message", envelope),
                 ActionException.class);
         assertThat(refusal.details().orElseThrow().toString())
                 .contains("coordinator-message-names-recipient");
@@ -123,7 +129,7 @@ class DelegationActionContractTest {
                 .put("kind", "TASK_MESSAGE_KIND_NOTE")
                 .put("text", "sidebar");
         ActionException refusal = catchThrowableOfType(
-                () -> new DelegationMessageAction(bridge).execute(envelope, context),
+                () -> dispatch("delegation-message", envelope),
                 ActionException.class);
         assertThat(refusal.details().orElseThrow().toString())
                 .contains("worker-message-addresses-coordinator");
@@ -133,9 +139,13 @@ class DelegationActionContractTest {
     @Test
     void anUndeclaredMemberIsRefusedRatherThanIgnored() {
         ObjectNode envelope = offerEnvelope().put("leaseSecs", 60);
-        assertThatThrownBy(() -> new DelegationOfferAction(bridge).execute(envelope, context))
+        assertThatThrownBy(() -> dispatch("delegation-offer", envelope))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("leaseSecs");
+    }
+
+    private ObjectNode dispatch(String verb, ObjectNode envelope) throws ActionException {
+        return catalog.execute(verb, envelope);
     }
 
     private static ObjectNode offerEnvelope() {

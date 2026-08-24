@@ -170,6 +170,39 @@ public final class CatalogContract {
     }
 
     /**
+     * The request as the generated type a verb is written against.
+     *
+     * <p>A verb declared on a contract with generated stubs reads its request through them.
+     * The same request reaches it as a generated message over gRPC and as a dynamic one from
+     * a JSON front, and those are the same message in two representations, so the dynamic one
+     * is re-read through the generated parser. A request that is already the right class is
+     * handed straight back.
+     *
+     * @param prototype the default instance of the type the verb reads, e.g.
+     *        {@code AcceptTaskRequest.getDefaultInstance()}
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends Message> T as(Message request, T prototype, String verb)
+            throws ActionException {
+        if (prototype.getClass().isInstance(request)) {
+            return (T) request;
+        }
+        Descriptor expected = prototype.getDescriptorForType();
+        if (!request.getDescriptorForType().getFullName().equals(expected.getFullName())) {
+            throw new ActionException("invalid-input",
+                    verb + " expects a " + expected.getFullName() + ", not a "
+                            + request.getDescriptorForType().getFullName());
+        }
+        try {
+            return (T) prototype.getParserForType().parseFrom(request.toByteString());
+        } catch (InvalidProtocolBufferException e) {
+            throw new ActionException("internal-error",
+                    verb + " request does not re-read as " + expected.getFullName()
+                            + ": " + e.getMessage());
+        }
+    }
+
+    /**
      * A request rendered as the JSON envelope a verb still written against JSON reads.
      *
      * <p>Absent fields stay absent. A verb reading this envelope distinguishes "not given"

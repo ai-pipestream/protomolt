@@ -2,9 +2,10 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.WatchEventsRequest;
 import ai.pipestream.proto.delegation.v1.WatchEventsResponse;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.time.Duration;
@@ -54,9 +55,9 @@ final class DelegationWatchAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        WatchEventsRequest request = DelegationActionJson
-                .parse(input, WatchEventsRequest.newBuilder(), name()).build();
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        WatchEventsRequest request = CatalogContract.as(
+                input, WatchEventsRequest.getDefaultInstance(), name());
         // The timeout tracks presence on the wire, because 0 is a legal request (poll and
         // return at once) and must not be read as "the caller said nothing".
         int timeoutMs = request.hasTimeoutMs() ? request.getTimeoutMs() : DEFAULT_TIMEOUT_MS;
@@ -72,11 +73,11 @@ final class DelegationWatchAction extends DelegationAction {
             Optional<InProcessDelegationCoordinator.Event> first = bridge.coordinator()
                     .waitForEvent(taskId, afterCursor, Duration.ofMillis(timeoutMs));
             if (first.isEmpty()) {
-                return DelegationActionJson.render(WatchEventsResponse.newBuilder()
+                return WatchEventsResponse.newBuilder()
                         .setOk(true)
                         .setCursor(afterCursor)
                         .setTimedOut(true)
-                        .build(), context);
+                        .build();
             }
             events = bridge.coordinator().eventsAfter(taskId, afterCursor);
         } catch (InterruptedException e) {
@@ -95,6 +96,6 @@ final class DelegationWatchAction extends DelegationAction {
                 .setTruncated(truncated)
                 .setTimedOut(false);
         events.forEach(event -> response.addEvents(observed(event)));
-        return DelegationActionJson.render(response.build(), context);
+        return response.build();
     }
 }
