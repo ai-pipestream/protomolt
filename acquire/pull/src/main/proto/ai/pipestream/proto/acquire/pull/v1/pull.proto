@@ -153,3 +153,18 @@ message PullFromJdbcResponse {
   // The pass result and its resumption point.
   PullReport report = 1;
 }
+
+// The pull connectors as a typed service.
+//
+// Each verb the connector roles contribute to the action catalog is one method
+// here, taking the same request message the verb accepts. A connector is
+// stateless and holds no schedule, so a method is one pass, not a subscription.
+service PullService {
+  // Pulls objects new or changed past a watermark from an S3 bucket and feeds
+  // them through intake with stable identity.
+  rpc PullFromS3(PullFromS3Request) returns (PullFromS3Response);
+
+  // Runs a watermark query against a source database and feeds each row
+  // through intake with stable identity.
+  rpc PullFromJdbc(PullFromJdbcRequest) returns (PullFromJdbcResponse);
+}

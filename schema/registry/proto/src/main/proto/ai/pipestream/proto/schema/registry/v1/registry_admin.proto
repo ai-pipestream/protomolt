@@ -173,3 +173,21 @@ message RegistrySyncResponse {
   // per-subject rejections above.
   repeated string errors = 4;
 }
+
+// The registry's administrative surface as a typed service.
+//
+// Every verb the registry role contributes to the action catalog is one method
+// here, taking the same request message the verb accepts, so the contract is
+// stated once and reached two ways.
+service RegistryAdminService {
+  // Publishes one typed config document through the registry's config gate,
+  // parsed strictly as its declared message type.
+  rpc PublishConfig(PublishConfigRequest) returns (PublishConfigResponse);
+
+  // Manages the git remotes this registry federates from: list, add, remove.
+  rpc RegistryRemotes(RegistryRemotesRequest) returns (RegistryRemotesResponse);
+
+  // Fetches a configured remote and imports its subjects with their
+  // descriptor artifacts.
+  rpc RegistrySync(RegistrySyncRequest) returns (RegistrySyncResponse);
+}
