@@ -89,7 +89,10 @@ public final class SearchConsoleServer implements AutoCloseable {
     }
 
     /**
-     * Creates the server (not yet started).
+     * Creates the server (not yet started), spending on its own ledger, for a console
+     * that is the node's only enforcement point. A node that also serves another
+     * enforcement point passes one shared ledger through the constructor that takes
+     * {@link ScopeBudgets}, or a principal gets a separate allowance per surface.
      *
      * @param port the HTTP port (0 for ephemeral)
      * @param serviceTarget the search service: a {@code host:port} authority or
