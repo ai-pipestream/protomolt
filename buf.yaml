@@ -136,6 +136,15 @@ lint:
 breaking:
   use:
     - FILE
+  except:
+    # Temporary, for typing the workflow field on the replay, promote and
+    # evaluate requests as the durable ai.pipestream.proto.grpc.workflow.v1
+    # .Workflow in place of google.protobuf.Struct. Each already carried
+    # exactly that message as JSON, which the verbs parsed by hand; declaring
+    # the type moves the contract into the message. Nothing consumes the
+    # Struct form, so the break is deliberate. Drop this block in the next
+    # pull request that touches this file, per the convention recorded below.
+    - FIELD_SAME_TYPE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

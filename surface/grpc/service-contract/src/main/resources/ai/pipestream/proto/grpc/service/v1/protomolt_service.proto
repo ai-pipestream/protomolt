@@ -14,6 +14,7 @@ syntax = "proto3";
 package ai.pipestream.proto.grpc.service.v1;
 
 import "ai/pipestream/proto/grpc/profile/v1/service_profile.proto";
+import "ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/struct.proto";
 
@@ -1825,12 +1826,11 @@ message RecordWorkflowRunResponse {
 
 // Exact workflow, evidence identity, and descriptor set for offline replay.
 message ReplayWorkflowRequest {
-  // Carried as a structure rather than declared: the workflow model lives in
-  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
-  // narrower copy of it that omits dependencies and the richer step model.
-  // Referencing the real type is the correct fix and belongs in the change
-  // that retires the copy.
-  google.protobuf.Struct workflow = 1 [
+  // The compiled workflow, as recorded. This is the durable contract from
+  // grpc_workflow.proto, not the authoring shape CompiledWorkflow in this file:
+  // a run executes what the compiler produced, with its dependencies resolved
+  // and its deadline a Duration.
+  ai.pipestream.proto.grpc.workflow.v1.Workflow workflow = 1 [
     (ai.pipestream.proto.validate.v1.field) = {required: true}
   ];
   // Stored run-evidence identity to replay.
@@ -1871,12 +1871,11 @@ message ReplayWorkflowResponse {
 
 // Workflow content to promote under one immutable version.
 message PromoteWorkflowRequest {
-  // Carried as a structure rather than declared: the workflow model lives in
-  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
-  // narrower copy of it that omits dependencies and the richer step model.
-  // Referencing the real type is the correct fix and belongs in the change
-  // that retires the copy.
-  google.protobuf.Struct workflow = 1 [
+  // The compiled workflow, as recorded. This is the durable contract from
+  // grpc_workflow.proto, not the authoring shape CompiledWorkflow in this file:
+  // a run executes what the compiler produced, with its dependencies resolved
+  // and its deadline a Duration.
+  ai.pipestream.proto.grpc.workflow.v1.Workflow workflow = 1 [
     (ai.pipestream.proto.validate.v1.field) = {required: true}
   ];
   // The version identity to publish under. Immutable once promoted, so a
@@ -2007,12 +2006,11 @@ message EvaluateWorkRecordRequest {
   // may pin one through PROTOMOLT_TRUST_SNAPSHOT; the verb publishes it as
   // required only when its own node has no pin to fall back on.
   google.protobuf.Struct trust = 2;
-  // Carried as a structure rather than declared: the workflow model lives in
-  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
-  // narrower copy of it that omits dependencies and the richer step model.
-  // Referencing the real type is the correct fix and belongs in the change
-  // that retires the copy.
-  google.protobuf.Struct workflow = 3 [
+  // The compiled workflow, as recorded. This is the durable contract from
+  // grpc_workflow.proto, not the authoring shape CompiledWorkflow in this file:
+  // a run executes what the compiler produced, with its dependencies resolved
+  // and its deadline a Duration.
+  ai.pipestream.proto.grpc.workflow.v1.Workflow workflow = 3 [
     (ai.pipestream.proto.validate.v1.field) = {required: true}
   ];
   // Exact descriptor set used by the recorded run.
