@@ -1,9 +1,9 @@
 package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.search.index.spi.ProtoOptionsIndexingHintSource;
 import ai.pipestream.proto.llm.DescriptorLlm;
 import ai.pipestream.proto.meta.DescriptorMetadata;
 import ai.pipestream.proto.quality.QualityScorer;
+import ai.pipestream.proto.search.index.spi.ProtoOptionsIndexingHintSource;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoCompilationException;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
@@ -20,6 +20,7 @@ import com.google.protobuf.Descriptors.DescriptorValidationException;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.ExtensionRegistry;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 
 import java.util.ArrayList;
 import java.util.Base64;
@@ -58,6 +59,29 @@ public final class SchemaResolver {
             throws ActionException {
         JsonNode node = input.get(field);
         return resolveNode(node, "/" + field, context);
+    }
+
+    /**
+     * Resolves the {@code SchemaSource} held in {@code request.<field>}.
+     *
+     * <p>The message states that a source names exactly one of a registered type, inline
+     * files, or a descriptor set, so that is checked as a rule before dispatch rather than
+     * counted here.
+     */
+    public static ResolvedSchema resolve(Message request, String field, ActionContext context)
+            throws ActionException {
+        Message schema = Fields.message(request, field);
+        String pointer = "/" + field;
+        String type = Fields.string(schema, "type");
+        if (!type.isEmpty()) {
+            return fromRegistry(type, pointer + "/type", context);
+        }
+        Map<String, String> sources = Fields.map(schema, "sources");
+        if (!sources.isEmpty()) {
+            return fromSources(sources, Fields.string(schema, "root"), pointer, context);
+        }
+        return fromDescriptorSet(Fields.string(schema, "descriptorSetBase64"),
+                pointer + "/descriptorSetBase64");
     }
 
     static ResolvedSchema resolveNode(JsonNode node, String pointer, ActionContext context)
@@ -112,21 +136,27 @@ public final class SchemaResolver {
             throw Inputs.invalidInput("'sources' must map proto import paths to file contents",
                     pointer + "/sources");
         }
-        ProtoSourceSet.Builder builder = ProtoSourceSet.builder();
+        Map<String, String> files = new LinkedHashMap<>();
         for (Map.Entry<String, JsonNode> entry : sourcesNode.properties()) {
             if (!entry.getValue().isTextual()) {
                 throw Inputs.invalidInput("Source file contents must be strings",
                         pointer + "/sources/" + entry.getKey());
             }
-            builder.add(entry.getKey(), entry.getValue().asText(), "inline");
+            files.put(entry.getKey(), entry.getValue().asText());
         }
+        return fromSources(files, Inputs.optionalString(schema, "root"), pointer, context);
+    }
+
+    private static ResolvedSchema fromSources(Map<String, String> inline, String root,
+            String pointer, ActionContext context) throws ActionException {
+        ProtoSourceSet.Builder builder = ProtoSourceSet.builder();
+        inline.forEach((path, text) -> builder.add(path, text, "inline"));
         ProtoSourceSet sources = builder.build();
         if (sources.isEmpty()) {
             throw Inputs.invalidInput("'sources' must contain at least one proto file",
                     pointer + "/sources");
         }
-        String root = Inputs.optionalString(schema, "root");
-        if (root != null) {
+        if (root != null && !root.isEmpty()) {
             if (!sources.contains(root)) {
                 throw Inputs.invalidInput("'root' must name a file present in 'sources'",
                         pointer + "/root");

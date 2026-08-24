@@ -3,6 +3,7 @@ package ai.pipestream.proto.codegen;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -67,7 +68,7 @@ class GenerateStubsActionValidationTest {
 
     @Test
     void missingSchemaIsInvalidInput() {
-        assertThatThrownBy(() -> action.execute(MAPPER.createObjectNode(), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, MAPPER.createObjectNode()))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
@@ -77,21 +78,27 @@ class GenerateStubsActionValidationTest {
         ObjectNode input = singleFileInput();
         input.put("generators", "java");
 
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
                     assertThat(e.getMessage()).contains("generators");
                 });
     }
 
+    /**
+     * An empty list selects Java, as the message says. proto3 delivers an omitted repeated
+     * field and an empty one identically, so the contract gives the empty list a meaning
+     * rather than refusing what it cannot tell apart from silence.
+     */
     @Test
-    void emptyGeneratorsArrayIsInvalidInput() {
+    void anEmptyGeneratorListSelectsJava() throws Exception {
         ObjectNode input = singleFileInput();
         input.putArray("generators");
 
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
-                .isInstanceOfSatisfying(ActionException.class,
-                        e -> assertThat(e.code()).isEqualTo("invalid-input"));
+        ObjectNode result = dispatch(action, input);
+
+        assertThat(result.get("ok").asBoolean()).isTrue();
+        assertThat(names(result)).anySatisfy(name -> assertThat(name).endsWith(".java"));
     }
 
     @Test
@@ -99,7 +106,7 @@ class GenerateStubsActionValidationTest {
         ObjectNode input = singleFileInput();
         input.putNull("generators");
 
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
 
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(names(result)).anySatisfy(name -> assertThat(name).endsWith(".java"));
@@ -124,21 +131,23 @@ class GenerateStubsActionValidationTest {
         ObjectNode input = singleFileInput();
         input.put("files", "shop/v1/order.proto");
 
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
                     assertThat(e.getMessage()).contains("files");
                 });
     }
 
+    /** An empty list selects every non-google file, for the same reason. */
     @Test
-    void emptyFilesArrayIsInvalidInput() {
-        ObjectNode input = singleFileInput();
+    void anEmptyFileListSelectsEveryNonGoogleFile() throws Exception {
+        ObjectNode input = twoFileInput();
         input.putArray("files");
 
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
-                .isInstanceOfSatisfying(ActionException.class,
-                        e -> assertThat(e.code()).isEqualTo("invalid-input"));
+        ObjectNode result = dispatch(action, input);
+
+        assertThat(result.get("ok").asBoolean()).isTrue();
+        assertThat(result.get("fileCount").asInt()).isEqualTo(2);
     }
 
     @Test
@@ -146,7 +155,7 @@ class GenerateStubsActionValidationTest {
         ObjectNode input = twoFileInput();
         input.putArray("files").add("shop/v1/absent.proto");
 
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
                     assertThat(e.getMessage())
@@ -158,7 +167,7 @@ class GenerateStubsActionValidationTest {
 
     @Test
     void multiFileSchemaGeneratesEveryNonGoogleFileByDefault() throws Exception {
-        ObjectNode result = action.execute(twoFileInput(), ActionContext.create());
+        ObjectNode result = dispatch(action, twoFileInput());
 
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.get("fileCount").asInt()).isEqualTo(2);
@@ -174,7 +183,7 @@ class GenerateStubsActionValidationTest {
         ObjectNode input = twoFileInput();
         input.putArray("files").add("shop/v1/common.proto");
 
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
 
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.get("fileCount").asInt()).isEqualTo(1);
@@ -185,7 +194,7 @@ class GenerateStubsActionValidationTest {
     void crossFileImportCompilesAndGenerates() throws Exception {
         // order.proto's Money field resolves through common.proto; generation must succeed
         // for both when the dependency is part of the schema.
-        ObjectNode result = action.execute(twoFileInput(), ActionContext.create());
+        ObjectNode result = dispatch(action, twoFileInput());
 
         String orderJava = result.get("files").findValues("content").stream()
                 .map(JsonNode::asText)
@@ -196,16 +205,17 @@ class GenerateStubsActionValidationTest {
         assertThat(orderJava).contains("Common.Money");
     }
 
-    /** A non-textual {@code parameter} is deliberately ignored, not an error. */
+    /** A non-textual {@code parameter} is refused by name rather than quietly ignored. */
     @Test
-    void nonTextualParameterIsIgnored() throws Exception {
+    void aNonTextualParameterIsRefusedByName() {
         ObjectNode input = singleFileInput();
         input.put("parameter", 123);
 
-        ObjectNode result = action.execute(input, ActionContext.create());
-
-        assertThat(result.get("ok").asBoolean()).isTrue();
-        assertThat(names(result)).noneSatisfy(name -> assertThat(name).endsWith(".pb.meta"));
+        assertThatThrownBy(() -> dispatch(action, input))
+                .isInstanceOfSatisfying(ActionException.class, e -> {
+                    assertThat(e.code()).isEqualTo("invalid-input");
+                    assertThat(e.getMessage()).contains("parameter");
+                });
     }
 
     /** grpc-java emits nothing for a schema without services, and that is not an error. */
@@ -214,10 +224,21 @@ class GenerateStubsActionValidationTest {
         ObjectNode input = singleFileInput();
         input.putArray("generators").add("CODE_GENERATOR_GRPC_JAVA");
 
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
 
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.get("fileCount").asInt()).isZero();
         assertThat(result.get("files").size()).isZero();
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

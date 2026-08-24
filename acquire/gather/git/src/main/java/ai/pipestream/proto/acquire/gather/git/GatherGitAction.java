@@ -3,17 +3,16 @@ package ai.pipestream.proto.acquire.gather.git;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSource;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.nio.file.Path;
@@ -28,7 +27,7 @@ import java.util.List;
  * the fallback lane for services that publish their contract in git instead of enabling
  * reflection.
  */
-public final class GatherGitAction implements JsonAction {
+public final class GatherGitAction implements ProtoAction {
 
     private final Path cacheRoot;
 
@@ -75,32 +74,26 @@ public final class GatherGitAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context)
+    public Message execute(Message input, ActionContext context)
             throws ActionException {
-        ObjectNode result = context.objectMapper().createObjectNode();
-        JsonNode repoNode = input.get("repo");
-        if (repoNode == null || !repoNode.isTextual() || repoNode.asText().isBlank()) {
-            result.put("ok", false);
-            result.put("error", "'repo' must be a non-empty git URL");
-            return result;
-        }
+        // repo is required by the request message, so a blank one is refused before here.
         GitProtoGatherer.Builder builder = GitProtoGatherer.builder()
-                .repo(repoNode.asText());
+                .repo(Fields.string(input, "repo"));
         if (cacheRoot != null) {
             builder.cacheRoot(cacheRoot);
         }
-        JsonNode ref = input.get("ref");
-        if (ref != null && ref.isTextual() && !ref.asText().isBlank()) {
-            builder.ref(ref.asText());
+        // An omitted ref, subdir or path list arrives as its zero, which is what "leave the
+        // gatherer's own default in place" already meant.
+        String ref = Fields.string(input, "ref");
+        if (!ref.isBlank()) {
+            builder.ref(ref);
         }
-        JsonNode subdir = input.get("subdir");
-        if (subdir != null && subdir.isTextual() && !subdir.asText().isBlank()) {
-            builder.subdir(subdir.asText());
+        String subdir = Fields.string(input, "subdir");
+        if (!subdir.isBlank()) {
+            builder.subdir(subdir);
         }
-        JsonNode pathsNode = input.get("paths");
-        if (pathsNode != null && pathsNode.isArray() && !pathsNode.isEmpty()) {
-            List<String> paths = new ArrayList<>();
-            pathsNode.forEach(p -> paths.add(p.asText()));
+        List<String> paths = Fields.strings(input, "paths");
+        if (!paths.isEmpty()) {
             builder.paths(paths);
         }
 
@@ -108,32 +101,32 @@ public final class GatherGitAction implements JsonAction {
         try {
             gathered = builder.build().gather();
         } catch (Exception e) {
-            result.put("ok", false);
-            result.put("error", "Gather failed: " + e.getMessage());
-            return result;
+            return refusal("Gather failed: " + e.getMessage());
         }
         if (gathered.paths().isEmpty()) {
-            result.put("ok", false);
-            result.put("error", "No .proto files found at the given ref/subdir/paths");
-            return result;
+            return refusal("No .proto files found at the given ref/subdir/paths");
         }
         CompiledProtos compiled;
         try {
             compiled = new ProtoSourceCompiler().compile(gathered);
         } catch (Exception e) {
-            result.put("ok", false);
-            result.put("error", "Gathered sources do not compile: " + e.getMessage());
-            return result;
+            return refusal("Gathered sources do not compile: " + e.getMessage());
         }
-        result.put("ok", true);
-        ArrayNode files = result.putArray("files");
-        ObjectNode sources = result.putObject("sources");
+        Reply result = Reply.of(responseType()).set("ok", true);
         for (ProtoSource source : gathered.sources()) {
-            files.add(source.path());
-            sources.put(source.path(), source.content());
+            result.add("files", source.path());
+            result.append("sources")
+                    .set("key", source.path())
+                    .set("value", source.content())
+                    .build();
         }
-        result.put("descriptorSetBase64",
-                Base64.getEncoder().encodeToString(compiled.descriptorSet().toByteArray()));
-        return result;
+        return result.set("descriptorSetBase64",
+                Base64.getEncoder().encodeToString(compiled.descriptorSet().toByteArray()))
+                .build();
+    }
+
+    /** A gather that could not complete, reported as a result rather than as an error. */
+    private Message refusal(String error) {
+        return Reply.of(responseType()).set("ok", false).set("error", error).build();
     }
 }

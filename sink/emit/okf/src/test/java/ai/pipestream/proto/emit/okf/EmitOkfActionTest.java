@@ -1,5 +1,6 @@
 package ai.pipestream.proto.emit.okf;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -26,7 +27,8 @@ class EmitOkfActionTest {
                    "syntax = \\"proto3\\"; package tick.v1; message Tick { string symbol = 1; double price = 2; } service Feed { rpc Watch(Tick) returns (stream Tick); }"}},
                  "title": "Tick feed"}
                 """);
-        ObjectNode result = new EmitOkfAction().execute(input, ActionContext.create());
+        ObjectNode result = ActionCatalog.defaults(ActionContext.create())
+                .register(new EmitOkfAction()).execute("emit-okf", input);
 
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.get("fileCount").asInt()).isEqualTo(5);
