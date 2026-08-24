@@ -34,7 +34,13 @@ public final class ProtoMoltServiceSchema {
      */
     private static final List<String> IMPORTED_RESOURCE_PATHS = List.of(
             "ai/pipestream/proto/grpc/profile/v1/service_profile.proto",
-            "ai/pipestream/proto/validate/v1/validate.proto");
+            "ai/pipestream/proto/validate/v1/validate.proto",
+            "ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto",
+            "ai/pipestream/proto/inference/v1/inference.proto",
+            "ai/pipestream/proto/inference/v1/structured.proto",
+            "ai/pipestream/proto/meta/v1/metadata.proto",
+            "ai/pipestream/proto/prompt/v1/prompt.proto",
+            "ai/pipestream/proto/receipt/v1/receipt.proto");
 
     /** Fully qualified service name. */
     public static final String SERVICE_FULL_NAME = "ai.pipestream.proto.grpc.service.v1.ProtoMoltService";

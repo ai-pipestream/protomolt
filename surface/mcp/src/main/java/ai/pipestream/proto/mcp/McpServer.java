@@ -491,15 +491,27 @@ public final class McpServer {
             }
             String key = idKey(message.get("id"));
             FutureTask<Optional<ObjectNode>> task = new FutureTask<>(() -> {
-                Optional<ObjectNode> response = McpServer.this.handle(message, caller);
-                if (completion != null && inFlight.containsKey(key)
-                        && !Thread.currentThread().isInterrupted()) {
-                    completion.accept(response);
+                try {
+                    Optional<ObjectNode> response = McpServer.this.handle(message, caller);
+                    if (completion != null && inFlight.containsKey(key)
+                            && !Thread.currentThread().isInterrupted()) {
+                        completion.accept(response);
+                    }
+                    return response;
+                } finally {
+                    // Release the id before the task completes. A FutureTask wakes its
+                    // waiters before it runs done(), so a caller that reuses the id for
+                    // its next request, which is correct when the previous one has
+                    // answered, would otherwise race the cleanup and be refused as a
+                    // duplicate. Removing by key alone is safe here: nothing can claim
+                    // the key while this task still holds it.
+                    inFlight.remove(key);
                 }
-                return response;
             }) {
                 @Override
                 protected void done() {
+                    // The body's own release covers the normal path. This covers a task
+                    // cancelled before it ever ran, and owns the slot either way.
                     inFlight.remove(key, this);
                     inFlightSlots.release();
                 }

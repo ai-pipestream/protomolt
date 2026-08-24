@@ -137,15 +137,20 @@ breaking:
   use:
     - FILE
   except:
-    # Temporary, for the field types the verb conversion declares in place of an
-    # untyped stand-in: ServiceRegisterRequest.profile as ServiceProfile rather
-    # than google.protobuf.Struct, and the check-compat mode as CompatibilityMode
-    # rather than a string carrying that enum's names. Each field already held
-    # exactly that value; declaring the type moves the contract into the message.
-    # Nothing consumes the earlier forms, so the breaks are deliberate. Drop this
-    # block in the next pull request that touches this file, per the convention
-    # recorded below.
+    # Temporary, for the last untyped payloads on the work-record verbs: the
+    # workflow field on replay, promote and evaluate becomes the durable
+    # ai.pipestream.proto.grpc.workflow.v1.Workflow, and trust becomes
+    # ai.pipestream.proto.receipt.v1.TrustSnapshot, both in place of
+    # google.protobuf.Struct. Each already carried exactly that message as
+    # JSON, which the verbs parsed by hand; declaring the type moves the
+    # contract into the message. Nothing consumes the Struct forms, so the
+    # breaks are deliberate. Drop this block in the next pull request that
+    # touches this file, per the convention recorded below.
     - FIELD_SAME_TYPE
+    # Same change, other half: the artifact bag on those two requests becomes a
+    # declared map<string, string> in place of a Struct, which buf reports as a
+    # cardinality change rather than a type change.
+    - FIELD_SAME_CARDINALITY
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore
