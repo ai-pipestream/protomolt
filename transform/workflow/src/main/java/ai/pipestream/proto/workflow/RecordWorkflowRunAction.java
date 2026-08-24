@@ -60,7 +60,7 @@ final class RecordWorkflowRunAction implements ProtoAction {
     @Override
     public Message execute(Message input, ActionContext context) throws ActionException {
         if (artifacts == null || runs == null) {
-            throw WorkflowActionJson.unavailable("workflow run recording",
+            throw WorkflowRequests.unavailable("workflow run recording",
                     "start protomolt-serve with --workflow-workspace");
         }
         CompiledWorkflow workflow = CompileWorkflowAction.parseChecked(
@@ -70,11 +70,11 @@ final class RecordWorkflowRunAction implements ProtoAction {
             message = context.transcoder().fromJsonDynamic(
                     Fields.json(input, "input").toString(), workflow.inputType());
         } catch (MalformedProtobufJsonException e) {
-            throw WorkflowActionJson.invalid("Input is not valid proto3 JSON for "
+            throw WorkflowRequests.invalid("Input is not valid proto3 JSON for "
                     + workflow.inputType().getFullName() + ": " + e.getMessage(), "/input");
         }
-        String runId = WorkflowActionJson.identity(input, "runId");
-        String version = WorkflowActionJson.optionalIdentity(input, "workflowVersion");
+        String runId = WorkflowRequests.identity(input, "runId");
+        String version = WorkflowRequests.optionalIdentity(input, "workflowVersion");
         WorkflowRunRecorder recorder = new WorkflowRunRecorder(runner, artifacts, runs);
         RunEvidence evidence;
         try {
@@ -92,7 +92,7 @@ final class RecordWorkflowRunAction implements ProtoAction {
                     .set("evidence", evidence)
                     .build();
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/runId");
+            throw WorkflowRequests.invalid(e.getMessage(), "/runId");
         } catch (IOException e) {
             throw new ActionException("repository-failed",
                     "Failed to record workflow run: " + e.getMessage());

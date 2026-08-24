@@ -52,31 +52,31 @@ final class SuggestMappingsAction implements ProtoAction {
     public Message execute(Message input, ActionContext context) throws ActionException {
         List<Message> declared = Fields.list(input, "sources");
         if (declared.isEmpty()) {
-            throw WorkflowActionJson.invalid("'sources' must be a non-empty array", "/sources");
+            throw WorkflowRequests.invalid("'sources' must be a non-empty array", "/sources");
         }
         if (declared.size() > MAX_SOURCES) {
-            throw WorkflowActionJson.invalid("'sources' must contain at most " + MAX_SOURCES
+            throw WorkflowRequests.invalid("'sources' must contain at most " + MAX_SOURCES
                     + " entries", "/sources");
         }
         Map<String, Descriptor> sources = new LinkedHashMap<>();
         for (int index = 0; index < declared.size(); index++) {
             Message source = declared.get(index);
-            String name = WorkflowActionJson.text(source, "name");
+            String name = WorkflowRequests.text(source, "name");
             if (!name.matches(SOURCE_NAME_PATTERN)) {
-                throw WorkflowActionJson.invalid("source name must be a mapping-scope identifier",
+                throw WorkflowRequests.invalid("source name must be a mapping-scope identifier",
                         "/sources/" + index + "/name");
             }
             Descriptor descriptor = SchemaResolver.resolve(source, "schema", context)
-                    .message(WorkflowActionJson.optionalText(source, "type"),
+                    .message(WorkflowRequests.optionalText(source, "type"),
                             "/sources/" + index + "/type");
             if (sources.putIfAbsent(name, descriptor) != null) {
-                throw WorkflowActionJson.invalid("duplicate source name '" + name + "'",
+                throw WorkflowRequests.invalid("duplicate source name '" + name + "'",
                         "/sources/" + index + "/name");
             }
         }
         Message targetSource = Fields.message(input, "target");
         Descriptor target = SchemaResolver.resolve(targetSource, "schema", context)
-                .message(WorkflowActionJson.optionalText(targetSource, "type"), "/target/type");
+                .message(WorkflowRequests.optionalText(targetSource, "type"), "/target/type");
         MappingSuggester.Suggestions suggestions = MappingSuggester.suggest(sources, target);
         Reply output = Reply.of(responseType()).set("targetType", suggestions.targetType());
         for (MappingSuggester.Candidate candidate : suggestions.candidates()) {

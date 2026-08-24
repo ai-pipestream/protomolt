@@ -155,27 +155,27 @@ final class EvaluateWorkRecordAction implements ProtoAction {
         // reporting that is more use to the caller than listing fields on a verb that was
         // never going to run.
         if (artifacts == null || runs == null) {
-            throw WorkflowActionJson.unavailable("work-record evaluation",
+            throw WorkflowRequests.unavailable("work-record evaluation",
                     "start protomolt-serve with --workflow-workspace");
         }
         byte[] record;
         try {
             record = Base64.getDecoder()
-                    .decode(WorkflowActionJson.text(input, "recordBase64"));
+                    .decode(WorkflowRequests.text(input, "recordBase64"));
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid("'recordBase64' is not valid base64",
+            throw WorkflowRequests.invalid("'recordBase64' is not valid base64",
                     "/recordBase64");
         }
         TrustSnapshot trust = TrustPin.resolve(input, defaultTrust.get());
         Workflow workflow = CatalogContract.as(
                 Fields.message(input, "workflow"), Workflow.getDefaultInstance(), name());
-        Map<String, byte[]> artifactBytes = WorkflowActionJson.base64Map(input, "artifacts");
+        Map<String, byte[]> artifactBytes = WorkflowRequests.base64Map(input, "artifacts");
 
         Verification verification;
         try {
             verification = RecordVerifier.verify(record, trust, artifactBytes);
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/trust");
+            throw WorkflowRequests.invalid(e.getMessage(), "/trust");
         }
 
         List<Verification.Check> evaluationChecks = new ArrayList<>();
@@ -278,7 +278,7 @@ final class EvaluateWorkRecordAction implements ProtoAction {
             return WorkflowReplay.replay(workflow, evidence,
                     SchemaResolver.resolve(input, "schema", context).files(), artifacts);
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/workflow");
+            throw WorkflowRequests.invalid(e.getMessage(), "/workflow");
         } catch (IOException e) {
             throw new ActionException("repository-failed",
                     "Replay failed: " + e.getMessage());
