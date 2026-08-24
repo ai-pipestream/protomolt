@@ -165,6 +165,31 @@ public final class CatalogContract {
     }
 
     /**
+     * What the message's rules say about a document, as a value.
+     *
+     * <p>Two callers want different things from the same check. A door wants a refusal: the
+     * caller sent something the contract does not allow, and nothing should run. A verb whose
+     * answer is a report on a document wants the findings, because refusing is the one thing
+     * it must not do with them. So the check yields the result and the caller decides.
+     *
+     * <p>The paths are named as the caller wrote them, not by their proto spelling, so a
+     * finding leads back to the member it came from.
+     */
+    public static ValidationResult inspect(Message document) {
+        return VALIDATOR.validate(document);
+    }
+
+    /** One violation as a finding: the member as written, the rule, and what it says. */
+    public static ObjectNode finding(ValidationResult.Violation violation) {
+        ObjectNode node = MAPPER.createObjectNode();
+        node.put("field", jsonPath(violation.path()));
+        node.put("pointer", pointer(violation.path()));
+        node.put("ruleId", violation.ruleId());
+        node.put("message", violation.message());
+        return node;
+    }
+
+    /**
      * Refuses a request the message's own rules do not allow.
      *
      * <p>The rules live on the request message, so they are the same rules whichever surface
@@ -181,7 +206,7 @@ public final class CatalogContract {
                     verb + " expects a " + descriptor.getFullName() + ", not a "
                             + request.getDescriptorForType().getFullName());
         }
-        ValidationResult result = VALIDATOR.validate(request);
+        ValidationResult result = inspect(request);
         if (!result.valid()) {
             throw new ActionException("invalid-input",
                     verb + " does not satisfy the request contract: " + describe(result),

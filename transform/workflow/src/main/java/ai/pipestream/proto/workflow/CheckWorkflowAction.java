@@ -7,9 +7,12 @@ import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The {@code check-workflow} verb: verify a workflow without executing anything — methods
@@ -18,6 +21,9 @@ import java.util.List;
  * lint gate for consoles, CI, and registration.
  */
 public final class CheckWorkflowAction implements ProtoAction {
+
+    /** The leading {@code steps[n]} of a violation path, when it has one. */
+    private static final Pattern STEP_INDEX = Pattern.compile("steps\\[(\\d+)\\]");
 
     @Override
     public String name() {
@@ -51,12 +57,24 @@ public final class CheckWorkflowAction implements ProtoAction {
     @Override
     public Message execute(Message input, ActionContext context)
             throws ActionException {
-        // This verb reports on a workflow rather than refusing one, so a definition it
-        // cannot read comes back as a finding.
+        // This verb reports on a workflow rather than refusing one, so nothing about the
+        // definition is an error here: what it cannot read, and what the contract will not
+        // allow, both come back as findings.
+        Message workflow = Fields.message(input, "workflow");
         Reply result = Reply.of(responseType());
+
+        // The request declares this field inspect-only, so the door left the workflow's own
+        // rules unchecked and they are this verb's to report.
+        ValidationResult declared = CatalogContract.inspect(workflow);
+        for (ValidationResult.Violation violation : declared.violations()) {
+            finding(result, stepOf(violation.path()), "contract",
+                    CatalogContract.finding(violation).path("field").asText()
+                            + " " + violation.message());
+        }
+
         CompiledWorkflow definition;
         try {
-            definition = WorkflowJson.parse(Fields.message(input, "workflow"), context);
+            definition = WorkflowJson.parse(workflow, context);
         } catch (WorkflowJson.WorkflowParseException e) {
             finding(result, e.step, "workflow", e.getMessage());
             return result.set("ok", false).build();
@@ -65,7 +83,16 @@ public final class CheckWorkflowAction implements ProtoAction {
         for (WorkflowVerifier.Finding entry : findings) {
             finding(result, entry.step(), entry.kind(), entry.error());
         }
-        return result.set("ok", findings.isEmpty()).build();
+        return result.set("ok", declared.valid() && findings.isEmpty()).build();
+    }
+
+    /**
+     * The step a violation sits under, read off its path: {@code steps[2].cel_rules[0].target}
+     * reports against step 2. A violation outside any step reports against the workflow.
+     */
+    private static String stepOf(String path) {
+        Matcher index = STEP_INDEX.matcher(path);
+        return index.lookingAt() ? "steps[" + index.group(1) + "]" : "";
     }
 
     private static void finding(Reply result, String step, String kind, String error) {
