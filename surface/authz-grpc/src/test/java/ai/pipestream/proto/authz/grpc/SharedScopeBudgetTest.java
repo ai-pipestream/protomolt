@@ -29,6 +29,8 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /**
  * One node, one ledger. A principal budgeted on a scope has that budget enforced across
@@ -166,8 +168,10 @@ class SharedScopeBudgetTest {
         }
 
         @Override
-        public ObjectNode inputSchema() {
-            return JsonNodeFactory.instance.objectNode().put("type", "object");
+        public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
         }
 
         @Override

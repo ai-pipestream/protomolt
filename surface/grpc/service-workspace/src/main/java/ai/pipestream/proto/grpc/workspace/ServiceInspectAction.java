@@ -10,6 +10,7 @@ import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Reads one profile and renders its service/method contracts without returning descriptor bytes. */
 public final class ServiceInspectAction implements ProtoAction {
@@ -39,8 +40,8 @@ public final class ServiceInspectAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return ServiceActionJson.schemaFor("ServiceInspectRequest");
+    public Descriptor requestType() {
+        return ServiceActionJson.request("ServiceInspectRequest");
     }
 
     @Override

@@ -1,5 +1,6 @@
 package ai.pipestream.proto.codegen;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -173,7 +174,10 @@ class GenerateStubsActionTest {
 
     @Test
     void unknownGeneratorIsInvalidInput() {
-        assertThatThrownBy(() -> action.execute(input("rust"), ActionContext.create()))
+        // Dispatching through a catalog because that is where the envelope is checked
+        // against the verb's request message; calling execute directly is below that line.
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).replace(action);
+        assertThatThrownBy(() -> catalog.execute("generate-stubs", input("rust")))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
                     // The refusal names the enum whose vocabulary the value failed. The

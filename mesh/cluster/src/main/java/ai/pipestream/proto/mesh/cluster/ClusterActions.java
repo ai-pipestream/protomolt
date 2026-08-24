@@ -173,8 +173,8 @@ public final class ClusterActions {
             return "Registers or refreshes one fenced mesh node advertisement after durable validation.";
         }
 
-        @Override public ObjectNode inputSchema() {
-            return schemaOf(RegisterNodeRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return RegisterNodeRequest.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
@@ -202,8 +202,8 @@ public final class ClusterActions {
             return "Extends one registered node's liveness window with a fenced heartbeat.";
         }
 
-        @Override public ObjectNode inputSchema() {
-            return schemaOf(HeartbeatRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return HeartbeatRequest.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
@@ -231,8 +231,8 @@ public final class ClusterActions {
             return "Registers or renews one health-gated processor lease on a registered node.";
         }
 
-        @Override public ObjectNode inputSchema() {
-            return schemaOf(RegisterProcessorRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return RegisterProcessorRequest.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
@@ -260,8 +260,8 @@ public final class ClusterActions {
             return "Publishes a fenced point-in-time node or processor capacity snapshot.";
         }
 
-        @Override public ObjectNode inputSchema() {
-            return schemaOf(UpdateCapacityRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return UpdateCapacityRequest.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
@@ -289,8 +289,8 @@ public final class ClusterActions {
             return "Returns the deterministic cluster directory snapshot and eligibility state.";
         }
 
-        @Override public ObjectNode inputSchema() {
-            return schemaOf(SweepRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return SweepRequest.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
@@ -315,8 +315,8 @@ public final class ClusterActions {
             return "Expires elapsed processor leases and node presence windows, cascading node loss.";
         }
 
-        @Override public ObjectNode inputSchema() {
-            return schemaOf(SweepRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return SweepRequest.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)

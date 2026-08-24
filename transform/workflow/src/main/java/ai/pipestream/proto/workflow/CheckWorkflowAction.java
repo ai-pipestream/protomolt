@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code check-workflow} verb: verify a workflow without executing anything — methods
@@ -40,14 +41,13 @@ public final class CheckWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("CheckWorkflowRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("CheckWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context)
             throws ActionException {
-        CatalogContract.check(input, "CheckWorkflowRequest", name());
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         ArrayNode findingsNode = result.putArray("findings");
         JsonNode workflowNode = input.get("workflow");

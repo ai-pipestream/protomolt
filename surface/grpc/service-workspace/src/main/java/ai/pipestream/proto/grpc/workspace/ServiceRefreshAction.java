@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 
 import java.io.IOException;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Re-reflects a stored profile and advances its content-addressed schema identity. */
 public final class ServiceRefreshAction implements ProtoAction {
@@ -45,8 +46,8 @@ public final class ServiceRefreshAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return ServiceActionJson.schemaFor("ServiceRefreshRequest");
+    public Descriptor requestType() {
+        return ServiceActionJson.request("ServiceRefreshRequest");
     }
 
     @Override

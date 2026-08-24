@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code run-workflow} verb: execute an inline workflow — serial typed gRPC calls, each
@@ -62,14 +63,13 @@ public final class RunWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("RunWorkflowRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("RunWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context)
             throws ActionException {
-        CatalogContract.check(input, "RunWorkflowRequest", name());
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         JsonNode workflowNode = input.get("workflow");
         JsonNode nameNode = input.get("workflowName");

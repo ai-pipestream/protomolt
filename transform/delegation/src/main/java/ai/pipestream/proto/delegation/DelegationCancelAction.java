@@ -5,6 +5,7 @@ import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.delegation.v1.CancelTaskRequest;
 import ai.pipestream.proto.delegation.v1.CancelTaskResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Cancels a task's open offer, lease, or candidate review. */
 final class DelegationCancelAction extends DelegationAction {
@@ -26,8 +27,8 @@ final class DelegationCancelAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(CancelTaskRequest.getDescriptor());
+    public Descriptor requestType() {
+        return CancelTaskRequest.getDescriptor();
     }
 
     @Override

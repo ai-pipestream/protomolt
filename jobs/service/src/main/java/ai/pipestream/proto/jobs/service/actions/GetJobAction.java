@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.Optional;
 import java.util.UUID;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code get-job} verb: a single-record read of one workflow run — the CLI,
@@ -50,8 +51,8 @@ public final class GetJobAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("GetJobRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("GetJobRequest");
     }
 
     @Override
@@ -59,7 +60,6 @@ public final class GetJobAction implements ProtoAction {
         // Availability first: a node with no job store cannot serve any request, so
         // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
-        CatalogContract.check(input, "GetJobRequest", name());
         String jobIdText = ActionSupport.requireString(input, "jobId");
         UUID jobId;
         try {

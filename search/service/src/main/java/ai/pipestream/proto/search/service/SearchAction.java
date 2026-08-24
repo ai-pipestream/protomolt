@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * Querying a mapping subject, as an agent-operable action.
@@ -87,12 +88,8 @@ public final class SearchAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        // Derived from the request message so the declared rules travel with the contract: a
-        // caller sees the positive, capped k and the required lane before sending, and a rule
-        // added to the proto reaches this manifest without a second edit.
-        return MAPPER.valueToTree(
-                ProtoJsonSchemaGenerator.create().generateRooted(SearchRequest.getDescriptor()));
+    public Descriptor requestType() {
+        return SearchRequest.getDescriptor();
     }
 
     @Override

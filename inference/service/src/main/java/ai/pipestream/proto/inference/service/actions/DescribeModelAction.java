@@ -10,6 +10,7 @@ import ai.pipestream.proto.inference.spi.UnknownModelException;
 import ai.pipestream.proto.inference.v1.DescribeModelRequest;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code inference-describe-model} verb: one catalog entry, capabilities
@@ -47,13 +48,12 @@ public final class DescribeModelAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("InferenceDescribeModelRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("InferenceDescribeModelRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "InferenceDescribeModelRequest", name());
         InferenceActionSupport.requireEngines(engines);
         String model = InferenceActionSupport.requireString(input, "model");
         ObjectNode result = JsonNodeFactory.instance.objectNode();

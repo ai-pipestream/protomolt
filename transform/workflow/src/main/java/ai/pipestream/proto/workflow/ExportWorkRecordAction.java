@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Projects a stored run's evidence into a canonical signed work record. */
 final class ExportWorkRecordAction implements ProtoAction {
@@ -62,13 +63,12 @@ final class ExportWorkRecordAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("ExportWorkRecordRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("ExportWorkRecordRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "ExportWorkRecordRequest", name());
         if (runs == null) {
             throw WorkflowActionJson.unavailable("work-record export",
                     "start protomolt-serve with --workflow-workspace");

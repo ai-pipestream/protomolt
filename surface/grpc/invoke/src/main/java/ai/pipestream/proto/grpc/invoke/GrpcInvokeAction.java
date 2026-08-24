@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code grpc-invoke}: call a unary or server-streaming gRPC method on a live server, driven
@@ -77,13 +78,12 @@ public final class GrpcInvokeAction implements StreamingAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("GrpcInvokeRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("GrpcInvokeRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "GrpcInvokeRequest", name());
         CallPlan plan = prepare(input, context);
 
         ObjectNode result = context.objectMapper().createObjectNode();

@@ -7,6 +7,7 @@ import ai.pipestream.proto.delegation.v1.ReadTranscriptResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Reads a bounded slice of the recorded delegation transcript from a cursor. */
 final class DelegationTranscriptAction extends DelegationAction {
@@ -31,8 +32,8 @@ final class DelegationTranscriptAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(ReadTranscriptRequest.getDescriptor());
+    public Descriptor requestType() {
+        return ReadTranscriptRequest.getDescriptor();
     }
 
     @Override

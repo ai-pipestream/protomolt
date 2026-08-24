@@ -11,6 +11,7 @@ import ai.pipestream.proto.registry.RegistryStoreException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code registry-remotes} verb: manages the git remotes this registry federates from.
@@ -57,12 +58,8 @@ public final class RegistryRemotesAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        // Derived from the request message. The three cross-field rules it declares state
-        // which members each operation needs, so the caller learns them from the schema
-        // rather than from a refusal.
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
-                .generate(RegistryRemotesRequest.getDescriptor()));
+    public Descriptor requestType() {
+        return RegistryRemotesRequest.getDescriptor();
     }
 
     @Override

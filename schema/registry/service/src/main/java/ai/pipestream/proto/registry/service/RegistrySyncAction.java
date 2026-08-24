@@ -11,6 +11,7 @@ import ai.pipestream.proto.registry.RegistryStoreException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code registry-sync} verb: fetches one configured remote registry and imports its
@@ -58,11 +59,8 @@ public final class RegistrySyncAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        // Derived from the request message, which declares the remote name as a slug so the
-        // accepted shape is stated rather than described.
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
-                .generate(RegistrySyncRequest.getDescriptor()));
+    public Descriptor requestType() {
+        return RegistrySyncRequest.getDescriptor();
     }
 
     @Override

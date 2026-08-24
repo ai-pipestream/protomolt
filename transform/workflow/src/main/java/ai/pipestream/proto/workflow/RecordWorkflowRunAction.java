@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 
 import java.io.IOException;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Runs an inline workflow and records redacted content-addressed evidence for replay. */
 final class RecordWorkflowRunAction implements ProtoAction {
@@ -46,13 +47,12 @@ final class RecordWorkflowRunAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("RecordWorkflowRunRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("RecordWorkflowRunRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "RecordWorkflowRunRequest", name());
         if (artifacts == null || runs == null) {
             throw WorkflowActionJson.unavailable("workflow run recording",
                     "start protomolt-serve with --workflow-workspace");

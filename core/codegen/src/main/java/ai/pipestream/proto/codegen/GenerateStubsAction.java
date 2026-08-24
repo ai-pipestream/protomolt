@@ -18,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code generate-stubs}: produce client and message source code for a schema, live, with no
@@ -57,13 +58,12 @@ public final class GenerateStubsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("GenerateStubsRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("GenerateStubsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "GenerateStubsRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         List<WasmProtoc.Plugin> plugins = parseGenerators(input);
         // protoc requires every transitive dependency present, dependencies before dependents;

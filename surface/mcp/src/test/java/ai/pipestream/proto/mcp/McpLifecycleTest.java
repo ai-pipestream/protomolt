@@ -16,6 +16,8 @@ import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /** Focused MCP lifecycle, cursor, capability, and revision fixtures. */
 class McpLifecycleTest {
@@ -189,8 +191,10 @@ class McpLifecycleTest {
                     }
 
                     @Override
-                    public ObjectNode inputSchema() {
-                        return mapper.createObjectNode().put("type", "object");
+                    public Descriptor requestType() {
+                        // Struct accepts any JSON object, so a fixture is not constrained by a
+                        // contract it is not testing.
+                        return Struct.getDescriptor();
                     }
 
                     @Override
@@ -234,8 +238,10 @@ class McpLifecycleTest {
                     }
 
                     @Override
-                    public ObjectNode inputSchema() {
-                        return mapper.createObjectNode().put("type", "object");
+                    public Descriptor requestType() {
+                        // Struct accepts any JSON object, so a fixture is not constrained by a
+                        // contract it is not testing.
+                        return Struct.getDescriptor();
                     }
 
                     @Override

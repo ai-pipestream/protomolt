@@ -27,13 +27,12 @@ final class RenderJsonSchemaAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("RenderJsonSchemaRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("RenderJsonSchemaRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "RenderJsonSchemaRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         Map<String, Object> document = ProtoJsonSchemaGenerator.create().generate(descriptor);

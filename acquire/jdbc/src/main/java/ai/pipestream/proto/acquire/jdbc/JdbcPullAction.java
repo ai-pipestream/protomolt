@@ -14,6 +14,7 @@ import com.google.protobuf.util.JsonFormat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code pull-jdbc} verb: one {@link JdbcPull} pass as an action. The caller owns the
@@ -63,11 +64,8 @@ public final class JdbcPullAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        // Derived from the request message, so the bounds and the required columns the pass
-        // relies on are visible to a caller before it starts one.
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
-                .generate(PullFromJdbcRequest.getDescriptor()));
+    public Descriptor requestType() {
+        return PullFromJdbcRequest.getDescriptor();
     }
 
     @Override

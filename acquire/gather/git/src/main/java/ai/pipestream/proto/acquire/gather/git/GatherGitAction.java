@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code gather-git} verb: pull {@code .proto} sources straight from a git repository,
@@ -63,14 +64,13 @@ public final class GatherGitAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("GatherGitRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("GatherGitRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context)
             throws ActionException {
-        CatalogContract.check(input, "GatherGitRequest", name());
         ObjectNode result = context.objectMapper().createObjectNode();
         JsonNode repoNode = input.get("repo");
         if (repoNode == null || !repoNode.isTextual() || repoNode.asText().isBlank()) {

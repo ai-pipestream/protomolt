@@ -9,6 +9,7 @@ import ai.pipestream.proto.delegation.v1.WorkerRegistrationSummary;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Lists the coordinator's worker registrations: identity, admission, and capabilities. */
 final class DelegationWorkerListAction extends DelegationAction {
@@ -33,8 +34,8 @@ final class DelegationWorkerListAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(ListWorkersRequest.getDescriptor());
+    public Descriptor requestType() {
+        return ListWorkersRequest.getDescriptor();
     }
 
     @Override

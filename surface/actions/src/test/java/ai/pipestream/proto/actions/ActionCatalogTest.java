@@ -15,6 +15,8 @@ import static ai.pipestream.proto.actions.TestFixtures.MAPPER;
 import static ai.pipestream.proto.actions.TestFixtures.obj;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 class ActionCatalogTest {
 
@@ -52,8 +54,10 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return JsonNodeFactory.instance.objectNode();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override
@@ -151,8 +155,10 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return ActionJson.baseInputSchema();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override
@@ -178,8 +184,10 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return ActionJson.baseInputSchema();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override
@@ -259,8 +267,10 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return ActionJson.baseInputSchema();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override

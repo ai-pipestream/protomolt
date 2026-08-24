@@ -11,6 +11,7 @@ import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code submit-workflow} verb: accept a workflow run for asynchronous
@@ -64,8 +65,8 @@ public final class SubmitWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("SubmitWorkflowRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("SubmitWorkflowRequest");
     }
 
     @Override
@@ -73,7 +74,6 @@ public final class SubmitWorkflowAction implements ProtoAction {
         // Availability first: a node with no job store cannot serve any request, so
         // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
-        CatalogContract.check(input, "SubmitWorkflowRequest", name());
         ObjectNode workflow = ActionSupport.optionalObject(input, "workflow");
         String workflowName = ActionSupport.optionalString(input, "workflowName");
         String jobId = ActionSupport.optionalString(input, "jobId");

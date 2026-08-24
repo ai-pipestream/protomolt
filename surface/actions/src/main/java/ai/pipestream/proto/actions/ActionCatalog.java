@@ -163,7 +163,14 @@ public final class ActionCatalog {
         return manifest;
     }
 
-    /** Dispatches {@code input} to the named action with process authority. */
+    /**
+     * Dispatches {@code input} to the named action with process authority.
+     *
+     * <p>The envelope is checked against the action's request message first. Calls arriving
+     * over gRPC pass a validating interceptor before they reach a handler; calls arriving as
+     * catalog verbs do not, so without this the same request would be refused on one surface
+     * and accepted on the other.
+     */
     public ObjectNode execute(String name, ObjectNode input) throws ActionException {
         return execute(name, input, Caller.operator());
     }
@@ -178,7 +185,9 @@ public final class ActionCatalog {
         ProtoAction action = get(name);
         requireScope(action, caller);
         requireBudget(action, caller, input);
-        return action.execute(Inputs.requireEnvelope(input), context);
+        ObjectNode envelope = Inputs.requireEnvelope(input);
+        CatalogContract.check(envelope, action.requestType(), name);
+        return action.execute(envelope, context);
     }
 
     /**
@@ -198,6 +207,7 @@ public final class ActionCatalog {
         requireScope(action, caller);
         requireBudget(action, caller, input);
         ObjectNode envelope = Inputs.requireEnvelope(input);
+        CatalogContract.check(envelope, action.requestType(), name);
         if (action instanceof StreamingAction streaming) {
             streaming.executeStreaming(envelope, context, emitter);
         } else {

@@ -39,13 +39,12 @@ final class SuggestMappingsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("SuggestMappingsRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("SuggestMappingsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "SuggestMappingsRequest", name());
         JsonNode sourceNode = input.get("sources");
         if (!(sourceNode instanceof ArrayNode array) || array.isEmpty()) {
             throw WorkflowActionJson.invalid("'sources' must be a non-empty array", "/sources");

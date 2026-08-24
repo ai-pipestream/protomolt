@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /**
  * Replay pages the listing and rides the submit action: one durable run
@@ -42,8 +44,10 @@ class ReplayActionTest {
         }
 
         @Override
-        public ObjectNode inputSchema() {
-            return MAPPER.createObjectNode();
+        public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
         }
 
         @Override

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.Arrays;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Checks a new schema version against an old one under a compatibility mode. */
 final class CheckCompatAction implements ProtoAction {
@@ -38,13 +39,12 @@ final class CheckCompatAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("CheckCompatRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("CheckCompatRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "CheckCompatRequest", name());
         SchemaResolver.ResolvedSchema oldSchema = SchemaResolver.resolve(input, "old", context);
         SchemaResolver.ResolvedSchema newSchema = SchemaResolver.resolve(input, "new", context);
         // The contract names the mode with an enum, so an unknown one is refused before the

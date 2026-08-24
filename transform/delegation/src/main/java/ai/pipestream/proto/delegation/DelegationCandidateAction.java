@@ -6,6 +6,7 @@ import ai.pipestream.proto.delegation.v1.CompletionCandidate;
 import ai.pipestream.proto.delegation.v1.SubmitCandidateRequest;
 import ai.pipestream.proto.delegation.v1.SubmitCandidateResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Submits one revision of completion evidence for coordinator review. */
 final class DelegationCandidateAction extends DelegationAction {
@@ -29,8 +30,8 @@ final class DelegationCandidateAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(SubmitCandidateRequest.getDescriptor());
+    public Descriptor requestType() {
+        return SubmitCandidateRequest.getDescriptor();
     }
 
     @Override

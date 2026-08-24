@@ -11,6 +11,7 @@ import com.google.protobuf.util.JsonFormat;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * Struct-to-proto: reverse-engineers a message type from data-rich JSON samples and returns
@@ -42,13 +43,12 @@ final class InferSchemaAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("InferSchemaRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("InferSchemaRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "InferSchemaRequest", name());
         String name = Inputs.requireString(input, "name");
         ArrayNode samplesNode = Inputs.optionalArray(input, "samples");
         if (samplesNode == null || samplesNode.isEmpty()) {

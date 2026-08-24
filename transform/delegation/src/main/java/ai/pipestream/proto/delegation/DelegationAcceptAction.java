@@ -5,6 +5,7 @@ import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.delegation.v1.AcceptTaskRequest;
 import ai.pipestream.proto.delegation.v1.AcceptTaskResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** The worker takes the open offer for a task's current attempt. */
 final class DelegationAcceptAction extends DelegationAction {
@@ -26,8 +27,8 @@ final class DelegationAcceptAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(AcceptTaskRequest.getDescriptor());
+    public Descriptor requestType() {
+        return AcceptTaskRequest.getDescriptor();
     }
 
     @Override

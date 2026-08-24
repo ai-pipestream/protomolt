@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Base64;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Invokes a registered service while keeping its descriptor inside ProtoMolt. */
 public final class ServiceInvokeAction implements StreamingAction {
@@ -57,8 +58,8 @@ public final class ServiceInvokeAction implements StreamingAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return ServiceActionJson.schemaFor("ServiceInvokeRequest");
+    public Descriptor requestType() {
+        return ServiceActionJson.request("ServiceInvokeRequest");
     }
 
     @Override

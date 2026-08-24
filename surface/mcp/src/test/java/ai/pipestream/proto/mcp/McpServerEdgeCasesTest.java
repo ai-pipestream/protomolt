@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /**
  * Protocol edge cases around {@link McpServer#handle(JsonNode)} and the stream loop that the
@@ -185,10 +187,10 @@ class McpServerEdgeCasesTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                ObjectNode schema = mapper.createObjectNode();
-                schema.put("type", "object");
-                return schema;
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override

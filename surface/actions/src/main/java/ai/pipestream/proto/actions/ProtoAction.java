@@ -1,10 +1,16 @@
 package ai.pipestream.proto.actions;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
- * One JSON-in/JSON-out verb over the toolkit: a named, self-describing operation that a UI form,
- * an HTTP endpoint, or a tool-using LLM can drive blind.
+ * One verb over the toolkit: a named operation a UI form, an HTTP endpoint, or a tool-using
+ * LLM can drive blind.
+ *
+ * <p>A verb describes itself by naming the protobuf message it accepts, not by writing a
+ * schema. The catalog derives the published schema from that message and enforces it before
+ * dispatch, so the bounds a caller reads are the bounds the verb applies and neither can
+ * drift from the other.
  *
  * <p>An action is stateless; everything it needs beyond the input envelope comes from the
  * {@link ActionContext}. Failures are structured {@link ActionException}s with a stable
@@ -28,13 +34,24 @@ public interface ProtoAction {
         return "";
     }
 
-    /** JSON Schema (draft 2020-12) for the input envelope accepted by {@link #execute}. */
-    ObjectNode inputSchema();
+    /** The request message this verb accepts; the envelope is its canonical proto3 JSON. */
+    Descriptor requestType();
+
+    /**
+     * JSON Schema (draft 2020-12) for the input envelope, derived from {@link #requestType()}.
+     *
+     * <p>Override only where the contract genuinely depends on how the node is configured
+     * rather than on the message, which is rare: the same message being correct with and
+     * without a field is the only reason to publish something the message does not say.
+     */
+    default ObjectNode inputSchema() {
+        return CatalogContract.schemaFor(requestType());
+    }
 
     /**
      * Executes the action.
      *
-     * @param input   the input envelope; must satisfy {@link #inputSchema()}
+     * @param input   the input envelope, already checked against {@link #requestType()}
      * @param context type resolution and JSON machinery shared across actions
      * @return the structured result document
      * @throws ActionException with a stable code on any failure, including envelope violations

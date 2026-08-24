@@ -26,6 +26,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The relying-party evaluation sidecar: a reproducible decision procedure
@@ -119,8 +120,19 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     }
 
     @Override
+    public Descriptor requestType() {
+        return CatalogContract.request("EvaluateWorkRecordRequest");
+    }
+
+    /**
+     * Adds trust to the required list when this node has no pinned snapshot.
+     *
+     * <p>One of the few contracts that cannot live in the message: the same request is
+     * correct with and without the field depending on what the node can fall back on.
+     */
+    @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = CatalogContract.schemaFor("EvaluateWorkRecordRequest");
+        ObjectNode schema = CatalogContract.schemaFor(requestType());
         // A node with a pinned snapshot supplies trust itself, so the request may
         // omit it. Without a pin there is nothing to fall back on, and the verb
         // says so in the schema it publishes rather than only when a call fails.
@@ -139,7 +151,6 @@ final class EvaluateWorkRecordAction implements ProtoAction {
             throw WorkflowActionJson.unavailable("work-record evaluation",
                     "start protomolt-serve with --workflow-workspace");
         }
-        CatalogContract.check(input, "EvaluateWorkRecordRequest", name());
         byte[] record;
         try {
             record = Base64.getDecoder()

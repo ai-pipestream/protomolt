@@ -6,6 +6,7 @@ import ai.pipestream.proto.delegation.v1.SendTaskMessageRequest;
 import ai.pipestream.proto.delegation.v1.SendTaskMessageResponse;
 import ai.pipestream.proto.delegation.v1.TaskMessage;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Sends one non-transitioning structured task message in either direction. */
 final class DelegationMessageAction extends DelegationAction {
@@ -30,8 +31,8 @@ final class DelegationMessageAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(SendTaskMessageRequest.getDescriptor());
+    public Descriptor requestType() {
+        return SendTaskMessageRequest.getDescriptor();
     }
 
     @Override

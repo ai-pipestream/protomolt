@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.time.Duration;
 import java.util.UUID;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Offers one bounded task attempt to an admitted worker, with its lease. */
 final class DelegationOfferAction extends DelegationAction {
@@ -36,8 +37,8 @@ final class DelegationOfferAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(OfferTaskRequest.getDescriptor());
+    public Descriptor requestType() {
+        return OfferTaskRequest.getDescriptor();
     }
 
     @Override
