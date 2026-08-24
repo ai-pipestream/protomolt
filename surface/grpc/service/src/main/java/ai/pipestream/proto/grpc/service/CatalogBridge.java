@@ -51,11 +51,23 @@ public final class CatalogBridge {
     public static DynamicMessage execute(ActionCatalog catalog, MethodDescriptor method,
                                          MessageOrBuilder request, Caller caller)
             throws ActionException {
+        return execute(catalog, actionName(method), method, request, caller);
+    }
+
+    /**
+     * Dispatches to a named verb behind {@code method}.
+     *
+     * <p>For a service whose RPCs are named for the service rather than for the verb, which
+     * is every contributed one: {@code AcceptTask} is the RPC and {@code delegation-accept}
+     * is the verb, so the name cannot be derived and is resolved from the contract instead.
+     */
+    public static DynamicMessage execute(ActionCatalog catalog, String verb,
+                                         MethodDescriptor method, MessageOrBuilder request,
+                                         Caller caller) throws ActionException {
         Message message = request instanceof Message typed
                 ? typed
                 : ((Message.Builder) request).build();
-        Message response = catalog.execute(actionName(method), message, caller);
-        return asDynamic(response, method.getOutputType(), method);
+        return asDynamic(catalog.execute(verb, message, caller), method.getOutputType(), method);
     }
 
     /**
