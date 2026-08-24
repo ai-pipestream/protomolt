@@ -130,6 +130,11 @@ public final class SearchServices implements AutoCloseable {
      * credential the resolver names is scope-checked — queries need {@code search-query},
      * the indexing service needs {@code search-index}. Without a token the service stays the
      * open, trusted-network surface it is today.
+     *
+     * <p>Spends on its own ledger, for a surface that is the node's only enforcement
+     * point. A node that also serves another enforcement point passes one shared ledger
+     * through the overload that takes {@link ScopeBudgets}, or a principal gets a
+     * separate allowance per surface.
      */
     public Server startInProcess(String name, String apiToken, CallerResolver resolver)
             throws IOException {
