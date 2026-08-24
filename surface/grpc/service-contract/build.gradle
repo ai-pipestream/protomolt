@@ -8,6 +8,11 @@ dependencies {
     // text, because the source closure is compiled rather than linked.
     api project(':protomolt-grpc-service-profile')
     api project(':protomolt-protobuf-validation')
+    // The durable workflow contract: the replay, promote and evaluate requests carry a
+    // compiled Workflow, and the definition is compiled from source, so this .proto and
+    // the ones it imports must be readable from the classpath as text.
+    api project(':protomolt-grpc-workflow')
+    api project(':protomolt-protobuf-prompt')
 
     testImplementation project(':protomolt-protobuf-validation')
 }
