@@ -1,19 +1,21 @@
 package ai.pipestream.proto.emit.okf;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.emit.Bundle;
 import ai.pipestream.proto.emit.Bundles;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
+import java.nio.charset.StandardCharsets;
 
-import java.util.Base64;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.Base64;
 
 /**
  * The {@code emit-okf} verb: render a schema as an Open Knowledge Format (OKF v0.1) bundle —
@@ -52,21 +54,27 @@ public final class EmitOkfAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("EmitOkfResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema resolved = SchemaResolver.resolve(input, "schema", context);
-        JsonNode titleNode = input.get("title");
-        String title = titleNode != null && titleNode.isTextual() ? titleNode.asText() : null;
+        // An omitted title arrives as the empty string, which the renderer reads as none.
+        String title = Fields.string(input, "title");
 
         Bundle bundle = new OkfRenderer().render(resolved.files(),
-                new OkfRenderer.Options(title, null));
+                new OkfRenderer.Options(title.isEmpty() ? null : title, null));
 
-        ObjectNode result = context.objectMapper().createObjectNode();
-        result.put("ok", true);
-        result.put("fileCount", bundle.size());
-        ObjectNode files = result.putObject("files");
-        bundle.forEach((path, content) -> files.put(path,
-                new String(content, java.nio.charset.StandardCharsets.UTF_8)));
-        result.put("zipBase64", Base64.getEncoder().encodeToString(Bundles.zip(bundle)));
-        return result;
+        Reply result = Reply.of(responseType())
+                .set("ok", true)
+                .set("fileCount", bundle.size());
+        bundle.forEach((path, content) -> result.append("files")
+                .set("key", path)
+                .set("value", new String(content, StandardCharsets.UTF_8))
+                .build());
+        return result.set("zipBase64",
+                Base64.getEncoder().encodeToString(Bundles.zip(bundle))).build();
     }
 }

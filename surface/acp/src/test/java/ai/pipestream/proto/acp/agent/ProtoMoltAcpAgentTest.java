@@ -5,20 +5,21 @@ import ai.pipestream.proto.acp.AcpClient;
 import ai.pipestream.proto.acp.TestPipes;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonStreamEmitter;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
+import java.time.Duration;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-
 import static org.assertj.core.api.Assertions.assertThat;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 /**
  * Drives the catalog agent through the ACP protocol over in-memory pipes: initialize, open a
@@ -157,19 +158,22 @@ class ProtoMoltAcpAgentTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                ObjectNode out = JsonNodeFactory.instance.objectNode();
-                out.put("ticks", 3);
-                return out;
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override
-            public void executeStreaming(ObjectNode input, ActionContext context,
-                    StreamEmitter emitter) {
+            public Message execute(Message input, ActionContext context) {
+                return number("ticks", 3);
+            }
+
+            @Override
+            public void executeStreaming(Message input, ActionContext context,
+                    StreamEmitter emitter) throws ActionException {
                 for (int i = 1; i <= 3; i++) {
-                    ObjectNode tick = JsonNodeFactory.instance.objectNode();
-                    tick.put("tick", i);
-                    emitter.emit(tick);
+                    emitter.emit(number("tick", i));
                 }
             }
         });
@@ -184,4 +188,11 @@ class ProtoMoltAcpAgentTest {
                     .contains("\"tick\" : 3");
         }
     }
+
+    /** A one-field Struct, which is what these fixtures answer with. */
+    private static Struct number(String field, int value) {
+        return Struct.newBuilder().putFields(field,
+                Value.newBuilder().setNumberValue(value).build()).build();
+    }
+
 }

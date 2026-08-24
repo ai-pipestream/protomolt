@@ -1,21 +1,22 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
-import ai.pipestream.proto.grpc.workflow.v1.Workflow;
+import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.v1.VersionedWorkflow;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import ai.pipestream.proto.grpc.workflow.v1.Workflow;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
-
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Promotes validated workflow content as one immutable registry version. */
 final class PromoteWorkflowAction implements ProtoAction {
@@ -55,13 +56,18 @@ final class PromoteWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("PromoteWorkflowResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         if (workflows == null) {
             throw WorkflowActionJson.unavailable("workflow promotion",
                     "start protomolt-serve with --registry-git");
         }
-        Workflow workflow = (Workflow) WorkflowActionJson.parse(
-                WorkflowActionJson.object(input, "workflow"), Workflow.newBuilder(), "/workflow");
+        Workflow workflow = CatalogContract.as(
+                Fields.message(input, "workflow"), Workflow.getDefaultInstance(), name());
         String version = WorkflowActionJson.identity(input, "version");
         Instant now = clock.instant();
         VersionedWorkflow promoted = VersionedWorkflow.newBuilder()
@@ -80,9 +86,9 @@ final class PromoteWorkflowAction implements ProtoAction {
             throw new ActionException("repository-failed",
                     "Failed to promote workflow: " + e.getMessage());
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("promoted", true);
-        output.set("versionedWorkflow", WorkflowActionJson.render(promoted, context));
-        return output;
+        return Reply.of(responseType())
+                .set("promoted", true)
+                .set("versionedWorkflow", promoted)
+                .build();
     }
 }

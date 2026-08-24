@@ -1,24 +1,25 @@
 package ai.pipestream.proto.codegen;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
+import com.google.protobuf.Message;
 import com.google.protobuf.compiler.PluginProtos;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code generate-stubs}: produce client and message source code for a schema, live, with no
@@ -63,47 +64,49 @@ public final class GenerateStubsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("GenerateStubsResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        List<WasmProtoc.Plugin> plugins = parseGenerators(input);
+        List<WasmProtoc.Plugin> plugins = generators(input);
         // protoc requires every transitive dependency present, dependencies before dependents;
         // the resolved descriptor graph has them all (including well-known types), so the
         // request is built from a deps-first walk rather than the raw descriptor set.
         List<FileDescriptorProto> orderedFiles = topologicalFiles(schema.files());
         Set<String> knownFiles = new LinkedHashSet<>();
         orderedFiles.forEach(f -> knownFiles.add(f.getName()));
-        List<String> filesToGenerate = parseFiles(input, knownFiles);
+        List<String> filesToGenerate = filesToGenerate(input, knownFiles);
 
         PluginProtos.CodeGeneratorRequest.Builder request =
                 PluginProtos.CodeGeneratorRequest.newBuilder();
         request.addAllProtoFile(orderedFiles);
         request.addAllFileToGenerate(filesToGenerate);
-        JsonNode parameter = input.get("parameter");
-        if (parameter != null && parameter.isTextual()) {
-            request.setParameter(parameter.asText());
-        }
+        request.setParameter(Fields.string(input, "parameter"));
 
-        ObjectNode result = context.objectMapper().createObjectNode();
-        ArrayNode files = context.objectMapper().createArrayNode();
+        Reply result = Reply.of(responseType());
+        int generated = 0;
         for (WasmProtoc.Plugin plugin : plugins) {
             PluginProtos.CodeGeneratorResponse response = WasmProtoc.run(plugin, request.build());
             if (!response.getError().isEmpty()) {
-                result.put("ok", false);
-                result.put("generator", plugin.wrapperArg());
-                result.put("error", response.getError());
-                return result;
+                return Reply.of(responseType())
+                        .set("ok", false)
+                        .set("generator", plugin.wrapperArg())
+                        .set("error", response.getError())
+                        .build();
             }
             for (PluginProtos.CodeGeneratorResponse.File file : response.getFileList()) {
-                ObjectNode entry = files.addObject();
-                entry.put("name", file.getName());
-                entry.put("generator", plugin.wrapperArg());
-                entry.put("content", file.getContent());
+                result.append("files")
+                        .set("name", file.getName())
+                        .set("generator", plugin.wrapperArg())
+                        .set("content", file.getContent())
+                        .build();
+                generated++;
             }
         }
-        result.put("ok", true);
-        result.set("files", files);
-        result.put("fileCount", files.size());
-        return result;
+        return result.set("ok", true).set("fileCount", generated).build();
     }
 
     private static List<FileDescriptorProto> topologicalFiles(
@@ -127,21 +130,18 @@ public final class GenerateStubsAction implements ProtoAction {
         ordered.add(file.toProto());
     }
 
-    private static List<WasmProtoc.Plugin> parseGenerators(ObjectNode input) throws ActionException {
-        JsonNode node = input.get("generators");
-        if (node == null || node.isNull()) {
+    /** The generators to run; none named selects Java. */
+    private static List<WasmProtoc.Plugin> generators(Message input) throws ActionException {
+        List<?> named = Fields.list(input, "generators");
+        if (named.isEmpty()) {
             return List.of(WasmProtoc.Plugin.JAVA);
         }
-        if (!node.isArray() || node.isEmpty()) {
-            throw invalidInput("'generators' must be a non-empty array of generator names",
-                    "/generators");
-        }
         List<WasmProtoc.Plugin> plugins = new ArrayList<>();
-        for (JsonNode element : node) {
+        for (Object element : named) {
             // The contract names generators with an enum, so an unknown one is refused
             // before the verb runs. Proto enum values carry their type name, and the
             // remainder is the plugin's own name with dashes written as underscores.
-            String name = element.asText("");
+            String name = element.toString();
             String value = name.startsWith(GENERATOR_PREFIX)
                     ? name.substring(GENERATOR_PREFIX.length()) : name;
             try {
@@ -155,27 +155,22 @@ public final class GenerateStubsAction implements ProtoAction {
         return plugins;
     }
 
-    private static List<String> parseFiles(ObjectNode input, Set<String> knownFiles)
+    /** The files to generate for; none named selects every non-google file in the schema. */
+    private static List<String> filesToGenerate(Message input, Set<String> knownFiles)
             throws ActionException {
-        JsonNode node = input.get("files");
-        if (node == null || node.isNull()) {
+        List<String> named = Fields.strings(input, "files");
+        if (named.isEmpty()) {
             return knownFiles.stream()
                     .filter(name -> !name.startsWith("google/protobuf/"))
                     .toList();
         }
-        if (!node.isArray() || node.isEmpty()) {
-            throw invalidInput("'files' must be a non-empty array of proto paths", "/files");
-        }
-        List<String> files = new ArrayList<>();
-        for (JsonNode element : node) {
-            String name = element.asText("");
+        for (String name : named) {
             if (!knownFiles.contains(name)) {
                 throw invalidInput("File '" + name + "' is not in the schema; present: "
                         + String.join(", ", knownFiles), "/files");
             }
-            files.add(name);
         }
-        return files;
+        return named;
     }
 
     private static ActionException invalidInput(String message, String pointer) {

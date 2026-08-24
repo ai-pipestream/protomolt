@@ -2,13 +2,14 @@ package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.cel.CelMappingRule;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
-
+import com.google.protobuf.Message;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,7 +39,22 @@ public final class WorkflowJson {
     }
 
     /** Parses one workflow-definition envelope into the resolved model. */
+    /**
+     * A stored definition, which reaches the runtime as a document rather than as a field of
+     * a request: out of a job row, or out of the workflow registry. It is read against the
+     * same message an inline definition arrives as, so both are held to one description.
+     */
     public static CompiledWorkflow parse(ObjectNode workflow, ActionContext context)
+            throws WorkflowParseException {
+        try {
+            return parse(CatalogContract.read(workflow,
+                    CatalogContract.request("CompiledWorkflow"), "workflow"), context);
+        } catch (ActionException e) {
+            throw new WorkflowParseException("", e.getMessage());
+        }
+    }
+
+    public static CompiledWorkflow parse(Message workflow, ActionContext context)
             throws WorkflowParseException {
         SchemaResolver.ResolvedSchema schema;
         Descriptor inputType;
@@ -48,26 +64,22 @@ public final class WorkflowJson {
         } catch (ActionException e) {
             throw new WorkflowParseException("", e.getMessage());
         }
-        JsonNode stepsNode = workflow.get("steps");
-        if (stepsNode == null || !stepsNode.isArray() || stepsNode.isEmpty()) {
+        List<Message> stepMessages = Fields.list(workflow, "steps");
+        if (stepMessages.isEmpty()) {
             throw new WorkflowParseException("", "'steps' must be a non-empty array");
         }
-        List<CompiledWorkflow.Step> steps = new ArrayList<>(stepsNode.size());
-        for (JsonNode node : stepsNode) {
-            if (!(node instanceof ObjectNode step)) {
-                throw new WorkflowParseException("", "each step must be an object");
-            }
+        List<CompiledWorkflow.Step> steps = new ArrayList<>(stepMessages.size());
+        for (Message step : stepMessages) {
             String name = text(step, "name");
             if (name == null) {
                 throw new WorkflowParseException("", "each step needs a 'name'");
             }
-            JsonNode structuredNode = step.get("structured");
-            if (structuredNode != null) {
-                if (!(structuredNode instanceof ObjectNode structured)) {
-                    throw new WorkflowParseException(name,
-                            "'structured' must be an object");
-                }
-                if (step.has("target") || step.has("method") || step.has("tls")) {
+            if (Fields.has(step, "structured")) {
+                Message structured = Fields.message(step, "structured");
+                // proto3 cannot tell an unset bool from a false one, so declaring tls is
+                // declaring it true.
+                if (text(step, "target") != null || text(step, "method") != null
+                        || Fields.flag(step, "tls")) {
                     throw new WorkflowParseException(name,
                             "a structured step must not declare target, method, or tls");
                 }
@@ -76,12 +88,6 @@ public final class WorkflowJson {
                 if (targetTypeName == null || model == null) {
                     throw new WorkflowParseException(name,
                             "a structured step needs 'targetType' and 'model'");
-                }
-                JsonNode attemptsNode = structured.get("maxAttempts");
-                if (attemptsNode != null && (!attemptsNode.isIntegralNumber()
-                        || !attemptsNode.canConvertToInt())) {
-                    throw new WorkflowParseException(name,
-                            "structured.maxAttempts must be a 32-bit integer");
                 }
                 Descriptor targetType;
                 try {
@@ -92,14 +98,14 @@ public final class WorkflowJson {
                 }
                 steps.add(step(name, () -> new CompiledWorkflow.Step(name,
                         CompiledWorkflow.Step.STRUCTURED_DEPENDENCY, false, null,
-                        text(step, "when"), strings(step.get("rules")),
-                        celRules(step.get("celRules"), name),
-                        step.path("validate").asBoolean(false),
-                        step.path("deadlineMs").asLong(0), text(step, "completion"),
+                        text(step, "when"), Fields.strings(step, "rules"),
+                        celRules(step, name),
+                        Fields.flag(step, "validate"),
+                        Fields.integer(step, "deadlineMs"), text(step, "completion"),
                         new CompiledWorkflow.StructuredSpec(targetType, model,
-                                attemptsNode == null ? 0 : attemptsNode.intValue()),
-                        edge(step.get("edge"), name, schema),
-                        fanOut(step.get("fanOut"), name, schema))));
+                                Fields.integer(structured, "maxAttempts")),
+                        edge(step, name, schema),
+                        fanOut(step, name, schema))));
                 continue;
             }
             String target = text(step, "target");
@@ -114,17 +120,17 @@ public final class WorkflowJson {
                 throw new WorkflowParseException(name, e.getMessage());
             }
             steps.add(step(name, () -> new CompiledWorkflow.Step(name, target,
-                    step.path("tls").asBoolean(false), resolved, text(step, "when"),
-                    strings(step.get("rules")), celRules(step.get("celRules"), name),
-                    step.path("validate").asBoolean(false),
-                    step.path("deadlineMs").asLong(0), text(step, "completion"), null,
-                    edge(step.get("edge"), name, schema),
-                    fanOut(step.get("fanOut"), name, schema))));
+                    Fields.flag(step, "tls"), resolved, text(step, "when"),
+                    Fields.strings(step, "rules"), celRules(step, name),
+                    Fields.flag(step, "validate"),
+                    Fields.integer(step, "deadlineMs"), text(step, "completion"), null,
+                    edge(step, name, schema),
+                    fanOut(step, name, schema))));
         }
         CompiledWorkflow.Output output = null;
-        JsonNode outputNode = workflow.get("output");
-        if (outputNode instanceof ObjectNode outputObject) {
-            String type = text(outputObject, "type");
+        if (Fields.has(workflow, "output")) {
+            Message outputMessage = Fields.message(workflow, "output");
+            String type = text(outputMessage, "type");
             if (type == null) {
                 throw new WorkflowParseException("", "'output' needs a 'type'");
             }
@@ -135,49 +141,34 @@ public final class WorkflowJson {
                 throw new WorkflowParseException("", e.getMessage());
             }
             output = new CompiledWorkflow.Output(outputType,
-                    strings(outputObject.get("rules")),
-                    celRules(outputObject.get("celRules"), "output"));
+                    Fields.strings(outputMessage, "rules"),
+                    celRules(outputMessage, "output"));
         }
         try {
             return new CompiledWorkflow(text(workflow, "name"), schema.files(), inputType,
-                    workflow.path("deadlineMs").asLong(0), steps, output);
+                    Fields.integer(workflow, "deadlineMs"), steps, output);
         } catch (IllegalArgumentException e) {
             throw new WorkflowParseException("", e.getMessage());
         }
     }
 
-    private static String text(ObjectNode node, String field) {
-        JsonNode value = node.get(field);
-        return value != null && value.isTextual() && !value.asText().isBlank()
-                ? value.asText()
-                : null;
+    /** A string field, or null when it is blank: absent and empty mean the same here. */
+    private static String text(Message message, String field) {
+        String value = Fields.string(message, field);
+        return value.isBlank() ? null : value;
     }
 
-    private static List<String> strings(JsonNode array) {
-        if (array == null || !array.isArray()) {
-            return List.of();
-        }
-        List<String> values = new ArrayList<>(array.size());
-        array.forEach(node -> values.add(node.asText()));
-        return values;
-    }
-
-    private static List<CelMappingRule> celRules(JsonNode array, String step)
+    private static List<CelMappingRule> celRules(Message owner, String step)
             throws WorkflowParseException {
-        if (array == null || !array.isArray()) {
-            return List.of();
-        }
-        List<CelMappingRule> rules = new ArrayList<>(array.size());
-        for (JsonNode node : array) {
-            if (!(node instanceof ObjectNode rule)) {
-                throw new WorkflowParseException(step, "each CEL rule must be an object");
-            }
+        List<Message> declared = Fields.list(owner, "celRules");
+        List<CelMappingRule> rules = new ArrayList<>(declared.size());
+        for (Message rule : declared) {
             String target = text(rule, "target");
             if (target == null) {
                 throw new WorkflowParseException(step, "a CEL rule needs a 'target' path");
             }
             rules.add(new CelMappingRule(text(rule, "filter"), text(rule, "selector"),
-                    target, strings(rule.get("fallback"))));
+                    target, Fields.strings(rule, "fallback")));
         }
         return rules;
     }
@@ -197,17 +188,15 @@ public final class WorkflowJson {
         CompiledWorkflow.Step build() throws WorkflowParseException;
     }
 
-    /** Parses a step's typed edge, resolving its types against the workflow schema. */    private static CompiledWorkflow.EdgeSpec edge(JsonNode node, String step,
+    /** Parses a step's typed edge, resolving its types against the workflow schema. */    private static CompiledWorkflow.EdgeSpec edge(Message owner, String step,
                                                  SchemaResolver.ResolvedSchema schema)
             throws WorkflowParseException {
-        if (node == null) {
+        if (!Fields.has(owner, "edge")) {
             return null;
         }
-        if (!(node instanceof ObjectNode edge)) {
-            throw new WorkflowParseException(step, "'edge' must be an object");
-        }
+        Message edge = Fields.message(owner, "edge");
         String produceTypeName = text(edge, "produceType");
-        List<String> sources = strings(edge.get("sources"));
+        List<String> sources = Fields.strings(edge, "sources");
         if (produceTypeName == null || sources.isEmpty()) {
             throw new WorkflowParseException(step,
                     "an edge needs 'sources' and 'produceType'");
@@ -219,23 +208,21 @@ public final class WorkflowJson {
             Descriptor projectTo = projectToName == null ? null : schema.message(
                     projectToName, "/workflow/steps/" + step + "/edge/projectTo");
             return new CompiledWorkflow.EdgeSpec(sources, produceType,
-                    strings(edge.get("rules")), celRules(edge.get("celRules"), step),
-                    projectTo, edge.path("validate").asBoolean(false));
+                    Fields.strings(edge, "rules"), celRules(edge, step),
+                    projectTo, Fields.flag(edge, "validate"));
         } catch (ActionException | IllegalArgumentException e) {
             throw new WorkflowParseException(step, e.getMessage());
         }
     }
 
     /** Parses a step's bounded fan-out, resolving the collect type against the schema. */
-    private static CompiledWorkflow.FanOutSpec fanOut(JsonNode node, String step,
+    private static CompiledWorkflow.FanOutSpec fanOut(Message owner, String step,
                                                      SchemaResolver.ResolvedSchema schema)
             throws WorkflowParseException {
-        if (node == null) {
+        if (!Fields.has(owner, "fanOut")) {
             return null;
         }
-        if (!(node instanceof ObjectNode fanOut)) {
-            throw new WorkflowParseException(step, "'fanOut' must be an object");
-        }
+        Message fanOut = Fields.message(owner, "fanOut");
         String items = text(fanOut, "items");
         String collectTypeName = text(fanOut, "collectType");
         String collectInto = text(fanOut, "collectInto");
@@ -252,21 +239,10 @@ public final class WorkflowJson {
             throw new WorkflowParseException(step, "fanOut.failurePolicy must be FAIL_FAST "
                     + "or CONTINUE; got '" + policy + "'");
         }
-        JsonNode maxItems = fanOut.get("maxItems");
-        JsonNode maxConcurrency = fanOut.get("maxConcurrency");
-        if (maxItems != null && (!maxItems.isIntegralNumber()
-                || !maxItems.canConvertToInt())) {
-            throw new WorkflowParseException(step, "fanOut.maxItems must be a 32-bit integer");
-        }
-        if (maxConcurrency != null && (!maxConcurrency.isIntegralNumber()
-                || !maxConcurrency.canConvertToInt())) {
-            throw new WorkflowParseException(step,
-                    "fanOut.maxConcurrency must be a 32-bit integer");
-        }
         try {
             return new CompiledWorkflow.FanOutSpec(items,
-                    maxItems == null ? 0 : maxItems.intValue(),
-                    maxConcurrency == null ? 0 : maxConcurrency.intValue(),
+                    Fields.integer(fanOut, "maxItems"),
+                    Fields.integer(fanOut, "maxConcurrency"),
                     failurePolicy,
                     schema.message(collectTypeName,
                             "/workflow/steps/" + step + "/fanOut/collectType"),

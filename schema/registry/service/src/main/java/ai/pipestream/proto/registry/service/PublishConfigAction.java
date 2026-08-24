@@ -2,18 +2,19 @@ package ai.pipestream.proto.registry.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
-import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.pipestream.proto.schema.registry.v1.PublishConfigRequest;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.registry.ConfigSupport;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.InvalidConfigException;
 import ai.pipestream.proto.registry.RegistryStoreException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import ai.pipestream.proto.schema.registry.v1.PublishConfigRequest;
+import ai.pipestream.proto.schema.registry.v1.PublishConfigResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * The config lane's write verb: publishes one typed config document
@@ -65,26 +66,30 @@ public final class PublishConfigAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        ObjectMapper mapper = context.objectMapper();
+    public Descriptor responseType() {
+        return PublishConfigResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // The message declares all three members required and the type name as a fully
         // qualified protobuf name, so those checks live in the contract rather than here.
-        JsonNode name = input.get("name");
-        JsonNode messageType = input.get("messageType");
-        JsonNode config = input.get("config");
-        RegistryRequests.validate(input, PublishConfigRequest.newBuilder(), "publish-config");
-        ObjectNode envelope = mapper.createObjectNode();
-        envelope.put(ConfigSupport.MESSAGE_TYPE, messageType.asText());
-        envelope.set(ConfigSupport.CONFIG, config);
-        String json = envelope.toString();
+        PublishConfigRequest request = CatalogContract.as(
+                input, PublishConfigRequest.getDefaultInstance(), name());
+        // The gate reads the document as text, and the config is carried as a structure
+        // because only the caller's declared type knows its shape.
+        ObjectNode envelope = context.objectMapper().createObjectNode();
+        envelope.put(ConfigSupport.MESSAGE_TYPE, request.getMessageType());
+        envelope.set(ConfigSupport.CONFIG,
+                CatalogContract.toEnvelope(request.getConfig(), name()));
         try {
+            String json = envelope.toString();
             ConfigSupport.gate(store, json);
-            String version = store.putConfig(name.asText(), json);
-            ObjectNode result = mapper.createObjectNode();
-            result.put("name", name.asText());
-            result.put("messageType", messageType.asText());
-            result.put("version", version);
-            return result;
+            return PublishConfigResponse.newBuilder()
+                    .setName(request.getName())
+                    .setMessageType(request.getMessageType())
+                    .setVersion(store.putConfig(request.getName(), json))
+                    .build();
         } catch (InvalidConfigException e) {
             throw new ActionException("invalid-config", e.getMessage());
         } catch (RegistryStoreException e) {

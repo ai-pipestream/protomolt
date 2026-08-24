@@ -1,9 +1,11 @@
 package ai.pipestream.proto.inference.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.spi.InferenceException;
@@ -12,10 +14,8 @@ import ai.pipestream.proto.inference.v1.GenerateRequest;
 import ai.pipestream.proto.inference.v1.GenerateResponse;
 import ai.pipestream.proto.inference.v1.Role;
 import ai.pipestream.proto.validate.ValidationResult;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * The {@code inference-generate} verb: one unary generation against a catalog
@@ -62,37 +62,26 @@ public final class GenerateAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        InferenceActionSupport.requireEngines(engines);
-        GenerateRequest.Builder request = GenerateRequest.newBuilder()
-                .setModel(InferenceActionSupport.requireString(input, "model"));
+    public Descriptor responseType() {
+        return CatalogContract.response("InferenceGenerateResponse");
+    }
 
-        JsonNode messages = input.get("messages");
-        if (messages == null || !messages.isArray() || messages.isEmpty()) {
-            throw InferenceActionSupport.invalidInput(
-                    "'messages' must be a non-empty array of {role, content}");
-        }
-        for (JsonNode turnNode : messages) {
-            if (!turnNode.isObject()) {
-                throw InferenceActionSupport.invalidInput("each message must be an object {role, content}");
-            }
-            String roleText = InferenceActionSupport.requireString((ObjectNode) turnNode, "role");
-            String content = InferenceActionSupport.requireString((ObjectNode) turnNode, "content");
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        InferenceActionSupport.requireEngines(engines);
+        // The request message declares the model required and bounds every sampling
+        // knob, and its own min_items rule refuses an empty turn list, so the shape
+        // checks that used to live here are the contract's.
+        GenerateRequest.Builder request = GenerateRequest.newBuilder()
+                .setModel(Fields.string(input, "model"))
+                .setTemperature(Fields.decimal(input, "temperature"))
+                .setTopP(Fields.decimal(input, "topP"))
+                .setMaxOutputTokens(Fields.integer(input, "maxOutputTokens"))
+                .setEnableThinking(Fields.flag(input, "enableThinking"));
+        for (Message turn : Fields.<Message>list(input, "messages")) {
             request.addMessages(ChatTurn.newBuilder()
-                    .setRole(role(roleText))
-                    .setContent(content));
-        }
-        if (input.hasNonNull("temperature")) {
-            request.setTemperature(input.get("temperature").asDouble());
-        }
-        if (input.hasNonNull("topP")) {
-            request.setTopP(input.get("topP").asDouble());
-        }
-        if (input.hasNonNull("maxOutputTokens")) {
-            request.setMaxOutputTokens(input.get("maxOutputTokens").asInt());
-        }
-        if (input.hasNonNull("enableThinking")) {
-            request.setEnableThinking(input.get("enableThinking").asBoolean());
+                    .setRole(role(Fields.string(turn, "role")))
+                    .setContent(Fields.string(turn, "content")));
         }
 
         GenerateRequest typed = request.build();
@@ -103,25 +92,24 @@ public final class GenerateAction implements ProtoAction {
                     "request violates its declared rules: " + e.result().violations());
         }
 
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
         try {
             GenerateResponse response = engines.generate(typed);
-            result.put("ok", true);
-            result.put("text", response.getText());
-            result.put("model", response.getModel());
-            result.put("provider", response.getProvider());
-            if (!response.getModelVersion().isEmpty()) {
-                result.put("modelVersion", response.getModelVersion());
-            }
-            result.put("finishReason", finishReason(response.getFinishReason()));
-            ObjectNode usage = result.putObject("usage");
-            usage.put("promptTokens", response.getUsage().getPromptTokens());
-            usage.put("completionTokens", response.getUsage().getCompletionTokens());
+            Reply result = Reply.of(responseType())
+                    .set("ok", true)
+                    .set("text", response.getText())
+                    .set("model", response.getModel())
+                    .set("provider", response.getProvider())
+                    .set("modelVersion", response.getModelVersion())
+                    .set("finishReason", finishReason(response.getFinishReason()));
+            result.nest("usage")
+                    .set("promptTokens", response.getUsage().getPromptTokens())
+                    .set("completionTokens", response.getUsage().getCompletionTokens())
+                    .build();
+            return result.build();
         } catch (InferenceException e) {
-            result.put("ok", false);
-            result.put("error", e.getMessage());
+            return Reply.of(responseType())
+                    .set("ok", false).set("error", e.getMessage()).build();
         }
-        return result;
     }
 
     private static Role role(String text) throws ActionException {

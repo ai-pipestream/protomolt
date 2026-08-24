@@ -1,20 +1,18 @@
 package ai.pipestream.proto.acquire.jdbc;
 
-import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.ProtoAction;
-import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.acquire.pull.PullReport;
 import ai.pipestream.proto.acquire.pull.v1.PullFromJdbcRequest;
+import ai.pipestream.proto.acquire.pull.v1.PullFromJdbcResponse;
+import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.validate.ProtoValidator;
-import ai.pipestream.proto.validate.ValidationResult;
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.util.JsonFormat;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * The {@code pull-jdbc} verb: one {@link JdbcPull} pass as an action. The caller owns the
@@ -69,8 +67,14 @@ public final class JdbcPullAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        PullFromJdbcRequest request = parse(input);
+    public Descriptor responseType() {
+        return PullFromJdbcResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        PullFromJdbcRequest request = CatalogContract.as(
+                input, PullFromJdbcRequest.getDefaultInstance(), name());
         PullReport report;
         try {
             report = pull.pull(
@@ -86,44 +90,8 @@ public final class JdbcPullAction implements ProtoAction {
         } catch (RuntimeException e) {
             throw new ActionException("pull-failed", e.getMessage());
         }
-        ObjectNode output = MAPPER.createObjectNode();
-        output.put("submitted", report.submitted());
-        output.put("deduplicated", report.deduplicated());
-        output.put("failed", report.failed());
-        ArrayNode errors = output.putArray("errors");
-        report.errors().forEach(errors::add);
-        output.put("watermark", report.watermark());
-        return output;
-    }
-
-    /**
-     * Reads the envelope into a request and holds it to the message's declared rules.
-     *
-     * <p>Calls arriving through the catalog do not pass the validating interceptor the gRPC
-     * surface uses, so the rules are applied here rather than left to the pass to discover
-     * after it has opened a connection.
-     */
-    private static PullFromJdbcRequest parse(ObjectNode input) throws ActionException {
-        PullFromJdbcRequest.Builder request = PullFromJdbcRequest.newBuilder();
-        try {
-            JsonFormat.parser().merge(input.toString(), request);
-        } catch (InvalidProtocolBufferException e) {
-            throw new ActionException("invalid-input",
-                    "the pull is not a valid PullFromJdbcRequest: " + e.getMessage());
-        }
-        PullFromJdbcRequest built = request.build();
-        ValidationResult result = VALIDATOR.validate(built);
-        if (!result.valid()) {
-            StringBuilder prose = new StringBuilder();
-            for (ValidationResult.Violation violation : result.violations()) {
-                if (prose.length() > 0) {
-                    prose.append("; ");
-                }
-                prose.append(violation.path()).append(' ').append(violation.message());
-            }
-            throw new ActionException("invalid-input",
-                    "The pull does not satisfy its contract: " + prose);
-        }
-        return built;
+        return PullFromJdbcResponse.newBuilder()
+                .setReport(report.toProto())
+                .build();
     }
 }

@@ -2,11 +2,12 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.RecordCheckpointRequest;
 import ai.pipestream.proto.delegation.v1.RecordCheckpointResponse;
 import ai.pipestream.proto.grpc.workflow.v1.ArtifactReference;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /** Records one resumable checkpoint of worker state on the leased attempt. */
 final class DelegationCheckpointAction extends DelegationAction {
@@ -34,9 +35,14 @@ final class DelegationCheckpointAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        RecordCheckpointRequest request = DelegationActionJson
-                .parse(input, RecordCheckpointRequest.newBuilder(), name()).build();
+    public Descriptor responseType() {
+        return RecordCheckpointResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        RecordCheckpointRequest request = CatalogContract.as(
+                input, RecordCheckpointRequest.getDefaultInstance(), name());
         ArtifactReference state = request.hasState() ? request.getState() : null;
         int checkpointSeq;
         try {
@@ -45,10 +51,10 @@ final class DelegationCheckpointAction extends DelegationAction {
         } catch (RuntimeException e) {
             throw failure(request.getWorkerId(), e);
         }
-        return DelegationActionJson.render(RecordCheckpointResponse.newBuilder()
+        return RecordCheckpointResponse.newBuilder()
                 .setOk(true)
                 .setCheckpointSeq(checkpointSeq)
                 .setResumeToken(request.getResumeToken())
-                .build(), context);
+                .build();
     }
 }

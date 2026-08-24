@@ -1,11 +1,11 @@
 package ai.pipestream.proto.inference.service.actions;
 
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
@@ -61,26 +61,26 @@ final class InferenceActionSupport {
     }
 
     /** Renders one catalog entry as its proto3 JSON (camelCase) envelope. */
-    static ObjectNode entryJson(ModelEntry entry) {
-        ObjectNode node = JsonNodeFactory.instance.objectNode();
-        node.put("id", entry.getId());
-        node.put("provider", entry.getProvider());
-        node.put("endpoint", entry.getEndpoint());
-        if (!entry.getBackendModel().isEmpty()) {
-            node.put("backendModel", entry.getBackendModel());
-        }
-        ModelCapabilities capabilities = entry.getCapabilities();
-        ObjectNode caps = node.putObject("capabilities");
-        caps.put("maxContextTokens", capabilities.getMaxContextTokens());
-        caps.put("maxOutputTokens", capabilities.getMaxOutputTokens());
-        caps.put("streaming", capabilities.getStreaming());
-        caps.put("thinking", capabilities.getThinking());
-        caps.put("structuredOutput", capabilities.getStructuredOutput());
-        capabilities.getModalitiesList().forEach(caps.putArray("modalities")::add);
-        if (!entry.getLabelsMap().isEmpty()) {
-            ObjectNode labels = node.putObject("labels");
-            entry.getLabelsMap().forEach(labels::put);
-        }
-        return node;
+    /**
+     * Writes one catalogued model into {@code entry}, which is the contract's own shape for
+     * it rather than the engine's.
+     */
+    static void writeEntry(Reply entry, ModelEntry model) {
+        entry.set("id", model.getId())
+                .set("provider", model.getProvider())
+                .set("endpoint", model.getEndpoint())
+                .set("backendModel", model.getBackendModel());
+        ModelCapabilities capabilities = model.getCapabilities();
+        entry.nest("capabilities")
+                .set("maxContextTokens", capabilities.getMaxContextTokens())
+                .set("maxOutputTokens", capabilities.getMaxOutputTokens())
+                .set("streaming", capabilities.getStreaming())
+                .set("thinking", capabilities.getThinking())
+                .set("structuredOutput", capabilities.getStructuredOutput())
+                .addAll("modalities", capabilities.getModalitiesList())
+                .build();
+        model.getLabelsMap().forEach((key, value) ->
+                entry.append("labels").set("key", key).set("value", value).build());
+        entry.build();
     }
 }

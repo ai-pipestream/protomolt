@@ -1,18 +1,20 @@
 package ai.pipestream.proto.grpc.invoke;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Message;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
@@ -20,12 +22,12 @@ import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code grpc-invoke}: call a unary or server-streaming gRPC method on a live server, driven
@@ -83,12 +85,17 @@ public final class GrpcInvokeAction implements StreamingAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("GrpcInvokeResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         CallPlan plan = prepare(input, context);
 
-        ObjectNode result = context.objectMapper().createObjectNode();
-        result.put("method", plan.method().getFullName());
-        result.put("methodType", DynamicGrpcCalls.methodType(plan.method()).name());
+        Reply result = Reply.of(responseType())
+                .set("method", plan.method().getFullName())
+                .set("methodType", DynamicGrpcCalls.methodType(plan.method()).name());
         ManagedChannel channel;
         try {
             channel = channelFactory.open(plan.target(), plan.tls());
@@ -99,33 +106,32 @@ public final class GrpcInvokeAction implements StreamingAction {
             List<DynamicMessage> responses = DynamicGrpcCalls.call(
                     channel, plan.method(), plan.request(), plan.options(), plan.headers(),
                     plan.maxResponses());
-            result.put("ok", true);
-            result.put("status", "OK");
-            ArrayNode out = result.putArray("responses");
+            result.set("ok", true).set("status", "OK");
             List<String> failures = new ArrayList<>();
             for (DynamicMessage response : responses) {
                 try {
-                    out.add(context.objectMapper().readTree(context.transcoder().toJson(response)));
+                    // The invoked service's replies have no shape this contract knows, so
+                    // they travel as structures.
+                    result.add("responses", context.transcoder().toJson(response));
                 } catch (Exception e) {
                     failures.add(e.getMessage());
                 }
             }
             if (!failures.isEmpty()) {
-                result.put("ok", false);
-                result.put("status", "RESPONSE_TRANSCODING_FAILED");
-                result.put("description", String.join("; ", failures));
+                result.set("ok", false)
+                        .set("status", "RESPONSE_TRANSCODING_FAILED")
+                        .set("description", String.join("; ", failures));
             }
         } catch (StatusRuntimeException e) {
-            result.put("ok", false);
-            result.put("status", e.getStatus().getCode().name());
+            result.set("ok", false).set("status", e.getStatus().getCode().name());
             String description = e.getStatus().getDescription();
             if (description != null) {
-                result.put("description", description);
+                result.set("description", description);
             }
         } finally {
             channel.shutdownNow();
         }
-        return result;
+        return result.build();
     }
 
     /**
@@ -135,7 +141,7 @@ public final class GrpcInvokeAction implements StreamingAction {
      * end marker whether the call succeeded or not.
      */
     @Override
-    public void executeStreaming(ObjectNode input, ActionContext context, StreamEmitter emitter)
+    public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter)
             throws ActionException {
         CallPlan plan = prepare(input, context);
         ManagedChannel channel;
@@ -149,7 +155,7 @@ public final class GrpcInvokeAction implements StreamingAction {
                 List<DynamicMessage> responses = DynamicGrpcCalls.call(
                         channel, plan.method(), plan.request(), plan.options(), plan.headers(), 1);
                 for (DynamicMessage response : responses) {
-                    emitter.emit(toJsonNode(context, response));
+                    emitter.emit(oneResponse(context, response));
                 }
             } else {
                 try (DynamicGrpcStream stream = DynamicGrpcCalls.openServerStream(
@@ -157,66 +163,68 @@ public final class GrpcInvokeAction implements StreamingAction {
                     while (!stream.isClosed()) {
                         for (DynamicMessage response
                                 : stream.take(1, Duration.ofMillis(plan.deadlineMs()))) {
-                            emitter.emit(toJsonNode(context, response));
+                            emitter.emit(oneResponse(context, response));
                         }
                     }
                     Status terminal = stream.terminalStatus();
                     if (terminal != null && !terminal.isOk()) {
-                        emitter.emit(terminalNode(context, terminal));
+                        emitter.emit(terminal(terminal));
                         return;
                     }
                 }
             }
-            emitter.emit(okTerminal(context));
+            emitter.emit(okTerminal());
         } catch (StatusRuntimeException e) {
-            emitter.emit(terminalNode(context, e.getStatus()));
+            emitter.emit(terminal(e.getStatus()));
         } finally {
             channel.shutdownNow();
         }
     }
 
-    private ObjectNode toJsonNode(ActionContext context, DynamicMessage response) {
+    /** One streamed reply, carried as a structure because its shape is the callee's. */
+    private Message oneResponse(ActionContext context, DynamicMessage response) {
         try {
-            return (ObjectNode) context.objectMapper()
-                    .readTree(context.transcoder().toJson(response));
+            return Reply.of(responseType())
+                    .set("ok", true)
+                    .set("status", "OK")
+                    .add("responses", context.transcoder().toJson(response))
+                    .build();
         } catch (Exception e) {
-            ObjectNode failure = context.objectMapper().createObjectNode();
-            failure.put("ok", false);
-            failure.put("status", "RESPONSE_TRANSCODING_FAILED");
-            failure.put("description", e.getMessage());
-            return failure;
+            return Reply.of(responseType())
+                    .set("ok", false)
+                    .set("status", "RESPONSE_TRANSCODING_FAILED")
+                    .set("description", e.getMessage())
+                    .build();
         }
     }
 
-    private static ObjectNode okTerminal(ActionContext context) {
-        ObjectNode terminal = context.objectMapper().createObjectNode();
-        terminal.put("ok", true);
-        terminal.put("status", "OK");
-        return terminal;
+    private Message okTerminal() {
+        return Reply.of(responseType()).set("ok", true).set("status", "OK").build();
     }
 
-    private static ObjectNode terminalNode(ActionContext context, Status status) {
-        ObjectNode terminal = context.objectMapper().createObjectNode();
-        terminal.put("ok", status.isOk());
-        terminal.put("status", status.getCode().name());
+    private Message terminal(Status status) {
+        Reply terminal = Reply.of(responseType())
+                .set("ok", status.isOk())
+                .set("status", status.getCode().name());
         if (status.getDescription() != null) {
-            terminal.put("description", status.getDescription());
+            terminal.set("description", status.getDescription());
         }
-        return terminal;
+        return terminal.build();
     }
 
-    private CallPlan prepare(ObjectNode input, ActionContext context) throws ActionException {
-        String target = requireString(input, "target");
-        String methodName = requireString(input, "method");
-        JsonNode requestNode = input.get("request");
-        if (requestNode == null || !requestNode.isObject()) {
-            throw invalidInput("'request' must be the request message as a JSON object", "/request");
-        }
-        int deadlineMs = optionalInt(input, "deadlineMs", DEFAULT_DEADLINE_MS);
-        int maxResponses = optionalInt(input, "maxResponses", DEFAULT_MAX_RESPONSES);
+    private CallPlan prepare(Message input, ActionContext context) throws ActionException {
+        String target = Fields.string(input, "target");
+        String methodName = Fields.string(input, "method");
+        // The request is a structure: its shape is the callee's input type, which this
+        // contract does not describe.
+        ObjectNode requestNode = Fields.json(input, "request");
+        // Zero selects the default for both bounds, as the message says.
+        int deadlineMs = orDefault(Fields.integer(input, "deadlineMs"), DEFAULT_DEADLINE_MS);
+        int maxResponses = orDefault(Fields.integer(input, "maxResponses"), DEFAULT_MAX_RESPONSES);
+        boolean tls = Fields.flag(input, "tls");
 
         try {
-            channelFactory.validateTarget(target, input.path("tls").asBoolean(false));
+            channelFactory.validateTarget(target, tls);
             channelFactory.validateDeadline(deadlineMs);
         } catch (IllegalArgumentException e) {
             throw invalidInput(e.getMessage(), e.getMessage().contains("deadline")
@@ -238,8 +246,13 @@ public final class GrpcInvokeAction implements StreamingAction {
             throw invalidInput("Request does not parse as " + method.getInputType().getFullName()
                     + ": " + e.getMessage(), "/request");
         }
-        return new CallPlan(method, request, parseMetadata(input), deadlineMs, maxResponses,
-                target, input.path("tls").asBoolean(false));
+        return new CallPlan(method, request, headers(input), deadlineMs, maxResponses,
+                target, tls);
+    }
+
+    /** Zero means the caller said nothing, which the message documents as the default. */
+    private static int orDefault(int asked, int fallback) {
+        return asked == 0 ? fallback : asked;
     }
 
     private record CallPlan(
@@ -284,26 +297,15 @@ public final class GrpcInvokeAction implements StreamingAction {
                 "/method");
     }
 
-    private static Metadata parseMetadata(ObjectNode input) throws ActionException {
+    private static Metadata headers(Message input) throws ActionException {
         Metadata headers = new Metadata();
-        JsonNode node = input.get("metadata");
-        if (node == null || node.isNull()) {
-            return headers;
-        }
-        if (!node.isObject()) {
-            throw invalidInput("'metadata' must be an object of string values", "/metadata");
-        }
-        for (var it = node.properties().iterator(); it.hasNext(); ) {
-            var entry = it.next();
+        for (var entry : Fields.map(input, "metadata").entrySet()) {
             String key = entry.getKey();
             if (key.endsWith(Metadata.BINARY_HEADER_SUFFIX)) {
-                throw invalidInput("Binary metadata keys ('-bin') are not supported", "/metadata/" + key);
+                throw invalidInput("Binary metadata keys ('-bin') are not supported",
+                        "/metadata/" + key);
             }
-            if (!entry.getValue().isTextual()) {
-                throw invalidInput("Metadata values must be strings", "/metadata/" + key);
-            }
-            headers.put(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER),
-                    entry.getValue().asText());
+            headers.put(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER), entry.getValue());
         }
         return headers;
     }

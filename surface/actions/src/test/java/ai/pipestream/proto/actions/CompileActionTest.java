@@ -56,7 +56,7 @@ class CompileActionTest {
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("errors")).hasSize(1);
         assertThat(result.get("errors").get(0).asText()).isNotBlank();
-        assertThat(result.has("descriptorSetBase64")).isFalse();
+        assertThat(result.get("descriptorSetBase64").asText()).isEmpty();
     }
 
     @Test

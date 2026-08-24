@@ -1,7 +1,9 @@
 package ai.pipestream.proto.search.service;
 
+import com.google.protobuf.Message;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
@@ -9,19 +11,17 @@ import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.search.v1.ReplayDocumentsRequest;
+import ai.pipestream.proto.search.v1.ReplayDocumentsResponse;
 import ai.pipestream.proto.validate.ProtoValidator;
-import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The replay operation: re-runs a stored workflow over every document a
@@ -109,11 +109,14 @@ public final class ReplayAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        // The message declares that a scoped replay names a drive and a reconciling one takes
-        // neither drive nor account. Those rules are checked here because the catalog path does
-        // not sit behind the validating interceptor the gRPC surface uses.
-        ReplayDocumentsRequest request = parse(input, context);
+    public Descriptor responseType() {
+        return ReplayDocumentsResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        ReplayDocumentsRequest request = CatalogContract.as(
+                input, ReplayDocumentsRequest.getDefaultInstance(), name());
         String workflowName = request.getWorkflowName();
         String mappingSubject = request.getMappingSubject();
         boolean prune = request.getPrune();
@@ -128,8 +131,7 @@ public final class ReplayAction implements ProtoAction {
         }
         String replayId = request.getReplayId();
 
-        ObjectNode output = MAPPER.createObjectNode();
-        ArrayNode jobIds = output.putArray("jobIds");
+        ReplayDocumentsResponse.Builder output = ReplayDocumentsResponse.newBuilder();
         Set<String> listed = new LinkedHashSet<>();
         int submitted = 0;
         String continuation = "";
@@ -158,24 +160,27 @@ public final class ReplayAction implements ProtoAction {
                             replayId, workflowName, mappingSubject, drive,
                             document.getDocId()));
                 }
-                ObjectNode result = submit.execute(envelope, context);
-                jobIds.add(result.path("jobId").asText());
+                // The submit verb runs on its own request message, so the envelope built
+                // here converts at this call the same way it would at any other front.
+                ObjectNode result = CatalogContract.toReply(submit.execute(
+                        CatalogContract.toRequest(envelope, submit.requestType(), submit.name()),
+                        context), submit.name());
+                output.addJobIds(result.path("jobId").asText());
                 submitted++;
             }
             continuation = listing.getNextContinuationToken();
         } while (!continuation.isEmpty());
-        output.put("submitted", submitted);
+        output.setSubmitted(submitted);
         if (prune) {
-            ArrayNode prunedDocIds = output.putArray("prunedDocIds");
             for (String docId : indexedBefore) {
                 if (!listed.contains(docId)) {
                     index.delete(mappingSubject, docId);
-                    prunedDocIds.add(docId);
+                    output.addPrunedDocIds(docId);
                 }
             }
-            output.put("pruned", prunedDocIds.size());
+            output.setPruned(output.getPrunedDocIdsCount());
         }
-        return output;
+        return output.build();
     }
 
     private static JsonNode addressJson(DocumentMetadata document) throws ActionException {
@@ -214,44 +219,5 @@ public final class ReplayAction implements ProtoAction {
                         replayId, workflowName, mappingSubject, drive, docId)
                 .getBytes(StandardCharsets.UTF_8))
                 .toString();
-    }
-
-    /**
-     * Reads the envelope into a request and holds it to the message's declared rules.
-     *
-     * <p>The envelope is the request message's canonical proto3 JSON form, so one document
-     * works over gRPC, over the JSON gateway, and as a tool call.
-     */
-    private ReplayDocumentsRequest parse(ObjectNode input, ActionContext context)
-            throws ActionException {
-        ReplayDocumentsRequest.Builder request = ReplayDocumentsRequest.newBuilder();
-        try {
-            JsonFormat.parser().merge(input.toString(), request);
-        } catch (InvalidProtocolBufferException e) {
-            throw new ActionException("invalid-input",
-                    "the replay is not a valid ReplayDocumentsRequest: " + e.getMessage());
-        }
-        ReplayDocumentsRequest built = request.build();
-        ValidationResult result = VALIDATOR.validate(built);
-        if (!result.valid()) {
-            ObjectNode details = context.objectMapper().createObjectNode();
-            ArrayNode violations = details.putArray("violations");
-            for (ValidationResult.Violation violation : result.violations()) {
-                ObjectNode node = violations.addObject();
-                node.put("field", violation.path());
-                node.put("ruleId", violation.ruleId());
-                node.put("message", violation.message());
-            }
-            StringBuilder prose = new StringBuilder();
-            for (ValidationResult.Violation violation : result.violations()) {
-                if (prose.length() > 0) {
-                    prose.append("; ");
-                }
-                prose.append(violation.path()).append(' ').append(violation.message());
-            }
-            throw new ActionException("invalid-input",
-                    "The replay does not satisfy its contract: " + prose, details);
-        }
-        return built;
     }
 }

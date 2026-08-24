@@ -3,27 +3,23 @@ package ai.pipestream.proto.grpc.service;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.Caller;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 import com.google.protobuf.MessageOrBuilder;
-import com.google.protobuf.util.JsonFormat;
 
 import java.util.Locale;
 
 /**
- * The message bridge between the typed service surface and the JSON action catalog.
+ * The bridge between an RPC on the service and the catalog verb behind it.
  *
- * <p>Every request message's canonical proto3 JSON form is exactly the action's input envelope,
- * and every action's output envelope parses as the response message — so the bridge is one
- * print, one dispatch, one parse, for every verb alike.
+ * <p>Both sides speak messages, so the bridge names the verb and hands the request straight
+ * to it. The only conversion left is the one the binding requires: a reply is re-read as a
+ * dynamic message of the method's output type when the verb did not already answer with one.
  */
 public final class CatalogBridge {
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private CatalogBridge() {
     }
@@ -55,27 +51,40 @@ public final class CatalogBridge {
     public static DynamicMessage execute(ActionCatalog catalog, MethodDescriptor method,
                                          MessageOrBuilder request, Caller caller)
             throws ActionException {
-        String action = actionName(method);
-        ObjectNode input;
-        try {
-            String json = JsonFormat.printer().print(request);
-            input = (ObjectNode) MAPPER.readTree(json.isBlank() ? "{}" : json);
-        } catch (Exception e) {
-            throw new ActionException("invalid-input",
-                    "Request does not render as the '" + action + "' input envelope: "
-                            + e.getMessage());
+        Message message = request instanceof Message typed
+                ? typed
+                : ((Message.Builder) request).build();
+        Message response = catalog.execute(actionName(method), message, caller);
+        return asDynamic(response, method.getOutputType(), method);
+    }
+
+    /**
+     * The response as a dynamic message of the method's output type.
+     *
+     * <p>A verb built on the compiled service definition already answers with one, and that
+     * case costs nothing. A verb that answers with a generated message of the same type is
+     * carried across by its encoding, because the binding's marshaller is built from the
+     * descriptor and cannot write a class it was not given.
+     */
+    private static DynamicMessage asDynamic(Message response, Descriptor outputType,
+                                            MethodDescriptor method) throws ActionException {
+        if (response instanceof DynamicMessage dynamic
+                && dynamic.getDescriptorForType() == outputType) {
+            return dynamic;
         }
-        ObjectNode output = catalog.execute(action, input, caller);
-        Descriptor outputType = method.getOutputType();
-        DynamicMessage.Builder builder = DynamicMessage.newBuilder(outputType);
+        if (!response.getDescriptorForType().getFullName().equals(outputType.getFullName())) {
+            throw new ActionException("internal-error",
+                    method.getName() + " answered with a "
+                            + response.getDescriptorForType().getFullName() + ", not a "
+                            + outputType.getFullName());
+        }
         try {
-            JsonFormat.parser().ignoringUnknownFields().merge(output.toString(), builder);
+            return DynamicMessage.parseFrom(outputType, response.toByteString());
         } catch (InvalidProtocolBufferException e) {
             throw new ActionException("internal-error",
-                    "Result of '" + action + "' does not parse as "
+                    "Result of " + method.getName() + " does not re-read as "
                             + outputType.getFullName() + ": " + e.getMessage());
         }
-        return builder.build();
     }
 
     /** Maps an action failure onto a gRPC status: client-repairable codes are INVALID_ARGUMENT. */

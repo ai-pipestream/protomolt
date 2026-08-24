@@ -1,20 +1,21 @@
 package ai.pipestream.proto.grpc.invoke;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Base64;
 import java.util.function.Function;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code reflect}: ask a live gRPC server for its own schema over the server-reflection protocol,
@@ -70,23 +71,21 @@ public final class ReflectAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        JsonNode targetNode = input.get("target");
-        if (targetNode == null || !targetNode.isTextual() || targetNode.asText().isBlank()) {
-            throw invalidInput("'target' must be a non-empty string", "/target");
-        }
-        String target = targetNode.asText();
-        long deadlineMs = DEFAULT_DEADLINE_MS;
-        JsonNode deadlineNode = input.get("deadlineMs");
-        if (deadlineNode != null && !deadlineNode.isNull()) {
-            if (!deadlineNode.canConvertToInt() || deadlineNode.asInt() <= 0) {
-                throw invalidInput("'deadlineMs' must be a positive integer", "/deadlineMs");
-            }
-            deadlineMs = deadlineNode.asInt();
-        }
+    public Descriptor responseType() {
+        return CatalogContract.response("ReflectResponse");
+    }
 
-        ObjectNode result = context.objectMapper().createObjectNode();
-        boolean tls = input.path("tls").asBoolean(false);
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        // target is required by the message and the deadline is bounded there, so a blank
+        // target or a non-positive deadline is refused before the verb runs. Zero means the
+        // caller said nothing, which the message documents as the default.
+        String target = Fields.string(input, "target");
+        int asked = Fields.integer(input, "deadlineMs");
+        long deadlineMs = asked == 0 ? DEFAULT_DEADLINE_MS : asked;
+
+        Reply result = Reply.of(responseType());
+        boolean tls = Fields.flag(input, "tls");
         try {
             channelFactory.validateTarget(target, tls);
             channelFactory.validateDeadline(deadlineMs);
@@ -104,19 +103,17 @@ public final class ReflectAction implements ProtoAction {
             ReflectionClient.Result discovered = channelFactory.policy() == null
                     ? ReflectionClient.discover(channel, deadlineMs)
                     : ReflectionClient.discover(channel, deadlineMs, channelFactory.policy());
-            result.put("ok", true);
-            ArrayNode services = result.putArray("services");
-            discovered.services().forEach(services::add);
-            result.put("descriptorSetBase64",
-                    Base64.getEncoder().encodeToString(discovered.descriptorSet().toByteArray()));
-            result.put("fileCount", discovered.descriptorSet().getFileCount());
+            result.set("ok", true)
+                    .addAll("services", discovered.services())
+                    .set("descriptorSetBase64", Base64.getEncoder()
+                            .encodeToString(discovered.descriptorSet().toByteArray()))
+                    .set("fileCount", discovered.descriptorSet().getFileCount());
         } catch (ReflectionException e) {
-            result.put("ok", false);
-            result.put("error", e.getMessage());
+            result.set("ok", false).set("error", e.getMessage());
         } finally {
             channel.shutdownNow();
         }
-        return result;
+        return result.build();
     }
 
     private static ActionException invalidInput(String message, String pointer) {

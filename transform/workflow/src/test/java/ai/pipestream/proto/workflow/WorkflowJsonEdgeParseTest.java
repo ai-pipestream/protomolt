@@ -156,9 +156,11 @@ class WorkflowJsonEdgeParseTest {
         assertThat(unknown.step).isEqualTo("process");
         assertThat(unknown.getMessage()).contains("Ghost");
 
+        // An edge that is not an object is not a WorkflowEdge, so the read refuses the
+        // definition rather than the parser attributing it to a step.
         ObjectNode notAnObject = workflow();
         firstStep(notAnObject).put("edge", "input");
-        assertThat(failure(notAnObject).getMessage()).contains("'edge' must be an object");
+        assertThat(failure(notAnObject).getMessage()).contains("Expect message object");
     }
 
     @Test
@@ -175,10 +177,10 @@ class WorkflowJsonEdgeParseTest {
         assertThat(bad.step).isEqualTo("process");
         assertThat(bad.getMessage()).contains("FAIL_FAST").contains("CONTINUE");
 
+        // The field is an int32, so a fractional value is not one and the read says so.
         ObjectNode fractional = workflow();
         ((ObjectNode) firstStep(fractional).get("fanOut")).put("maxItems", 2.5);
-        assertThat(failure(fractional).getMessage())
-                .contains("fanOut.maxItems must be a 32-bit integer");
+        assertThat(failure(fractional).getMessage()).contains("Not an int32 value");
     }
 
     @Test

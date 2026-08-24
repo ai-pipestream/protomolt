@@ -1,18 +1,18 @@
 package ai.pipestream.proto.inference.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.v1.ListModelsRequest;
 import ai.pipestream.proto.inference.v1.ListModelsResponse;
 import ai.pipestream.proto.inference.v1.ModelEntry;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * The {@code inference-list-models} verb: reads the server's inference model
@@ -56,19 +56,21 @@ public final class ListModelsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("InferenceListModelsResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         InferenceActionSupport.requireEngines(engines);
-        String provider = InferenceActionSupport.optionalString(input, "provider");
+        // An omitted provider arrives as the empty string, which lists every provider.
         ListModelsResponse response = engines.listModels(ListModelsRequest.newBuilder()
-                .setProvider(provider == null ? "" : provider)
+                .setProvider(Fields.string(input, "provider"))
                 .build());
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        result.put("ok", true);
-        ArrayNode models = result.putArray("models");
+        Reply result = Reply.of(responseType()).set("ok", true);
         for (ModelEntry entry : response.getModelsList()) {
-            models.add(InferenceActionSupport.entryJson(entry));
+            InferenceActionSupport.writeEntry(result.append("models"), entry);
         }
-        result.put("catalogGeneration", response.getCatalogGeneration());
-        return result;
+        return result.set("catalogGeneration", response.getCatalogGeneration()).build();
     }
 }

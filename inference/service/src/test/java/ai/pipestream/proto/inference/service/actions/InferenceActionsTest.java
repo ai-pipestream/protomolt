@@ -3,6 +3,7 @@ package ai.pipestream.proto.inference.service.actions;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.inference.spi.ChunkObserver;
 import ai.pipestream.proto.inference.spi.InferenceCatalog;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
@@ -77,10 +78,10 @@ class InferenceActionsTest {
 
     @Test
     void generateHappyPathCarriesProvenance() throws ActionException {
-        ObjectNode out = new GenerateAction(engines).execute(input(Map.of(
+        ObjectNode out = dispatch(new GenerateAction(engines), input(Map.of(
                 "model", "judge",
                 "messages", List.of(Map.of("role", "user", "content", "verdict?")),
-                "temperature", 0.2)), ActionContext.create());
+                "temperature", 0.2)));
         assertThat(out.get("ok").asBoolean()).isTrue();
         assertThat(out.get("text").asText()).isEqualTo("answer");
         assertThat(out.get("provider").asText()).isEqualTo("stub");
@@ -90,34 +91,31 @@ class InferenceActionsTest {
 
     @Test
     void generateUnknownModelAnswersOkFalse() throws ActionException {
-        ObjectNode out = new GenerateAction(engines).execute(input(Map.of(
+        ObjectNode out = dispatch(new GenerateAction(engines), input(Map.of(
                 "model", "ghost",
-                "messages", List.of(Map.of("role", "user", "content", "hi")))),
-                ActionContext.create());
+                "messages", List.of(Map.of("role", "user", "content", "hi")))));
         assertThat(out.get("ok").asBoolean()).isFalse();
         assertThat(out.get("error").asText()).contains("ghost");
     }
 
     @Test
     void generateProviderFailureAnswersOkFalse() throws ActionException {
-        ObjectNode out = new GenerateAction(engines).execute(input(Map.of(
+        ObjectNode out = dispatch(new GenerateAction(engines), input(Map.of(
                 "model", "judge",
-                "messages", List.of(Map.of("role", "user", "content", "boom")))),
-                ActionContext.create());
+                "messages", List.of(Map.of("role", "user", "content", "boom")))));
         assertThat(out.get("ok").asBoolean()).isFalse();
         assertThat(out.get("error").asText()).contains("backend exploded");
     }
 
     @Test
     void generateRejectsBadInput() {
-        assertThatThrownBy(() -> new GenerateAction(engines).execute(input(Map.of(
+        assertThatThrownBy(() -> dispatch(new GenerateAction(engines), input(Map.of(
                 "model", "judge",
-                "messages", List.of(Map.of("role", "wizard", "content", "hi")))),
-                ActionContext.create()))
+                "messages", List.of(Map.of("role", "wizard", "content", "hi"))))))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.getMessage()).contains("wizard"));
-        assertThatThrownBy(() -> new GenerateAction(engines).execute(input(Map.of(
-                "model", "judge", "messages", List.of())), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(new GenerateAction(engines), input(Map.of(
+                "model", "judge", "messages", List.of()))))
                 .isInstanceOf(ActionException.class);
     }
 
@@ -138,24 +136,20 @@ class InferenceActionsTest {
 
     @Test
     void unavailableWithoutEngines() {
-        assertThatThrownBy(() -> new GenerateAction(null).execute(input(Map.of(
+        assertThatThrownBy(() -> dispatch(new GenerateAction(null), input(Map.of(
                 "model", "judge",
-                "messages", List.of(Map.of("role", "user", "content", "hi")))),
-                ActionContext.create()))
+                "messages", List.of(Map.of("role", "user", "content", "hi"))))))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.getMessage()).contains("not configured"));
-        assertThatThrownBy(() -> new ListModelsAction(null).execute(
-                input(Map.of()), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(new ListModelsAction(null), input(Map.of())))
                 .isInstanceOf(ActionException.class);
-        assertThatThrownBy(() -> new DescribeModelAction(null).execute(
-                input(Map.of("model", "judge")), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(new DescribeModelAction(null), input(Map.of("model", "judge"))))
                 .isInstanceOf(ActionException.class);
     }
 
     @Test
     void listModelsRendersEntriesAndGeneration() throws ActionException {
-        ObjectNode out = new ListModelsAction(engines).execute(input(Map.of()),
-                ActionContext.create());
+        ObjectNode out = dispatch(new ListModelsAction(engines), input(Map.of()));
         assertThat(out.get("ok").asBoolean()).isTrue();
         JsonNode entry = out.get("models").get(0);
         assertThat(entry.get("id").asText()).isEqualTo("judge");
@@ -167,13 +161,22 @@ class InferenceActionsTest {
 
     @Test
     void describeModelRoundTripsAndFailsFalseOnUnknown() throws ActionException {
-        ObjectNode found = new DescribeModelAction(engines).execute(input(Map.of("model", "judge")),
-                ActionContext.create());
+        ObjectNode found = dispatch(new DescribeModelAction(engines), input(Map.of("model", "judge")));
         assertThat(found.get("ok").asBoolean()).isTrue();
         assertThat(found.at("/entry/provider").asText()).isEqualTo("stub");
-        ObjectNode missing = new DescribeModelAction(engines).execute(input(Map.of("model", "ghost")),
-                ActionContext.create());
+        ObjectNode missing = dispatch(new DescribeModelAction(engines), input(Map.of("model", "ghost")));
         assertThat(missing.get("ok").asBoolean()).isFalse();
         assertThat(missing.get("error").asText()).contains("ghost");
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

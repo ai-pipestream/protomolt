@@ -2,21 +2,18 @@ package ai.pipestream.proto.search.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.search.v1.SearchRequest;
 import ai.pipestream.proto.search.v1.SearchResponse;
 import ai.pipestream.proto.search.v1.SubjectInfo;
-import ai.pipestream.proto.validate.ProtoValidator;
-import ai.pipestream.proto.validate.ValidationResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.util.JsonFormat;
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import java.util.List;
 
 /**
  * Querying a mapping subject, as an agent-operable action.
@@ -38,10 +35,7 @@ public final class SearchAction implements ProtoAction {
     /** The action name: {@value}. */
     public static final String NAME = "search";
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     private final SubjectSearch index;
-    private final ProtoValidator validator;
 
     /**
      * Creates the action.
@@ -49,18 +43,10 @@ public final class SearchAction implements ProtoAction {
      * @param index the served index this action queries
      */
     public SearchAction(SubjectSearch index) {
-        this(index, ProtoValidator.create());
-    }
-
-    SearchAction(SubjectSearch index, ProtoValidator validator) {
         if (index == null) {
             throw new IllegalArgumentException("index must not be null");
         }
-        if (validator == null) {
-            throw new IllegalArgumentException("validator must not be null");
-        }
         this.index = index;
-        this.validator = validator;
     }
 
     @Override
@@ -93,8 +79,14 @@ public final class SearchAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        SearchRequest request = requestFrom(input, context);
+    public Descriptor responseType() {
+        return SearchResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        SearchRequest request = CatalogContract.as(
+                input, SearchRequest.getDefaultInstance(), name());
         List<ai.pipestream.proto.search.v1.SearchHit> hits;
         try {
             hits = index.search(request.getMappingSubject(), request);
@@ -106,49 +98,7 @@ public final class SearchAction implements ProtoAction {
             // A lane the subject is not wired for, most often vector without a chunk lane.
             throw new ActionException("lane-unavailable", e.getMessage(), subjects(context));
         }
-        String json = context.transcoder().toJson(
-                SearchResponse.newBuilder().addAllHits(hits).build());
-        try {
-            return (ObjectNode) context.objectMapper().readTree(json);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new ActionException("internal", "the search response did not render as JSON: "
-                    + e.getMessage(), null);
-        }
-    }
-
-    /**
-     * Reads the envelope into a request and holds it to the same rules the gRPC surface holds
-     * it to.
-     *
-     * <p>The envelope is the request message's canonical proto3 JSON form. The gRPC surface
-     * enforces the declared rules through a validating interceptor, which this path does not
-     * sit behind, so the rules are applied here rather than left to the index to discover.
-     */
-    private SearchRequest requestFrom(ObjectNode input, ActionContext context)
-            throws ActionException {
-        SearchRequest.Builder request = SearchRequest.newBuilder();
-        try {
-            JsonFormat.parser().merge(input.toString(), request);
-        } catch (InvalidProtocolBufferException e) {
-            throw new ActionException("invalid-query",
-                    "the query is not a valid SearchRequest: " + e.getMessage(), null);
-        }
-        SearchRequest built = request.build();
-        ValidationResult result = validator.validate(built);
-        if (!result.valid()) {
-            ObjectNode details = context.objectMapper().createObjectNode();
-            ArrayNode violations = details.putArray("violations");
-            for (ValidationResult.Violation violation : result.violations()) {
-                ObjectNode node = violations.addObject();
-                node.put("field", violation.path());
-                node.put("ruleId", violation.ruleId());
-                node.put("message", violation.message());
-            }
-            throw new ActionException("invalid-query",
-                    "The query does not satisfy the search contract: " + describe(result),
-                    details);
-        }
-        return built;
+        return SearchResponse.newBuilder().addAllHits(hits).build();
     }
 
     /**
@@ -167,16 +117,5 @@ public final class SearchAction implements ProtoAction {
             info.getTextFieldsList().forEach(text::add);
         }
         return details;
-    }
-
-    private static String describe(ValidationResult result) {
-        StringBuilder out = new StringBuilder();
-        for (ValidationResult.Violation violation : result.violations()) {
-            if (out.length() > 0) {
-                out.append("; ");
-            }
-            out.append(violation.path()).append(' ').append(violation.message());
-        }
-        return out.toString();
     }
 }

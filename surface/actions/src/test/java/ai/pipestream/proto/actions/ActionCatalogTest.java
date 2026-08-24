@@ -4,19 +4,19 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Test;
-
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-
+import org.junit.jupiter.api.Test;
 import static ai.pipestream.proto.actions.TestFixtures.MAPPER;
 import static ai.pipestream.proto.actions.TestFixtures.obj;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 class ActionCatalogTest {
 
@@ -61,15 +61,25 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return JsonNodeFactory.instance.objectNode().put("unary", true);
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override
-            public void executeStreaming(ObjectNode input, ActionContext context,
-                    StreamEmitter emitter) {
-                emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 1));
-                emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 2));
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("unary",
+                        Value.newBuilder().setBoolValue(true).build()).build();
+            }
+
+            @Override
+            public void executeStreaming(Message input, ActionContext context,
+                    StreamEmitter emitter) throws ActionException {
+                emitter.emit(Struct.newBuilder().putFields("n",
+                        Value.newBuilder().setNumberValue(1).build()).build());
+                emitter.emit(Struct.newBuilder().putFields("n",
+                        Value.newBuilder().setNumberValue(2).build()).build());
                 emissions.addAndGet(2);
             }
         });
@@ -136,7 +146,7 @@ class ActionCatalogTest {
 
     @Test
     void nullInputIsInvalidInput() {
-        assertThatThrownBy(() -> catalog.execute("list-types", null))
+        assertThatThrownBy(() -> catalog.execute("list-types", (ObjectNode) null))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
@@ -162,8 +172,16 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return MAPPER.createObjectNode().put("ok", true);
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         };
         catalog.register(custom);
@@ -191,8 +209,16 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return MAPPER.createObjectNode().put("impostor", true);
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("impostor",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         };
         assertThatThrownBy(() -> catalog.register(shadow))
@@ -274,8 +300,16 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return MAPPER.createObjectNode().put("ok", true);
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         };
     }

@@ -6,11 +6,10 @@ import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.mcp.McpServer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,10 +19,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 /**
  * The MCP streamable HTTP transport on the one-process server: an MCP client needs only
@@ -220,7 +219,8 @@ class McpHttpTest {
 
         JsonNode content = MAPPER.readTree(response.body()).path("result")
                 .path("structuredContent");
-        assertThat(content.path("ok").asBoolean()).isTrue();
+        // GetSnapshotResponse declares the snapshot and nothing else, so the reading
+        // itself is the whole answer.
         assertThat(content.path("snapshot").path("cluster").path("clusterId").asText())
                 .isEqualTo("protomolt");
     }
@@ -257,15 +257,24 @@ class McpHttpTest {
             }
 
             @Override
-            public com.fasterxml.jackson.databind.node.ObjectNode execute(
-                    com.fasterxml.jackson.databind.node.ObjectNode input, ActionContext context) {
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public com.google.protobuf.Message execute(
+                    com.google.protobuf.Message input, ActionContext context) {
                 started.countDown();
                 try {
                     Thread.sleep(60_000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                return context.objectMapper().createObjectNode().put("completed", true);
+                return Struct.newBuilder().putFields("completed",
+                        com.google.protobuf.Value.newBuilder().setBoolValue(true).build())
+                        .build();
             }
         });
         McpServer mcpServer = new McpServer(catalog, null, "test", "0");

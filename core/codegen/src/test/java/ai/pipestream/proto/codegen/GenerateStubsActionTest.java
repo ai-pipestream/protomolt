@@ -3,6 +3,7 @@ package ai.pipestream.proto.codegen;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -52,7 +53,7 @@ class GenerateStubsActionTest {
 
     @Test
     void defaultGeneratorProducesJavaMessageCode() throws Exception {
-        ObjectNode result = action.execute(input(), ActionContext.create());
+        ObjectNode result = dispatch(action, input());
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(names(result)).anySatisfy(name -> assertThat(name).endsWith("OrderOuterClass.java"));
         String content = result.get("files").get(0).get("content").asText();
@@ -61,7 +62,7 @@ class GenerateStubsActionTest {
 
     @Test
     void grpcJavaGeneratesServiceStubs() throws Exception {
-        ObjectNode result = action.execute(input("grpc-java"), ActionContext.create());
+        ObjectNode result = dispatch(action, input("grpc-java"));
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(names(result)).anySatisfy(name ->
                 assertThat(name).endsWith("OrderServiceGrpc.java"));
@@ -71,7 +72,7 @@ class GenerateStubsActionTest {
 
     @Test
     void multipleGeneratorsCombineIntoOneFileList() throws Exception {
-        ObjectNode result = action.execute(input("java", "grpc-java"), ActionContext.create());
+        ObjectNode result = dispatch(action, input("java", "grpc-java"));
         assertThat(result.get("ok").asBoolean()).isTrue();
         List<String> generators = result.get("files").findValuesAsText("generator");
         assertThat(generators).contains("java", "grpc-java");
@@ -81,21 +82,21 @@ class GenerateStubsActionTest {
 
     @Test
     void kotlinGeneratorProducesKotlinDsl() throws Exception {
-        ObjectNode result = action.execute(input("kotlin"), ActionContext.create());
+        ObjectNode result = dispatch(action, input("kotlin"));
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(names(result)).anySatisfy(name -> assertThat(name).endsWith(".kt"));
     }
 
     @Test
     void wellKnownTypeImportsAreNotGeneratedByDefault() throws Exception {
-        ObjectNode result = action.execute(input(), ActionContext.create());
+        ObjectNode result = dispatch(action, input());
         assertThat(names(result)).noneSatisfy(name ->
                 assertThat(name).contains("google/protobuf"));
     }
 
     @Test
     void pythonGeneratorProducesPb2Module() throws Exception {
-        ObjectNode result = action.execute(input("python"), ActionContext.create());
+        ObjectNode result = dispatch(action, input("python"));
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(names(result)).anySatisfy(name -> assertThat(name).endsWith("order_pb2.py"));
         String content = result.get("files").get(0).get("content").asText();
@@ -111,7 +112,7 @@ class GenerateStubsActionTest {
                 "php", ".php",
                 "objc", ".pbobjc.m");
         for (var entry : expectations.entrySet()) {
-            ObjectNode result = action.execute(input(entry.getKey()), ActionContext.create());
+            ObjectNode result = dispatch(action, input(entry.getKey()));
             assertThat(result.get("ok").asBoolean())
                     .as("generator %s", entry.getKey()).isTrue();
             assertThat(names(result))
@@ -131,12 +132,12 @@ class GenerateStubsActionTest {
         ObjectNode input = input("java");
         input.put("parameter", "annotate_code");
 
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
 
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(names(result)).anySatisfy(name ->
                 assertThat(name).endsWith("OrderOuterClass.java.pb.meta"));
-        assertThat(names(action.execute(input("java"), ActionContext.create())))
+        assertThat(names(dispatch(action, input("java"))))
                 .noneSatisfy(name -> assertThat(name).endsWith(".pb.meta"));
     }
 
@@ -149,14 +150,16 @@ class GenerateStubsActionTest {
         ObjectNode input = input("java");
         input.put("parameter", "bogus_option");
 
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
 
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("generator").asText()).isEqualTo("java");
         assertThat(result.get("error").asText())
                 .contains("Unknown generator option: bogus_option");
-        assertThat(result.has("files")).isFalse();
-        assertThat(result.has("fileCount")).isFalse();
+        // The reply carries the shape the response declares, so a failed run reports no
+        // files rather than leaving the members out.
+        assertThat(result.get("files")).isEmpty();
+        assertThat(result.get("fileCount").asInt()).isZero();
     }
 
     /** The run stops at the failing generator; a later generator's files are not returned. */
@@ -165,11 +168,11 @@ class GenerateStubsActionTest {
         ObjectNode input = input("java", "grpc-java");
         input.put("parameter", "bogus_option");
 
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
 
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("generator").asText()).isEqualTo("java");
-        assertThat(result.has("files")).isFalse();
+        assertThat(result.get("files")).isEmpty();
     }
 
     @Test
@@ -190,8 +193,19 @@ class GenerateStubsActionTest {
     void unknownFileIsInvalidInput() {
         ObjectNode input = input();
         input.putArray("files").add("nope.proto");
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

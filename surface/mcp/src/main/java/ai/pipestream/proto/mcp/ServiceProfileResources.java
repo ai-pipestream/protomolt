@@ -83,7 +83,7 @@ public final class ServiceProfileResources implements McpResources {
                 return Optional.empty();
             }
             ServiceProfile profile = found.get();
-            ArrayNode services = ServiceDescriptorInspection.services(
+            ArrayNode services = ServiceDescriptorInspection.servicesJson(
                     profile, repository, registry, mapper);
             if (methodMarker < 0) {
                 ObjectNode document = mapper.createObjectNode();

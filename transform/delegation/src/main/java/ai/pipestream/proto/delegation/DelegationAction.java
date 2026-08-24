@@ -42,12 +42,12 @@ abstract class DelegationAction implements ProtoAction {
     static ActionException failure(String workerId, RuntimeException e) {
         String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
         if (message.startsWith("worker is not registered")) {
-            return DelegationActionJson.unknownWorker(workerId);
+            return DelegationFailures.unknownWorker(workerId);
         }
         if (message.startsWith("worker stream")) {
-            return DelegationActionJson.streamFailed(workerId, message);
+            return DelegationFailures.streamFailed(workerId, message);
         }
-        return DelegationActionJson.rejected(message);
+        return DelegationFailures.rejected(message);
     }
 
     /** Maps coordinator-side failures onto the stable delegation error codes. */

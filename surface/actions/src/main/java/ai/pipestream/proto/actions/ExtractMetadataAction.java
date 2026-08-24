@@ -1,9 +1,8 @@
 package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.meta.DescriptorMetadata;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
-
+import com.google.protobuf.Message;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -33,14 +32,20 @@ final class ExtractMetadataAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("ExtractMetadataResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
+        String named = Fields.string(input, "type");
+        Descriptor descriptor = schema.message(named.isEmpty() ? null : named, "/type");
         Map<String, Object> bag = DescriptorMetadata.asBag(descriptor);
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("type", descriptor.getFullName());
-        // Map.copyOf in asBag drops insertion order; sort for a deterministic document.
-        output.set("metadata", context.objectMapper().valueToTree(new TreeMap<>(bag)));
-        return output;
+        return Reply.of(responseType())
+                .set("type", descriptor.getFullName())
+                // Map.copyOf in asBag drops insertion order; sort for a deterministic document.
+                .set("metadata", context.objectMapper().valueToTree(new TreeMap<>(bag)))
+                .build();
     }
 }

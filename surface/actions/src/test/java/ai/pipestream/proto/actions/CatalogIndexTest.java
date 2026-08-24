@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -36,8 +36,17 @@ class CatalogIndexTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context) {
-            return input.deepCopy();
+        public Descriptor responseType() {
+            return CatalogContract.request("ListTypesResponse");
+        }
+
+        @Override
+        public Message execute(Message input, ActionContext context) {
+            // Reports what it was given, but as its own response message: a verb answers
+            // under the contract it names, so it cannot simply hand the request back.
+            Reply output = Reply.of(responseType());
+            output.append("types").set("fullName", Fields.string(input, "filter")).build();
+            return output.build();
         }
     }
 
@@ -71,6 +80,7 @@ class CatalogIndexTest {
         ObjectNode input = JsonNodeFactory.instance.objectNode();
         input.put("filter", "shop");
 
-        assertThat(catalog().execute("echo", input).path("filter").asText()).isEqualTo("shop");
+        assertThat(catalog().execute("echo", input)
+                .path("types").path(0).path("fullName").asText()).isEqualTo("shop");
     }
 }

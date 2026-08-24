@@ -1,17 +1,20 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.jobs.service.WorkflowRunSubmitter;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
+import ai.pipestream.proto.workflow.WorkflowRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * The {@code submit-workflow} verb: accept a workflow run for asynchronous
@@ -70,28 +73,37 @@ public final class SubmitWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("SubmitWorkflowResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // Availability first: a node with no job store cannot serve any request, so
         // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
-        ObjectNode workflow = ActionSupport.optionalObject(input, "workflow");
-        String workflowName = ActionSupport.optionalString(input, "workflowName");
-        String jobId = ActionSupport.optionalString(input, "jobId");
-        JsonNode inputNode = input.get("input");
-        WorkflowRunSubmitter.Outcome outcome =
-                submitter.submit(workflow, workflowName, inputNode, jobId, context);
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        result.put("ok", outcome.ok());
+        // The workflow and its input are structures: their shape is the caller's workflow
+        // definition, which this contract does not describe, so they stay documents.
+        ObjectNode workflow = Fields.has(input, "workflow")
+                ? Fields.json(input, "workflow")
+                : null;
+        WorkflowRunSubmitter.Outcome outcome = submitter.submit(
+                workflow,
+                Fields.string(input, "workflowName"),
+                Fields.has(input, "input") ? Fields.json(input, "input") : null,
+                Fields.string(input, "jobId"),
+                context);
+        Reply result = Reply.of(responseType()).set("ok", outcome.ok());
         if (outcome.ok()) {
-            result.put("jobId", outcome.jobId());
-            result.put("status", outcome.status());
-        } else {
-            if (outcome.failedStep() != null && !outcome.failedStep().isEmpty()) {
-                result.put("failedStep", outcome.failedStep());
-            }
-            result.put("error", outcome.error());
+            return result
+                    .set("jobId", outcome.jobId())
+                    .set("status", outcome.status())
+                    .build();
         }
-        return result;
+        return result
+                .set("failedStep", outcome.failedStep() == null ? "" : outcome.failedStep())
+                .set("error", outcome.error())
+                .build();
     }
 
     private static ObjectNode baseSchema() {

@@ -16,8 +16,8 @@ class RenderPromptActionTest {
         ObjectNode result = catalog.execute("render-prompt",
                 obj("{\"schema\": {\"type\": \"actions.test.Person\"}}"));
 
-        assertThat(result.get("target_type").asText()).isEqualTo("actions.test.Person");
-        assertThat(result.get("descriptor_set_ref").asText()).isEmpty();
+        assertThat(result.get("targetType").asText()).isEqualTo("actions.test.Person");
+        assertThat(result.get("descriptorSetRef").asText()).isEmpty();
         String instructions = result.get("instructions").asText();
         assertThat(instructions)
                 .contains("You are filling the form \"actions.test.Person\"")
@@ -25,23 +25,23 @@ class RenderPromptActionTest {
                 .contains("must be at least 3 characters")
                 .contains("Respond with exactly one JSON object")
                 .doesNotContain("Persona:");
-        assertThat(result.get("response_json_schema").get("$ref").asText())
+        assertThat(result.get("responseJsonSchema").get("$ref").asText())
                 .isEqualTo("#/$defs/actions.test.Person");
         assertThat(result.has("persona")).isFalse();
-        assertThat(result.get("few_shot").isArray()).isTrue();
+        assertThat(result.get("fewShot").isArray()).isTrue();
     }
 
     @Test
     void rendersAResolvedPersona() throws Exception {
         ObjectNode result = catalog.execute("render-prompt", obj("""
                 {"schema": {"type": "actions.test.Person"},
-                 "descriptor_set_ref": "repo://forms/v3",
+                 "descriptorSetRef": "repo://forms/v3",
                  "persona": {"id": "litigator", "version": "1.0.0",
                              "instructions": "You fill forms as a practicing litigator.",
                              "safeguards": ["Never speculate about intent."]}}
                 """));
 
-        assertThat(result.get("descriptor_set_ref").asText()).isEqualTo("repo://forms/v3");
+        assertThat(result.get("descriptorSetRef").asText()).isEqualTo("repo://forms/v3");
         assertThat(result.get("instructions").asText())
                 .contains("Persona: litigator (version 1.0.0)")
                 .contains("Never speculate about intent.");

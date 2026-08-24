@@ -1,13 +1,11 @@
 package ai.pipestream.proto.actions;
 
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
-
+import com.google.protobuf.Message;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -38,10 +36,16 @@ final class ListTypesAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String filter = Inputs.optionalString(input, "filter");
+    public Descriptor responseType() {
+        return CatalogContract.response("ListTypesResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        // An omitted filter arrives as the empty string, which matches everything.
+        String filter = Fields.string(input, "filter");
         Map<String, FileDescriptor> files = new LinkedHashMap<>();
-        if (input.has("schema")) {
+        if (Fields.has(input, "schema")) {
             SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
             for (FileDescriptor file : schema.files()) {
                 files.putIfAbsent(file.getName(), file);
@@ -51,44 +55,44 @@ final class ListTypesAction implements ProtoAction {
                 files.putIfAbsent(descriptor.getFile().getName(), descriptor.getFile());
             }
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        ArrayNode types = output.putArray("types");
+        Reply output = Reply.of(responseType());
         for (FileDescriptor file : files.values()) {
             for (Descriptor message : file.getMessageTypes()) {
-                addMessage(message, filter, types);
+                addMessage(message, filter, output);
             }
             for (EnumDescriptor enumType : file.getEnumTypes()) {
-                addNamed(enumType.getFullName(), file, "enum", filter, types);
+                addNamed(enumType.getFullName(), file, "enum", filter, output);
             }
             for (ServiceDescriptor service : file.getServices()) {
-                addNamed(service.getFullName(), file, "service", filter, types);
+                addNamed(service.getFullName(), file, "service", filter, output);
             }
         }
-        return output;
+        return output.build();
     }
 
-    private static void addMessage(Descriptor message, String filter, ArrayNode types) {
+    private static void addMessage(Descriptor message, String filter, Reply types) {
         if (message.getOptions().getMapEntry()) {
             return;
         }
         if (matches(message.getFullName(), filter)) {
-            ObjectNode entry = types.addObject();
-            entry.put("fullName", message.getFullName());
-            entry.put("file", message.getFile().getName());
-            entry.put("kind", "message");
-            ArrayNode fields = entry.putArray("fields");
+            Reply entry = types.append("types")
+                    .set("fullName", message.getFullName())
+                    .set("file", message.getFile().getName())
+                    .set("kind", "message");
             for (FieldDescriptor field : message.getFields()) {
-                ObjectNode fieldNode = fields.addObject();
-                fieldNode.put("name", field.getName());
-                fieldNode.put("number", field.getNumber());
-                fieldNode.put("type", field.getType().name().toLowerCase(Locale.ROOT));
+                Reply fieldEntry = entry.append("fields")
+                        .set("name", field.getName())
+                        .set("number", field.getNumber())
+                        .set("type", field.getType().name().toLowerCase(Locale.ROOT))
+                        .set("label", label(field));
                 if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-                    fieldNode.put("typeName", field.getMessageType().getFullName());
+                    fieldEntry.set("typeName", field.getMessageType().getFullName());
                 } else if (field.getJavaType() == FieldDescriptor.JavaType.ENUM) {
-                    fieldNode.put("typeName", field.getEnumType().getFullName());
+                    fieldEntry.set("typeName", field.getEnumType().getFullName());
                 }
-                fieldNode.put("label", label(field));
+                fieldEntry.build();
             }
+            entry.build();
         }
         for (Descriptor nested : message.getNestedTypes()) {
             addMessage(nested, filter, types);
@@ -99,18 +103,19 @@ final class ListTypesAction implements ProtoAction {
     }
 
     private static void addNamed(String fullName, FileDescriptor file, String kind,
-                                 String filter, ArrayNode types) {
+                                 String filter, Reply types) {
         if (!matches(fullName, filter)) {
             return;
         }
-        ObjectNode entry = types.addObject();
-        entry.put("fullName", fullName);
-        entry.put("file", file.getName());
-        entry.put("kind", kind);
+        types.append("types")
+                .set("fullName", fullName)
+                .set("file", file.getName())
+                .set("kind", kind)
+                .build();
     }
 
     private static boolean matches(String fullName, String filter) {
-        return filter == null
+        return filter.isEmpty()
                 || fullName.toLowerCase(Locale.ROOT).contains(filter.toLowerCase(Locale.ROOT));
     }
 

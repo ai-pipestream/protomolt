@@ -1,18 +1,18 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.shapes.MappingSuggester;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
-
+import com.google.protobuf.Message;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** MCP/action surface for conservative descriptor-grounded mapping candidates. */
@@ -44,21 +44,23 @@ final class SuggestMappingsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        JsonNode sourceNode = input.get("sources");
-        if (!(sourceNode instanceof ArrayNode array) || array.isEmpty()) {
+    public Descriptor responseType() {
+        return CatalogContract.response("SuggestMappingsResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        List<Message> declared = Fields.list(input, "sources");
+        if (declared.isEmpty()) {
             throw WorkflowActionJson.invalid("'sources' must be a non-empty array", "/sources");
         }
-        if (array.size() > MAX_SOURCES) {
+        if (declared.size() > MAX_SOURCES) {
             throw WorkflowActionJson.invalid("'sources' must contain at most " + MAX_SOURCES
                     + " entries", "/sources");
         }
         Map<String, Descriptor> sources = new LinkedHashMap<>();
-        for (int index = 0; index < array.size(); index++) {
-            if (!(array.get(index) instanceof ObjectNode source)) {
-                throw WorkflowActionJson.invalid("each source must be an object",
-                        "/sources/" + index);
-            }
+        for (int index = 0; index < declared.size(); index++) {
+            Message source = declared.get(index);
             String name = WorkflowActionJson.text(source, "name");
             if (!name.matches(SOURCE_NAME_PATTERN)) {
                 throw WorkflowActionJson.invalid("source name must be a mapping-scope identifier",
@@ -72,20 +74,19 @@ final class SuggestMappingsAction implements ProtoAction {
                         "/sources/" + index + "/name");
             }
         }
-        ObjectNode targetNode = WorkflowActionJson.object(input, "target");
-        Descriptor target = SchemaResolver.resolve(targetNode, "schema", context)
-                .message(WorkflowActionJson.optionalText(targetNode, "type"), "/target/type");
+        Message targetSource = Fields.message(input, "target");
+        Descriptor target = SchemaResolver.resolve(targetSource, "schema", context)
+                .message(WorkflowActionJson.optionalText(targetSource, "type"), "/target/type");
         MappingSuggester.Suggestions suggestions = MappingSuggester.suggest(sources, target);
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("targetType", suggestions.targetType());
-        ArrayNode candidates = output.putArray("candidates");
+        Reply output = Reply.of(responseType()).set("targetType", suggestions.targetType());
         for (MappingSuggester.Candidate candidate : suggestions.candidates()) {
-            ObjectNode node = candidates.addObject();
-            node.put("targetPath", candidate.targetPath());
-            node.put("sourcePath", candidate.sourcePath());
-            node.put("rule", candidate.rule());
-            node.put("basis", candidate.basis());
+            output.append("candidates")
+                    .set("targetPath", candidate.targetPath())
+                    .set("sourcePath", candidate.sourcePath())
+                    .set("rule", candidate.rule())
+                    .set("basis", candidate.basis())
+                    .build();
         }
-        return output;
+        return output.build();
     }
 }

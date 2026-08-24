@@ -1,6 +1,7 @@
 package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.descriptors.GoogleDescriptorLoader;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.ReflectionClient;
@@ -16,7 +17,6 @@ import ai.pipestream.proto.grpc.profile.v1.Transport;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.util.JsonFormat;
@@ -164,17 +164,15 @@ final class ServiceActionSupport {
         }
     }
 
-    static ObjectNode summary(ServiceProfile profile, ObjectMapper mapper) {
-        ObjectNode result = mapper.createObjectNode();
-        result.put("name", profile.getName());
-        if (!profile.getDescription().isBlank()) {
-            result.put("description", profile.getDescription());
-        }
-        ArrayNode endpoints = result.putArray("endpoints");
-        profile.getEndpointsList().forEach(endpoint -> endpoints.add(endpoint.getName()));
-        result.put("descriptorFingerprint",
-                profile.getSchemaSource().getDescriptorFingerprint());
-        return result;
+    /** One stored profile as the contract's summary of it. */
+    static void writeSummary(Reply summary, ServiceProfile profile) {
+        summary.set("name", profile.getName())
+                .set("description", profile.getDescription())
+                .set("descriptorFingerprint",
+                        profile.getSchemaSource().getDescriptorFingerprint());
+        profile.getEndpointsList().forEach(
+                endpoint -> summary.add("endpoints", endpoint.getName()));
+        summary.build();
     }
 
     static DescriptorArtifact descriptorArtifact(ServiceProfile profile,
@@ -207,11 +205,11 @@ final class ServiceActionSupport {
         return registry != null && registry.supportsDescriptorSets();
     }
 
-    static ArrayNode services(ServiceProfile profile, ServiceProfileRepository repository,
-                              SchemaRegistryStore registry,
-                              ObjectMapper mapper) throws ActionException {
+    static void writeServices(Reply reply, String field, ServiceProfile profile,
+                              ServiceProfileRepository repository,
+                              SchemaRegistryStore registry) throws ActionException {
         try {
-            return ServiceDescriptorInspection.services(profile, repository, registry, mapper);
+            ServiceDescriptorInspection.writeServices(reply, field, profile, repository, registry);
         } catch (IOException e) {
             throw new ActionException("invalid-descriptor", e.getMessage());
         } catch (IllegalArgumentException e) {

@@ -9,7 +9,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
-
+import com.google.protobuf.Message;
 import java.util.Map;
 
 /** Evaluates a CEL expression over a JSON message typed by its protobuf schema. */
@@ -38,11 +38,17 @@ final class EvalCelAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("EvalCelResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
-        ObjectNode messageNode = Inputs.requireObject(input, "message");
-        String expression = Inputs.requireString(input, "expression");
+        Descriptor descriptor = schema.message(named(input, "type"), "/type");
+        // The message is a structure: its shape is the named type, not this contract.
+        ObjectNode messageNode = Fields.json(input, "message");
+        String expression = Fields.string(input, "expression");
         DynamicMessage message;
         try {
             message = context.transcoder().fromJsonDynamic(messageNode.toString(), descriptor);
@@ -71,9 +77,16 @@ final class EvalCelAction implements ProtoAction {
             throw new ActionException("evaluation-failed",
                     "CEL expression failed at runtime: " + e.getMessage(), details);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.set("result", ActionJson.celValue(value, context));
-        output.put("resultType", ActionJson.celType(value));
-        return output;
+        return Reply.of(responseType())
+                .set("result", ActionJson.celValue(value, context))
+                .set("resultType", ActionJson.celType(value))
+                .build();
     }
+
+    /** A named type, or null when the caller left the schema's own default to apply. */
+    private static String named(Message input, String field) {
+        String value = Fields.string(input, field);
+        return value.isEmpty() ? null : value;
+    }
+
 }

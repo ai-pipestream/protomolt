@@ -1,6 +1,9 @@
 package ai.pipestream.proto.workflow;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.cel.CelMappingRule;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.grpc.policy.OutboundChannelPolicyException;
@@ -19,15 +22,13 @@ import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.ServerCalls;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
-
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -276,10 +277,10 @@ class WorkflowTest {
         // one is refused rather than silently ignored.
         ObjectNode checkInput = MAPPER.createObjectNode();
         checkInput.set("workflow", input.get("workflow"));
-        ObjectNode checked = new CheckWorkflowAction().execute(checkInput, context);
+        ObjectNode checked = dispatch(new CheckWorkflowAction(), checkInput);
         assertThat(checked.get("ok").asBoolean()).isTrue();
 
-        ObjectNode run = new RunWorkflowAction(runner).execute(input, context);
+        ObjectNode run = dispatch(new RunWorkflowAction(runner), input);
         assertThat(run.get("ok").asBoolean()).isTrue();
         assertThat(run.get("outputType").asText()).isEqualTo("workflow.test.Embedding");
         assertThat(run.get("output").get("sourceText").asText()).isEqualTo("hey");
@@ -289,10 +290,21 @@ class WorkflowTest {
         ObjectNode broken = checkInput.deepCopy();
         ((ObjectNode) broken.get("workflow").get("steps").get(1))
                 .putArray("rules").add("ids = tokenizer.ids");
-        ObjectNode findings = new CheckWorkflowAction().execute(broken, context);
+        ObjectNode findings = dispatch(new CheckWorkflowAction(), broken);
         assertThat(findings.get("ok").asBoolean()).isFalse();
         assertThat(findings.get("findings").get(0).get("step").asText()).isEqualTo("embed");
         assertThat(findings.get("findings").get(0).get("error").asText())
                 .contains("unknown source 'tokenizer'");
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

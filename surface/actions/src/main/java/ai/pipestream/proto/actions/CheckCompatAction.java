@@ -4,11 +4,9 @@ import ai.pipestream.proto.compat.CompatibilityChecker;
 import ai.pipestream.proto.compat.CompatibilityMode;
 import ai.pipestream.proto.compat.CompatibilityResult;
 import ai.pipestream.proto.compat.SchemaChange;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
-import java.util.Arrays;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import java.util.Arrays;
 
 /** Checks a new schema version against an old one under a compatibility mode. */
 final class CheckCompatAction implements ProtoAction {
@@ -44,33 +42,36 @@ final class CheckCompatAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("CheckCompatResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema oldSchema = SchemaResolver.resolve(input, "old", context);
         SchemaResolver.ResolvedSchema newSchema = SchemaResolver.resolve(input, "new", context);
         // The contract names the mode with an enum, so an unknown one is refused before the
         // verb runs and whatever arrives is a value this checker already knows.
-        String modeName = Inputs.optionalString(input, "mode");
-        CompatibilityMode mode = modeName == null || modeName.isBlank()
+        String modeName = Fields.enumName(input, "mode");
+        CompatibilityMode mode = modeName.isEmpty() || modeName.endsWith("UNSPECIFIED")
                 ? CompatibilityMode.BACKWARD
                 : CompatibilityMode.valueOf(modeName.startsWith(MODE_PREFIX)
                         ? modeName.substring(MODE_PREFIX.length()) : modeName);
         CompatibilityChecker checker = CompatibilityChecker.builder()
-                .includeJsonRules(Inputs.optionalBoolean(input, "includeJsonRules", false))
-                .includeSourceRules(Inputs.optionalBoolean(input, "includeSourceRules", false))
+                .includeJsonRules(Fields.flag(input, "includeJsonRules"))
+                .includeSourceRules(Fields.flag(input, "includeSourceRules"))
                 .build();
         CompatibilityResult result =
                 checker.check(oldSchema.descriptorSet(), newSchema.descriptorSet(), mode);
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("compatible", result.isCompatible());
-        output.put("mode", MODE_PREFIX + result.mode().name());
-        ArrayNode violations = output.putArray("violations");
+        Reply output = Reply.of(responseType())
+                .set("compatible", result.isCompatible())
+                .set("mode", MODE_PREFIX + result.mode().name());
         for (SchemaChange change : result.violations()) {
-            violations.add(ActionJson.change(change, context.objectMapper()));
+            ActionJson.writeChange(output, "violations", change);
         }
-        ArrayNode changes = output.putArray("changes");
         for (SchemaChange change : result.changes()) {
-            changes.add(ActionJson.change(change, context.objectMapper()));
+            ActionJson.writeChange(output, "changes", change);
         }
-        return output;
+        return output.build();
     }
 }

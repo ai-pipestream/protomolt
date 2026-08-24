@@ -2,15 +2,16 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.CheckpointReference;
 import ai.pipestream.proto.delegation.v1.OfferTaskRequest;
 import ai.pipestream.proto.delegation.v1.OfferTaskResponse;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.time.Duration;
 import java.util.UUID;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Offers one bounded task attempt to an admitted worker, with its lease. */
 final class DelegationOfferAction extends DelegationAction {
@@ -42,11 +43,16 @@ final class DelegationOfferAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return OfferTaskResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // worker_id, spec and the lease bound are declared on the request message, so the
         // contract check in parse refuses a malformed offer before it reaches here.
-        OfferTaskRequest request =
-                DelegationActionJson.parse(input, OfferTaskRequest.newBuilder(), name()).build();
+        OfferTaskRequest request = CatalogContract.as(
+                input, OfferTaskRequest.getDefaultInstance(), name());
         // proto3 cannot distinguish an omitted task id from an empty one, and both mean the
         // same thing here: a new task, whose id the coordinator generates.
         String taskId = request.getTaskId().isEmpty()
@@ -65,10 +71,10 @@ final class DelegationOfferAction extends DelegationAction {
         } catch (RuntimeException e) {
             throw failure(request.getWorkerId(), e);
         }
-        return DelegationActionJson.render(OfferTaskResponse.newBuilder()
+        return OfferTaskResponse.newBuilder()
                 .setOk(true)
                 .setTaskId(taskId)
                 .setOffer(offer)
-                .build(), context);
+                .build();
     }
 }

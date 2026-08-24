@@ -1,15 +1,16 @@
 package ai.pipestream.proto.actions;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 /** Sink for incrementally produced results of a {@link StreamingAction}. */
 @FunctionalInterface
 public interface StreamEmitter {
 
     /**
-     * Accepts one result document as it is produced.
+     * Accepts one result as it is produced.
      *
-     * @param node the result fragment; shape is defined by the emitting action
+     * @param message a {@link ProtoAction#responseType()} message
+     * @throws ActionException when the emission cannot be rendered for the front receiving it
      */
-    void emit(ObjectNode node);
+    void emit(Message message) throws ActionException;
 }

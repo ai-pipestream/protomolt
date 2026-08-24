@@ -136,7 +136,9 @@ class ClusterActionsTest {
     }
 
     private ObjectNode execute(String action, String field, Message message) throws Exception {
-        return catalog.execute(action, MAPPER.createObjectNode().set(field, render(message)));
+        ObjectNode envelope = MAPPER.createObjectNode();
+        envelope.set(field, render(message));
+        return catalog.execute(action, envelope);
     }
 
     private static ObjectNode render(Message message) throws Exception {
