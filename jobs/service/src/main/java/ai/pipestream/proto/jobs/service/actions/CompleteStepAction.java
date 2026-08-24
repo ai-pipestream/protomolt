@@ -1,6 +1,7 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -68,29 +69,15 @@ public final class CompleteStepAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("jobId")
-                .put("type", "string")
-                .put("description", "The job's uuid.");
-        properties.putObject("stepName")
-                .put("type", "string")
-                .put("description", "The parked step to complete (the job's "
-                        + "outstandingStep).");
-        properties.putObject("response")
-                .put("type", "object")
-                .put("description", "The step's response, as proto3 JSON of its output "
-                        + "type.");
-        schema.putArray("required").add("jobId").add("stepName").add("response");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("CompleteStepRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        // Availability first: a node with no job store cannot serve any request, so
+        // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
+        CatalogContract.check(input, "CompleteStepRequest", name());
         String jobIdText = ActionSupport.requireString(input, "jobId");
         String stepName = ActionSupport.requireString(input, "stepName");
         ObjectNode response = ActionSupport.requireObject(input, "response");

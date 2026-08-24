@@ -1,6 +1,7 @@
 package ai.pipestream.proto.grpc.invoke;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -64,27 +65,12 @@ public final class ReflectAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("target")
-                .put("type", "string")
-                .put("description", "gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.");
-        properties.putObject("deadlineMs")
-                .put("type", "integer")
-                .put("description", "Reflection deadline in milliseconds; default " + DEFAULT_DEADLINE_MS + ".");
-        properties.putObject("tls")
-                .put("type", "boolean")
-                .put("default", false)
-                .put("description", "Connect with TLS (system trust roots); plaintext by default.");
-        schema.putArray("required").add("target");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("ReflectRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "ReflectRequest", name());
         JsonNode targetNode = input.get("target");
         if (targetNode == null || !targetNode.isTextual() || targetNode.asText().isBlank()) {
             throw invalidInput("'target' must be a non-empty string", "/target");

@@ -1,6 +1,7 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -21,6 +22,13 @@ import java.util.List;
  * call then answers {@code unavailable}.
  */
 public final class ListJobsAction implements ProtoAction {
+
+    /**
+     * Proto enum values carry their type name, so the wire form of COMPLETED is
+     * JOB_STATUS_COMPLETED. The store's status column does not, and
+     * JOB_STATUS_UNSPECIFIED reduces to no filter at all.
+     */
+    private static final String STATUS_PREFIX = "JOB_STATUS_";
 
     /** The default page size. */
     public static final int DEFAULT_LIMIT = 50;
@@ -57,32 +65,25 @@ public final class ListJobsAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("status")
-                .put("type", "string")
-                .put("description", "Restrict to one status: QUEUED, RUNNING, WAITING, "
-                        + "COMPLETED, FAILED, or DEAD.");
-        properties.putObject("workflowName")
-                .put("type", "string")
-                .put("description", "Restrict to one workflow.");
-        properties.putObject("limit")
-                .put("type", "integer")
-                .put("description", "Page size; default " + DEFAULT_LIMIT + ", capped at "
-                        + MAX_LIMIT + ".");
-        properties.putObject("offset")
-                .put("type", "integer")
-                .put("description", "Rows to skip.");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("ListJobsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        // Availability first: a node with no job store cannot serve any request, so
+        // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
+        CatalogContract.check(input, "ListJobsRequest", name());
+        // The contract names the status with an enum, so an unknown one is refused
+        // before the verb runs; the store's own vocabulary drops the type-name prefix
+        // that proto enum values carry.
         String status = ActionSupport.optionalString(input, "status");
+        if (status != null && status.startsWith(STATUS_PREFIX)) {
+            status = status.substring(STATUS_PREFIX.length());
+        }
+        if (status != null && status.isEmpty()) {
+            status = null;
+        }
         if (status != null && !WorkflowRunRecord.STATUSES.contains(status)) {
             throw ActionSupport.invalidInput("'status' must be one of "
                     + String.join(", ", WorkflowRunRecord.STATUSES.stream().sorted().toList())

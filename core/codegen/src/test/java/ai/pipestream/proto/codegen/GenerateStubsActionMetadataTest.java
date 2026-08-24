@@ -42,7 +42,6 @@ class GenerateStubsActionMetadataTest {
         assertThat(schema.get("$schema").asText())
                 .isEqualTo("https://json-schema.org/draft/2020-12/schema");
         assertThat(schema.get("type").asText()).isEqualTo("object");
-        assertThat(schema.get("additionalProperties").asBoolean()).isFalse();
         assertThat(schema.path("required")).hasSize(1);
         assertThat(schema.path("required").get(0).asText()).isEqualTo("schema");
         assertThat(schema.path("properties").properties())
@@ -55,13 +54,13 @@ class GenerateStubsActionMetadataTest {
         JsonNode generators = action.inputSchema().path("properties").path("generators");
 
         assertThat(generators.path("type").asText()).isEqualTo("array");
-        assertThat(generators.path("minItems").asInt()).isEqualTo(1);
-        // The enum is attached via putPOJO; convertValue normalizes it to a plain list.
-        List<String> enumValues = MAPPER.convertValue(
-                generators.path("items").path("enum"),
-                MAPPER.getTypeFactory().constructCollectionType(List.class, String.class));
-        assertThat(enumValues).containsExactlyInAnyOrder(
-                "java", "kotlin", "grpc-java", "python", "cpp", "csharp", "ruby", "php", "objc");
+        // Each generator is a CodeGenerator value. proto3 JSON accepts an enum by name or
+        // by number, so the item schema is the choice between the two; the names are what
+        // a caller writes.
+        assertThat(generators.path("items").toString())
+                .contains("CODE_GENERATOR_JAVA")
+                .contains("CODE_GENERATOR_GRPC_JAVA")
+                .contains("CODE_GENERATOR_OBJC");
     }
 
     @Test

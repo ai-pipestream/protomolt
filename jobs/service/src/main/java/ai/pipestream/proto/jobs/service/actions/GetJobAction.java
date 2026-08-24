@@ -1,6 +1,7 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -50,20 +51,15 @@ public final class GetJobAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        schema.putObject("properties").putObject("jobId")
-                .put("type", "string")
-                .put("description", "The job's uuid.");
-        schema.putArray("required").add("jobId");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("GetJobRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        // Availability first: a node with no job store cannot serve any request, so
+        // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
+        CatalogContract.check(input, "GetJobRequest", name());
         String jobIdText = ActionSupport.requireString(input, "jobId");
         UUID jobId;
         try {
