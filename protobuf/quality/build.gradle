@@ -11,6 +11,6 @@ dependencies {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.35.1"
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
     }
 }

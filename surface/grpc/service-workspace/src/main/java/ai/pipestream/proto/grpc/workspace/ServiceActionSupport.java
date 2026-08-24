@@ -65,20 +65,6 @@ final class ServiceActionSupport {
         return value.asInt();
     }
 
-    static ServiceProfile parseProfile(ObjectNode input) throws ActionException {
-        JsonNode node = input.get("profile");
-        if (!(node instanceof ObjectNode)) {
-            throw invalid("'profile' must be an object", "/profile");
-        }
-        ServiceProfile.Builder profile = ServiceProfile.newBuilder();
-        try {
-            JsonFormat.parser().merge(node.toString(), profile);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-            throw invalid("'profile' is not valid service-profile JSON: " + e.getMessage(),
-                    "/profile");
-        }
-        return profile.build();
-    }
 
     static ServiceEndpoint endpoint(ServiceProfile profile, String requested) throws ActionException {
         if (profile.getEndpointsCount() == 0) {
@@ -240,15 +226,6 @@ final class ServiceActionSupport {
         return schema;
     }
 
-    static ObjectNode nameSchema() {
-        ObjectNode schema = baseSchema();
-        schema.putObject("properties").putObject("name")
-                .put("type", "string")
-                .put("pattern", "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
-        schema.putArray("required").add("name");
-        schema.put("additionalProperties", false);
-        return schema;
-    }
 
     static ActionException invalid(String message, String pointer) {
         ObjectNode details = JsonNodeFactory.instance.objectNode();

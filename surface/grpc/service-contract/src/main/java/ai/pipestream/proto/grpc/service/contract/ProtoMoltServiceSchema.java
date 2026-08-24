@@ -1,4 +1,4 @@
-package ai.pipestream.proto.grpc.service;
+package ai.pipestream.proto.grpc.service.contract;
 
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
@@ -33,7 +33,8 @@ public final class ProtoMoltServiceSchema {
      * here.
      */
     private static final List<String> IMPORTED_RESOURCE_PATHS = List.of(
-            "ai/pipestream/proto/grpc/profile/v1/service_profile.proto");
+            "ai/pipestream/proto/grpc/profile/v1/service_profile.proto",
+            "ai/pipestream/proto/validate/v1/validate.proto");
 
     /** Fully qualified service name. */
     public static final String SERVICE_FULL_NAME = "ai.pipestream.proto.grpc.service.v1.ProtoMoltService";

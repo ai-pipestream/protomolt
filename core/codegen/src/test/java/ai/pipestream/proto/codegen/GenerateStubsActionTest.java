@@ -36,7 +36,10 @@ class GenerateStubsActionTest {
         if (generators.length > 0) {
             var array = input.putArray("generators");
             for (String generator : generators) {
-                array.add(generator);
+                // Call sites name a generator the way a person would; the wire form is the
+                // proto enum value, which carries its type name.
+                array.add("CODE_GENERATOR_"
+                        + generator.toUpperCase(java.util.Locale.ROOT).replace('-', '_'));
             }
         }
         return input;
@@ -173,7 +176,9 @@ class GenerateStubsActionTest {
         assertThatThrownBy(() -> action.execute(input("rust"), ActionContext.create()))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
-                    assertThat(e.getMessage()).contains("java, kotlin, grpc-java, python, cpp, csharp, ruby, php, objc");
+                    // The refusal names the enum whose vocabulary the value failed. The
+                    // values themselves are on the published schema, derived from it.
+                    assertThat(e.getMessage()).contains("CodeGenerator");
                 });
     }
 

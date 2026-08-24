@@ -4,7 +4,7 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.Caller;
 import ai.pipestream.proto.grpc.service.CatalogBridge;
-import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.http.rest.ApiTokenRequirement;
 import ai.pipestream.proto.http.rest.ForbiddenProtoRestException;
 import ai.pipestream.proto.http.rest.MalformedRequestException;

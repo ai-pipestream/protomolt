@@ -51,7 +51,7 @@ class MaskMessageActionTest {
                  "message": {"id": "e-1",
                              "payload": {"@type": "type.googleapis.com/actions.test.Person",
                                          "name": "Pat Smith", "age": 30}},
-                 "classes": ["pii"], "strategy": "redact"}
+                 "classes": ["pii"], "strategy": "MASK_STRATEGY_REDACT"}
                 """);
         ((ObjectNode) input.get("schema").get("sources"))
                 .put("mask/any/envelope.proto", ENVELOPE_PROTO);
@@ -99,13 +99,13 @@ class MaskMessageActionTest {
     void encryptRoundTripsWithTheKeyAndOnlyTheKey() throws Exception {
         String key = java.util.Base64.getEncoder().encodeToString(new byte[16]);
         ObjectNode sealed = catalog.execute("mask-message", maskInput(
-                "\"classes\": [\"pii\"], \"strategy\": \"encrypt\", \"key\": \"" + key + "\""));
+                "\"classes\": [\"pii\"], \"strategy\": \"MASK_STRATEGY_ENCRYPT\", \"key\": \"" + key + "\""));
         String ciphertext = sealed.get("message").get("email").asText();
         assertThat(ciphertext).isNotEqualTo("pat@example.com").isNotEmpty();
 
         // Decrypt with the same key restores the original...
         ObjectNode input = maskInput(
-                "\"classes\": [\"pii\"], \"strategy\": \"decrypt\", \"key\": \"" + key + "\"");
+                "\"classes\": [\"pii\"], \"strategy\": \"MASK_STRATEGY_DECRYPT\", \"key\": \"" + key + "\"");
         ((ObjectNode) input.get("message")).setAll((ObjectNode) sealed.get("message"));
         ObjectNode opened = catalog.execute("mask-message", input);
         assertThat(opened.get("message").get("email").asText()).isEqualTo("pat@example.com");
@@ -114,7 +114,7 @@ class MaskMessageActionTest {
         String wrong = java.util.Base64.getEncoder().encodeToString(
                 "0123456789abcdef".getBytes());
         ObjectNode tampered = maskInput(
-                "\"classes\": [\"pii\"], \"strategy\": \"decrypt\", \"key\": \"" + wrong + "\"");
+                "\"classes\": [\"pii\"], \"strategy\": \"MASK_STRATEGY_DECRYPT\", \"key\": \"" + wrong + "\"");
         ((ObjectNode) tampered.get("message")).setAll((ObjectNode) sealed.get("message"));
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         catalog.execute("mask-message", tampered))
@@ -125,7 +125,7 @@ class MaskMessageActionTest {
     void aKeyOfTheWrongLengthPointsAtTheKey() throws Exception {
         String tooShort = java.util.Base64.getEncoder().encodeToString(new byte[7]);
         assertThatThrownBy(() -> catalog.execute("mask-message", maskInput(
-                "\"classes\": [\"pii\"], \"strategy\": \"encrypt\", \"key\": \"" + tooShort + "\"")))
+                "\"classes\": [\"pii\"], \"strategy\": \"MASK_STRATEGY_ENCRYPT\", \"key\": \"" + tooShort + "\"")))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
                     assertThat(e.details().orElseThrow().get("pointer").asText()).isEqualTo("/key");
@@ -135,7 +135,7 @@ class MaskMessageActionTest {
     @Test
     void encryptWithoutAKeyPointsAtTheKey() throws Exception {
         assertThatThrownBy(() -> catalog.execute("mask-message",
-                maskInput("\"classes\": [\"pii\"], \"strategy\": \"encrypt\"")))
+                maskInput("\"classes\": [\"pii\"], \"strategy\": \"MASK_STRATEGY_ENCRYPT\"")))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.details().orElseThrow().get("pointer").asText()).isEqualTo("/key");
                 });
@@ -149,7 +149,7 @@ class MaskMessageActionTest {
     void decryptingAValueThatIsNotAnEnvelopePointsAtTheMessage() throws Exception {
         String key = java.util.Base64.getEncoder().encodeToString(new byte[16]);
         assertThatThrownBy(() -> catalog.execute("mask-message", maskInput(
-                "\"classes\": [\"pii\"], \"strategy\": \"decrypt\", \"key\": \"" + key + "\"")))
+                "\"classes\": [\"pii\"], \"strategy\": \"MASK_STRATEGY_DECRYPT\", \"key\": \"" + key + "\"")))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
                     assertThat(e.details().orElseThrow().get("pointer").asText())
@@ -160,7 +160,7 @@ class MaskMessageActionTest {
     @Test
     void redactMarksStringsVisibly() throws Exception {
         ObjectNode result = catalog.execute("mask-message",
-                maskInput("\"classes\": [\"pii\", \"secret\"], \"strategy\": \"redact\""));
+                maskInput("\"classes\": [\"pii\", \"secret\"], \"strategy\": \"MASK_STRATEGY_REDACT\""));
         JsonNode message = result.get("message");
         assertThat(message.get("email").asText()).isEqualTo("***");
         assertThat(message.get("ssn").asText()).isEqualTo("***");

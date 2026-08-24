@@ -290,6 +290,8 @@ project(':protomolt-grpc-channel-policy').projectDir = file('surface/grpc/channe
 
 include 'protomolt-grpc-service'
 project(':protomolt-grpc-service').projectDir = file('surface/grpc/service')
+include 'protomolt-grpc-service-contract'
+project(':protomolt-grpc-service-contract').projectDir = file('surface/grpc/service-contract')
 
 include 'protomolt-grpc-service-profile'
 project(':protomolt-grpc-service-profile').projectDir = file('surface/grpc/service-profile')

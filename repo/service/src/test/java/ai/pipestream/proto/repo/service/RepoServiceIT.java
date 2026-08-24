@@ -58,6 +58,10 @@ import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.StringValue;
 import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
+import io.grpc.Metadata;
+import io.grpc.Server;
+import io.grpc.stub.MetadataUtils;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -125,6 +129,56 @@ class RepoServiceIT {
     static void tearDown() {
         channel.shutdownNow();
         services.close();
+    }
+
+    // --------------------------------------------------------- authentication
+
+    /**
+     * The TCP listener holds every account's documents and every claim-check blob, so with
+     * a credential configured it must refuse a call that does not present one. The
+     * in-process transport the rest of this class uses stays open deliberately: it has no
+     * socket, and a caller already inside the JVM is past every boundary a credential
+     * could draw.
+     */
+    @Test
+    void theGuardedTcpListenerRefusesACallWithoutTheCredential() throws Exception {
+        String token = "repo-it-token";
+        Server guarded = services.startNetty(0, token, null);
+        ManagedChannel plain = ManagedChannelBuilder
+                .forAddress("127.0.0.1", guarded.getPort()).usePlaintext().build();
+        try {
+            DriveServiceGrpc.DriveServiceBlockingStub anonymous =
+                    DriveServiceGrpc.newBlockingStub(plain);
+
+            assertThatThrownBy(() -> anonymous.listDrives(
+                            ListDrivesRequest.newBuilder().setAccountId("acct-auth").build()))
+                    .isInstanceOf(StatusRuntimeException.class)
+                    .satisfies(thrown -> assertThat(
+                            ((StatusRuntimeException) thrown).getStatus().getCode())
+                            .isEqualTo(Status.Code.UNAUTHENTICATED));
+
+            Metadata credential = new Metadata();
+            credential.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER),
+                    token);
+            DriveServiceGrpc.DriveServiceBlockingStub authenticated =
+                    DriveServiceGrpc.newBlockingStub(plain).withInterceptors(
+                            MetadataUtils.newAttachHeadersInterceptor(credential));
+
+            assertThat(authenticated.listDrives(
+                    ListDrivesRequest.newBuilder().setAccountId("acct-auth").build()))
+                    .isNotNull();
+        } finally {
+            plain.shutdownNow();
+            guarded.shutdownNow();
+        }
+    }
+
+    /** An access policy resolves principals from credentials, so it cannot run without one. */
+    @Test
+    void anAccessPolicyResolverWithoutACredentialIsRefusedAtStartup() {
+        assertThatThrownBy(() -> services.startNetty(0, null, caller -> java.util.Optional.empty()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("api token");
     }
 
     // ------------------------------------------------------------- fixtures

@@ -12,6 +12,13 @@ import java.util.Arrays;
 /** Checks a new schema version against an old one under a compatibility mode. */
 final class CheckCompatAction implements ProtoAction {
 
+    /**
+     * Proto enum values carry their type name, so the wire form of BACKWARD is
+     * COMPATIBILITY_MODE_BACKWARD. The checker's own enum does not, and the two are
+     * otherwise the same vocabulary.
+     */
+    private static final String MODE_PREFIX = "COMPATIBILITY_MODE_";
+
     @Override
     public String name() {
         return "check-compat";
@@ -32,44 +39,21 @@ final class CheckCompatAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("old", ActionJson.schemaSourceSchema());
-        properties.set("new", ActionJson.schemaSourceSchema());
-        ObjectNode mode = properties.putObject("mode");
-        mode.put("type", "string");
-        mode.put("description", "Compatibility mode to enforce; defaults to BACKWARD.");
-        mode.put("default", "BACKWARD");
-        ArrayNode modes = mode.putArray("enum");
-        Arrays.stream(CompatibilityMode.values()).map(Enum::name).forEach(modes::add);
-        properties.putObject("includeJsonRules")
-                .put("type", "boolean")
-                .put("default", false)
-                .put("description",
-                        "Also treat canonical proto3 JSON payload breaks (field/enum name changes, "
-                                + "removals) as violations.");
-        properties.putObject("includeSourceRules")
-                .put("type", "boolean")
-                .put("default", false)
-                .put("description",
-                        "Also treat generated-code and gRPC surface breaks as violations.");
-        ActionJson.required(schema, "old", "new");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("CheckCompatRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "CheckCompatRequest", name());
         SchemaResolver.ResolvedSchema oldSchema = SchemaResolver.resolve(input, "old", context);
         SchemaResolver.ResolvedSchema newSchema = SchemaResolver.resolve(input, "new", context);
+        // The contract names the mode with an enum, so an unknown one is refused before the
+        // verb runs and whatever arrives is a value this checker already knows.
         String modeName = Inputs.optionalString(input, "mode");
-        CompatibilityMode mode;
-        try {
-            mode = modeName == null ? CompatibilityMode.BACKWARD : CompatibilityMode.valueOf(modeName);
-        } catch (IllegalArgumentException e) {
-            throw Inputs.invalidInput("Unknown compatibility mode '" + modeName + "'; expected one of "
-                    + Arrays.toString(CompatibilityMode.values()), "/mode");
-        }
+        CompatibilityMode mode = modeName == null || modeName.isBlank()
+                ? CompatibilityMode.BACKWARD
+                : CompatibilityMode.valueOf(modeName.startsWith(MODE_PREFIX)
+                        ? modeName.substring(MODE_PREFIX.length()) : modeName);
         CompatibilityChecker checker = CompatibilityChecker.builder()
                 .includeJsonRules(Inputs.optionalBoolean(input, "includeJsonRules", false))
                 .includeSourceRules(Inputs.optionalBoolean(input, "includeSourceRules", false))
@@ -78,7 +62,7 @@ final class CheckCompatAction implements ProtoAction {
                 checker.check(oldSchema.descriptorSet(), newSchema.descriptorSet(), mode);
         ObjectNode output = context.objectMapper().createObjectNode();
         output.put("compatible", result.isCompatible());
-        output.put("mode", result.mode().name());
+        output.put("mode", MODE_PREFIX + result.mode().name());
         ArrayNode violations = output.putArray("violations");
         for (SchemaChange change : result.violations()) {
             violations.add(ActionJson.change(change, context.objectMapper()));

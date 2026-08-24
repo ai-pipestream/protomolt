@@ -1,5 +1,6 @@
 package ai.pipestream.proto.grpc.service;
 
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import ai.pipestream.proto.actions.ActionContext;

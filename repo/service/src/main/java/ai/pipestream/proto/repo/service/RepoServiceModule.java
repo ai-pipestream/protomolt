@@ -44,10 +44,15 @@ public final class RepoServiceModule implements ServiceModule {
         String name = ROLE + "-" + context.nodeId();
         services.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
+        // The in-process transport needs no credential: it has no socket, and a caller
+        // already inside the JVM is past every boundary a credential could draw. The TCP
+        // listener is the one reachable from elsewhere, so that is the one guarded.
+        String apiToken = context.environment().get("PROTOMOLT_API_TOKEN");
+        String credential = apiToken == null || apiToken.isBlank() ? null : apiToken;
         return new ServiceMount() {
             @Override
             public void start() {
-                netty = services.startNetty(config.grpcPort());
+                netty = services.startNetty(config.grpcPort(), credential, null);
                 services.seedAccountDrives();
                 services.startLifecycle();
             }

@@ -8,7 +8,7 @@ import ai.pipestream.proto.authz.AccessPolicy;
 import ai.pipestream.proto.authz.AccessPolicyCallers;
 import ai.pipestream.proto.authz.Principal;
 import ai.pipestream.proto.authz.ScopeBudget;
-import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

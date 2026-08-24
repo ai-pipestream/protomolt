@@ -36,39 +36,12 @@ final class RenderIndexMappingsAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type to build the index mapping for; required unless the schema "
-                        + "already identifies a single message."));
-        ObjectNode engine = properties.putObject("engine");
-        engine.put("type", "string");
-        engine.put("description", "Target search engine for the rendered artifact.");
-        ArrayNode engines = engine.putArray("enum");
-        engines.add("opensearch");
-        engines.add("solr");
-        engines.add("lucene");
-        engines.add("qdrant");
-        ObjectNode sensitivityProp = properties.putObject("sensitivity");
-        sensitivityProp.put("type", "object");
-        sensitivityProp.put("description", "OpenSearch only: apply schema-declared "
-                + "sensitivity classes — {\"encrypt\": [...]} renders those fields as "
-                + "store-only ciphertext containers (index: false), {\"mask\": [...]} and "
-                + "{\"exclude\": [...]} emit a security-plugin role fragment "
-                + "(masked_fields / fls). {\"maskFormat\": {class: suffix}} appends a "
-                + "per-class masked_fields format, e.g. '::SHA-512' or "
-                + "'::/regex/::replacement'. {\"role\": {\"indexPatterns\": [...], "
-                + "\"allowedActions\": [...]}} additionally renders security.role, a "
-                + "complete role body ready to PUT at _plugins/_security/api/roles/{name}. "
-                + "The response becomes {mappings, security}.");
-        ActionJson.required(schema, "schema", "engine");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("RenderIndexMappingsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "RenderIndexMappingsRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         String engine = Inputs.requireString(input, "engine");
@@ -86,8 +59,10 @@ final class RenderIndexMappingsAction implements ProtoAction {
     private static ObjectNode renderFor(String engine, IndexMapping mapping, Descriptor descriptor,
                                         ObjectNode input, ActionContext context)
             throws ActionException {
+        // The contract names the engine with an enum and refuses the unset value, so
+        // every case here is one this verb renders.
         return switch (engine) {
-            case "opensearch" -> {
+            case "INDEX_ENGINE_OPENSEARCH" -> {
                 ObjectNode mappings = context.objectMapper()
                         .valueToTree(new OpenSearchMappingGenerator().generate(mapping));
                 ObjectNode sensitivity = Inputs.optionalObject(input, "sensitivity");
@@ -96,9 +71,9 @@ final class RenderIndexMappingsAction implements ProtoAction {
                         : opensearchWithSensitivity(mappings, mapping, descriptor,
                                 sensitivity, context);
             }
-            case "solr" -> solr(mapping, context);
-            case "lucene" -> lucene(mapping, context);
-            case "qdrant" -> qdrant(mapping, context);
+            case "INDEX_ENGINE_SOLR" -> solr(mapping, context);
+            case "INDEX_ENGINE_LUCENE" -> lucene(mapping, context);
+            case "INDEX_ENGINE_QDRANT" -> qdrant(mapping, context);
             default -> throw Inputs.invalidInput(
                     "Unknown engine '" + engine + "'; expected one of opensearch, solr, lucene, qdrant",
                     "/engine");

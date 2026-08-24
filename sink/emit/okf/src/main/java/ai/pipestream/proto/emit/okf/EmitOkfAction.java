@@ -1,6 +1,7 @@
 package ai.pipestream.proto.emit.okf;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
@@ -46,25 +47,12 @@ public final class EmitOkfAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        ObjectNode schemaProperty = properties.putObject("schema");
-        schemaProperty.put("type", "object");
-        schemaProperty.put("description", "The schema to render: {type} for a registered "
-                + "type, {sources} for inline .proto files, or {descriptorSetBase64}.");
-        properties.putObject("title")
-                .put("type", "string")
-                .put("description", "Heading of the bundle's root index.md; default "
-                        + "'Schema knowledge bundle'.");
-        schema.putArray("required").add("schema");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("EmitOkfRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "EmitOkfRequest", name());
         SchemaResolver.ResolvedSchema resolved = SchemaResolver.resolve(input, "schema", context);
         JsonNode titleNode = input.get("title");
         String title = titleNode != null && titleNode.isTextual() ? titleNode.asText() : null;

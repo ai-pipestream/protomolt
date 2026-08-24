@@ -1,6 +1,7 @@
 package ai.pipestream.proto.codegen;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
@@ -30,6 +31,13 @@ import java.util.Set;
  */
 public final class GenerateStubsAction implements ProtoAction {
 
+    /**
+     * Proto enum values carry their type name, so the wire form of the Java generator is
+     * CODE_GENERATOR_JAVA. The plugin enum does not, and the two are otherwise the same
+     * vocabulary.
+     */
+    private static final String GENERATOR_PREFIX = "CODE_GENERATOR_";
+
     @Override
     public String name() {
         return "generate-stubs";
@@ -50,39 +58,12 @@ public final class GenerateStubsAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        ObjectNode schemaSource = properties.putObject("schema");
-        schemaSource.put("type", "object");
-        schemaSource.put("description", "Schema source; provide exactly one of 'type', 'sources', "
-                + "'descriptorSetBase64'. A registry subject's text passed as 'sources' works "
-                + "for any registered schema.");
-        ObjectNode generators = properties.putObject("generators");
-        generators.put("type", "array");
-        generators.put("description", "Generators to run, in order; default [\"java\"].");
-        generators.putObject("items")
-                .put("type", "string")
-                .putPOJO("enum", List.of("java", "kotlin", "grpc-java", "python", "cpp", "csharp", "ruby", "php", "objc"));
-        generators.put("minItems", 1);
-        ObjectNode files = properties.putObject("files");
-        files.put("type", "array");
-        files.put("description", "Proto file paths within the schema to generate for; defaults "
-                + "to every non-google file.");
-        files.putObject("items").put("type", "string");
-        ObjectNode parameter = properties.putObject("parameter");
-        parameter.put("type", "string");
-        parameter.put("description", "Optional generator parameter string, as protoc's "
-                + "--<gen>_opt (applied to every requested generator).");
-        ArrayNode required = schema.putArray("required");
-        required.add("schema");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("GenerateStubsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "GenerateStubsRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         List<WasmProtoc.Plugin> plugins = parseGenerators(input);
         // protoc requires every transitive dependency present, dependencies before dependents;
@@ -157,20 +138,18 @@ public final class GenerateStubsAction implements ProtoAction {
         }
         List<WasmProtoc.Plugin> plugins = new ArrayList<>();
         for (JsonNode element : node) {
+            // The contract names generators with an enum, so an unknown one is refused
+            // before the verb runs. Proto enum values carry their type name, and the
+            // remainder is the plugin's own name with dashes written as underscores.
             String name = element.asText("");
-            switch (name.toLowerCase(Locale.ROOT)) {
-                case "java" -> plugins.add(WasmProtoc.Plugin.JAVA);
-                case "kotlin" -> plugins.add(WasmProtoc.Plugin.KOTLIN);
-                case "grpc-java" -> plugins.add(WasmProtoc.Plugin.GRPC_JAVA);
-                case "python" -> plugins.add(WasmProtoc.Plugin.PYTHON);
-                case "cpp" -> plugins.add(WasmProtoc.Plugin.CPP);
-                case "csharp" -> plugins.add(WasmProtoc.Plugin.CSHARP);
-                case "ruby" -> plugins.add(WasmProtoc.Plugin.RUBY);
-                case "php" -> plugins.add(WasmProtoc.Plugin.PHP);
-                case "objc" -> plugins.add(WasmProtoc.Plugin.OBJC);
-                default -> throw invalidInput("Unknown generator '" + name
-                        + "'; supported: java, kotlin, grpc-java, python, cpp, csharp, ruby, php, objc",
-                        "/generators");
+            String value = name.startsWith(GENERATOR_PREFIX)
+                    ? name.substring(GENERATOR_PREFIX.length()) : name;
+            try {
+                plugins.add(WasmProtoc.Plugin.valueOf(value.toUpperCase(Locale.ROOT)
+                        .replace('-', '_')));
+            } catch (IllegalArgumentException e) {
+                throw invalidInput("'" + name + "' names a generator this build does not "
+                        + "embed", "/generators");
             }
         }
         return plugins;

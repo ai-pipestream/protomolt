@@ -59,7 +59,7 @@ public final class MetricActions {
      */
     private static ObjectNode schemaFor(Descriptor request) {
         return new ObjectMapper().valueToTree(
-                ProtoJsonSchemaGenerator.create().generate(request));
+                ProtoJsonSchemaGenerator.create().generateRooted(request));
     }
 
     /**

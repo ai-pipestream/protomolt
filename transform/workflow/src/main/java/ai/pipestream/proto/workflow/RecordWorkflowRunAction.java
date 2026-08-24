@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -46,19 +47,12 @@ final class RecordWorkflowRunAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("workflow", RunWorkflowAction.workflowSchema());
-        properties.putObject("input").put("type", "object");
-        WorkflowActionJson.identitySchema(properties, "runId");
-        WorkflowActionJson.identitySchema(properties, "workflowVersion");
-        schema.putArray("required").add("workflow").add("input").add("runId");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("RecordWorkflowRunRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "RecordWorkflowRunRequest", name());
         if (artifacts == null || runs == null) {
             throw WorkflowActionJson.unavailable("workflow run recording",
                     "start protomolt-serve with --workflow-workspace");

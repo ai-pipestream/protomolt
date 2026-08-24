@@ -1,6 +1,7 @@
 package ai.pipestream.proto.inference.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -47,19 +48,12 @@ public final class DescribeModelAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        schema.putObject("properties").putObject("model")
-                .put("type", "string")
-                .put("description", "The catalog id to describe.");
-        schema.putArray("required").add("model");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("InferenceDescribeModelRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "InferenceDescribeModelRequest", name());
         InferenceActionSupport.requireEngines(engines);
         String model = InferenceActionSupport.requireString(input, "model");
         ObjectNode result = JsonNodeFactory.instance.objectNode();

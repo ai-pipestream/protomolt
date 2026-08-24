@@ -89,12 +89,12 @@ class DemoModeTest {
     @Test
     void indexMappingsRenderFromTheDemoHints() throws Exception {
         JsonNode result = post("/grpc-json/ProtoMoltService/RenderIndexMappings", """
-                {"schema": {"type": "demo.shop.v1.Order"}, "engine": "opensearch"}
+                {"schema": {"type": "demo.shop.v1.Order"}, "engine": "INDEX_ENGINE_OPENSEARCH"}
                 """);
         // RenderIndexMappings returns RenderIndexMappingsResponse: the engine it rendered for,
         // and the artifact under 'mappings'. The artifact's own shape is the engine's, not
         // ProtoMolt's.
-        assertThat(result.path("engine").asText()).isEqualTo("opensearch");
+        assertThat(result.path("engine").asText()).isEqualTo("INDEX_ENGINE_OPENSEARCH");
         assertThat(result.path("mappings").path("properties").isObject()).isTrue();
     }
 

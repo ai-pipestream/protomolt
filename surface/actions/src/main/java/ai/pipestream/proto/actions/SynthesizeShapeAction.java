@@ -39,66 +39,28 @@ final class SynthesizeShapeAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("mode")
-                .put("type", "string")
-                .put("description", "The shape to synthesize: 'envelope', 'projection', or "
-                        + "'union'.");
-        properties.putObject("name")
-                .put("type", "string")
-                .put("description",
-                        "Fully qualified name of the synthesized message, e.g. "
-                                + "'derived.v1.OrderWithCustomer'.");
-        ObjectNode sources = properties.putObject("sources");
-        sources.put("type", "array");
-        sources.put("description", "The named source types, in shape order.");
-        ObjectNode source = sources.putObject("items");
-        source.put("type", "object");
-        ObjectNode sourceProperties = source.putObject("properties");
-        sourceProperties.putObject("name")
-                .put("type", "string")
-                .put("description", "Scope name; becomes the field or case name.");
-        sourceProperties.set("schema", ActionJson.schemaSourceSchema());
-        sourceProperties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type; required unless the schema identifies one."));
-        source.putArray("required").add("name").add("schema");
-        ObjectNode fields = properties.putObject("fields");
-        fields.put("type", "array");
-        fields.put("description", "Projection only: the projected fields, each typed by its "
-                + "source path.");
-        ObjectNode field = fields.putObject("items");
-        field.put("type", "object");
-        ObjectNode fieldProperties = field.putObject("properties");
-        fieldProperties.putObject("name")
-                .put("type", "string")
-                .put("description", "Field name on the synthesized message.");
-        fieldProperties.putObject("from")
-                .put("type", "string")
-                .put("description", "Scoped source path the field's type and value come "
-                        + "from, e.g. 'order.ship_to.city'.");
-        field.putArray("required").add("name").add("from");
-        ActionJson.required(schema, "mode", "name", "sources");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("SynthesizeShapeRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "SynthesizeShapeRequest", name());
         String mode = Inputs.requireString(input, "mode");
         String name = Inputs.requireString(input, "name");
         List<ShapeSynthesizer.NamedType> sources = namedSources(input, context);
         ShapeSynthesizer synthesizer = new ShapeSynthesizer();
         ShapeSynthesizer.SynthesizedShape shape;
         try {
+            // The contract names the mode with an enum and refuses the unset value, so
+            // every case here is one the synthesizer implements.
             shape = switch (mode) {
-                case "envelope" -> synthesizer.envelope(name, sources);
-                case "projection" -> synthesizer.projection(name, sources,
+                case "SHAPE_MODE_ENVELOPE" -> synthesizer.envelope(name, sources);
+                case "SHAPE_MODE_PROJECTION" -> synthesizer.projection(name, sources,
                         projectedFields(input));
-                case "union" -> synthesizer.taggedUnion(name, sources);
+                case "SHAPE_MODE_UNION" -> synthesizer.taggedUnion(name, sources);
                 default -> throw Inputs.invalidInput(
-                        "'mode' must be 'envelope', 'projection', or 'union'; got '"
-                                + mode + "'", "/mode");
+                        "'mode' names a shape this synthesizer does not build: " + mode,
+                        "/mode");
             };
         } catch (IllegalArgumentException e) {
             throw Inputs.invalidInput(e.getMessage(), "/sources");

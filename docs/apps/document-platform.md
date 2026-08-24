@@ -189,7 +189,8 @@ registry and submits through the jobs role like any other workflow.
 ## The operator token and access policy
 
 `PROTOMOLT_API_TOKEN` makes the node guarded: the registry's HTTP
-surface and the search and metric gRPC servers demand a credential, and
+surface, repo-service's TCP listener and bulk upload route, and the
+search and metric gRPC servers demand a credential, and
 the node's own outbound calls — remote-role channels, the boot publish,
 the config lane's pulls — present the same token, so a split-role fleet
 stays whole when every node is guarded. `PROTOMOLT_ACCESS_POLICY` names
@@ -203,6 +204,19 @@ console demands a browser login bound to a policy principal holding
 session's own credential to the operations panel's registry proxy —
 see [the console](../search/service.md#the-console). Both variables
 unset is the open, trusted-network node.
+
+Repo-service is worth stating separately because of what it holds: every
+account's documents and every claim-check blob. On a guarded node its TCP
+listener requires the token on every call, reflection included, since
+reflection enumerates the very RPCs being guarded; so does the streaming
+upload route, which writes into any account's drive. Its in-process
+transport stays open by design, because it has no socket and a caller
+already inside the JVM is past every boundary a credential could draw. A
+repository reachable from outside the node's own network should always
+run guarded, whatever the rest of the node does. Running it standalone
+without the token logs a warning at boot rather than failing, so an
+existing trusted-network deployment keeps working while saying plainly
+what it is.
 
 A policy principal's `metric_access` section drives the metric role's
 compile-time rewrite on the same guarded node — denied members and

@@ -1,5 +1,6 @@
 package ai.pipestream.proto.grpc.service;
 
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.grpc.invoke.ReflectionClient;
@@ -231,7 +232,7 @@ class ProtoMoltGrpcServiceTest {
                    {"name": "other", "schema": {"sources": {"shop/v1/order.proto": %s}},
                     "type": "shop.v1.Order", "message": {"id": "o-2", "qty": 4}}
                  ],
-                 "shape": {"mode": "projection", "name": "derived.v1.Pair",
+                 "shape": {"mode": "SHAPE_MODE_PROJECTION", "name": "derived.v1.Pair",
                            "fields": [{"name": "left_id", "from": "order.id"},
                                       {"name": "right_id", "from": "other.id"}]},
                  "celRules": [{"selector": "order.qty * other.qty", "target": "left_id"}]}
@@ -300,9 +301,9 @@ class ProtoMoltGrpcServiceTest {
         JsonNode result = call("CheckCompat", """
                 {"old": {"sources": {"shop/v1/order.proto": %s}},
                  "new": {"sources": {"shop/v1/order.proto": %s}},
-                 "mode": "BACKWARD"}
+                 "mode": "COMPATIBILITY_MODE_BACKWARD"}
                 """.formatted(oldProto, newProto));
-        assertThat(result.path("mode").asText()).isEqualTo("BACKWARD");
+        assertThat(result.path("mode").asText()).isEqualTo("COMPATIBILITY_MODE_BACKWARD");
         assertThat(result.path("changes").findValuesAsText("ruleId")).isNotEmpty();
     }
 

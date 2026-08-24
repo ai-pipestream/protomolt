@@ -1,6 +1,6 @@
 package ai.pipestream.proto.serve;
 
-import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

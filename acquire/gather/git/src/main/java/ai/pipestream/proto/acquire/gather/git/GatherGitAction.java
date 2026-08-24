@@ -1,6 +1,8 @@
 package ai.pipestream.proto.acquire.gather.git;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.sources.CompiledProtos;
@@ -62,33 +64,13 @@ public final class GatherGitAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("repo")
-                .put("type", "string")
-                .put("description", "Git repository URL (https or ssh), e.g. "
-                        + "'https://github.com/kserve/open-inference-protocol.git'.");
-        properties.putObject("ref")
-                .put("type", "string")
-                .put("description", "Branch, tag, or commit SHA; default 'main'.");
-        ObjectNode paths = properties.putObject("paths");
-        paths.put("type", "array");
-        paths.put("description", "Specific .proto files or directories to gather, relative "
-                + "to 'subdir'; default: every .proto under 'subdir'.");
-        paths.putObject("items").put("type", "string");
-        properties.putObject("subdir")
-                .put("type", "string")
-                .put("description", "Directory within the repository that import paths are "
-                        + "relative to; default 'proto'. Use '.' for the repository root.");
-        schema.putArray("required").add("repo");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("GatherGitRequest");
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) {
+    public ObjectNode execute(ObjectNode input, ActionContext context)
+            throws ActionException {
+        CatalogContract.check(input, "GatherGitRequest", name());
         ObjectNode result = context.objectMapper().createObjectNode();
         JsonNode repoNode = input.get("repo");
         if (repoNode == null || !repoNode.isTextual() || repoNode.asText().isBlank()) {

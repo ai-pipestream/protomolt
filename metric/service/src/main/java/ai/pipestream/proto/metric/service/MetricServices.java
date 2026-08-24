@@ -127,6 +127,11 @@ public final class MetricServices implements AutoCloseable {
      * credential the resolver names is scope-checked — describing and querying need
      * {@code metrics-query}, rebuilding rollups needs {@code metrics-rebuild}. Without a
      * token the service stays the open, trusted-network surface it is today.
+     *
+     * <p>Spends on its own ledger, for a surface that is the node's only enforcement
+     * point. A node that also serves another enforcement point passes one shared ledger
+     * through the overload that takes {@link ScopeBudgets}, or a principal gets a
+     * separate allowance per surface.
      */
     public Server startInProcess(String name, String apiToken, CallerResolver resolver)
             throws IOException {

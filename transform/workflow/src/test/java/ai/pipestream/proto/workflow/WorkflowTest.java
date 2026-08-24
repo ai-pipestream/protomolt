@@ -271,7 +271,12 @@ class WorkflowTest {
                 """.formatted(descriptorSet));
 
         ActionContext context = ActionContext.create();
-        ObjectNode checked = new CheckWorkflowAction().execute(input, context);
+        // check-workflow takes the workflow alone: it verifies the definition, so an input
+        // to run it with is not part of what it is being asked, and an envelope carrying
+        // one is refused rather than silently ignored.
+        ObjectNode checkInput = MAPPER.createObjectNode();
+        checkInput.set("workflow", input.get("workflow"));
+        ObjectNode checked = new CheckWorkflowAction().execute(checkInput, context);
         assertThat(checked.get("ok").asBoolean()).isTrue();
 
         ObjectNode run = new RunWorkflowAction(runner).execute(input, context);
@@ -281,7 +286,7 @@ class WorkflowTest {
         assertThat(run.get("steps")).hasSize(2);
 
         // A broken rule comes back as a typed finding, not an error.
-        ObjectNode broken = input.deepCopy();
+        ObjectNode broken = checkInput.deepCopy();
         ((ObjectNode) broken.get("workflow").get("steps").get(1))
                 .putArray("rules").add("ids = tokenizer.ids");
         ObjectNode findings = new CheckWorkflowAction().execute(broken, context);

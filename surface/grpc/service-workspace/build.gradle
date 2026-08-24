@@ -3,6 +3,10 @@ description = 'Agent-facing service registration, reflection refresh, and descri
 dependencies {
     api project(':protomolt-actions')
     api project(':protomolt-grpc-service-profile')
+    // The request messages these verbs are declared in, so an input schema is derived
+    // from the contract rather than hand-written beside it.
+    implementation project(':protomolt-grpc-service-contract')
+    implementation project(':protomolt-http-jsonschema')
 
     implementation project(':protomolt-descriptors')
     implementation project(':protomolt-grpc-invoke')

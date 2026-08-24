@@ -14,6 +14,7 @@ syntax = "proto3";
 package ai.pipestream.proto.grpc.service.v1;
 
 import "ai/pipestream/proto/grpc/profile/v1/service_profile.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/struct.proto";
 
 // The ProtoMolt toolkit: compile, introspect, validate, diff, render,
@@ -199,18 +200,46 @@ service ProtoMoltService {
 // 'descriptor_set_base64'; 'root' optionally names the entry file within
 // 'sources'.
 message SchemaSource {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "schema_source.exactly_one"
+      message: "a schema source names exactly one of type, sources, or descriptorSetBase64"
+      expression: "[this.type != '', size(this.sources) > 0, this.descriptor_set_base64 != ''].filter(set, set).size() == 1"
+    }
+  };
+
   // Fully qualified message name resolved from the shared descriptor
-  // registry, e.g. 'google.protobuf.Struct'.
-  string type = 1;
+  // registry, e.g. 'google.protobuf.Struct'. Discover names with ListTypes.
+  string type = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 
-  // Inline .proto files keyed by import path; compiled per call.
-  map<string, string> sources = 2;
+  // Inline .proto files keyed by import path; compiled per call and never
+  // registered. The cap bounds what one call asks the compiler to do.
+  map<string, string> sources = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {max_pairs: 256, keys: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
 
-  // Optional entry file within 'sources'.
-  string root = 3;
+  // Optional entry file within 'sources'. When it declares exactly one
+  // message, that message becomes the default type.
+  string root = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+    }
+  ];
 
   // Base64-encoded serialized google.protobuf.FileDescriptorSet.
-  string descriptor_set_base64 = 4;
+  string descriptor_set_base64 = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {base64: true}
+    }
+  ];
 }
 
 // A service profile in the canonical proto3 JSON form of
@@ -219,11 +248,23 @@ message SchemaSource {
 // published protobuf standard.
 message ServiceRegisterRequest {
   // Caller-authored profile; reflection replaces its schemaSource value.
-  google.protobuf.Struct profile = 1;
+  ai.pipestream.proto.grpc.profile.v1.ServiceProfile profile = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Endpoint name to reflect; empty selects the first endpoint.
-  string endpoint = 2;
-  // Reflection deadline in milliseconds; zero selects the action default.
-  int32 deadline_ms = 3;
+  string endpoint = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 128}
+    }
+  ];
+  // Reflection deadline in milliseconds; zero selects the action default of
+  // 15000. The ceiling matches the outbound channel policy, which refuses a
+  // longer deadline than 60000 whatever a caller asks for.
+  int32 deadline_ms = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
 }
 
 // One field of a reflected message, as the service workspace reports it.
@@ -314,7 +355,12 @@ message ServiceListResponse {
 // Identifies one stored service profile to inspect.
 message ServiceInspectRequest {
   // Stable profile name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
 }
 
 // One profile and the contracts reflection found behind it.
@@ -329,11 +375,25 @@ message ServiceInspectResponse {
 // Selects a registered endpoint to reflect again.
 message ServiceRefreshRequest {
   // Stable profile name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
   // Endpoint name to reflect; empty selects the first endpoint.
-  string endpoint = 2;
-  // Reflection deadline in milliseconds; zero selects the action default.
-  int32 deadline_ms = 3;
+  string endpoint = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 128}
+    }
+  ];
+  // Reflection deadline in milliseconds; zero selects the action default of
+  // 15000, and 60000 is the outbound channel policy's ceiling.
+  int32 deadline_ms = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
 }
 
 // Outcome of re-reflecting a registered endpoint.
@@ -357,17 +417,46 @@ message ServiceRefreshResponse {
 // bounds deadline_ms and max_responses before resolving registry state.
 message ServiceInvokeRequest {
   // Stable profile name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
   // Fully qualified method as package.Service/Method.
-  string method = 2;
-  // Request message as canonical proto3 JSON.
-  google.protobuf.Struct request = 3;
+  string method = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 3, max_len: 512, contains: "/"}
+    }
+  ];
+  // Request message as canonical proto3 JSON. Struct is the honest type here:
+  // the message type is only known once the profile's descriptors resolve the
+  // method, so the payload cannot be declared any more narrowly at this layer.
+  google.protobuf.Struct request = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Named profile endpoint; empty selects the first endpoint.
-  string endpoint = 4;
-  // Call deadline in milliseconds; zero selects the registered/default value.
-  int32 deadline_ms = 5;
-  // Maximum server-streaming responses; zero selects the action default.
-  int32 max_responses = 6;
+  string endpoint = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 128}
+    }
+  ];
+  // Call deadline in milliseconds; zero selects the registered method policy's
+  // value, or 15000. A registered method deadline is a ceiling, and 60000 is
+  // the outbound channel policy's.
+  int32 deadline_ms = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
+  // Maximum server-streaming responses to collect; zero selects the action
+  // default. The cap bounds what one call can hold in memory.
+  int32 max_responses = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 4096}
+    }
+  ];
 }
 
 // Outcome of invoking a method on a registered profile. The invocation fields
@@ -398,8 +487,14 @@ message ServiceInvokeResponse {
 
 // The input of compile: the inline .proto sources to compile.
 message CompileRequest {
-  // The .proto files to compile, keyed by import path.
-  map<string, string> sources = 1;
+  // The .proto files to compile, keyed by import path, for example
+  // 'example/v1/doc.proto'. At least one, because compiling nothing is a
+  // request the caller did not mean.
+  map<string, string> sources = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {min_pairs: 1, max_pairs: 256, keys: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
 }
 
 // The result of compile: diagnostics on failure, the descriptor set on
@@ -423,7 +518,11 @@ message ListTypesRequest {
   // Optional; without it the shared descriptor registry is listed.
   SchemaSource schema = 1;
   // Case-insensitive substring filter on the fully qualified name.
-  string filter = 2;
+  string filter = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    }
+  ];
 }
 
 // One field of a message type.
@@ -462,12 +561,22 @@ message ListTypesResponse {
 // check.
 message ValidateMessageRequest {
   // The schema declaring the type and its validation rules.
-  SchemaSource schema = 1;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Fully qualified type to validate against; required unless the schema
-  // identifies a single message.
-  string type = 2;
-  // The message as canonical proto3 JSON.
-  google.protobuf.Struct message = 3;
+  // identifies a single message, which is why it is not required here.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
+  // The message as canonical proto3 JSON. Struct is the honest type: the
+  // message type is only known once the schema source resolves it.
+  google.protobuf.Struct message = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One broken validation rule.
@@ -493,9 +602,13 @@ message ValidateMessageResponse {
 // The input of diff-schemas: the two schema versions to compare.
 message DiffSchemasRequest {
   // The old schema version.
-  SchemaSource old = 1;
+  SchemaSource old = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // The new schema version.
-  SchemaSource new = 2;
+  SchemaSource new = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One typed change between two schema versions.
@@ -521,21 +634,49 @@ message DiffSchemasResponse {
   repeated SchemaChange changes = 1;
 }
 
+// How much compatibility a schema change must preserve.
+//
+// A transitive variant checks the new version against every earlier version
+// rather than only the one it is compared with, which is what catches a
+// change that is compatible with its immediate predecessor but not with a
+// version still in the field.
+enum CompatibilityMode {
+  // Selects BACKWARD, the mode most callers want and the one the verb has
+  // always defaulted to.
+  COMPATIBILITY_MODE_UNSPECIFIED = 0;
+  // Any change is allowed.
+  COMPATIBILITY_MODE_NONE = 1;
+  // New readers can read data written by the old schema.
+  COMPATIBILITY_MODE_BACKWARD = 2;
+  // Old readers can read data written by the new schema.
+  COMPATIBILITY_MODE_FORWARD = 3;
+  // Both directions hold.
+  COMPATIBILITY_MODE_FULL = 4;
+  // BACKWARD against every earlier version.
+  COMPATIBILITY_MODE_BACKWARD_TRANSITIVE = 5;
+  // FORWARD against every earlier version.
+  COMPATIBILITY_MODE_FORWARD_TRANSITIVE = 6;
+  // FULL against every earlier version.
+  COMPATIBILITY_MODE_FULL_TRANSITIVE = 7;
+}
+
 // The input of check-compat: both versions plus the mode and the optional
 // rule families.
 message CheckCompatRequest {
   // The old schema version.
-  SchemaSource old = 1;
+  SchemaSource old = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // The new schema version.
-  SchemaSource new = 2;
-  // NONE, BACKWARD, FORWARD, FULL, or a _TRANSITIVE variant; defaults to
-  // BACKWARD.
-  string mode = 3;
-  // Also treat canonical proto3 JSON payload breaks (field/enum name
-  // changes, removals) as violations; default false.
+  SchemaSource new = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Compatibility to enforce; unspecified selects BACKWARD.
+  CompatibilityMode mode = 3;
+  // Also treat canonical proto3 JSON payload breaks (field and enum name
+  // changes, removals) as violations.
   bool include_json_rules = 4;
-  // Also treat generated-code and gRPC surface breaks as violations;
-  // default false.
+  // Also treat generated-code and gRPC surface breaks as violations.
   bool include_source_rules = 5;
 }
 
@@ -543,8 +684,10 @@ message CheckCompatRequest {
 message CheckCompatResponse {
   // True when no violation was found under 'mode'.
   bool compatible = 1;
-  // The compatibility mode that was enforced.
-  string mode = 2;
+  // The compatibility mode that was enforced, in the same vocabulary the
+  // request names it in, so a caller can compare what it asked for with what
+  // was applied.
+  CompatibilityMode mode = 2;
   // The changes that break 'mode'.
   repeated SchemaChange violations = 3;
   // The full change list, informational entries included.
@@ -554,9 +697,17 @@ message CheckCompatResponse {
 // The input of render-json-schema.
 message RenderJsonSchemaRequest {
   // The schema declaring the message type.
-  SchemaSource schema = 1;
-  // Fully qualified message type to render.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to render; not required, because a schema
+  // declaring exactly one message identifies it on its own.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 }
 
 // The rendered JSON Schema document.
@@ -571,15 +722,28 @@ message RenderJsonSchemaResponse {
 // The input of render-prompt.
 message RenderPromptRequest {
   // The schema declaring the message type.
-  SchemaSource schema = 1;
-  // Fully qualified message type to render the prompt packet for.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to render the prompt packet for; not
+  // required, because a schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // The resolved persona to render for, as canonical proto3 JSON of
-  // ai.pipestream.proto.prompt.v1.Persona. Absent renders persona-free.
+  // ai.pipestream.proto.prompt.v1.Persona. Absent renders persona-free,
+  // meaning schema instructions only.
   google.protobuf.Struct persona = 3;
   // Opaque registry reference echoed into the packet so the receiver can
   // rebuild the descriptor set; empty when the caller has no registry context.
-  string descriptor_set_ref = 4;
+  string descriptor_set_ref = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+    }
+  ];
 }
 
 // A rendered prompt packet: everything a model needs to fill the target
@@ -605,20 +769,101 @@ message RenderPromptResponse {
 }
 
 
+// The search engine an index artifact is rendered for.
+enum IndexEngine {
+  // Unset. There is no default engine, because the artifacts differ in kind.
+  INDEX_ENGINE_UNSPECIFIED = 0;
+  // OpenSearch index mappings, and the only engine that renders security.
+  INDEX_ENGINE_OPENSEARCH = 1;
+  // Solr schema fields.
+  INDEX_ENGINE_SOLR = 2;
+  // Lucene field specifications.
+  INDEX_ENGINE_LUCENE = 3;
+  // Qdrant collection schema and vector specifications.
+  INDEX_ENGINE_QDRANT = 4;
+}
+
+// An OpenSearch security role rendered beside the mappings, complete enough
+// to PUT at _plugins/_security/api/roles/{name}.
+message IndexSecurityRole {
+  // The index names the role covers. Required: a role covering no index
+  // grants nothing and is almost certainly a mistake.
+  repeated string index_patterns = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 128, items: {string: {min_len: 1, max_len: 256}}}
+    }
+  ];
+  // The actions the role permits; empty renders the role without them.
+  repeated string allowed_actions = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 128, items: {string: {min_len: 1, max_len: 256}}}
+    }
+  ];
+}
+
+// How schema-declared sensitivity classes shape the rendered artifacts.
+// OpenSearch only: the other engines have nowhere to put this.
+message IndexSensitivity {
+  // Classes rendered as store-only ciphertext containers, indexed false. The
+  // engine cannot search what it cannot read, so it is told not to try.
+  repeated string encrypt = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // Classes emitted as masked_fields in the security role fragment.
+  repeated string mask = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // Classes emitted as field-level security exclusions.
+  repeated string exclude = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // Per-class masked_fields format suffix, for example '::SHA-512' or
+  // '::/regex/::replacement', keyed by sensitivity class.
+  map<string, string> mask_format = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {max_pairs: 64, keys: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // When set, a complete security role is rendered beside the mappings.
+  IndexSecurityRole role = 5;
+}
+
 // The input of render-index-mappings.
 message RenderIndexMappingsRequest {
   // The schema declaring the message type and its indexing hints.
-  SchemaSource schema = 1;
-  // Fully qualified message type to render mappings for.
-  string type = 2;
-  // 'opensearch', 'solr', or 'lucene'.
-  string engine = 3;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to render mappings for; not required,
+  // because a schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
+  // The engine to render for.
+  IndexEngine engine = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Apply schema-declared sensitivity classes; OpenSearch only. Absent
+  // renders mappings alone.
+  IndexSensitivity sensitivity = 4;
 }
 
 // The rendered search-index artifact for one engine.
 message RenderIndexMappingsResponse {
-  // Engine the artifact was rendered for, echoed from the request.
-  string engine = 1;
+  // Engine the artifact was rendered for, echoed from the request in the same
+  // vocabulary the request names it in.
+  IndexEngine engine = 1;
   // The artifact itself. Its shape is defined by the target engine rather
   // than by ProtoMolt, so it is carried as a structure.
   google.protobuf.Struct mappings = 2;
@@ -628,13 +873,29 @@ message RenderIndexMappingsResponse {
 // The input of eval-cel.
 message EvalCelRequest {
   // The schema declaring the message type.
-  SchemaSource schema = 1;
-  // Fully qualified type of the bound message.
-  string type = 2;
-  // The message bound as the CEL variable 'input', as proto3 JSON.
-  google.protobuf.Struct message = 3;
-  // The CEL expression to evaluate.
-  string expression = 4;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified type of the bound message; required unless the schema
+  // identifies a single message, which is why it is not required here.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
+  // The message bound as the CEL variable 'input', as proto3 JSON. Struct is
+  // the honest type: the message type is only known once the schema resolves.
+  google.protobuf.Struct message = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The CEL expression to evaluate, type-checked against the message type.
+  string expression = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 8192}
+    }
+  ];
 }
 
 // The result of eval-cel.
@@ -650,13 +911,30 @@ message EvalCelResponse {
 // the target it writes to.
 message CelRule {
   // Optional boolean CEL gate; the rule is skipped when false.
-  string filter = 1;
+  string filter = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 8192}
+    }
+  ];
   // Optional CEL value expression written to 'target'.
-  string selector = 2;
+  string selector = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 8192}
+    }
+  ];
   // The output field path the selector value is written to.
-  string target = 3;
+  string target = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024}
+    }
+  ];
   // Text rules applied when no selector is given.
-  repeated string fallback = 4;
+  repeated string fallback = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 2048}}}
+    }
+  ];
 }
 
 // The input of map-message.
@@ -683,9 +961,17 @@ message MapMessageResponse {
 // The input of extract-metadata.
 message ExtractMetadataRequest {
   // The schema declaring the message type and its metadata options.
-  SchemaSource schema = 1;
-  // Fully qualified message type to extract metadata from.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to extract metadata from; not required,
+  // because a schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 }
 
 // The metadata bag of one message type.
@@ -698,10 +984,24 @@ message ExtractMetadataResponse {
 
 // The input of reflect: where the server is and how to reach it.
 message ReflectRequest {
-  // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
-  string target = 1;
-  // Default 15000.
-  int32 deadline_ms = 2;
+  // gRPC target, for example 'localhost:9090', 'dns:///svc:443', or an
+  // in-process name. Which forms are permitted is the outbound channel
+  // policy's decision, not this message's: it owns the scheme, host and port
+  // allow-lists, and a narrower rule here would refuse targets the policy
+  // allows.
+  string target = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512}
+    }
+  ];
+  // Reflection deadline in milliseconds; zero selects 15000, and 60000 is the
+  // outbound channel policy's ceiling.
+  int32 deadline_ms = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
   // Connect with TLS (system trust roots); plaintext by default.
   bool tls = 3;
 }
@@ -723,20 +1023,54 @@ message ReflectResponse {
 
 // The input of grpc-invoke.
 message GrpcInvokeRequest {
-  // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
-  string target = 1;
+  // gRPC target, for example 'localhost:9090', 'dns:///svc:443', or an
+  // in-process name. Which forms are permitted is the outbound channel
+  // policy's decision, not this message's: it owns the scheme, host and port
+  // allow-lists, and a narrower rule here would refuse targets the policy
+  // allows.
+  string target = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512}
+    }
+  ];
   // Fully qualified 'package.Service/Method'.
-  string method = 2;
+  string method = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 3, max_len: 512, contains: "/"}
+    }
+  ];
   // Must declare the target service.
-  SchemaSource schema = 3;
-  // The request message as canonical proto3 JSON.
-  google.protobuf.Struct request = 4;
+  SchemaSource schema = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The request message as canonical proto3 JSON. Struct is the honest type
+  // here: the message type is only known once the schema source compiles and
+  // resolves the method, so it cannot be declared more narrowly at this layer.
+  google.protobuf.Struct request = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Optional ASCII request headers.
-  map<string, string> metadata = 5;
-  // Default 15000.
-  int32 deadline_ms = 6;
-  // Cap on collected server-streaming responses; default 64.
-  int32 max_responses = 7;
+  map<string, string> metadata = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {max_pairs: 64}
+    }
+  ];
+  // Call deadline in milliseconds; zero selects 15000, and 60000 is the
+  // outbound channel policy's ceiling.
+  int32 deadline_ms = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
+  // Cap on collected server-streaming responses; zero selects 64. The cap
+  // bounds what one call can hold in memory.
+  int32 max_responses = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 4096}
+    }
+  ];
   // Connect with TLS (system trust roots); plaintext by default.
   bool tls = 8;
 }
@@ -757,17 +1091,54 @@ message GrpcInvokeResponse {
   string description = 6;
 }
 
+// A code generator embedded in the bundled protoc module.
+enum CodeGenerator {
+  // Unset. An empty generator list selects JAVA.
+  CODE_GENERATOR_UNSPECIFIED = 0;
+  // Java message classes.
+  CODE_GENERATOR_JAVA = 1;
+  // Kotlin DSL builders, which need the Java classes alongside them.
+  CODE_GENERATOR_KOTLIN = 2;
+  // Java gRPC service stubs.
+  CODE_GENERATOR_GRPC_JAVA = 3;
+  // Python message modules.
+  CODE_GENERATOR_PYTHON = 4;
+  // C++ message classes.
+  CODE_GENERATOR_CPP = 5;
+  // C# message classes.
+  CODE_GENERATOR_CSHARP = 6;
+  // Ruby message classes.
+  CODE_GENERATOR_RUBY = 7;
+  // PHP message classes.
+  CODE_GENERATOR_PHP = 8;
+  // Objective-C message classes.
+  CODE_GENERATOR_OBJC = 9;
+}
+
 // The input of generate-stubs.
 message GenerateStubsRequest {
   // The schema to generate code from.
-  SchemaSource schema = 1;
-  // 'java', 'kotlin', 'grpc-java', 'python', 'cpp', 'csharp', 'ruby', 'php',
-  // 'objc'; defaults to ['java'].
-  repeated string generators = 2;
-  // Proto file paths to generate for; defaults to every non-google file.
-  repeated string files = 3;
-  // Optional generator parameter, as protoc's --<gen>_opt.
-  string parameter = 4;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Generators to run; empty selects JAVA.
+  repeated CodeGenerator generators = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 9, unique: true, items: {enum: {defined_only: true, not_in: [0]}}}
+    }
+  ];
+  // Proto file paths to generate for; empty selects every non-google file.
+  repeated string files = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512, items: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
+  // Generator parameter, passed as protoc's --<gen>_opt.
+  string parameter = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 2048}
+    }
+  ];
 }
 
 // One generated source file.
@@ -797,15 +1168,33 @@ message GenerateStubsResponse {
 // The input of gather-git: where the repository is and which .proto files
 // to take.
 message GatherGitRequest {
-  // Git repository URL (https or ssh).
-  string repo = 1;
-  // Branch, tag, or commit SHA; default 'main'.
-  string ref = 2;
-  // Specific files or directories relative to 'subdir'; default: every
-  // .proto under 'subdir'.
-  repeated string paths = 3;
-  // Directory import paths are relative to; default 'proto', '.' for root.
-  string subdir = 4;
+  // Git repository URL, https or ssh.
+  string repo = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 2048}
+    }
+  ];
+  // Branch, tag, or commit SHA; empty selects 'main'.
+  string ref = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 256}
+    }
+  ];
+  // Specific files or directories relative to 'subdir'; empty gathers every
+  // .proto under it.
+  repeated string paths = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512, items: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
+  // Directory import paths are relative to; empty selects 'proto', and '.'
+  // means the repository root.
+  string subdir = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+    }
+  ];
 }
 
 // The gathered and compiled schema.
@@ -825,9 +1214,16 @@ message GatherGitResponse {
 // The input of emit-okf.
 message EmitOkfRequest {
   // The schema to render as an OKF bundle.
-  SchemaSource schema = 1;
-  // Heading of the bundle's root index.md; default 'Schema knowledge bundle'.
-  string title = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Heading of the bundle's root index.md; empty selects 'Schema knowledge
+  // bundle'.
+  string title = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    }
+  ];
 }
 
 // The rendered OKF bundle.
@@ -849,11 +1245,24 @@ message EmitOkfResponse {
 // case name.
 message ShapeSource {
   // The scope name; becomes the synthesized field or case name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
   // The schema declaring the source type.
-  SchemaSource schema = 2;
-  // Fully qualified message type; required unless the schema identifies one.
-  string type = 3;
+  SchemaSource schema = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type; not required, because a schema declaring
+  // exactly one message identifies it on its own.
+  string type = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // join-messages only: the source message as proto3 JSON.
   google.protobuf.Struct message = 4;
 }
@@ -861,21 +1270,61 @@ message ShapeSource {
 // A projected field: its type is inferred from the scoped source path.
 message ProjectedField {
   // The field's name in the projected output.
-  string name = 1;
-  // e.g. 'order.ship_to.city'.
-  string from = 2;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, identifier: true}
+    }
+  ];
+  // The scoped source path the field is taken from, for example
+  // 'order.ship_to.city'.
+  string from = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024}
+    }
+  ];
+}
+
+// How a shape is built from its sources.
+enum ShapeMode {
+  // Unset. A synthesis has no sensible default, so this is refused.
+  SHAPE_MODE_UNSPECIFIED = 0;
+  // One field per source, each holding that source's message.
+  SHAPE_MODE_ENVELOPE = 1;
+  // A flat message carrying the named fields selected from the sources.
+  SHAPE_MODE_PROJECTION = 2;
+  // A oneof with one case per source.
+  SHAPE_MODE_UNION = 3;
 }
 
 // The input of synthesize-shape.
 message SynthesizeShapeRequest {
-  // 'envelope', 'projection', or 'union'.
-  string mode = 1;
+  // How to build the shape.
+  ShapeMode mode = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
   // Fully qualified name of the synthesized message.
-  string name = 2;
+  string name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // The named source types, in shape order.
-  repeated ShapeSource sources = 3;
+  repeated ShapeSource sources = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 64}
+    }
+  ];
   // Projection only.
-  repeated ProjectedField fields = 4;
+  repeated ProjectedField fields = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512}
+    }
+  ];
 }
 
 // The synthesized shape, ready to register.
@@ -895,19 +1344,40 @@ message SynthesizeShapeResponse {
 // The authored output type of a join.
 message JoinTarget {
   // The schema declaring the target type.
-  SchemaSource schema = 1;
-  // Fully qualified target message type.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified target message type; not required, because a schema
+  // declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 }
 
 // A shape to synthesize as the join output.
 message JoinShape {
-  // 'envelope', 'projection', or 'union'.
-  string mode = 1;
+  // How to build the shape; the same vocabulary synthesize-shape names.
+  ShapeMode mode = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
   // Fully qualified name of the synthesized output message.
-  string name = 2;
+  string name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // Projection only: the projected fields.
-  repeated ProjectedField fields = 3;
+  repeated ProjectedField fields = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512}
+    }
+  ];
 }
 
 // The input of join-messages.
@@ -952,10 +1422,20 @@ message MergeResolution {
 // The input of merge-schemas.
 message MergeSchemasRequest {
   // Fully qualified name of the merged message.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // Two or more; for coalesced singular fields, later sources overwrite
-  // earlier ones at join time. 'message' is unused here.
-  repeated ShapeSource sources = 2;
+  // earlier ones at join time. 'message' is unused here. Merging fewer than
+  // two schemas has no merge to perform.
+  repeated ShapeSource sources = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 2, max_items: 64}
+    }
+  ];
   // Keyed by clashing field name.
   map<string, MergeResolution> resolutions = 3;
   // Return only the clash report, even when the merge is clean.
@@ -1178,13 +1658,28 @@ message CompiledWorkflow {
 
 // The input of run-workflow: an inline workflow or the name of a stored one.
 message RunWorkflowRequest {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "run_workflow.one_definition"
+      message: "name either an inline workflow or a stored workflowName, not both and not neither"
+      expression: "has(this.workflow) != (this.workflow_name != '')"
+    }
+  };
+
   // The inline workflow definition to execute.
   CompiledWorkflow workflow = 1;
-  // The workflow input, as proto3 JSON of input_type.
-  google.protobuf.Struct input = 2;
-  // A stored workflow to run instead of an inline 'workflow' (registered via the
-  // registry's workflows endpoint).
-  string workflow_name = 3;
+  // The workflow input, as proto3 JSON of the workflow's declared input type.
+  google.protobuf.Struct input = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // A stored workflow to run instead of an inline one, registered through the
+  // registry's workflows endpoint.
+  string workflow_name = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The outcome of one workflow step.
@@ -1216,7 +1711,9 @@ message RunWorkflowResponse {
 // The input of check-workflow.
 message CheckWorkflowRequest {
   // The workflow definition to verify.
-  CompiledWorkflow workflow = 1;
+  CompiledWorkflow workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One problem found while verifying a workflow.
@@ -1240,7 +1737,9 @@ message CheckWorkflowResponse {
 // A checked workflow to compile into a workflow.
 message CompileWorkflowRequest {
   // Descriptor-grounded workflow to check and compile.
-  CompiledWorkflow workflow = 1;
+  CompiledWorkflow workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // Deterministic workflow content and its SHA-256 identity.
@@ -1254,9 +1753,15 @@ message CompileWorkflowResponse {
 // Descriptor-grounded mapping suggestion input.
 message SuggestMappingsRequest {
   // Named source message types available to mapping rules.
-  repeated ShapeSource sources = 1;
+  repeated ShapeSource sources = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 64}
+    }
+  ];
   // Message type whose fields need source mappings.
-  JoinTarget target = 2;
+  JoinTarget target = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One proposed target=source.path mapping.
@@ -1282,13 +1787,28 @@ message SuggestMappingsResponse {
 // A live draft-workflow probe to record for offline replay.
 message RecordWorkflowRunRequest {
   // Descriptor-grounded workflow to execute.
-  CompiledWorkflow workflow = 1;
+  CompiledWorkflow workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Workflow input encoded as proto3 JSON.
-  google.protobuf.Struct input = 2;
-  // Client-selected path-safe run identity.
-  string run_id = 3;
+  google.protobuf.Struct input = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Client-selected run identity. The caller chooses it so a retry can name
+  // the same run rather than recording a second one.
+  string run_id = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
   // Promoted workflow version, or empty for a draft probe.
-  string workflow_version = 4;
+  string workflow_version = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The persisted run evidence; failed executions still return their evidence.
@@ -1305,12 +1825,26 @@ message RecordWorkflowRunResponse {
 
 // Exact workflow, evidence identity, and descriptor set for offline replay.
 message ReplayWorkflowRequest {
-  // Workflow encoded as protobuf JSON.
-  google.protobuf.Struct workflow = 1;
+  // Carried as a structure rather than declared: the workflow model lives in
+  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
+  // narrower copy of it that omits dependencies and the richer step model.
+  // Referencing the real type is the correct fix and belongs in the change
+  // that retires the copy.
+  google.protobuf.Struct workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Stored run-evidence identity to replay.
-  string run_id = 2;
-  // Exact descriptor set used to decode and verify fixtures.
-  SchemaSource schema = 3;
+  string run_id = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
+  // The exact descriptor set the run used, which is what makes a replay a
+  // comparison rather than a re-interpretation.
+  SchemaSource schema = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One step's offline replay verdict.
@@ -1337,10 +1871,23 @@ message ReplayWorkflowResponse {
 
 // Workflow content to promote under one immutable version.
 message PromoteWorkflowRequest {
-  // Workflow encoded as protobuf JSON.
-  google.protobuf.Struct workflow = 1;
-  // Path-safe immutable version identity.
-  string version = 2;
+  // Carried as a structure rather than declared: the workflow model lives in
+  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
+  // narrower copy of it that omits dependencies and the richer step model.
+  // Referencing the real type is the correct fix and belongs in the change
+  // that retires the copy.
+  google.protobuf.Struct workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The version identity to publish under. Immutable once promoted, so a
+  // second promotion under the same version is refused rather than replacing
+  // what the first one published.
+  string version = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The immutable promotion envelope stored in the registry.
@@ -1354,16 +1901,40 @@ message PromoteWorkflowResponse {
 // The stored run to project and the record identity to issue it under.
 message ExportWorkRecordRequest {
   // Stored run-evidence identity to project.
-  string run_id = 1;
+  string run_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
   // Record identity; derived as "record-<run_id>" when empty.
-  string record_id = 2;
+  string record_id = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
   // Manifest digest of the record this one re-issues, or empty.
-  string prior_manifest_sha256 = 3;
+  string prior_manifest_sha256 = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {sha256_hex: true}
+    }
+  ];
   // Sensitivity classes removed from the evidence before projection; a
   // disclosure names these and disclose_of together.
-  repeated string mask_classes = 4;
+  repeated string mask_classes = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
   // Manifest digest of the record this disclosure projects, or empty.
-  string disclose_of = 5;
+  string disclose_of = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {sha256_hex: true}
+    }
+  ];
 }
 
 // The signed record and its identity.
@@ -1380,9 +1951,19 @@ message ExportWorkRecordResponse {
 
 // A signed record and the trust snapshot to verify it against.
 message VerifyWorkRecordRequest {
-  // Serialized SignedWorkRecord, base64.
-  string record_base64 = 1;
-  // TrustSnapshot encoded as protobuf JSON.
+  // The record to verify: a serialized SignedWorkRecord, base64. It stays
+  // encoded rather than declared, because verification covers the exact bytes
+  // that were signed and re-encoding a parsed message would not reproduce
+  // them.
+  string record_base64 = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, base64: true}
+    }
+  ];
+  // TrustSnapshot encoded as protobuf JSON. Not required here, because a node
+  // may pin one through PROTOMOLT_TRUST_SNAPSHOT; the verb publishes it as
+  // required only when its own node has no pin to fall back on.
   google.protobuf.Struct trust = 2;
   // Referenced artifact bytes by SHA-256, base64-encoded; when present the
   // rehash check runs all-or-nothing instead of being skipped.
@@ -1414,14 +1995,30 @@ message VerifyWorkRecordResponse {
 // A signed record, its trust snapshot, and the replay inputs to evaluate it
 // beside its stored evidence.
 message EvaluateWorkRecordRequest {
-  // Serialized SignedWorkRecord, base64.
-  string record_base64 = 1;
-  // TrustSnapshot encoded as protobuf JSON.
+  // The record to evaluate: a serialized SignedWorkRecord, base64, for the
+  // same reason verify-work-record takes it encoded.
+  string record_base64 = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, base64: true}
+    }
+  ];
+  // TrustSnapshot encoded as protobuf JSON. Not required here, because a node
+  // may pin one through PROTOMOLT_TRUST_SNAPSHOT; the verb publishes it as
+  // required only when its own node has no pin to fall back on.
   google.protobuf.Struct trust = 2;
-  // The workflow the run executed, encoded as protobuf JSON, for replay.
-  google.protobuf.Struct workflow = 3;
+  // Carried as a structure rather than declared: the workflow model lives in
+  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
+  // narrower copy of it that omits dependencies and the richer step model.
+  // Referencing the real type is the correct fix and belongs in the change
+  // that retires the copy.
+  google.protobuf.Struct workflow = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Exact descriptor set used by the recorded run.
-  SchemaSource schema = 4;
+  SchemaSource schema = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Referenced artifact bytes by SHA-256, base64; runs the rehash check.
   google.protobuf.Struct artifacts = 5;
 }
@@ -1451,17 +2048,37 @@ message EvaluateWorkRecordResponse {
 // The input of submit-workflow: an inline workflow or the name of a stored one,
 // the workflow input, and an optional client-generated job id.
 message SubmitWorkflowRequest {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "submit_workflow.one_definition"
+      message: "name either an inline workflow or a stored workflowName, not both and not neither"
+      expression: "has(this.workflow) != (this.workflow_name != '')"
+    }
+  };
+
   // The inline workflow definition to execute.
   CompiledWorkflow workflow = 1;
-  // A stored workflow to run instead of an inline 'workflow' (registered via the
-  // registry's workflows endpoint).
-  string workflow_name = 2;
-  // The workflow input, as proto3 JSON of input_type.
-  google.protobuf.Struct input = 3;
-  // Optional client-generated job id (a UUID). Supplying one makes submit
-  // idempotent: a second submit with the same id returns the existing job.
-  // The server mints one when empty.
-  string job_id = 4;
+  // A stored workflow to run instead of an inline one, registered through the
+  // registry's workflows endpoint.
+  string workflow_name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
+  // The workflow input, as proto3 JSON of the workflow's declared input type.
+  google.protobuf.Struct input = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Client-generated job id. Supplying one makes submit idempotent: a second
+  // submit with the same id returns the existing job rather than starting a
+  // second one. The server mints one when empty.
+  string job_id = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {uuid: true}
+    }
+  ];
 }
 
 // The outcome of submit-workflow.
@@ -1524,7 +2141,12 @@ message WorkflowRun {
 // The input of get-job.
 message GetJobRequest {
   // The job id returned by submit-workflow.
-  string job_id = 1;
+  string job_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    }
+  ];
 }
 
 // The outcome of get-job.
@@ -1537,17 +2159,54 @@ message GetJobResponse {
   string error = 3;
 }
 
+// Where a workflow run has got to.
+enum JobStatus {
+  // No filter: every status is listed.
+  JOB_STATUS_UNSPECIFIED = 0;
+  // Accepted and waiting for a worker.
+  JOB_STATUS_QUEUED = 1;
+  // A worker is executing it.
+  JOB_STATUS_RUNNING = 2;
+  // Parked on an external step until complete-step supplies the response.
+  JOB_STATUS_WAITING = 3;
+  // Finished successfully.
+  JOB_STATUS_COMPLETED = 4;
+  // Finished unsuccessfully, and may still be retried.
+  JOB_STATUS_FAILED = 5;
+  // Out of attempts; no further retry will be made.
+  JOB_STATUS_DEAD = 6;
+}
+
 // The input of list-jobs.
 message ListJobsRequest {
-  // Optional status filter (QUEUED, RUNNING, WAITING, COMPLETED, FAILED,
-  // DEAD); empty lists every status.
-  string status = 1;
-  // Optional workflow-name filter.
-  string workflow_name = 2;
-  // Maximum jobs returned; default 50, capped at 500.
-  int32 limit = 3;
+  // Status filter; unspecified lists every status.
+  JobStatus status = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true}
+    }
+  ];
+  // Workflow-name filter; empty lists every workflow.
+  string workflow_name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
+  // Maximum jobs returned; zero selects the default of 50. A larger value is
+  // clamped to the ceiling of 500 rather than refused, so a caller asking for
+  // everything gets a page instead of an error. The ceiling is not declared as
+  // a rule for that reason: it bounds the answer, not the request.
+  int32 limit = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0}
+    }
+  ];
   // Offset into the created_at-descending ordering.
-  int32 offset = 4;
+  int32 offset = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0}
+    }
+  ];
 }
 
 // The outcome of list-jobs.
@@ -1565,9 +2224,19 @@ message ListJobsResponse {
 // whoever the job was parked for.
 message CompleteStepRequest {
   // The job id.
-  string job_id = 1;
-  // The parked step's name; must match the job's outstanding_step.
-  string step_name = 2;
+  string job_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    }
+  ];
+  // The parked step's name; must match the job's outstanding step.
+  string step_name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
   // The step's response, as proto3 JSON of the step's output type. When the
   // step declares 'validate', the response is checked against its declared
   // rules before the workflow resumes — a rejection fails the job as a verdict.
@@ -1589,10 +2258,21 @@ message CompleteStepResponse {
 // The input of infer-schema.
 message InferSchemaRequest {
   // Fully qualified name for the inferred message.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // Sample documents; keys union across samples and numbers stay int64 only
-  // when integral in every occurrence.
-  repeated google.protobuf.Struct samples = 2;
+  // when integral in every occurrence. At least one, because inferring a
+  // schema from nothing has no evidence to work from. The cap bounds what one
+  // call asks the inferencer to read.
+  repeated google.protobuf.Struct samples = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 1000}
+    }
+  ];
 }
 
 // The inferred message type, ready to register.
@@ -1608,18 +2288,62 @@ message InferSchemaResponse {
   string descriptor_set_base64 = 4;
 }
 
+// What masking does to a field it covers.
+enum MaskStrategy {
+  // Selects REMOVE, the verb's default.
+  MASK_STRATEGY_UNSPECIFIED = 0;
+  // The field is dropped from the output entirely.
+  MASK_STRATEGY_REMOVE = 1;
+  // The field is kept with its value replaced.
+  MASK_STRATEGY_REDACT = 2;
+  // String and bytes values become AES-GCM ciphertext and other types clear.
+  // Requires a key.
+  MASK_STRATEGY_ENCRYPT = 3;
+  // Reverses ENCRYPT with the same key. A wrong key fails loudly.
+  MASK_STRATEGY_DECRYPT = 4;
+}
+
 // The input of mask-message.
 message MaskMessageRequest {
   // The schema declaring the field sensitivity classes.
-  SchemaSource schema = 1;
-  // Fully qualified type of the message to mask.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified type of the message to mask; not required, because a
+  // schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // The message to mask, as canonical proto3 JSON.
-  google.protobuf.Struct message = 3;
-  // Sensitivity classes to mask, e.g. 'pii'.
-  repeated string classes = 4;
-  // 'remove' (default) or 'redact'.
-  string strategy = 5;
+  google.protobuf.Struct message = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Sensitivity classes to mask, for example 'pii'. At least one: masking no
+  // class would return the message unchanged, which the caller can do without
+  // calling this verb.
+  repeated string classes = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // What to do with a covered field; unspecified removes it.
+  MaskStrategy strategy = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true}
+    }
+  ];
+  // Base64 AES key of 16, 24, or 32 bytes, required by ENCRYPT and DECRYPT
+  // and unused by the other strategies. The caller's key: it is never stored
+  // and never appears in a response.
+  string key = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {base64: true, max_len: 128}
+    }
+  ];
 }
 
 // The masked message.
@@ -1648,16 +2372,39 @@ message InferenceChatTurn {
 
 // The input of inference-generate.
 message InferenceGenerateRequest {
-  // The catalog id of the model to run (see inference-list-models).
-  string model = 1;
-  // The conversation, oldest first.
-  repeated InferenceChatTurn messages = 2;
-  // Sampling temperature; 0 is the provider's default.
-  double temperature = 3;
-  // Nucleus sampling mass; 0 is the provider's default.
-  double top_p = 4;
-  // Hard cap on generated tokens; 0 lets the provider apply its own cap.
-  int32 max_output_tokens = 5;
+  // The catalog id of the model to run; inference-list-models names them.
+  string model = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
+  // The conversation, oldest first. At least one turn: a generation with no
+  // conversation has nothing to continue.
+  repeated InferenceChatTurn messages = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 1000}
+    }
+  ];
+  // Sampling temperature; zero selects the provider's default. The range is
+  // the one every supported provider accepts.
+  double temperature = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      double: {gte: 0.0, lte: 2.0}
+    }
+  ];
+  // Nucleus sampling mass; zero selects the provider's default.
+  double top_p = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      double: {gte: 0.0, lte: 1.0}
+    }
+  ];
+  // Hard cap on generated tokens; zero lets the provider apply its own.
+  int32 max_output_tokens = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0}
+    }
+  ];
   // Requests the model's deliberation mode when it has one.
   bool enable_thinking = 6;
 }
@@ -1726,7 +2473,12 @@ message InferenceModelEntry {
 // The input of inference-list-models.
 message InferenceListModelsRequest {
   // When set, only entries executed by this provider are returned.
-  string provider = 1;
+  string provider = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 128, path_safe_name: true}
+    }
+  ];
 }
 
 // The outcome of inference-list-models.
@@ -1744,7 +2496,12 @@ message InferenceListModelsResponse {
 // The input of inference-describe-model.
 message InferenceDescribeModelRequest {
   // The catalog id to describe.
-  string model = 1;
+  string model = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The outcome of inference-describe-model.

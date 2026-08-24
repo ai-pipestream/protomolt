@@ -1,6 +1,7 @@
 package ai.pipestream.proto.inference.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -56,44 +57,12 @@ public final class GenerateAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        JsonNodeFactory factory = JsonNodeFactory.instance;
-        ObjectNode schema = factory.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("model")
-                .put("type", "string")
-                .put("description", "The catalog id of the model to run.");
-        ObjectNode messages = properties.putObject("messages");
-        messages.put("type", "array");
-        messages.put("description", "The conversation, oldest first.");
-        ObjectNode turn = messages.putObject("items");
-        turn.put("type", "object");
-        ObjectNode turnProps = turn.putObject("properties");
-        turnProps.putObject("role")
-                .put("type", "string")
-                .put("enum", factory.arrayNode().add("system").add("user").add("assistant").add("tool"));
-        turnProps.putObject("content").put("type", "string");
-        turn.putArray("required").add("role").add("content");
-        properties.putObject("temperature")
-                .put("type", "number")
-                .put("description", "Sampling temperature; omit for the provider default.");
-        properties.putObject("topP")
-                .put("type", "number")
-                .put("description", "Nucleus sampling mass; omit for the provider default.");
-        properties.putObject("maxOutputTokens")
-                .put("type", "integer")
-                .put("description", "Hard cap on generated tokens; omit for the provider default.");
-        properties.putObject("enableThinking")
-                .put("type", "boolean")
-                .put("description", "Requests the model's deliberation mode when it has one.");
-        schema.putArray("required").add("model").add("messages");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("InferenceGenerateRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "InferenceGenerateRequest", name());
         InferenceActionSupport.requireEngines(engines);
         GenerateRequest.Builder request = GenerateRequest.newBuilder()
                 .setModel(InferenceActionSupport.requireString(input, "model"));

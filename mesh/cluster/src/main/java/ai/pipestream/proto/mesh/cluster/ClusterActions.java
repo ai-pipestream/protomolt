@@ -81,7 +81,7 @@ public final class ClusterActions {
          */
         static ObjectNode schemaOf(Descriptor request) {
             return new ObjectMapper().valueToTree(
-                    ProtoJsonSchemaGenerator.create().generate(request));
+                    ProtoJsonSchemaGenerator.create().generateRooted(request));
         }
 
         /**

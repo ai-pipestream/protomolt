@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
@@ -44,19 +45,12 @@ final class ReplayWorkflowAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("workflow").put("type", "object");
-        WorkflowActionJson.identitySchema(properties, "runId");
-        properties.putObject("schema").put("type", "object")
-                .put("description", "The exact descriptors used by the recorded run.");
-        schema.putArray("required").add("workflow").add("runId").add("schema");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("ReplayWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "ReplayWorkflowRequest", name());
         if (artifacts == null || runs == null) {
             throw WorkflowActionJson.unavailable("workflow replay",
                     "start protomolt-serve with --workflow-workspace");

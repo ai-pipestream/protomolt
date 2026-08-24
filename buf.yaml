@@ -16,7 +16,7 @@ modules:
     name: buf.build/ai-pipestream/protobuf-llm-testdata
   - path: protobuf/prompt/src/test/proto
     name: buf.build/ai-pipestream/protobuf-prompt-testdata
-  - path: surface/grpc/service/src/main/resources
+  - path: surface/grpc/service-contract/src/main/resources
     name: buf.build/ai-pipestream/protomolt-service
   - path: protobuf/validation/src/main/proto
     name: buf.build/ai-pipestream/protobuf-validation
@@ -137,13 +137,15 @@ breaking:
   use:
     - FILE
   except:
-    # Temporary, for the response-type change that gave every ProtoMoltService
-    # method a declared response message in place of google.protobuf.Struct.
-    # Eight RPCs changed response type, which FILE correctly reports as a wire
-    # break. Nothing consumes these responses yet, so the break is deliberate.
-    # Drop this block in the next pull request that touches this file, per the
-    # convention recorded below.
-    - RPC_SAME_RESPONSE_TYPE
+    # Temporary, for the field types the verb conversion declares in place of an
+    # untyped stand-in: ServiceRegisterRequest.profile as ServiceProfile rather
+    # than google.protobuf.Struct, and the check-compat mode as CompatibilityMode
+    # rather than a string carrying that enum's names. Each field already held
+    # exactly that value; declaring the type moves the contract into the message.
+    # Nothing consumes the earlier forms, so the breaks are deliberate. Drop this
+    # block in the next pull request that touches this file, per the convention
+    # recorded below.
+    - FIELD_SAME_TYPE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

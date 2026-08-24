@@ -52,7 +52,7 @@ class ShapeActionsTest {
     @Test
     void synthesizesAProjectionWithImpliedRules() throws Exception {
         ObjectNode input = sourcesInput("""
-                "mode": "projection", "name": "derived.v1.Summary",
+                "mode": "SHAPE_MODE_PROJECTION", "name": "derived.v1.Summary",
                 "fields": [{"name": "order_id", "from": "order.id"},
                            {"name": "customer_name", "from": "customer.name"}]
                 """);
@@ -73,20 +73,20 @@ class ShapeActionsTest {
     @Test
     void synthesizesEnvelopeAndUnion() throws Exception {
         ObjectNode envelope = catalog.execute("synthesize-shape",
-                sourcesInput("\"mode\": \"envelope\", \"name\": \"derived.v1.Pair\""));
+                sourcesInput("\"mode\": \"SHAPE_MODE_ENVELOPE\", \"name\": \"derived.v1.Pair\""));
         assertThat(envelope.get("protoSource").asText())
                 .contains("shop.v1.Order order = 1;")
                 .contains("crm.v1.Customer customer = 2;");
 
         ObjectNode union = catalog.execute("synthesize-shape",
-                sourcesInput("\"mode\": \"union\", \"name\": \"derived.v1.Either\""));
+                sourcesInput("\"mode\": \"SHAPE_MODE_UNION\", \"name\": \"derived.v1.Either\""));
         assertThat(union.get("protoSource").asText()).contains("oneof value {");
     }
 
     @Test
     void joinsIntoASynthesizedShapeWithNoRules() throws Exception {
         ObjectNode input = sourcesInput("""
-                "shape": {"mode": "projection", "name": "derived.v1.Summary",
+                "shape": {"mode": "SHAPE_MODE_PROJECTION", "name": "derived.v1.Summary",
                           "fields": [{"name": "order_id", "from": "order.id"},
                                      {"name": "customer_name", "from": "customer.name"}]}
                 """);
@@ -118,14 +118,14 @@ class ShapeActionsTest {
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("'target' or 'shape'");
         assertThatThrownBy(() -> catalog.execute("synthesize-shape", sourcesInput("""
-                "mode": "projection", "name": "derived.v1.Bad",
+                "mode": "SHAPE_MODE_PROJECTION", "name": "derived.v1.Bad",
                 "fields": [{"name": "x", "from": "order.nope"}]
                 """)))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("No field 'nope'");
         assertThatThrownBy(() -> catalog.execute("synthesize-shape",
-                sourcesInput("\"mode\": \"sideways\", \"name\": \"derived.v1.Bad\"")))
+                sourcesInput("\"mode\": \"SHAPE_MODE_SIDEWAYS\", \"name\": \"derived.v1.Bad\"")))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("sideways");
+                .hasMessageContaining("SHAPE_MODE_SIDEWAYS");
     }
 }

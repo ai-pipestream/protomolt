@@ -31,22 +31,12 @@ final class ValidateMessageAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type to validate against; required unless the schema "
-                        + "already identifies a single message."));
-        properties.putObject("message")
-                .put("type", "object")
-                .put("description", "The message to validate, as canonical proto3 JSON.");
-        ActionJson.required(schema, "schema", "message");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("ValidateMessageRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "ValidateMessageRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         ObjectNode messageNode = Inputs.requireObject(input, "message");

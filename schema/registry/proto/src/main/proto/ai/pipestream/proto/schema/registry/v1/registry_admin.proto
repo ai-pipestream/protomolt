@@ -133,9 +133,9 @@ message RegistryRemotesResponse {
 
 // Fetches a remote registry and merges what it holds into this mount.
 message RegistrySyncRequest {
-  // Name of a remote previously added. Synchronizing names a configured
-  // remote rather than taking a URL, so a mount can only pull from somewhere
-  // an operator has already approved.
+  // Name of a configured remote. Synchronizing names a remote rather than
+  // taking a URL, so a mount can only pull from somewhere an operator has
+  // already approved by adding it.
   string remote = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true

@@ -41,7 +41,7 @@ class CheckCompatActionTest {
                 """);
         ObjectNode result = catalog.execute("check-compat", input);
         assertThat(result.get("compatible").asBoolean()).isFalse();
-        assertThat(result.get("mode").asText()).isEqualTo("BACKWARD");
+        assertThat(result.get("mode").asText()).isEqualTo("COMPATIBILITY_MODE_BACKWARD");
         assertThat(result.get("violations").findValuesAsText("ruleId"))
                 .containsExactly("FIELD_TYPE_CHANGED");
         assertThat(result.get("violations").get(0).get("path").asText()).isEqualTo("ex.Doc.count");
@@ -96,10 +96,11 @@ class CheckCompatActionTest {
                   string note = 2;
                 }
                 """);
-        input.put("mode", "NONE");
+        // Proto enum values carry their type name on the wire.
+        input.put("mode", "COMPATIBILITY_MODE_NONE");
         ObjectNode result = catalog.execute("check-compat", input);
         assertThat(result.get("compatible").asBoolean()).isTrue();
-        assertThat(result.get("mode").asText()).isEqualTo("NONE");
+        assertThat(result.get("mode").asText()).isEqualTo("COMPATIBILITY_MODE_NONE");
         assertThat(result.get("changes")).isNotEmpty();
     }
 
@@ -128,8 +129,22 @@ class CheckCompatActionTest {
         assertThatThrownBy(() -> catalog.execute("check-compat", input))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
-                    assertThat(e.details().orElseThrow().get("pointer").asText()).isEqualTo("/mode");
-                    assertThat(e.getMessage()).contains("BACKWARD");
+                    // A value the parser cannot read at all is refused before any rule runs,
+                    // so the refusal names the enum whose vocabulary it failed rather than a
+                    // pointer to a field that never parsed. The legal values are on the
+                    // published schema, which is derived from that same enum.
+                    assertThat(e.getMessage()).contains("SIDEWAYS").contains("CompatibilityMode");
                 });
+    }
+
+    @Test
+    void thePublishedSchemaListsTheLegalModes() {
+        ObjectNode schema = new CheckCompatAction().inputSchema();
+
+        // proto3 JSON accepts an enum by name or by number, so the property is the choice
+        // between the two; the names are what a caller writes.
+        assertThat(schema.path("properties").path("mode").toString())
+                .contains("COMPATIBILITY_MODE_BACKWARD")
+                .contains("COMPATIBILITY_MODE_FULL_TRANSITIVE");
     }
 }

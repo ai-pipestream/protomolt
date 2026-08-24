@@ -21,6 +21,6 @@ dependencies {
 // modules, so no protoc-gen-grpc-java here.
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.35.1"
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
     }
 }

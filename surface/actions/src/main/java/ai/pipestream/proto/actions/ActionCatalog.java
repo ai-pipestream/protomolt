@@ -30,7 +30,13 @@ public final class ActionCatalog {
         this.budgets = Objects.requireNonNull(budgets, "budgets");
     }
 
-    /** A catalog with every built-in action registered, spending on its own ledger. */
+    /**
+     * A catalog with every built-in action registered, spending on its own ledger, for a
+     * catalog that is the node's only enforcement point. A node that also serves another
+     * enforcement point passes one shared ledger through
+     * {@link #defaults(ActionContext, ScopeBudgets)}, or a principal gets a separate
+     * allowance per surface.
+     */
     public static ActionCatalog defaults(ActionContext context) {
         return defaults(context, new ScopeBudgets());
     }

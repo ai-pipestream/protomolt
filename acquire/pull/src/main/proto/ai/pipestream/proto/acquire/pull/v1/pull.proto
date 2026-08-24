@@ -38,7 +38,9 @@ message PullReport {
 
 // One pass over an object store prefix.
 message PullFromS3Request {
-  // Bucket to read from.
+  // Bucket to read from. It must already exist and be readable by the
+  // credentials the connector was configured with; the pass does not create
+  // it and does not fall back to another.
   string bucket = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
@@ -136,7 +138,9 @@ message PullFromJdbcRequest {
       string: {max_len: 1024}
     }
   ];
-  // Cap on rows processed in this pass. Zero means no cap.
+  // Cap on rows processed in this pass. Zero means no cap, which is only
+  // safe when the caller can afford a pass proportional to the whole result
+  // set the query returns.
   int32 max_rows = 7 [
     (ai.pipestream.proto.validate.v1.field) = {
       int32: {gte: 0}

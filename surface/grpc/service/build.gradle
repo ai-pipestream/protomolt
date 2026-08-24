@@ -2,6 +2,9 @@ description = 'The action catalog as a gRPC service: every verb a typed RPC, ser
 
 dependencies {
     api project(':protomolt-actions')
+    // The service definition and its compiled schema; api because this module's own
+    // public surface hands out descriptors from it.
+    api project(':protomolt-grpc-service-contract')
     api project(':protomolt-authz-grpc')
     api project(':protomolt-grpc-channel-policy')
     api libs.grpc.api
