@@ -103,7 +103,8 @@ public final class S3PullModule implements ServiceModule {
     public ServiceMount wire(NodeContext context) {
         S3Client s3 = client(config);
         GrpcIntakeFeed feed = new GrpcIntakeFeed(
-                context.channels().targetOf("intake"), config.apiKey());
+                context.channels().targetOf("intake"), config.apiKey(),
+                GrpcIntakeFeed.plaintextRequested(context.environment()));
         context.contributions().contribute(ProtoAction.class,
                 new S3PullAction(new S3Pull(s3, feed)));
         return ServiceMount.inert(() -> {
