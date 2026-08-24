@@ -9,8 +9,8 @@ import ai.pipestream.proto.grpc.invoke.ReflectionException;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.DynamicMessage;
 
 import java.io.IOException;
 
@@ -46,33 +46,26 @@ public final class ServiceRefreshAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ServiceActionSupport.nameSchema();
-        ObjectNode properties = (ObjectNode) schema.get("properties");
-        properties.putObject("endpoint").put("type", "string")
-                .put("description", "Endpoint name to reflect; defaults to the first endpoint.");
-        properties.putObject("deadlineMs").put("type", "integer").put("minimum", 1)
-                .put("maximum", ServiceActionSupport.MAX_DEADLINE_MS)
-                .put("default", ServiceActionSupport.DEFAULT_DEADLINE_MS);
-        return schema;
+        return ServiceActionJson.schemaFor("ServiceRefreshRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         ServiceProfileRepository store = ServiceActionSupport.requireRepository(repository);
-        String name = ServiceActionSupport.requireString(input, "name");
+        DynamicMessage request = ServiceActionJson.parse(input, "ServiceRefreshRequest", name());
+        String name = ServiceActionJson.string(request, "name");
         ServiceProfile profile;
         try {
             profile = store.find(name).orElseThrow(() -> ServiceActionSupport.notFound(name));
         } catch (IOException e) {
             throw ServiceActionSupport.storage("read service profile '" + name + "'", e);
         }
-        JsonNode endpoint = input.get("endpoint");
-        if (endpoint != null && !endpoint.isTextual()) {
-            throw ServiceActionSupport.invalid("'endpoint' must be a string", "/endpoint");
-        }
+        String endpoint = ServiceActionJson.string(request, "endpoint");
         try {
             ServiceProfile refreshed = ServiceActionSupport.reflectAndStore(profile,
-                    endpoint == null ? null : endpoint.asText(), ServiceActionSupport.deadline(input),
+                    endpoint.isEmpty() ? null : endpoint,
+                    ServiceActionJson.number(request, "deadline_ms",
+                            ServiceActionSupport.DEFAULT_DEADLINE_MS),
                     store, registry, channels);
             ObjectNode result = context.objectMapper().createObjectNode();
             result.put("ok", true);

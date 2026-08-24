@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
+import com.google.protobuf.Parser;
 import com.google.protobuf.util.JsonFormat;
 
 /**
@@ -91,6 +93,38 @@ final class ServiceActionJson {
     /** The value of a declared string field on a parsed request. */
     static String string(DynamicMessage request, String field) {
         return (String) request.getField(request.getDescriptorForType().findFieldByName(field));
+    }
+
+    /**
+     * The value of a declared int32 field, or {@code fallback} when it is zero.
+     *
+     * <p>proto3 cannot distinguish an absent number from a zero one, so the contract gives
+     * zero the meaning "the action's default" and declares it in the field's comment. That
+     * is why the rules admit zero rather than requiring a positive value.
+     */
+    static int number(DynamicMessage request, String field, int fallback) {
+        int value = (Integer) request.getField(
+                request.getDescriptorForType().findFieldByName(field));
+        return value == 0 ? fallback : value;
+    }
+
+    /**
+     * A declared message field re-read as its generated type.
+     *
+     * <p>The service definition is compiled at load, so a submessage arrives as a dynamic
+     * message. Its descriptor is the same one the generated class was built from, so the
+     * encoded bytes parse directly and the action works with the typed value.
+     */
+    static <T extends Message> T submessage(DynamicMessage request, String field,
+            Parser<T> parser, String verb) throws ActionException {
+        Message value = (Message) request.getField(
+                request.getDescriptorForType().findFieldByName(field));
+        try {
+            return parser.parseFrom(value.toByteString());
+        } catch (InvalidProtocolBufferException e) {
+            throw new ActionException("invalid-input",
+                    verb + " could not read '" + field + "': " + e.getMessage());
+        }
     }
 
     /** The violations as machine-readable details, each naming its field and its rule. */
