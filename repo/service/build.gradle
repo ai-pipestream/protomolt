@@ -19,6 +19,7 @@ configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClassp
 dependencies {
     api project(':protomolt-composer')
     implementation project(':protomolt-repo-proto')
+    implementation project(':protomolt-authz-grpc')
     implementation project(':protomolt-repo-container')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services

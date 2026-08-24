@@ -1,5 +1,7 @@
 package ai.pipestream.proto.repo.service;
 
+import ai.pipestream.proto.authz.CallerResolver;
+import ai.pipestream.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.pipestream.proto.repo.container.blob.BlobStore;
 import ai.pipestream.proto.repo.container.blob.CachingBlobStore;
 import ai.pipestream.proto.repo.container.blob.PartStorage;
@@ -250,12 +252,45 @@ public final class RepoServices implements AutoCloseable {
      * @return the started server (also closed by {@link #close()})
      */
     public Server startNetty(int port) {
+        return startNetty(port, null, null);
+    }
+
+    /**
+     * Starts all services on a Netty TCP server, requiring a call credential when
+     * {@code apiToken} is set.
+     *
+     * <p>The repository holds every account's documents and every claim-check blob, so an
+     * unauthenticated listener is a read and write path to all of them. With a token, every
+     * call must present it in {@code api_token} metadata (or {@code authorization: Bearer});
+     * reflection and health are covered too, because reflection enumerates the very RPCs
+     * being guarded. With a {@link CallerResolver}, a credential the mounted access policy
+     * names runs as its principal instead of with process authority.
+     *
+     * <p>Without a token the listener stays open, which is the trusted-network deployment
+     * this service has always supported: a repository reachable only from inside the node's
+     * network, with authentication enforced at the surfaces in front of it. That default is
+     * unchanged so an existing deployment does not break, but a repository reachable from
+     * anywhere else should set a token.
+     *
+     * @param port the listen port (0 = ephemeral)
+     * @param apiToken the operator credential every call must present, or null to serve open
+     * @param resolver resolves a policy-named credential to its principal; requires a token
+     * @return the started server (also closed by {@link #close()})
+     */
+    public Server startNetty(int port, String apiToken, CallerResolver resolver) {
+        if (apiToken == null && resolver != null) {
+            throw new IllegalArgumentException(
+                    "an access-policy resolver requires the operator api token");
+        }
         try {
             HealthStatusManager health = new HealthStatusManager();
             var builder = NettyServerBuilder.forPort(port)
                     .executor(Executors.newVirtualThreadPerTaskExecutor())
                     .addService(health.getHealthService())
                     .addService(ProtoReflectionService.newInstance());
+            if (apiToken != null) {
+                builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
+            }
             Server server = registerAndStart(builder);
             health.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
             LOG.info("repo-service listening on port {}", server.getPort());
@@ -284,7 +319,23 @@ public final class RepoServices implements AutoCloseable {
      * @return the started HTTP server (also closed by {@link #close()})
      */
     public UploadHttpServer startHttp(int port) {
-        UploadHttpServer http = new UploadHttpServer(documentService, driveLedger, blobStore);
+        return startHttp(port, null);
+    }
+
+    /**
+     * Starts the streaming HTTP upload server, requiring a credential when
+     * {@code apiToken} is set. The route writes into any account's drive, so it takes the
+     * same credential as the gRPC surface rather than a second one; without a token it
+     * serves open, the trusted-network default this server has always had.
+     *
+     * @param port the listen port (0 = ephemeral; read the bound port back
+     *        from the returned server)
+     * @param apiToken the credential every request must present, or null to serve open
+     * @return the started HTTP server (also closed by {@link #close()})
+     */
+    public UploadHttpServer startHttp(int port, String apiToken) {
+        UploadHttpServer http =
+                new UploadHttpServer(documentService, driveLedger, blobStore, apiToken);
         http.start(port);
         httpServers.add(http);
         return http;
