@@ -92,7 +92,7 @@ public final class SearchAction implements ProtoAction {
         // caller sees the positive, capped k and the required lane before sending, and a rule
         // added to the proto reaches this manifest without a second edit.
         return MAPPER.valueToTree(
-                ProtoJsonSchemaGenerator.create().generate(SearchRequest.getDescriptor()));
+                ProtoJsonSchemaGenerator.create().generateRooted(SearchRequest.getDescriptor()));
     }
 
     @Override

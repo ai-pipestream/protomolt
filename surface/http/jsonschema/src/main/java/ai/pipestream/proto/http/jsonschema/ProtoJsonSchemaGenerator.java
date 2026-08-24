@@ -41,6 +41,11 @@ import java.util.Objects;
  * Schema {@code required} array; CEL rules are not expressible in JSON Schema and are
  * surfaced verbatim under the {@code x-pipestream-cel} vendor keyword.
  *
+ * <p>{@link #generateRooted(Descriptor)} produces the same schema with the root message
+ * described in place rather than behind a reference. Tool-calling clients, MCP among
+ * them, require the root to declare {@code "type": "object"} and read its properties
+ * from the top level; a reference at the root leaves them nothing to read.
+ *
  * <p>Known gaps (documented, not silent): bytes length rules are not mapped (JSON
  * carries base64 text, not raw lengths), and timestamp/duration bounds are not mapped
  * (JSON Schema cannot compare {@code date-time} values). Floating {@code finite} needs
@@ -74,6 +79,37 @@ public final class ProtoJsonSchemaGenerator {
     }
 
     /** Generates the schema as pretty-printed JSON text. */
+    /**
+     * The schema with the root message described at the top level.
+     *
+     * <p>Identical to {@link #generate(Descriptor)} except that the root's own
+     * {@code type}, {@code properties} and {@code required} sit on the returned schema
+     * instead of behind a {@code $ref}. Nested types stay in {@code $defs} and keep their
+     * references, so recursion is still safe and each type is still defined once.
+     *
+     * <p>This is the form a tool manifest needs: a client that cannot follow a root
+     * reference sees an object schema it can read directly.
+     */
+    public Map<String, Object> generateRooted(Descriptor descriptor) {
+        Map<String, Object> schema = generate(descriptor);
+        Object defsValue = schema.get("$defs");
+        if (!(defsValue instanceof Map<?, ?> defs)) {
+            return schema;
+        }
+        Object rootDef = defs.get(descriptor.getFullName());
+        if (!(rootDef instanceof Map<?, ?> root)) {
+            return schema;
+        }
+        Map<String, Object> rooted = new LinkedHashMap<>();
+        rooted.put("$schema", schema.get("$schema"));
+        root.forEach((key, value) -> rooted.put(String.valueOf(key), value));
+        // $defs keeps every type, the root included. A message can reach itself, directly
+        // or through a nested one, and those references point into $defs; removing the
+        // root to avoid stating it twice would leave them pointing at nothing.
+        rooted.put("$defs", defs);
+        return rooted;
+    }
+
     public String generateJson(Descriptor descriptor) {
         try {
             return MAPPER.writerWithDefaultPrettyPrinter()

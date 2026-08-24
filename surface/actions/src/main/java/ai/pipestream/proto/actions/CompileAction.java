@@ -35,21 +35,12 @@ final class CompileAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        ObjectNode sources = properties.putObject("sources");
-        sources.put("type", "object");
-        sources.put("description",
-                "The .proto files to compile, keyed by import path (e.g. 'example/v1/doc.proto').");
-        sources.putObject("additionalProperties").put("type", "string");
-        sources.put("minProperties", 1);
-        ActionJson.required(schema, "sources");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("CompileRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "CompileRequest", name());
         ObjectNode sourcesNode = Inputs.requireObject(input, "sources");
         ProtoSourceSet.Builder builder = ProtoSourceSet.builder();
         for (Map.Entry<String, JsonNode> entry : sourcesNode.properties()) {

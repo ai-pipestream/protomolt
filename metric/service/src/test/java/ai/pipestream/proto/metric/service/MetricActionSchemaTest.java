@@ -33,15 +33,16 @@ class MetricActionSchemaTest {
 
     /**
      * The request message's own definition, resolved through the document's root reference.
-     * The generator emits a reference plus a definitions block rather than one inline object,
-     * because a message that reaches the same nested type twice must describe it once.
+     * A verb manifest describes its root message in place, because a tool-calling client
+     * reads the root's properties directly and cannot follow a reference to find them.
+     * Nested types stay in the definitions block, where a message reaching the same type
+     * twice is still described once.
      */
     private static JsonNode root(ObjectNode schema) {
-        String ref = schema.path("$ref").asText();
-        assertThat(ref).as("root reference").startsWith("#/$defs/");
-        JsonNode definition = schema.path("$defs").path(ref.substring("#/$defs/".length()));
-        assertThat(definition.isMissingNode()).as("definition for %s", ref).isFalse();
-        return definition;
+        assertThat(schema.path("$ref").isMissingNode())
+                .as("a manifest root is described in place, not referenced").isTrue();
+        assertThat(schema.path("type").asText()).isEqualTo("object");
+        return schema;
     }
 
     private static JsonNode property(ObjectNode schema, String field) {

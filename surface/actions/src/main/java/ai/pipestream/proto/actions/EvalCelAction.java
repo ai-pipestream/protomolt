@@ -34,26 +34,12 @@ final class EvalCelAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type of the input message; required unless the schema "
-                        + "already identifies a single message."));
-        properties.putObject("message")
-                .put("type", "object")
-                .put("description", "The message to bind as 'input', as canonical proto3 JSON.");
-        properties.putObject("expression")
-                .put("type", "string")
-                .put("description",
-                        "CEL expression over the variable 'input', type-checked against the message type.");
-        ActionJson.required(schema, "schema", "message", "expression");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("EvalCelRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "EvalCelRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         ObjectNode messageNode = Inputs.requireObject(input, "message");

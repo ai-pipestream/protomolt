@@ -34,19 +34,12 @@ final class ListTypesAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.putObject("filter")
-                .put("type", "string")
-                .put("description",
-                        "Optional case-insensitive substring filter on the fully qualified type name.");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("ListTypesRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "ListTypesRequest", name());
         String filter = Inputs.optionalString(input, "filter");
         Map<String, FileDescriptor> files = new LinkedHashMap<>();
         if (input.has("schema")) {
