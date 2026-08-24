@@ -52,7 +52,7 @@ final class CompileWorkflowAction implements ProtoAction {
         try {
             workflow = WorkflowCompiler.compile(definition);
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/workflow");
+            throw WorkflowRequests.invalid(e.getMessage(), "/workflow");
         }
         return Reply.of(responseType())
                 .set("workflow", workflow)
@@ -66,7 +66,7 @@ final class CompileWorkflowAction implements ProtoAction {
         try {
             definition = WorkflowJson.parse(workflow, context);
         } catch (WorkflowJson.WorkflowParseException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), e.step.isBlank()
+            throw WorkflowRequests.invalid(e.getMessage(), e.step.isBlank()
                     ? "/workflow" : "/workflow/steps/" + e.step);
         }
         List<WorkflowVerifier.Finding> findings = new WorkflowVerifier().verify(definition);

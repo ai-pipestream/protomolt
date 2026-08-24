@@ -56,7 +56,7 @@ public record TrustPin(TrustSnapshot snapshot) {
         if (defaultTrust != null) {
             return defaultTrust;
         }
-        throw WorkflowActionJson.invalid("the request carries no trust snapshot and the "
+        throw WorkflowRequests.invalid("the request carries no trust snapshot and the "
                 + "server pins none; supply 'trust' or set " + ENV_TRUST_SNAPSHOT, "/trust");
     }
 }

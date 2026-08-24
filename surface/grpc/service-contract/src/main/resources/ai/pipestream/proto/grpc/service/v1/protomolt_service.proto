@@ -1714,7 +1714,13 @@ message RunWorkflowResponse {
 message CheckWorkflowRequest {
   // The workflow definition to verify.
   CompiledWorkflow workflow = 1 [
-    (ai.pipestream.proto.validate.v1.field) = {required: true}
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      // The verb's answer is a report on this workflow, so holding the request
+      // to the workflow's own rules would refuse exactly the definitions it
+      // exists to explain. It reads the violations and reports them instead.
+      inspect_only: true
+    }
   ];
 }
 

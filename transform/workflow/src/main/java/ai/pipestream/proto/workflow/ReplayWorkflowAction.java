@@ -57,23 +57,23 @@ final class ReplayWorkflowAction implements ProtoAction {
     @Override
     public Message execute(Message input, ActionContext context) throws ActionException {
         if (artifacts == null || runs == null) {
-            throw WorkflowActionJson.unavailable("workflow replay",
+            throw WorkflowRequests.unavailable("workflow replay",
                     "start protomolt-serve with --workflow-workspace");
         }
         Workflow workflow = CatalogContract.as(
                 Fields.message(input, "workflow"), Workflow.getDefaultInstance(), name());
-        String runId = WorkflowActionJson.identity(input, "runId");
+        String runId = WorkflowRequests.identity(input, "runId");
         RunEvidence evidence;
         WorkflowReplay.ReplayResult result;
         try {
             evidence = runs.find(runId).orElseThrow(() ->
-                    WorkflowActionJson.invalid("No run evidence named '" + runId + "'", "/runId"));
+                    WorkflowRequests.invalid("No run evidence named '" + runId + "'", "/runId"));
             result = WorkflowReplay.replay(workflow, evidence,
                     SchemaResolver.resolve(input, "schema", context).files(), artifacts);
         } catch (ActionException e) {
             throw e;
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/workflow");
+            throw WorkflowRequests.invalid(e.getMessage(), "/workflow");
         } catch (IOException e) {
             throw new ActionException("repository-failed", "Replay failed: " + e.getMessage());
         }

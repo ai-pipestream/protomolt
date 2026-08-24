@@ -89,18 +89,18 @@ final class VerifyWorkRecordAction implements ProtoAction {
         byte[] record;
         try {
             record = Base64.getDecoder()
-                    .decode(WorkflowActionJson.text(input, "recordBase64"));
+                    .decode(WorkflowRequests.text(input, "recordBase64"));
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid("'recordBase64' is not valid base64",
+            throw WorkflowRequests.invalid("'recordBase64' is not valid base64",
                     "/recordBase64");
         }
         TrustSnapshot trust = TrustPin.resolve(input, defaultTrust.get());
-        Map<String, byte[]> artifacts = WorkflowActionJson.base64Map(input, "artifacts");
+        Map<String, byte[]> artifacts = WorkflowRequests.base64Map(input, "artifacts");
         Verification verification;
         try {
             verification = RecordVerifier.verify(record, trust, artifacts);
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/trust");
+            throw WorkflowRequests.invalid(e.getMessage(), "/trust");
         }
         Reply output = Reply.of(responseType())
                 .set("verified", verification.verified())

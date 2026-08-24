@@ -137,6 +137,7 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
         if (rules.getIgnoreIfZero()) {
             builder.ignore(ai.pipestream.proto.validate.model.IgnoreMode.IF_ZERO_VALUE);
         }
+        builder.inspectOnly(rules.getInspectOnly());
         if (rules.hasString()) {
             builder.string(toStringConstraints(rules.getString()));
         }

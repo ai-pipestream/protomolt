@@ -75,40 +75,40 @@ final class ExportWorkRecordAction implements ProtoAction {
     @Override
     public Message execute(Message input, ActionContext context) throws ActionException {
         if (runs == null) {
-            throw WorkflowActionJson.unavailable("work-record export",
+            throw WorkflowRequests.unavailable("work-record export",
                     "start protomolt-serve with --workflow-workspace");
         }
         if (signing == null) {
-            throw WorkflowActionJson.unavailable("work-record signing",
+            throw WorkflowRequests.unavailable("work-record signing",
                     "set " + RecordSigning.ENV_KEY_FILE + ", " + RecordSigning.ENV_KEY_ID
                             + ", and " + RecordSigning.ENV_ISSUER);
         }
-        String runId = WorkflowActionJson.identity(input, "runId");
-        String recordId = WorkflowActionJson.optionalIdentity(input, "recordId");
+        String runId = WorkflowRequests.identity(input, "runId");
+        String recordId = WorkflowRequests.optionalIdentity(input, "recordId");
         if (recordId == null) {
             recordId = "record-" + runId;
         }
-        String prior = WorkflowActionJson.optionalText(input, "priorManifestSha256");
+        String prior = WorkflowRequests.optionalText(input, "priorManifestSha256");
         if (prior != null && !prior.matches("[0-9a-f]{64}")) {
-            throw WorkflowActionJson.invalid(
+            throw WorkflowRequests.invalid(
                     "'priorManifestSha256' must be a lowercase SHA-256 digest",
                     "/priorManifestSha256");
         }
         List<String> maskClasses = maskClasses(input);
-        String discloseOf = WorkflowActionJson.optionalText(input, "discloseOf");
+        String discloseOf = WorkflowRequests.optionalText(input, "discloseOf");
         if ((maskClasses == null) != (discloseOf == null)) {
-            throw WorkflowActionJson.invalid(
+            throw WorkflowRequests.invalid(
                     "a disclosure names both 'maskClasses' and 'discloseOf'",
                     maskClasses == null ? "/maskClasses" : "/discloseOf");
         }
         if (discloseOf != null && !discloseOf.matches("[0-9a-f]{64}")) {
-            throw WorkflowActionJson.invalid(
+            throw WorkflowRequests.invalid(
                     "'discloseOf' must be a lowercase SHA-256 digest", "/discloseOf");
         }
         RunEvidence evidence;
         try {
             evidence = runs.find(runId).orElseThrow(() ->
-                    WorkflowActionJson.invalid("No run evidence named '" + runId + "'",
+                    WorkflowRequests.invalid("No run evidence named '" + runId + "'",
                             "/runId"));
         } catch (ActionException e) {
             throw e;
@@ -121,7 +121,7 @@ final class ExportWorkRecordAction implements ProtoAction {
             SensitivityMasker.MaskResult masked = SensitivityMasker.mask(evidence,
                     Set.copyOf(maskClasses), SensitivityMasker.Strategy.REMOVE);
             if (!masked.unresolvedPaths().isEmpty()) {
-                throw WorkflowActionJson.invalid(
+                throw WorkflowRequests.invalid(
                         "cannot disclose evidence with unresolved payload paths: "
                                 + masked.unresolvedPaths(), "/maskClasses");
             }
@@ -137,7 +137,7 @@ final class ExportWorkRecordAction implements ProtoAction {
                             .setNanos(now.getNano()).build(),
                     prior == null ? "" : prior));
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/runId");
+            throw WorkflowRequests.invalid(e.getMessage(), "/runId");
         }
         if (discloseOf != null) {
             manifest = manifest.toBuilder()
@@ -164,7 +164,7 @@ final class ExportWorkRecordAction implements ProtoAction {
         List<String> classes = new ArrayList<>();
         for (String entry : declared) {
             if (entry.isBlank()) {
-                throw WorkflowActionJson.invalid(
+                throw WorkflowRequests.invalid(
                         "'maskClasses' entries must be non-empty strings", "/maskClasses");
             }
             classes.add(entry);

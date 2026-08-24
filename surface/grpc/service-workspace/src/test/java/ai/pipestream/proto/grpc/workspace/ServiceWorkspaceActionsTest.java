@@ -14,14 +14,13 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import java.nio.file.Path;
-import java.util.UUID;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -222,6 +221,40 @@ class ServiceWorkspaceActionsTest {
                 .isInstanceOf(ActionException.class)
                 .extracting(error -> ((ActionException) error).code())
                 .isEqualTo("unavailable");
+    }
+
+    /**
+     * A service that arrived by reflection becomes verbs, and they work.
+     *
+     * <p>Nothing about the health service is known at build time: its descriptors were read
+     * off the wire. Each method is registered as a verb whose contract is the method's own
+     * request and response, so the tool schema a caller reads is derived from a message that
+     * did not exist in this process a moment ago, and calling the verb calls the service.
+     */
+    @Test
+    void aReflectedServiceBecomesWorkingVerbs() throws Exception {
+        catalog.execute("service-register", registerInput(false));
+        var profile = repository.find("health-local").orElseThrow();
+
+        List<String> verbs = ReflectedServiceActions.register(catalog, profile, repository,
+                null, (target, tls) -> channel());
+
+        assertThat(verbs).contains("health-local-check");
+        assertThat(catalog.names()).contains("health-local-check");
+
+        // The published schema is derived from the reflected request message.
+        JsonNode tool = null;
+        for (JsonNode entry : catalog.list()) {
+            if ("health-local-check".equals(entry.path("name").asText())) {
+                tool = entry;
+            }
+        }
+        assertThat(tool).isNotNull();
+        assertThat(tool.path("inputSchema").path("properties").has("service")).isTrue();
+
+        // And the verb reaches the service.
+        ObjectNode answered = catalog.execute("health-local-check", MAPPER.createObjectNode());
+        assertThat(answered.path("status").asText()).isEqualTo("SERVING");
     }
 
     private ObjectNode registerInput(boolean credentialReference) throws Exception {

@@ -65,6 +65,35 @@ class VerbRpcCorrespondenceTest {
         }
     }
 
+    /**
+     * And answers with the message that RPC declares.
+     *
+     * <p>A verb builds its reply against the type it names, so naming the wrong one is not a
+     * mismatch anyone notices later: the reply is built correctly against a contract nobody
+     * asked for. mesh-snapshot named another verb's request type this way and published the
+     * wrong input schema for as long as nothing compared the two.
+     */
+    @Test
+    void everyToolkitVerbAnswersWithTheMessageItsRpcDeclares() throws Exception {
+        Map<String, MethodDescriptor> byVerb = ProtoMoltServiceSchema.service().getMethods()
+                .stream()
+                .collect(Collectors.toMap(VerbRpcCorrespondenceTest::verbName,
+                        Function.identity()));
+        ActionCatalog catalog = ProtoMoltCatalog.full(ActionContext.create());
+        assertThat(catalog.names()).hasSizeGreaterThan(30);
+
+        for (String name : catalog.names()) {
+            MethodDescriptor method = byVerb.get(name);
+            assertThat(method).as("verb %s has an RPC", name).isNotNull();
+            assertThat(catalog.get(name).requestType().getFullName())
+                    .as("%s accepts what %s declares", name, method.getFullName())
+                    .isEqualTo(method.getInputType().getFullName());
+            assertThat(catalog.get(name).responseType().getFullName())
+                    .as("%s answers with what %s declares", name, method.getFullName())
+                    .isEqualTo(method.getOutputType().getFullName());
+        }
+    }
+
     @Test
     void theInferenceVerbsKeepTheirPrefixedNames() {
         // Three RPCs are named for the service they reach rather than for the verb alone,

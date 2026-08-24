@@ -8,30 +8,28 @@ import ai.pipestream.proto.authz.AccessPolicyCallers;
 import ai.pipestream.proto.authz.CallerResolver;
 import ai.pipestream.proto.authz.ConsoleSessions;
 import ai.pipestream.proto.authz.OidcCallerResolver;
+import ai.pipestream.proto.authz.jdbc.CallerStoreConfig;
+import ai.pipestream.proto.authz.jdbc.JdbcCallerResolver;
 import ai.pipestream.proto.config.DistributedConfig;
 import ai.pipestream.proto.config.TrustSnapshotMounts;
 import ai.pipestream.proto.config.registry.RegistryConfigSource;
-import ai.pipestream.proto.receipt.TrustSnapshot;
-import ai.pipestream.proto.workflow.TrustPin;
-import ai.pipestream.proto.authz.jdbc.CallerStoreConfig;
-import ai.pipestream.proto.authz.jdbc.JdbcCallerResolver;
-import ai.pipestream.proto.workflow.WorkflowRepository;
-import ai.pipestream.proto.workflow.WorkflowRunner;
 import ai.pipestream.proto.delegation.DelegationActions;
 import ai.pipestream.proto.delegation.DelegationBridge;
-import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
-import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
+import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
 import ai.pipestream.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
+import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
+import ai.pipestream.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.FileSystemRunEvidenceRepository;
-import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
-import ai.pipestream.proto.grpc.policy.OutboundChannelPolicy;
-import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
-import ai.pipestream.proto.jobs.service.events.WorkflowRunEventRelay;
-import ai.pipestream.proto.jobs.service.store.WorkflowRunDatabase;
+import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
+import ai.pipestream.proto.http.openapi.ProtoOpenApiGenerator;
+import ai.pipestream.proto.http.rest.ApiTokenRequirement;
+import ai.pipestream.proto.http.rest.ProtoApiTokenValidator;
+import ai.pipestream.proto.http.rest.ProtoRestGateway;
+import ai.pipestream.proto.http.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.inference.spi.CredentialResolutionException;
 import ai.pipestream.proto.inference.spi.CredentialResolver;
 import ai.pipestream.proto.inference.spi.InferenceCatalog;
@@ -39,27 +37,30 @@ import ai.pipestream.proto.inference.spi.InferenceEngines;
 import ai.pipestream.proto.inference.structured.StructuredGenerator;
 import ai.pipestream.proto.inference.v1.ModelCapabilities;
 import ai.pipestream.proto.inference.v1.ModelEntry;
-import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
+import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.jobs.service.events.WorkflowRunEventRelay;
 import ai.pipestream.proto.jobs.service.store.JdbcWorkflowRunStore;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunDatabase;
+import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
 import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
-import ai.pipestream.proto.mcp.McpServer;
 import ai.pipestream.proto.mcp.CompositeResources;
 import ai.pipestream.proto.mcp.DelegationResources;
+import ai.pipestream.proto.mcp.McpServer;
 import ai.pipestream.proto.mcp.RegistryResources;
 import ai.pipestream.proto.mcp.ServiceProfileResources;
 import ai.pipestream.proto.mesh.cluster.ClusterActions;
-import ai.pipestream.proto.http.openapi.ProtoOpenApiGenerator;
+import ai.pipestream.proto.mesh.cluster.v1.ClusterDirectoryServiceProto;
+import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.RegistryWorkflowVersionRepository;
 import ai.pipestream.proto.registry.service.SchemaRegistryServer;
 import ai.pipestream.proto.registry.service.SchemaRegistryServerConfig;
-import ai.pipestream.proto.http.rest.ApiTokenRequirement;
-import ai.pipestream.proto.http.rest.ProtoApiTokenValidator;
-import ai.pipestream.proto.http.rest.ProtoRestGateway;
-import ai.pipestream.proto.http.rest.ProtoRestMethodRegistry;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
-
+import ai.pipestream.proto.workflow.TrustPin;
+import ai.pipestream.proto.workflow.WorkflowRepository;
+import ai.pipestream.proto.workflow.WorkflowRunner;
+import com.google.protobuf.Descriptors.ServiceDescriptor;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.net.URI;
@@ -73,12 +74,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.ScheduledExecutorService;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1104,9 +1104,13 @@ public final class ProtoMoltServe implements AutoCloseable {
             ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
             Function<Map<String, String>, Caller> restCallers = callers == null
                     ? null : restCallers(options.apiToken(), callers);
+            // The families that contribute verbs declare them on services of their own, so
+            // those are mounted alongside ProtoMolt's; without them the same verb is on gRPC
+            // and MCP but missing from REST and from the OpenAPI document.
             ProtoMoltRestMount.register(methods, catalog, options.apiToken() == null
                     ? null
-                    : ApiTokenRequirement.apiKeyHeader("api_token"), restCallers);
+                    : ApiTokenRequirement.apiKeyHeader("api_token"), restCallers,
+                    contributedServices(meshCluster != null));
             ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
                     .withHost(options.host())
                     .withPort(options.httpPort());
@@ -1235,6 +1239,25 @@ public final class ProtoMoltServe implements AutoCloseable {
     }
 
     /** Header-to-caller resolution for the REST mount: operator token, else the policy. */
+    /**
+     * The services whose verbs this server wired, beside ProtoMolt's own.
+     *
+     * <p>Listed by what was actually started rather than by what is on the classpath: the
+     * mount publishes only methods the catalog can serve, and naming a service it did not
+     * wire would rely on that filter rather than saying so here.
+     */
+    private static java.util.List<ServiceDescriptor> contributedServices(boolean meshCluster) {
+        java.util.List<ServiceDescriptor> services = new java.util.ArrayList<>();
+        // Fully qualified: the generated holder and the registrar share a simple name.
+        services.add(ai.pipestream.proto.delegation.v1.DelegationActions.getDescriptor()
+                .findServiceByName("DelegationService"));
+        if (meshCluster) {
+            services.add(ClusterDirectoryServiceProto.getDescriptor()
+                    .findServiceByName("ClusterDirectoryService"));
+        }
+        return services;
+    }
+
     private static Function<Map<String, String>, Caller> restCallers(
             String apiToken, CallerResolver resolver) {
         byte[] operator = apiToken.getBytes(StandardCharsets.UTF_8);

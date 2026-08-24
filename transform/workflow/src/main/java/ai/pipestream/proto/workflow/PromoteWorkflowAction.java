@@ -63,12 +63,12 @@ final class PromoteWorkflowAction implements ProtoAction {
     @Override
     public Message execute(Message input, ActionContext context) throws ActionException {
         if (workflows == null) {
-            throw WorkflowActionJson.unavailable("workflow promotion",
+            throw WorkflowRequests.unavailable("workflow promotion",
                     "start protomolt-serve with --registry-git");
         }
         Workflow workflow = CatalogContract.as(
                 Fields.message(input, "workflow"), Workflow.getDefaultInstance(), name());
-        String version = WorkflowActionJson.identity(input, "version");
+        String version = WorkflowRequests.identity(input, "version");
         Instant now = clock.instant();
         VersionedWorkflow promoted = VersionedWorkflow.newBuilder()
                 .setWorkflow(workflow)
@@ -81,7 +81,7 @@ final class PromoteWorkflowAction implements ProtoAction {
             WorkflowValidation.validate(promoted);
             workflows.save(promoted);
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/workflow");
+            throw WorkflowRequests.invalid(e.getMessage(), "/workflow");
         } catch (IOException e) {
             throw new ActionException("repository-failed",
                     "Failed to promote workflow: " + e.getMessage());

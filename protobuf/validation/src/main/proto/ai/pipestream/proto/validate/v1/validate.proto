@@ -375,6 +375,17 @@ message FieldRules {
   // compilation. Enforcement is fail-closed: a declared taxonomy with no
   // mount refuses rather than passes.
   string taxonomy = 18;
+  // When true, the rules inside this field's message are not enforced here:
+  // the field carries a document the receiver examines rather than a value
+  // it consumes. The field's own rules still apply, so it can still be
+  // required and still has to parse as its declared type; what is suspended
+  // is the walk into it.
+  //
+  // For a verb whose answer is a report on the document it is given. Holding
+  // such a request to the document's rules refuses exactly the documents the
+  // verb exists to explain, so the receiver reads the violations as a value
+  // and reports them instead.
+  bool inspect_only = 19;
 }
 
 // Constraints attached to a message as a whole.

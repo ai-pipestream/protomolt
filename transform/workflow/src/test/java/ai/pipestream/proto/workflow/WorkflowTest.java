@@ -298,6 +298,39 @@ class WorkflowTest {
     }
 
     /**
+     * A definition the workflow contract itself rejects is reported, not refused.
+     *
+     * <p>A CEL rule must name a target, and the request carries the definition in a field
+     * declared inspect-only, so the door leaves that rule to this verb. Were it enforced at
+     * the door the call would be refused, and the one verb whose job is to say what is wrong
+     * with a workflow would be the one verb that could not be asked about this one.
+     */
+    @Test
+    void aDefinitionTheContractRejectsIsReportedRatherThanRefused() throws Exception {
+        ObjectNode workflow = MAPPER.createObjectNode();
+        workflow.put("name", "broken");
+        workflow.putObject("schema").put("type", "google.protobuf.Struct");
+        workflow.put("inputType", "google.protobuf.Struct");
+        ObjectNode step = workflow.putArray("steps").addObject();
+        step.put("name", "one");
+        step.put("target", "localhost:9000");
+        step.put("method", "test.Service/Method");
+        // No 'target' on the rule, which CelRule declares required.
+        step.putArray("celRules").addObject().put("selector", "input.text");
+
+        ObjectNode request = MAPPER.createObjectNode();
+        request.set("workflow", workflow);
+        ObjectNode reported = dispatch(new CheckWorkflowAction(), request);
+
+        assertThat(reported.get("ok").asBoolean()).isFalse();
+        assertThat(reported.get("findings").findValuesAsText("kind")).contains("contract");
+        assertThat(reported.get("findings").findValuesAsText("error"))
+                .anySatisfy(error -> assertThat(error).contains("target").contains("required"));
+        // The finding is attributed to the step it came from, read off the violation path.
+        assertThat(reported.get("findings").findValuesAsText("step")).contains("steps[0]");
+    }
+
+    /**
      * Dispatches the way every surface does: through a catalog holding the verb, which is
      * where the request contract is checked before the verb runs.
      */
