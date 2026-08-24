@@ -136,16 +136,6 @@ lint:
 breaking:
   use:
     - FILE
-  except:
-    # Temporary, for the field types the verb conversion declares in place of an
-    # untyped stand-in: ServiceRegisterRequest.profile as ServiceProfile rather
-    # than google.protobuf.Struct, and the check-compat mode as CompatibilityMode
-    # rather than a string carrying that enum's names. Each field already held
-    # exactly that value; declaring the type moves the contract into the message.
-    # Nothing consumes the earlier forms, so the breaks are deliberate. Drop this
-    # block in the next pull request that touches this file, per the convention
-    # recorded below.
-    - FIELD_SAME_TYPE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

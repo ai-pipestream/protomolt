@@ -20,8 +20,14 @@
 #     so no commit on either remote is ever dropped.
 #
 # Required environment:
-#   FORGEJO_REMOTE     URL of the forgejo repository (credentials embedded
-#                      by the caller, e.g. the workflow)
+#   FORGEJO_REMOTE     the forgejo repository: a remote name, or a URL with
+#                      credentials embedded by the caller (the workflow passes
+#                      a URL; a working clone can pass the remote name)
+#   GITHUB_REMOTE      name of the github remote, default "origin". The CI job
+#                      clones from github so origin is correct there. A local
+#                      worktree of this project has it the other way round,
+#                      with origin pointing at canonical forgejo, and must say
+#                      so: GITHUB_REMOTE=github FORGEJO_REMOTE=origin.
 #   GH_TOKEN           token for gh (must be a PAT: PRs opened with the
 #                      ambient GITHUB_TOKEN do not trigger CI)
 
@@ -29,11 +35,11 @@ set -euo pipefail
 
 SYNC_BRANCH="sync/forgejo-main"
 MERGE_BRANCH="sync/merge-remotes"
+GITHUB_REMOTE="${GITHUB_REMOTE:-origin}"
 
-git fetch origin main
+git fetch "$GITHUB_REMOTE" main
+GITHUB_MAIN=$(git rev-parse FETCH_HEAD)
 git fetch "$FORGEJO_REMOTE" main
-
-GITHUB_MAIN=$(git rev-parse origin/main)
 FORGEJO_MAIN=$(git rev-parse FETCH_HEAD)
 
 if [ "$GITHUB_MAIN" = "$FORGEJO_MAIN" ]; then
@@ -43,7 +49,7 @@ fi
 
 if git merge-base --is-ancestor "$FORGEJO_MAIN" "$GITHUB_MAIN"; then
   echo "github is ahead; fast-forwarding forgejo main to $GITHUB_MAIN"
-  git push "$FORGEJO_REMOTE" "origin/main:refs/heads/main"
+  git push "$FORGEJO_REMOTE" "$GITHUB_MAIN:refs/heads/main"
   exit 0
 fi
 
@@ -70,7 +76,7 @@ fi
 # Sync branches are scratch space owned by this automation and are reborn on
 # every run, so a plain force push is correct here. The lease form is not
 # usable because the run only fetches main. Main itself is never pushed.
-git push --force origin "$BRANCH:refs/heads/$BRANCH"
+git push --force "$GITHUB_REMOTE" "$BRANCH:refs/heads/$BRANCH"
 
 if gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' | grep -q .; then
   echo "sync PR for $BRANCH already open"
