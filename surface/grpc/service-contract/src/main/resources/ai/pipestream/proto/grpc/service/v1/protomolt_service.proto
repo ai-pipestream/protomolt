@@ -200,18 +200,46 @@ service ProtoMoltService {
 // 'descriptor_set_base64'; 'root' optionally names the entry file within
 // 'sources'.
 message SchemaSource {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "schema_source.exactly_one"
+      message: "a schema source names exactly one of type, sources, or descriptorSetBase64"
+      expression: "[this.type != '', size(this.sources) > 0, this.descriptor_set_base64 != ''].filter(set, set).size() == 1"
+    }
+  };
+
   // Fully qualified message name resolved from the shared descriptor
-  // registry, e.g. 'google.protobuf.Struct'.
-  string type = 1;
+  // registry, e.g. 'google.protobuf.Struct'. Discover names with ListTypes.
+  string type = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 
-  // Inline .proto files keyed by import path; compiled per call.
-  map<string, string> sources = 2;
+  // Inline .proto files keyed by import path; compiled per call and never
+  // registered. The cap bounds what one call asks the compiler to do.
+  map<string, string> sources = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {max_pairs: 256, keys: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
 
-  // Optional entry file within 'sources'.
-  string root = 3;
+  // Optional entry file within 'sources'. When it declares exactly one
+  // message, that message becomes the default type.
+  string root = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+    }
+  ];
 
   // Base64-encoded serialized google.protobuf.FileDescriptorSet.
-  string descriptor_set_base64 = 4;
+  string descriptor_set_base64 = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {base64: true}
+    }
+  ];
 }
 
 // A service profile in the canonical proto3 JSON form of
@@ -459,8 +487,14 @@ message ServiceInvokeResponse {
 
 // The input of compile: the inline .proto sources to compile.
 message CompileRequest {
-  // The .proto files to compile, keyed by import path.
-  map<string, string> sources = 1;
+  // The .proto files to compile, keyed by import path, for example
+  // 'example/v1/doc.proto'. At least one, because compiling nothing is a
+  // request the caller did not mean.
+  map<string, string> sources = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {min_pairs: 1, max_pairs: 256, keys: {string: {min_len: 1, max_len: 1024}}}
+    }
+  ];
 }
 
 // The result of compile: diagnostics on failure, the descriptor set on
@@ -484,7 +518,11 @@ message ListTypesRequest {
   // Optional; without it the shared descriptor registry is listed.
   SchemaSource schema = 1;
   // Case-insensitive substring filter on the fully qualified name.
-  string filter = 2;
+  string filter = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    }
+  ];
 }
 
 // One field of a message type.
@@ -523,12 +561,22 @@ message ListTypesResponse {
 // check.
 message ValidateMessageRequest {
   // The schema declaring the type and its validation rules.
-  SchemaSource schema = 1;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Fully qualified type to validate against; required unless the schema
-  // identifies a single message.
-  string type = 2;
-  // The message as canonical proto3 JSON.
-  google.protobuf.Struct message = 3;
+  // identifies a single message, which is why it is not required here.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
+  // The message as canonical proto3 JSON. Struct is the honest type: the
+  // message type is only known once the schema source resolves it.
+  google.protobuf.Struct message = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One broken validation rule.
@@ -689,13 +737,29 @@ message RenderIndexMappingsResponse {
 // The input of eval-cel.
 message EvalCelRequest {
   // The schema declaring the message type.
-  SchemaSource schema = 1;
-  // Fully qualified type of the bound message.
-  string type = 2;
-  // The message bound as the CEL variable 'input', as proto3 JSON.
-  google.protobuf.Struct message = 3;
-  // The CEL expression to evaluate.
-  string expression = 4;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified type of the bound message; required unless the schema
+  // identifies a single message, which is why it is not required here.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
+  // The message bound as the CEL variable 'input', as proto3 JSON. Struct is
+  // the honest type: the message type is only known once the schema resolves.
+  google.protobuf.Struct message = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The CEL expression to evaluate, type-checked against the message type.
+  string expression = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 8192}
+    }
+  ];
 }
 
 // The result of eval-cel.

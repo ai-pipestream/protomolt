@@ -57,12 +57,16 @@ class ServiceInspectContractTest {
 
     private final ServiceInspectAction action = new ServiceInspectAction(EMPTY, null);
 
-    /** The generator emits a root reference into $defs, so the bounds live one hop away. */
+    /**
+     * A verb manifest describes its root message in place, because a tool-calling client
+     * reads the root's properties directly and cannot follow a reference to find them.
+     */
     private ObjectNode properties() {
         ObjectNode schema = action.inputSchema();
-        String ref = schema.path("$ref").asText();
-        String name = ref.substring(ref.lastIndexOf('/') + 1);
-        return (ObjectNode) schema.path("$defs").path(name).path("properties");
+        assertThat(schema.path("$ref").isMissingNode())
+                .as("a manifest root is described in place, not referenced").isTrue();
+        assertThat(schema.path("type").asText()).isEqualTo("object");
+        return (ObjectNode) schema.path("properties");
     }
 
     private static ObjectNode envelope(String name) {

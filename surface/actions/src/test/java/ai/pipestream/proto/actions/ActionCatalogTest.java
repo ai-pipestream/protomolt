@@ -29,8 +29,11 @@ class ActionCatalogTest {
     @Test
     void executeStreamingFallsBackToSingleEmissionForUnaryActions() throws Exception {
         List<ObjectNode> emitted = new ArrayList<>();
-        catalog.executeStreaming("list-types", JsonNodeFactory.instance.objectNode()
-                .putObject("schema").put("type", "test.Person"), emitted::add);
+        // putObject returns the nested node, so the envelope has to be held separately;
+        // chaining off it would send the inner object as the whole request.
+        ObjectNode input = JsonNodeFactory.instance.objectNode();
+        input.putObject("schema").put("type", "actions.test.Person");
+        catalog.executeStreaming("list-types", input, emitted::add);
         assertThat(emitted).hasSize(1);
     }
 

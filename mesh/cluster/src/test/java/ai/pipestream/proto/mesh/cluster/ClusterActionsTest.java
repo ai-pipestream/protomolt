@@ -50,11 +50,11 @@ class ClusterActionsTest {
                 continue;
             }
             JsonNode schema = entry.path("inputSchema");
-            String ref = schema.path("$ref").asText();
-            assertThat(ref).as("%s schema reference", entry.path("name").asText())
-                    .startsWith("#/$defs/");
-            assertThat(schema.path("$defs").path(ref.substring("#/$defs/".length()))
-                    .path("type").asText()).isEqualTo("object");
+            // A manifest root is described in place: a tool-calling client reads its
+            // properties directly and cannot follow a reference to find them.
+            assertThat(schema.path("$ref").isMissingNode())
+                    .as("%s schema root", entry.path("name").asText()).isTrue();
+            assertThat(schema.path("type").asText()).isEqualTo("object");
         }
     }
 

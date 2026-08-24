@@ -14,6 +14,9 @@ dependencies {
     implementation project(':protomolt-protobuf-quality')
     implementation project(':protomolt-protobuf-prompt')
     implementation project(':protomolt-http-jsonschema')
+    // The request messages the catalog verbs are declared in, so an input schema is
+    // derived from the contract rather than hand-written beside it.
+    implementation project(':protomolt-grpc-service-contract')
     implementation project(':protomolt-mapper')
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-shapes')

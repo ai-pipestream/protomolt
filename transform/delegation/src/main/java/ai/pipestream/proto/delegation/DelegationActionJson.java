@@ -46,7 +46,7 @@ final class DelegationActionJson {
      * reaches every surface without a second edit.
      */
     static ObjectNode schemaFor(Descriptor request) {
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create().generate(request));
+        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create().generateRooted(request));
     }
 
     /**

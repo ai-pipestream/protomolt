@@ -1,6 +1,5 @@
-package ai.pipestream.proto.grpc.workspace;
+package ai.pipestream.proto.actions;
 
-import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.validate.ProtoValidator;
@@ -11,20 +10,21 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.Message;
-import com.google.protobuf.Parser;
 import com.google.protobuf.util.JsonFormat;
 
 /**
- * Shared contract plumbing for the service-workspace verbs: the request message each verb is
- * declared in, its derived input schema, and envelope parsing that enforces the declared
- * rules.
+ * The declared contract behind a catalog verb: the request message it accepts, the input
+ * schema derived from that message, and envelope parsing that enforces the message's rules.
  *
- * <p>The service definition is compiled from source at load and bound with dynamic messages,
- * so a request message is reached by name off that descriptor rather than through a generated
- * class.
+ * <p>Every verb is declared as an RPC on the ProtoMolt service, so the request message is
+ * the one description of what the verb takes. Deriving the published schema from it means a
+ * caller reading the tool manifest sees the bounds the verb applies, and a rule added to the
+ * proto reaches every surface without a second edit.
+ *
+ * <p>The definition is compiled from source at load, so a request message is reached by name
+ * off that descriptor rather than through a generated class.
  */
-final class ServiceActionJson {
+public final class CatalogContract {
 
     /**
      * Enforces the request contract on the catalog path.
@@ -37,11 +37,11 @@ final class ServiceActionJson {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private ServiceActionJson() {
+    private CatalogContract() {
     }
 
     /** The request message a verb is declared in, by its name in the service definition. */
-    static Descriptor request(String message) {
+    public static Descriptor request(String message) {
         Descriptor descriptor = ProtoMoltServiceSchema.file().findMessageTypeByName(message);
         if (descriptor == null) {
             throw new IllegalStateException(
@@ -50,27 +50,20 @@ final class ServiceActionJson {
         return descriptor;
     }
 
-    /**
-     * The input schema for a verb, derived from the request message it accepts.
-     *
-     * <p>Deriving rather than hand-writing keeps one description of the contract. The
-     * generator folds the message's declared validation rules into the schema, so a caller
-     * reading the tool manifest sees the same bounds the verb enforces, and a rule added to
-     * the proto reaches every surface without a second edit.
-     */
-    static ObjectNode schemaFor(String message) {
+    /** The input schema for a verb, derived from the request message it accepts. */
+    public static ObjectNode schemaFor(String message) {
         return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create().generateRooted(request(message)));
     }
 
     /**
-     * Parses an action envelope into the request message it must satisfy.
+     * Refuses an envelope the request message does not accept.
      *
      * <p>The envelope is the message's canonical proto3 JSON form, so the same document works
      * over the catalog, over the JSON gateway, and as a tool call. Unknown members are refused
      * rather than ignored: a caller that misspells a field has written a request it did not
      * mean, and silently dropping it would do something else.
      */
-    static DynamicMessage parse(ObjectNode input, String message, String verb)
+    public static void check(ObjectNode input, String message, String verb)
             throws ActionException {
         Descriptor descriptor = request(message);
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
@@ -80,56 +73,26 @@ final class ServiceActionJson {
             throw new ActionException("invalid-input",
                     verb + " expects a " + descriptor.getName() + ": " + e.getMessage());
         }
-        DynamicMessage parsed = builder.build();
-        ValidationResult result = VALIDATOR.validate(parsed);
+        ValidationResult result = VALIDATOR.validate(builder.build());
         if (!result.valid()) {
             throw new ActionException("invalid-input",
                     verb + " does not satisfy the request contract: " + describe(result),
                     violations(result));
         }
-        return parsed;
-    }
-
-    /** The value of a declared string field on a parsed request. */
-    static String string(DynamicMessage request, String field) {
-        return (String) request.getField(request.getDescriptorForType().findFieldByName(field));
     }
 
     /**
-     * The value of a declared int32 field, or {@code fallback} when it is zero.
+     * The violations as machine-readable details.
      *
-     * <p>proto3 cannot distinguish an absent number from a zero one, so the contract gives
-     * zero the meaning "the action's default" and declares it in the field's comment. That
-     * is why the rules admit zero rather than requiring a positive value.
+     * <p>Carries the {@code pointer} the catalog's error contract has always reported, so a
+     * caller that located a bad field from the pointer keeps doing so now that the refusal
+     * comes from the declared rules. The validator names a field by its proto path; the
+     * pointer names it as it appears in the JSON envelope the caller actually sent.
      */
-    static int number(DynamicMessage request, String field, int fallback) {
-        int value = (Integer) request.getField(
-                request.getDescriptorForType().findFieldByName(field));
-        return value == 0 ? fallback : value;
-    }
-
-    /**
-     * A declared message field re-read as its generated type.
-     *
-     * <p>The service definition is compiled at load, so a submessage arrives as a dynamic
-     * message. Its descriptor is the same one the generated class was built from, so the
-     * encoded bytes parse directly and the action works with the typed value.
-     */
-    static <T extends Message> T submessage(DynamicMessage request, String field,
-            Parser<T> parser, String verb) throws ActionException {
-        Message value = (Message) request.getField(
-                request.getDescriptorForType().findFieldByName(field));
-        try {
-            return parser.parseFrom(value.toByteString());
-        } catch (InvalidProtocolBufferException e) {
-            throw new ActionException("invalid-input",
-                    verb + " could not read '" + field + "': " + e.getMessage());
-        }
-    }
-
-    /** The violations as machine-readable details, each naming its field and its rule. */
     private static ObjectNode violations(ValidationResult result) {
         ObjectNode details = MAPPER.createObjectNode();
+        result.violations().stream().findFirst().ifPresent(
+                first -> details.put("pointer", pointer(first.path())));
         ArrayNode listed = details.putArray("violations");
         for (ValidationResult.Violation violation : result.violations()) {
             ObjectNode node = listed.addObject();
@@ -138,6 +101,36 @@ final class ServiceActionJson {
             node.put("message", violation.message());
         }
         return details;
+    }
+
+    /**
+     * A validator path rendered as a JSON Pointer into the envelope: dotted proto field
+     * names become slash-separated JSON names, which is how the caller wrote them.
+     */
+    private static String pointer(String path) {
+        StringBuilder out = new StringBuilder();
+        for (String segment : path.split("\\.")) {
+            out.append('/').append(jsonName(segment));
+        }
+        return out.toString();
+    }
+
+    /** One proto field name as its proto3 JSON spelling. */
+    private static String jsonName(String field) {
+        StringBuilder out = new StringBuilder(field.length());
+        boolean capitalize = false;
+        for (int i = 0; i < field.length(); i++) {
+            char character = field.charAt(i);
+            if (character == '_') {
+                capitalize = true;
+            } else if (capitalize) {
+                out.append(Character.toUpperCase(character));
+                capitalize = false;
+            } else {
+                out.append(character);
+            }
+        }
+        return out.toString();
     }
 
     /** The violations as one human-readable sentence, in declaration order. */

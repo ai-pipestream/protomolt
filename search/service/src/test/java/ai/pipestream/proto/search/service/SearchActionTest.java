@@ -91,9 +91,10 @@ class SearchActionTest {
      * reaches the same nested type twice describes it once.
      */
     private static com.fasterxml.jackson.databind.JsonNode rootOf(ObjectNode schema) {
-        String ref = schema.path("$ref").asText();
-        assertThat(ref).startsWith("#/$defs/");
-        return schema.path("$defs").path(ref.substring("#/$defs/".length()));
+        assertThat(schema.path("$ref").isMissingNode())
+                .as("a manifest root is described in place, not referenced").isTrue();
+        assertThat(schema.path("type").asText()).isEqualTo("object");
+        return schema;
     }
 
     // --- the contract the catalog sees ------------------------------------------
