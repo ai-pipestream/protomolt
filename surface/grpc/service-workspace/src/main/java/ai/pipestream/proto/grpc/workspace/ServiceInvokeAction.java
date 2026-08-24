@@ -2,9 +2,10 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonStreamingAction;
+import ai.pipestream.proto.actions.Fields;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.actions.JsonStreamEmitter;
+import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
@@ -18,6 +19,7 @@ import ai.pipestream.proto.grpc.profile.v1.Transport;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
@@ -25,7 +27,7 @@ import java.time.Duration;
 import java.util.Base64;
 
 /** Invokes a registered service while keeping its descriptor inside ProtoMolt. */
-public final class ServiceInvokeAction implements JsonStreamingAction {
+public final class ServiceInvokeAction implements StreamingAction {
 
     private static final int MAX_RESPONSES = 4_096;
 
@@ -69,40 +71,39 @@ public final class ServiceInvokeAction implements JsonStreamingAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         Invocation invocation = prepare(input, context);
-        ObjectNode result = delegate.execute(invocation.delegateInput(), context);
-        result.put("serviceProfile", invocation.profile().getName());
-        result.put("endpoint", invocation.endpoint().getName());
-        result.put("descriptorFingerprint",
-                invocation.profile().getSchemaSource().getDescriptorFingerprint());
-        return result;
+        // The reply is the delegate's plus what only this verb knows: which stored profile
+        // and endpoint the call went to, and the descriptor it was typed against.
+        return Reply.of(responseType())
+                .copyFrom(delegate.execute(invocation.delegateRequest(), context))
+                .set("serviceProfile", invocation.profile().getName())
+                .set("endpoint", invocation.endpoint().getName())
+                .set("descriptorFingerprint",
+                        invocation.profile().getSchemaSource().getDescriptorFingerprint())
+                .build();
     }
 
     @Override
-    public void executeStreaming(ObjectNode input, ActionContext context, JsonStreamEmitter emitter)
+    public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter)
             throws ActionException {
-        delegate.executeStreaming(prepare(input, context).delegateInput(), context, emitter);
+        delegate.executeStreaming(prepare(input, context).delegateRequest(), context, emitter);
     }
 
-    private Invocation prepare(ObjectNode input, ActionContext context) throws ActionException {
-        // Both the unary and the streaming path come through here, so the contract is
-        // enforced once for either.
-        ServiceActionJson.parse(input, "ServiceInvokeRequest", name());
+    private Invocation prepare(Message input, ActionContext context) throws ActionException {
+        // Both the unary and the streaming path come through here.
         ServiceProfileRepository profiles = ServiceActionSupport.requireRepository(repository);
-        String name = ServiceActionSupport.requireString(input, "name");
-        String method = ServiceActionSupport.requireString(input, "method");
-        JsonNode request = input.get("request");
-        if (request == null || !request.isObject()) {
-            throw ServiceActionSupport.invalid("'request' must be an object", "/request");
-        }
+        String name = Fields.string(input, "name");
+        String method = Fields.string(input, "method");
+        // The request is a structure: its shape is the callee's input type.
+        ObjectNode request = Fields.json(input, "request");
         ServiceProfile profile;
         try {
             profile = profiles.find(name).orElseThrow(() -> ServiceActionSupport.notFound(name));
         } catch (IOException e) {
             throw ServiceActionSupport.storage("read service profile '" + name + "'", e);
         }
-        String endpointName = optionalString(input, "endpoint");
+        String endpointName = Fields.string(input, "endpoint");
         ServiceEndpoint endpoint = ServiceActionSupport.endpoint(profile, endpointName);
         rejectUnresolvedTransport(endpoint);
         MethodPolicy policy = profile.getMethodPoliciesList().stream()
@@ -118,16 +119,18 @@ public final class ServiceInvokeAction implements JsonStreamingAction {
             throw new ActionException("invalid-descriptor", e.getMessage());
         }
 
-        ObjectNode delegated = context.objectMapper().createObjectNode();
-        delegated.put("target", ServiceActionSupport.target(endpoint));
-        delegated.put("method", method);
-        delegated.set("request", request.deepCopy());
-        delegated.putObject("schema").put("descriptorSetBase64",
-                Base64.getEncoder().encodeToString(artifact.getDescriptorSet().toByteArray()));
-        delegated.put("tls", endpoint.getTransport() == Transport.TRANSPORT_TLS);
-        copyMaxResponses(input, delegated);
-        delegated.put("deadlineMs", effectiveDeadline(input, policy));
-        return new Invocation(profile, endpoint, delegated);
+        Reply delegated = Reply.of(delegate.requestType())
+                .set("target", ServiceActionSupport.target(endpoint))
+                .set("method", method)
+                .set("request", request)
+                .set("tls", endpoint.getTransport() == Transport.TRANSPORT_TLS)
+                .set("maxResponses", maxResponses(input))
+                .set("deadlineMs", effectiveDeadline(input, policy));
+        delegated.nest("schema")
+                .set("descriptorSetBase64", Base64.getEncoder()
+                        .encodeToString(artifact.getDescriptorSet().toByteArray()))
+                .build();
+        return new Invocation(profile, endpoint, delegated.build());
     }
 
     private static void rejectUnresolvedTransport(ServiceEndpoint endpoint) throws ActionException {
@@ -148,11 +151,12 @@ public final class ServiceInvokeAction implements JsonStreamingAction {
         }
     }
 
-    private static int effectiveDeadline(ObjectNode input, MethodPolicy policy)
+    private static int effectiveDeadline(Message input, MethodPolicy policy)
             throws ActionException {
-        boolean supplied = input.hasNonNull("deadlineMs");
-        int requested = supplied ? ServiceActionSupport.deadline(input)
-                : ServiceActionSupport.DEFAULT_DEADLINE_MS;
+        // Zero means the caller said nothing, which the message documents as the default.
+        int asked = Fields.integer(input, "deadlineMs");
+        boolean supplied = asked != 0;
+        int requested = supplied ? asked : ServiceActionSupport.DEFAULT_DEADLINE_MS;
         if (policy == null || policy.getDeadline().equals(
                 com.google.protobuf.Duration.getDefaultInstance())) {
             return requested;
@@ -171,19 +175,15 @@ public final class ServiceInvokeAction implements JsonStreamingAction {
         return supplied ? requested : Math.toIntExact(configuredMs);
     }
 
-    private static void copyMaxResponses(ObjectNode input, ObjectNode delegated)
-            throws ActionException {
-        JsonNode value = input.get("maxResponses");
-        if (value == null || value.isNull()) {
-            return;
-        }
-        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() <= 0
-                || value.asInt() > MAX_RESPONSES) {
-            throw ServiceActionSupport.invalid("'maxResponses' must be an integer from 1 to "
-                            + MAX_RESPONSES,
+    /** How many replies to collect; zero leaves the delegate's own default in place. */
+    private static int maxResponses(Message input) throws ActionException {
+        int asked = Fields.integer(input, "maxResponses");
+        if (asked < 0 || asked > MAX_RESPONSES) {
+            throw ServiceActionSupport.invalid(
+                    "'maxResponses' must be an integer from 1 to " + MAX_RESPONSES,
                     "/maxResponses");
         }
-        delegated.put("maxResponses", value.asInt());
+        return asked;
     }
 
     private static String optionalString(ObjectNode input, String field) throws ActionException {
@@ -199,6 +199,6 @@ public final class ServiceInvokeAction implements JsonStreamingAction {
     }
 
     private record Invocation(ServiceProfile profile, ServiceEndpoint endpoint,
-                              ObjectNode delegateInput) {
+                              Message delegateRequest) {
     }
 }

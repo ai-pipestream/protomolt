@@ -1,6 +1,9 @@
 package ai.pipestream.proto.grpc.invoke;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -24,12 +27,23 @@ class ChannelFactoryTlsTest {
         });
 
         ObjectNode plain = MAPPER.createObjectNode().put("target", "x").put("deadlineMs", 200);
-        action.execute(plain, ActionContext.create());
+        dispatch(action, plain);
         assertThat(sawTls).isFalse();
 
         ObjectNode secure = MAPPER.createObjectNode()
                 .put("target", "x").put("deadlineMs", 200).put("tls", true);
-        action.execute(secure, ActionContext.create());
+        dispatch(action, secure);
         assertThat(sawTls).isTrue();
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

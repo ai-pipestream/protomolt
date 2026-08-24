@@ -1,7 +1,9 @@
 package ai.pipestream.proto.grpc.invoke;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -164,8 +166,7 @@ class GrpcInvokeActionTest {
     @Test
     void unaryEchoRoundTrips() throws Exception {
         ObjectNode request = MAPPER.createObjectNode().put("text", "hello");
-        ObjectNode result = action.execute(input("invoke.test.EchoService/Echo", request),
-                ActionContext.create());
+        ObjectNode result = dispatch(action, input("invoke.test.EchoService/Echo", request));
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.get("status").asText()).isEqualTo("OK");
         assertThat(result.get("methodType").asText()).isEqualTo("UNARY");
@@ -178,7 +179,7 @@ class GrpcInvokeActionTest {
         ObjectNode input = input("invoke.test.EchoService/Echo",
                 MAPPER.createObjectNode().put("text", "hi"));
         input.putObject("metadata").put("x-test", "token-123");
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(SEEN_HEADER.get()).isEqualTo("token-123");
     }
@@ -186,8 +187,7 @@ class GrpcInvokeActionTest {
     @Test
     void serverStreamingCollectsResponsesInOrder() throws Exception {
         ObjectNode request = MAPPER.createObjectNode().put("text", "one two three");
-        ObjectNode result = action.execute(input("invoke.test.EchoService/Split", request),
-                ActionContext.create());
+        ObjectNode result = dispatch(action, input("invoke.test.EchoService/Split", request));
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.get("methodType").asText()).isEqualTo("SERVER_STREAMING");
         assertThat(result.get("responses").findValuesAsText("text"))
@@ -199,7 +199,7 @@ class GrpcInvokeActionTest {
         ObjectNode input = input("invoke.test.EchoService/Split",
                 MAPPER.createObjectNode().put("text", "a b c d e"));
         input.put("maxResponses", 2);
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
         assertThat(result.get("responses").size()).isEqualTo(2);
     }
 
@@ -210,7 +210,7 @@ class GrpcInvokeActionTest {
         input.put("maxResponses", 1);
         input.put("deadlineMs", 30_000);
         long start = System.nanoTime();
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.get("responses").size()).isEqualTo(1);
@@ -220,8 +220,8 @@ class GrpcInvokeActionTest {
 
     @Test
     void grpcStatusFailuresAreResultsNotErrors() throws Exception {
-        ObjectNode result = action.execute(input("invoke.test.EchoService/Fail",
-                MAPPER.createObjectNode().put("text", "x")), ActionContext.create());
+        ObjectNode result = dispatch(action, input("invoke.test.EchoService/Fail",
+                MAPPER.createObjectNode().put("text", "x")));
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("status").asText()).isEqualTo("INVALID_ARGUMENT");
         assertThat(result.get("description").asText()).isEqualTo("bad ping");
@@ -232,23 +232,23 @@ class GrpcInvokeActionTest {
         ObjectNode input = input("invoke.test.EchoService/Slow",
                 MAPPER.createObjectNode().put("text", "x"));
         input.put("deadlineMs", 50);
-        ObjectNode result = action.execute(input, ActionContext.create());
+        ObjectNode result = dispatch(action, input);
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("status").asText()).isEqualTo("DEADLINE_EXCEEDED");
     }
 
     @Test
     void clientStreamingIsRejectedAsInvalidInput() {
-        assertThatThrownBy(() -> action.execute(input("invoke.test.EchoService/Collect",
-                MAPPER.createObjectNode()), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input("invoke.test.EchoService/Collect",
+                MAPPER.createObjectNode())))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
 
     @Test
     void unknownMethodListsAvailableMethods() {
-        assertThatThrownBy(() -> action.execute(input("invoke.test.EchoService/Nope",
-                MAPPER.createObjectNode()), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input("invoke.test.EchoService/Nope",
+                MAPPER.createObjectNode())))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("invalid-input");
                     assertThat(e.getMessage()).contains("invoke.test.EchoService/Echo");
@@ -260,8 +260,7 @@ class GrpcInvokeActionTest {
         // Unknown fields are ignored by the toolkit's JSON parser; a type mismatch is malformed.
         ObjectNode request = MAPPER.createObjectNode();
         request.putObject("text").put("nested", true);
-        assertThatThrownBy(() -> action.execute(input("invoke.test.EchoService/Echo", request),
-                ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input("invoke.test.EchoService/Echo", request)))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
@@ -269,12 +268,13 @@ class GrpcInvokeActionTest {
     @Test
     void streamingEmitsEachResponseInOrderWithOkTerminal() throws Exception {
         List<ObjectNode> emitted = new ArrayList<>();
-        action.executeStreaming(
-                input("invoke.test.EchoService/Split",
-                        MAPPER.createObjectNode().put("text", "one two three")),
-                ActionContext.create(), emitted::add);
+        stream(action, input("invoke.test.EchoService/Split",
+                        MAPPER.createObjectNode().put("text", "one two three")), emitted);
         assertThat(emitted).hasSize(4);
-        assertThat(emitted.subList(0, 3).stream().map(n -> n.get("text").asText()))
+        // Every emission is the verb's own response message, so a streamed reply from the
+        // callee arrives under 'responses' exactly as the collected form carries it.
+        assertThat(emitted.subList(0, 3).stream()
+                .map(n -> n.path("responses").get(0).get("text").asText()))
                 .containsExactly("one", "two", "three");
         assertThat(emitted.get(3).get("ok").asBoolean()).isTrue();
         assertThat(emitted.get(3).get("status").asText()).isEqualTo("OK");
@@ -283,22 +283,19 @@ class GrpcInvokeActionTest {
     @Test
     void streamingUnaryEmitsSingleResponseAndTerminal() throws Exception {
         List<ObjectNode> emitted = new ArrayList<>();
-        action.executeStreaming(
-                input("invoke.test.EchoService/Echo",
-                        MAPPER.createObjectNode().put("text", "hello")),
-                ActionContext.create(), emitted::add);
+        stream(action, input("invoke.test.EchoService/Echo",
+                        MAPPER.createObjectNode().put("text", "hello")), emitted);
         assertThat(emitted).hasSize(2);
-        assertThat(emitted.get(0).get("text").asText()).isEqualTo("hello!");
+        assertThat(emitted.get(0).path("responses").get(0).get("text").asText())
+                .isEqualTo("hello!");
         assertThat(emitted.get(1).get("status").asText()).isEqualTo("OK");
     }
 
     @Test
     void streamingStatusFailureEndsWithErrorTerminal() throws Exception {
         List<ObjectNode> emitted = new ArrayList<>();
-        action.executeStreaming(
-                input("invoke.test.EchoService/Fail",
-                        MAPPER.createObjectNode().put("text", "x")),
-                ActionContext.create(), emitted::add);
+        stream(action, input("invoke.test.EchoService/Fail",
+                        MAPPER.createObjectNode().put("text", "x")), emitted);
         assertThat(emitted).hasSize(1);
         assertThat(emitted.get(0).get("ok").asBoolean()).isFalse();
         assertThat(emitted.get(0).get("status").asText()).isEqualTo("INVALID_ARGUMENT");
@@ -311,11 +308,36 @@ class GrpcInvokeActionTest {
                 MAPPER.createObjectNode().put("text", "x"));
         input.put("deadlineMs", 800);
         List<ObjectNode> emitted = new ArrayList<>();
-        action.executeStreaming(input, ActionContext.create(), emitted::add);
+        stream(action, input, emitted);
         // The open stream yields its one tick, then the call deadline ends it.
         assertThat(emitted).hasSize(2);
-        assertThat(emitted.get(0).get("text").asText()).isEqualTo("tick");
+        assertThat(emitted.get(0).path("responses").get(0).get("text").asText())
+                .isEqualTo("tick");
         assertThat(emitted.get(1).get("ok").asBoolean()).isFalse();
         assertThat(emitted.get(1).get("status").asText()).isEqualTo("DEADLINE_EXCEEDED");
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
+
+    /**
+     * Streams the way a streaming front does: through a catalog holding the verb, which is
+     * where the request contract is checked. Each emission is rendered as the document a
+     * JSON front would read.
+     */
+    private static void stream(ProtoAction verb, ObjectNode input, List<ObjectNode> emitted)
+            throws ActionException {
+        ActionCatalog.defaults(ActionContext.create())
+                .replace(verb)
+                .executeStreaming(verb.name(), input, emitted::add);
+    }
+
 }

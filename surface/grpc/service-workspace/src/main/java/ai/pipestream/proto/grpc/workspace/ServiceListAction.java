@@ -2,17 +2,17 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
 
 /** Lists the durable service identities without loading descriptor artifacts. */
-public final class ServiceListAction implements JsonAction {
+public final class ServiceListAction implements ProtoAction {
 
     private final ServiceProfileRepository repository;
 
@@ -47,19 +47,17 @@ public final class ServiceListAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         ServiceProfileRepository store = ServiceActionSupport.requireRepository(repository);
-        // The request carries no fields, so parsing exists to refuse one that does: a caller
-        // sending a filter this verb does not have has asked for something it will not get.
-        ServiceActionJson.parse(input, "ServiceListRequest", name());
-        ObjectNode result = context.objectMapper().createObjectNode();
-        var services = result.putArray("services");
+        // The request carries no fields; a caller sending a filter this verb does not have
+        // is refused by the contract before dispatch.
+        Reply result = Reply.of(responseType());
         try {
-            store.list().forEach(profile -> services.add(
-                    ServiceActionSupport.summary(profile, context.objectMapper())));
+            store.list().forEach(profile ->
+                    ServiceActionSupport.writeSummary(result.append("services"), profile));
         } catch (IOException e) {
             throw ServiceActionSupport.storage("list service profiles", e);
         }
-        return result;
+        return result.build();
     }
 }

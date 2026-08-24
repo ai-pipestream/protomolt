@@ -2,19 +2,20 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
 
 /** Reads one profile and renders its service/method contracts without returning descriptor bytes. */
-public final class ServiceInspectAction implements JsonAction {
+public final class ServiceInspectAction implements ProtoAction {
 
     private final ServiceProfileRepository repository;
     private final SchemaRegistryStore registry;
@@ -51,20 +52,17 @@ public final class ServiceInspectAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         ServiceProfileRepository store = ServiceActionSupport.requireRepository(repository);
-        String name = ServiceActionJson.string(
-                ServiceActionJson.parse(input, "ServiceInspectRequest", name()), "name");
+        String name = Fields.string(input, "name");
         ServiceProfile profile;
         try {
             profile = store.find(name).orElseThrow(() -> ServiceActionSupport.notFound(name));
         } catch (IOException e) {
             throw ServiceActionSupport.storage("read service profile '" + name + "'", e);
         }
-        ObjectNode result = context.objectMapper().createObjectNode();
-        result.set("profile", ServiceActionSupport.profileJson(profile, context.objectMapper()));
-        result.set("services", ServiceActionSupport.services(
-                profile, store, registry, context.objectMapper()));
-        return result;
+        Reply result = Reply.of(responseType()).set("profile", profile);
+        ServiceActionSupport.writeServices(result, "services", profile, store, registry);
+        return result.build();
     }
 }

@@ -1,7 +1,9 @@
 package ai.pipestream.proto.grpc.workspace;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.DescriptorArtifact;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
@@ -87,15 +89,14 @@ class ServiceInspectContractTest {
     void aNameTheContractRefusesNeverReachesTheStore() {
         // The workspace is empty, so a name that got past validation would come back as a
         // not-found instead. A path-shaped name is the case the format rule exists to refuse.
-        assertThatThrownBy(() -> action.execute(envelope("billing/api"), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, envelope("billing/api")))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("request contract");
     }
 
     @Test
     void aMissingNameIsRefusedByTheContract() {
-        assertThatThrownBy(() -> action.execute(
-                        JsonNodeFactory.instance.objectNode(), ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, JsonNodeFactory.instance.objectNode()))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("request contract");
     }
@@ -105,8 +106,19 @@ class ServiceInspectContractTest {
         ObjectNode input = envelope("billing-api");
         input.put("nmae", "typo");
 
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(action, input))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("ServiceInspectRequest");
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

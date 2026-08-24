@@ -11,6 +11,9 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
 import com.google.protobuf.util.JsonFormat;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * Builds a verb's reply against the message it declares.
  *
@@ -83,6 +86,28 @@ public final class Reply {
     public Reply append(String field) {
         FieldDescriptor descriptor = messageField(field, true);
         return new Reply(descriptor.getMessageType(), this, descriptor);
+    }
+
+    /**
+     * Copies every field set on {@code source} onto this reply, by name.
+     *
+     * <p>For a verb that answers with another verb's reply plus its own additions. A field
+     * the target does not declare is an error rather than a silent omission, so a field
+     * added to the source forces the wrapper to say what it does with it.
+     */
+    public Reply copyFrom(Message source) {
+        for (Map.Entry<FieldDescriptor, Object> set : source.getAllFields().entrySet()) {
+            FieldDescriptor from = set.getKey();
+            FieldDescriptor into = field(from.getName());
+            if (from.isRepeated()) {
+                for (Object element : (List<?>) set.getValue()) {
+                    builder.addRepeatedField(into, element);
+                }
+            } else {
+                builder.setField(into, set.getValue());
+            }
+        }
+        return this;
     }
 
     /** The finished message. A nested reply attaches itself to its parent here. */
