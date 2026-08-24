@@ -227,11 +227,20 @@ published input schema is derived from that message. Both answer with a
 
 ### How these are reached
 
+Every verb is declared as one RPC, so its contract is stated once. The toolkit
+verbs are methods on `ProtoMoltService`; a contributed verb is a method on the
+service its own role owns — `DelegationService`, `ClusterDirectoryService`,
+`MetricService`, `SearchService` and `SearchIndexService`,
+`RegistryAdminService`, `PullService` — taking the same request message the
+verb accepts. Each family's test asserts that every request message it
+declares is some method's input, so a message reachable as a verb and not as a
+method fails the build.
+
 `ProtoMoltRestMount` mounts the typed surface by iterating the method
-descriptors of `ProtoMoltService`, the hand-maintained proto service contract.
-A contributed verb has no RPC there, so it does not appear on the typed gRPC
-service, the `/grpc-json` REST routes, the generated OpenAPI document, or
-Swagger UI. It is reached instead through:
+descriptors of `ProtoMoltService` alone. A contributed verb's RPC lives on
+another service, so it does not appear on that mount's `/grpc-json` REST
+routes, its generated OpenAPI document, or its Swagger UI. It is reached
+instead through:
 
 - the registry's actions route, `GET /protomolt/actions` and
   `POST /protomolt/actions/{name}`, which serves whatever catalog the host
@@ -245,7 +254,8 @@ Note for anyone verifying this page: the generated
 catalogs only (defaults, standalone MCP, full). Contributed verbs are not in
 it, so the test that pins this document against the inventory cannot notice a
 contributed verb going undocumented. Adding one to a role module means adding
-it here by hand.
+it here by hand. What the build does catch is a verb whose request message no
+method takes, which is the half that used to go unnoticed.
 
 Wherever an action takes a schema it accepts exactly one of three forms,
 `{"type": "fully.qualified.Name"}` (resolved from the context's descriptor
