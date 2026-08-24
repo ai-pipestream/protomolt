@@ -43,43 +43,12 @@ final class MergeSchemasAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("name")
-                .put("type", "string")
-                .put("description", "Fully qualified name of the merged message, e.g. "
-                        + "'derived.v1.OrderTicket'.");
-        ObjectNode sources = properties.putObject("sources");
-        sources.put("type", "array");
-        sources.put("description", "The named source types (two or more), in merge order; "
-                + "for coalesced singular fields, later sources overwrite earlier ones at "
-                + "join time.");
-        ObjectNode source = sources.putObject("items");
-        source.put("type", "object");
-        ObjectNode sourceProperties = source.putObject("properties");
-        sourceProperties.putObject("name")
-                .put("type", "string")
-                .put("description", "Scope name; prefixes default renames.");
-        sourceProperties.set("schema", ActionJson.schemaSourceSchema());
-        sourceProperties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type; required unless the schema identifies one."));
-        source.putArray("required").add("name").add("schema");
-        ObjectNode resolutions = properties.putObject("resolutions");
-        resolutions.put("type", "object");
-        resolutions.put("description", "Per clashing field name: {\"action\": \"rename\"|"
-                + "\"prefer\"|\"coalesce\", \"source\"?: winner for prefer, \"names\"?: "
-                + "{source: new field name} for rename}.");
-        properties.putObject("reportOnly")
-                .put("type", "boolean")
-                .put("description", "Return only the clash report, even when the merge is "
-                        + "clean.");
-        ActionJson.required(schema, "name", "sources");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("MergeSchemasRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "MergeSchemasRequest", name());
         String name = Inputs.requireString(input, "name");
         List<ShapeSynthesizer.NamedType> sources =
                 SynthesizeShapeAction.namedSources(input, context);
