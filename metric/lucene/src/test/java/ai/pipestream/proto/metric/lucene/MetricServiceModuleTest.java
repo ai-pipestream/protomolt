@@ -449,8 +449,8 @@ class MetricServiceModuleTest {
                 .environment(Map.of())
                 .build()
                 .boot(List.of("repo", "search", "metric"))) {
-            ai.pipestream.proto.actions.JsonAction rebuild =
-                    (ai.pipestream.proto.actions.JsonAction) node.context().contributions()
+            ai.pipestream.proto.actions.ProtoAction rebuild =
+                    node.context().contributions()
                             .all(ai.pipestream.proto.actions.ProtoAction.class).stream()
                             .filter(action -> action.name().equals("rebuild-rollup"))
                             .findFirst().orElseThrow();
@@ -460,8 +460,11 @@ class MetricServiceModuleTest {
             input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
             input.put("table", "documents_total");
             input.putArray("measures").add("documents");
-            com.fasterxml.jackson.databind.node.ObjectNode written = rebuild.execute(
-                    input, ai.pipestream.proto.actions.ActionContext.create());
+            com.fasterxml.jackson.databind.node.ObjectNode written =
+                    ai.pipestream.proto.actions.ActionCatalog
+                            .defaults(ai.pipestream.proto.actions.ActionContext.create())
+                            .replace(rebuild)
+                            .execute(rebuild.name(), input);
             assertThat(written.get("table").asText()).isEqualTo("protomolt.documents_total");
             assertThat(replaced).containsExactly("documents_total");
         }

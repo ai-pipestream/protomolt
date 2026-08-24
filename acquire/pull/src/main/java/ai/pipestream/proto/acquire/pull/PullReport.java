@@ -59,4 +59,16 @@ public record PullReport(int submitted, int deduplicated, int failed,
             return new PullReport(submitted, deduplicated, failed, List.copyOf(errors), watermark);
         }
     }
+
+    /** This pass as the contract message both pull verbs answer with. */
+    public ai.pipestream.proto.acquire.pull.v1.PullReport toProto() {
+        return ai.pipestream.proto.acquire.pull.v1.PullReport.newBuilder()
+                .setSubmitted(submitted)
+                .setDeduplicated(deduplicated)
+                .setFailed(failed)
+                .addAllErrors(errors)
+                .setWatermark(watermark)
+                .build();
+    }
+
 }

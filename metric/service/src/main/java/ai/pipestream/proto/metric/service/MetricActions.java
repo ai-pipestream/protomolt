@@ -2,7 +2,7 @@ package ai.pipestream.proto.metric.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
@@ -49,45 +49,6 @@ public final class MetricActions {
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private MetricActions() {
-    }
-
-    /**
-     * The input schema for a verb, derived from the request message it accepts.
-     *
-     * <p>Deriving rather than hand-writing keeps one description of the contract. The generator
-     * folds the message's declared validation rules into the schema, so a caller reading the
-     * tool manifest sees the same bounds the gate enforces, and a rule added to the proto
-     * reaches every surface without a second edit.
-     */
-    private static ObjectNode schemaFor(Descriptor request) {
-        return new ObjectMapper().valueToTree(
-                ProtoJsonSchemaGenerator.create().generateRooted(request));
-    }
-
-    /**
-     * Parses an action envelope into the request message it must satisfy.
-     *
-     * <p>The envelope is the message's canonical proto3 JSON form, so the same document works
-     * over gRPC, over the JSON gateway, and as a tool call. Unknown members are refused rather
-     * than ignored: a caller that misspells a field has written a query it did not mean, and
-     * silently dropping it would answer a different question.
-     */
-    private static <B extends Message.Builder> B parse(ObjectNode input, B builder, String verb)
-            throws ActionException {
-        try {
-            JsonFormat.parser().merge(input.toString(), builder);
-        } catch (InvalidProtocolBufferException e) {
-            throw new ActionException("invalid-input",
-                    verb + " expects a " + builder.getDescriptorForType().getName()
-                            + ": " + e.getMessage());
-        }
-        ValidationResult result = VALIDATOR.validate(builder.build());
-        if (!result.valid()) {
-            throw new ActionException("invalid-input",
-                    verb + " does not satisfy the request contract: " + describe(result),
-                    violations(result));
-        }
-        return builder;
     }
 
     /** The violations as machine-readable details, each naming its field and its rule. */
@@ -164,18 +125,8 @@ public final class MetricActions {
         return new ActionException(refusal.code(), refusal.getMessage(), details);
     }
 
-    private static ObjectNode toJson(com.google.protobuf.Message message, ObjectMapper mapper)
-            throws ActionException {
-        try {
-            return (ObjectNode) mapper.readTree(JsonFormat.printer().print(message));
-        } catch (InvalidProtocolBufferException | com.fasterxml.jackson.core.JacksonException e) {
-            throw new ActionException("render-failed",
-                    "cannot render the response as JSON: " + e.getMessage());
-        }
-    }
-
     /** One subject's queryable surface: members, roles, backends. */
-    static final class DescribeMappingAction implements JsonAction {
+    static final class DescribeMappingAction implements ProtoAction {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
@@ -211,21 +162,21 @@ public final class MetricActions {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context)
+        public Message execute(Message input, ActionContext context)
                 throws ActionException {
             ObjectMapper mapper = context.objectMapper();
-            DescribeMappingRequest request =
-                    parse(input, DescribeMappingRequest.newBuilder(), "describe-mapping").build();
+            DescribeMappingRequest request = CatalogContract.as(
+                    input, DescribeMappingRequest.getDefaultInstance(), name());
             ServedMetricSubject subject =
                     subject(subjects, resolver, request.getMappingSubject(), mapper);
             DescribeMappingResponse response = MetricQueries.describe(subject.mapping(),
                     List.copyOf(subject.executors().keySet()));
-            return toJson(response, mapper);
+            return response;
         }
     }
 
     /** One aggregate query, request and response in proto3 JSON. */
-    static final class QueryMetricsAction implements JsonAction {
+    static final class QueryMetricsAction implements ProtoAction {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
@@ -262,17 +213,17 @@ public final class MetricActions {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context)
+        public Message execute(Message input, ActionContext context)
                 throws ActionException {
             ObjectMapper mapper = context.objectMapper();
-            QueryMetricsRequest.Builder request =
-                    parse(input, QueryMetricsRequest.newBuilder(), "query-metrics");
+            QueryMetricsRequest request = CatalogContract.as(
+                    input, QueryMetricsRequest.getDefaultInstance(), name());
             ServedMetricSubject subject = subject(
                     subjects, resolver, request.getMappingSubject(), mapper);
             try {
                 QueryMetricsResponse response = MetricQueries.query(
-                        subject.mapping(), subject.executors(), request.build());
-                return toJson(response, mapper);
+                        subject.mapping(), subject.executors(), request);
+                return response;
             } catch (MetricRefusal refusal) {
                 throw refusal(refusal, mapper);
             }
@@ -280,7 +231,7 @@ public final class MetricActions {
     }
 
     /** One declared-rollup rebuild, request and response in proto3 JSON. */
-    static final class RebuildRollupAction implements JsonAction {
+    static final class RebuildRollupAction implements ProtoAction {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.pipestream.proto.metric.spi.RollupSink rollups;
@@ -321,19 +272,19 @@ public final class MetricActions {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context)
+        public Message execute(Message input, ActionContext context)
                 throws ActionException {
             ObjectMapper mapper = context.objectMapper();
             // table and measures carry required and min_items rules on the request message, so
             // the gate refuses an empty one before it reaches here. Repeating those checks in
             // Java would give the same query two different refusal messages.
-            RebuildRollupRequest.Builder request =
-                    parse(input, RebuildRollupRequest.newBuilder(), "rebuild-rollup");
+            RebuildRollupRequest request = CatalogContract.as(
+                    input, RebuildRollupRequest.getDefaultInstance(), name());
             ServedMetricSubject subject = subject(
                     subjects, resolver, request.getMappingSubject(), mapper);
             try {
-                return toJson(Rollups.rebuild(subject, rollups, request.build(),
-                        name -> Subjects.find(subjects, resolver, name)), mapper);
+                return Rollups.rebuild(subject, rollups, request,
+                        name -> Subjects.find(subjects, resolver, name));
             } catch (MetricRefusal refusal) {
                 throw refusal(refusal, mapper);
             }

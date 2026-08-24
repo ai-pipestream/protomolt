@@ -5,25 +5,21 @@ import ai.pipestream.proto.acquire.pull.v1.PullFromS3Request;
 import ai.pipestream.proto.acquire.pull.v1.PullFromS3Response;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.validate.ProtoValidator;
-import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.util.JsonFormat;
+import com.google.protobuf.Message;
 
 /**
  * The {@code pull-s3} verb: one {@link S3Pull} pass as an action. The caller owns the
  * watermark — hand back the report's {@code watermark} on the next call for an incremental
  * pull, or persist it wherever operations state lives.
  */
-public final class S3PullAction implements JsonAction {
+public final class S3PullAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "pull-s3";
@@ -76,8 +72,9 @@ public final class S3PullAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        PullFromS3Request request = parse(input);
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        PullFromS3Request request = CatalogContract.as(
+                input, PullFromS3Request.getDefaultInstance(), name());
         PullReport report;
         try {
             report = pull.pull(
@@ -92,53 +89,6 @@ public final class S3PullAction implements JsonAction {
         } catch (RuntimeException e) {
             throw new ActionException("pull-failed", e.getMessage());
         }
-        return toJson(report);
-    }
-
-    /**
-     * The pass result as the response document: a {@code PullReport} under {@code report},
-     * which is the one field the response message declares.
-     */
-    static ObjectNode toJson(PullReport report) {
-        ObjectNode output = MAPPER.createObjectNode();
-        ObjectNode node = output.putObject("report");
-        node.put("submitted", report.submitted());
-        node.put("deduplicated", report.deduplicated());
-        node.put("failed", report.failed());
-        ArrayNode errors = node.putArray("errors");
-        report.errors().forEach(errors::add);
-        node.put("watermark", report.watermark());
-        return output;
-    }
-
-    /**
-     * Reads the envelope into a request and holds it to the message's declared rules.
-     *
-     * <p>Calls arriving through the catalog do not pass the validating interceptor the gRPC
-     * surface uses, so the rules are applied here rather than left to the pass to discover
-     * after it has already started reading.
-     */
-    private static PullFromS3Request parse(ObjectNode input) throws ActionException {
-        PullFromS3Request.Builder request = PullFromS3Request.newBuilder();
-        try {
-            JsonFormat.parser().merge(input.toString(), request);
-        } catch (InvalidProtocolBufferException e) {
-            throw new ActionException("invalid-input",
-                    "the pull is not a valid PullFromS3Request: " + e.getMessage());
-        }
-        PullFromS3Request built = request.build();
-        ValidationResult result = VALIDATOR.validate(built);
-        if (!result.valid()) {
-            StringBuilder prose = new StringBuilder();
-            for (ValidationResult.Violation violation : result.violations()) {
-                if (prose.length() > 0) {
-                    prose.append("; ");
-                }
-                prose.append(violation.path()).append(' ').append(violation.message());
-            }
-            throw new ActionException("invalid-input",
-                    "The pull does not satisfy its contract: " + prose);
-        }
-        return built;
+        return PullFromS3Response.newBuilder().setReport(report.toProto()).build();
     }
 }

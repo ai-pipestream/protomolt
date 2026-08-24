@@ -3,10 +3,9 @@ package ai.pipestream.proto.mesh.cluster;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.mesh.cluster.v1.ApplyOutcome;
 import ai.pipestream.proto.mesh.cluster.v1.CapacityAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
@@ -28,17 +27,10 @@ import ai.pipestream.proto.mesh.cluster.v1.SweepResponse;
 import ai.pipestream.proto.mesh.cluster.v1.SweepResponse;
 import ai.pipestream.proto.mesh.cluster.v1.UpdateCapacityRequest;
 import ai.pipestream.proto.mesh.cluster.v1.UpdateCapacityResponse;
-import ai.pipestream.proto.validate.ProtoValidator;
-import ai.pipestream.proto.validate.ValidationResult;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
-import com.google.protobuf.util.JsonFormat;
 
 import java.util.List;
 import java.util.Objects;
@@ -68,13 +60,8 @@ public final class ClusterActions {
                 .register(new Sweep(directory));
     }
 
-    /**
-     * Enforces request contracts on the catalog path, which does not sit behind the
-     * validating interceptor the gRPC surface uses.
-     */
-    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
-    private abstract static class ClusterAction implements JsonAction {
+    private abstract static class ClusterAction implements ProtoAction {
         final PersistentClusterDirectory directory;
 
         ClusterAction(PersistentClusterDirectory directory) {
@@ -82,78 +69,17 @@ public final class ClusterActions {
         }
 
         /**
-         * The input schema for a verb, derived from the request message it accepts.
-         *
-         * <p>The generator folds the message's declared rules into the schema, so a caller
-         * reading the manifest sees the same contract the directory enforces.
+         * Where an applied change landed. Every reply on this service carries one, so the
+         * verbs differ only in the response message they set it on.
          */
-        static ObjectNode schemaOf(Descriptor request) {
-            return new ObjectMapper().valueToTree(
-                    ProtoJsonSchemaGenerator.create().generateRooted(request));
-        }
-
-        /**
-         * Reads the envelope into a request and holds it to the message's declared rules.
-         *
-         * <p>The envelope is the request message's canonical proto3 JSON form. Calls arriving
-         * over gRPC pass a validating interceptor; calls arriving through the catalog do not,
-         * so the rules are applied here rather than left to the directory to rediscover.
-         */
-        static <B extends Message.Builder> B parse(ObjectNode input, B builder)
-                throws ActionException {
-            try {
-                JsonFormat.parser().merge(input.toString(), builder);
-            } catch (Exception e) {
-                throw invalid("Invalid protobuf JSON: " + e.getMessage(), "/");
-            }
-            ValidationResult result = VALIDATOR.validate(builder.build());
-            if (!result.valid()) {
-                ObjectNode details = JsonNodeFactory.instance.objectNode();
-                ArrayNode violations = details.putArray("violations");
-                StringBuilder prose = new StringBuilder();
-                for (ValidationResult.Violation violation : result.violations()) {
-                    ObjectNode node = violations.addObject();
-                    node.put("field", violation.path());
-                    node.put("ruleId", violation.ruleId());
-                    node.put("message", violation.message());
-                    if (prose.length() > 0) {
-                        prose.append("; ");
-                    }
-                    prose.append(violation.path()).append(' ').append(violation.message());
-                }
-                throw new ActionException("invalid-input",
-                        "The request does not satisfy its contract: " + prose, details);
-            }
-            return builder;
-        }
-
-        static ObjectNode render(Message message, ActionContext context) throws ActionException {
-            try {
-                JsonNode json = context.objectMapper().readTree(
-                        JsonFormat.printer().omittingInsignificantWhitespace().print(message));
-                if (json instanceof ObjectNode object) {
-                    return object;
-                }
-                throw new IllegalStateException("protobuf JSON was not an object");
-            } catch (JsonProcessingException e) {
-                throw new ActionException("render-failed", "Failed to render protobuf JSON", null);
-            } catch (Exception e) {
-                throw new ActionException("render-failed", e.getMessage(), null);
-            }
-        }
-
-        static ObjectNode outcome(ClusterDirectory.ApplyOutcome outcome,
-                                  PersistentClusterDirectory directory,
-                                  ActionContext context) throws ActionException {
+        static DirectoryCommit commit(ClusterDirectory.ApplyOutcome outcome,
+                                      PersistentClusterDirectory directory) {
             ClusterSnapshot snapshot = directory.snapshot();
-            DirectoryCommit commit = DirectoryCommit.newBuilder()
+            return DirectoryCommit.newBuilder()
                     .setOutcome(ApplyOutcome.valueOf("APPLY_OUTCOME_" + outcome.name()))
                     .setSnapshotSeq(snapshot.getSnapshotSeq())
                     .setSnapshotFingerprint(snapshot.getFingerprint())
                     .build();
-            ObjectNode result = context.objectMapper().createObjectNode();
-            result.set("commit", render(commit, context));
-            return result;
         }
 
         static ActionException invalid(String message, String pointer) {
@@ -189,12 +115,14 @@ public final class ClusterActions {
             return RegisterNodeResponse.getDescriptor();
         }
 
-        @Override public ObjectNode execute(ObjectNode input, ActionContext context)
+        @Override public Message execute(Message input, ActionContext context)
                 throws ActionException {
             NodeAdvertisement advertisement =
-                    parse(input, RegisterNodeRequest.newBuilder()).build().getAdvertisement();
+                    CatalogContract.as(input, RegisterNodeRequest.getDefaultInstance(), name())
+                            .getAdvertisement();
             try {
-                return outcome(directory.register(advertisement), directory, context);
+                return RegisterNodeResponse.newBuilder()
+                        .setCommit(commit(directory.register(advertisement), directory)).build();
             } catch (RuntimeException e) {
                 throw rejected(e);
             }
@@ -222,12 +150,14 @@ public final class ClusterActions {
             return HeartbeatResponse.getDescriptor();
         }
 
-        @Override public ObjectNode execute(ObjectNode input, ActionContext context)
+        @Override public Message execute(Message input, ActionContext context)
                 throws ActionException {
             NodePresence presence =
-                    parse(input, HeartbeatRequest.newBuilder()).build().getPresence();
+                    CatalogContract.as(input, HeartbeatRequest.getDefaultInstance(), name())
+                            .getPresence();
             try {
-                return outcome(directory.heartbeat(presence), directory, context);
+                return HeartbeatResponse.newBuilder()
+                        .setCommit(commit(directory.heartbeat(presence), directory)).build();
             } catch (RuntimeException e) {
                 throw rejected(e);
             }
@@ -255,12 +185,13 @@ public final class ClusterActions {
             return RegisterProcessorResponse.getDescriptor();
         }
 
-        @Override public ObjectNode execute(ObjectNode input, ActionContext context)
+        @Override public Message execute(Message input, ActionContext context)
                 throws ActionException {
-            ProcessorAdvertisement advertisement = parse(
-                    input, RegisterProcessorRequest.newBuilder()).build().getAdvertisement();
+            ProcessorAdvertisement advertisement = CatalogContract.as(input, RegisterProcessorRequest.getDefaultInstance(), name())
+                            .getAdvertisement();
             try {
-                return outcome(directory.registerProcessor(advertisement), directory, context);
+                return RegisterProcessorResponse.newBuilder()
+                        .setCommit(commit(directory.registerProcessor(advertisement), directory)).build();
             } catch (RuntimeException e) {
                 throw rejected(e);
             }
@@ -288,12 +219,14 @@ public final class ClusterActions {
             return UpdateCapacityResponse.getDescriptor();
         }
 
-        @Override public ObjectNode execute(ObjectNode input, ActionContext context)
+        @Override public Message execute(Message input, ActionContext context)
                 throws ActionException {
             CapacityAdvertisement capacity =
-                    parse(input, UpdateCapacityRequest.newBuilder()).build().getCapacity();
+                    CatalogContract.as(input, UpdateCapacityRequest.getDefaultInstance(), name())
+                            .getCapacity();
             try {
-                return outcome(directory.updateCapacity(capacity), directory, context);
+                return UpdateCapacityResponse.newBuilder()
+                        .setCommit(commit(directory.updateCapacity(capacity), directory)).build();
             } catch (RuntimeException e) {
                 throw rejected(e);
             }
@@ -321,11 +254,10 @@ public final class ClusterActions {
             return GetSnapshotResponse.getDescriptor();
         }
 
-        @Override public ObjectNode execute(ObjectNode input, ActionContext context)
+        @Override public Message execute(Message input, ActionContext context)
                 throws ActionException {
-            ObjectNode result = context.objectMapper().createObjectNode();
-            result.set("snapshot", render(directory.snapshot(), context));
-            return result;
+            return GetSnapshotResponse.newBuilder()
+                    .setSnapshot(directory.snapshot()).build();
         }
     }
 
@@ -350,7 +282,7 @@ public final class ClusterActions {
             return SweepResponse.getDescriptor();
         }
 
-        @Override public ObjectNode execute(ObjectNode input, ActionContext context)
+        @Override public Message execute(Message input, ActionContext context)
                 throws ActionException {
             List<ClusterEvent> expired;
             try {
@@ -358,13 +290,10 @@ public final class ClusterActions {
             } catch (RuntimeException e) {
                 throw rejected(e);
             }
-            ObjectNode result = context.objectMapper().createObjectNode();
-            ArrayNode events = result.putArray("events");
-            for (ClusterEvent event : expired) {
-                events.add(render(event, context));
-            }
-            result.put("snapshotSeq", directory.snapshot().getSnapshotSeq());
-            return result;
+            return SweepResponse.newBuilder()
+                    .addAllEvents(expired)
+                    .setSnapshotSeq(directory.snapshot().getSnapshotSeq())
+                    .build();
         }
     }
 }

@@ -2,18 +2,18 @@ package ai.pipestream.proto.registry.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.registry.RegistryFederation;
 import ai.pipestream.proto.registry.RegistryStoreException;
+import ai.pipestream.proto.schema.registry.v1.ImportedSubject;
 import ai.pipestream.proto.schema.registry.v1.RegistrySyncRequest;
 import ai.pipestream.proto.schema.registry.v1.RegistrySyncResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * The {@code registry-sync} verb: fetches one configured remote registry and imports its
@@ -21,7 +21,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * compatibility-gated) and descriptor artifacts. The answer is the full sync report — what
  * imported, what was already present, and what was rejected with the gate's violations.
  */
-public final class RegistrySyncAction implements JsonAction {
+public final class RegistrySyncAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "registry-sync";
@@ -71,9 +71,9 @@ public final class RegistrySyncAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        RegistrySyncRequest request = (RegistrySyncRequest) RegistryRequests.validate(
-                input, RegistrySyncRequest.newBuilder(), "registry-sync");
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        RegistrySyncRequest request = CatalogContract.as(
+                input, RegistrySyncRequest.getDefaultInstance(), name());
         String remote = request.getRemote();
         if (remote.isBlank()) {
             throw new ActionException("invalid-input", "remote is required");
@@ -86,21 +86,18 @@ public final class RegistrySyncAction implements JsonAction {
         } catch (RegistryStoreException e) {
             throw new ActionException("sync-failed", e.getMessage());
         }
-        ObjectNode output = MAPPER.createObjectNode();
-        output.put("remote", report.remote());
-        ArrayNode subjects = output.putArray("subjects");
+        RegistrySyncResponse.Builder response = RegistrySyncResponse.newBuilder()
+                .setRemote(report.remote())
+                .setDescriptorsImported(report.descriptorsImported())
+                .addAllErrors(report.errors());
         for (RegistryFederation.SubjectSync subject : report.subjects()) {
-            ObjectNode node = subjects.addObject()
-                    .put("remoteSubject", subject.remoteSubject())
-                    .put("localSubject", subject.localSubject())
-                    .put("imported", subject.imported())
-                    .put("alreadyPresent", subject.alreadyPresent());
-            ArrayNode rejections = node.putArray("rejections");
-            subject.rejections().forEach(rejections::add);
+            response.addSubjects(ImportedSubject.newBuilder()
+                    .setRemoteSubject(subject.remoteSubject())
+                    .setLocalSubject(subject.localSubject())
+                    .setImported(subject.imported())
+                    .setAlreadyPresent(subject.alreadyPresent())
+                    .addAllRejections(subject.rejections()));
         }
-        output.put("descriptorsImported", report.descriptorsImported());
-        ArrayNode errors = output.putArray("errors");
-        report.errors().forEach(errors::add);
-        return output;
+        return response.build();
     }
 }

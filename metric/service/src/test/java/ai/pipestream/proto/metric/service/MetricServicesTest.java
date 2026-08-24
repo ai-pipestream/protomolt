@@ -1,8 +1,8 @@
 package ai.pipestream.proto.metric.service;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.metric.Aggregate;
 import ai.pipestream.proto.metric.DescribeMappingRequest;
@@ -275,7 +275,7 @@ class MetricServicesTest {
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode describeInput = mapper.createObjectNode()
                 .put("mappingSubject", "rollup:orders_rollup");
-        ObjectNode described = ((JsonAction) actions.get(0)).execute(describeInput, ActionContext.create());
+        ObjectNode described = dispatch(actions, 0, describeInput);
         assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
     }
 
@@ -388,7 +388,7 @@ class MetricServicesTest {
         ObjectMapper mapper = new ObjectMapper();
 
         ObjectNode describeInput = mapper.createObjectNode().put("mappingSubject", "orders");
-        ObjectNode described = ((JsonAction) actions.get(0)).execute(describeInput, context);
+        ObjectNode described = dispatch(actions, 0, describeInput);
         assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
 
         // The envelope IS the request message, not a wrapper around one.
@@ -396,12 +396,12 @@ class MetricServicesTest {
                 .put("mappingSubject", "orders")
                 .put("limit", 10);
         queryInput.putArray("measures").add("revenue");
-        ObjectNode answered = ((JsonAction) actions.get(1)).execute(queryInput, context);
+        ObjectNode answered = dispatch(actions, 1, queryInput);
         assertThat(answered.get("rows").get(0).get("measures").get("revenue").asDouble())
                 .isEqualTo(180.0);
 
         ObjectNode unknown = mapper.createObjectNode().put("mappingSubject", "nope");
-        assertThatThrownBy(() -> ((JsonAction) actions.get(0)).execute(unknown, context))
+        assertThatThrownBy(() -> dispatch(actions, 0, unknown))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("unknown-subject");
                     assertThat(e.details().orElseThrow().get("legal").get(0).asText())
@@ -412,12 +412,12 @@ class MetricServicesTest {
                 .put("mappingSubject", "orders")
                 .put("limit", 10);
         badMember.putArray("measures").add("nope");
-        assertThatThrownBy(() -> ((JsonAction) actions.get(1)).execute(badMember, context))
+        assertThatThrownBy(() -> dispatch(actions, 1, badMember))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("unknown-member"));
 
         ObjectNode garbage = mapper.createObjectNode().put("limit", "not-a-number");
-        assertThatThrownBy(() -> ((JsonAction) actions.get(1)).execute(garbage, context))
+        assertThatThrownBy(() -> dispatch(actions, 1, garbage))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("invalid-input"));
     }
@@ -427,7 +427,7 @@ class MetricServicesTest {
             throws Exception {
         FakeRollupSink rollups = new FakeRollupSink();
         List<ProtoAction> actions = MetricActions.over(subjects, rollups);
-        JsonAction rebuild = (JsonAction) actions.get(2);
+        
         ActionContext context = ActionContext.create();
         ObjectMapper mapper = new ObjectMapper();
 
@@ -436,7 +436,7 @@ class MetricServicesTest {
         input.put("table", "revenue_by_segment");
         input.putArray("measures").add("revenue");
         input.putArray("dimensions").addObject().put("name", "segment");
-        ObjectNode written = rebuild.execute(input, context);
+        ObjectNode written = dispatch(actions, 2, input);
         assertThat(written.get("table").asText()).isEqualTo("protomolt.revenue_by_segment");
         assertThat(written.get("rowsWritten").asText()).isEqualTo("1");
         assertThat(written.get("physicalPlan").asText()).isEqualTo("fake-plan");
@@ -444,8 +444,8 @@ class MetricServicesTest {
         assertThat(rollups.dimensions).containsExactly("segment");
 
         // Without a sink the verb refuses exactly like the RPC.
-        JsonAction sinkless = (JsonAction) MetricActions.over(subjects).get(2);
-        assertThatThrownBy(() -> sinkless.execute(input, context))
+        List<ProtoAction> sinkless = MetricActions.over(subjects);
+        assertThatThrownBy(() -> dispatch(sinkless, 2, input))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("missing-sink"));
 
@@ -454,8 +454,20 @@ class MetricServicesTest {
         ObjectNode noTable = mapper.createObjectNode()
                 .put("mappingSubject", "orders");
         noTable.putArray("measures").add("revenue");
-        assertThatThrownBy(() -> rebuild.execute(noTable, context))
+        assertThatThrownBy(() -> dispatch(actions, 2, noTable))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("invalid-input"));
     }
+
+    /**
+     * Dispatches a verb the way every surface does: through a catalog holding it. The
+     * request contract is checked there, so calling a verb directly would skip it.
+     */
+    private static ObjectNode dispatch(List<ProtoAction> actions, int index, ObjectNode input)
+            throws ActionException {
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create());
+        actions.forEach(catalog::replace);
+        return catalog.execute(actions.get(index).name(), input);
+    }
+
 }
