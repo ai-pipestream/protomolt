@@ -2,6 +2,10 @@ description = 'JDBC pull connector: runs a watermark query against a source data
 
 dependencies {
     api project(':protomolt-acquire-pull')
+    // The verb's input schema is derived from its request message rather than
+    // hand-written, so the declared rules reach every caller.
+    implementation project(':protomolt-http-jsonschema')
+    implementation project(':protomolt-protobuf-validation')
     api project(':protomolt-composer')
     implementation project(':protomolt-actions')
     implementation libs.jackson.databind

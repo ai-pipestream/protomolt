@@ -381,7 +381,8 @@ for event in events:
     kinds += [k for k in frame if k not in ("frameId", "taskId", "seq", "sentAt")]
     if frame.get("frameId"):
         frame_ids.append(frame["frameId"])
-    cursors.append(event.get("cursor", 0))
+    # A proto3 int64 renders as a JSON string; compare the numbers, not the text.
+    cursors.append(int(event.get("cursor", 0)))
 required = {"offer", "accept", "progress", "checkpoint", "taskMessage",
             "completion", "accepted"}
 missing = required.difference(kinds)
@@ -411,7 +412,8 @@ echo "PROOF resource: protomolt://delegation/tasks/$TASK_ID/transcript answers o
 say "STEP watch-continuity: the script's own cursor saw every event exactly once"
 python3 - "$EVENTS_JSONL" <<'PYEOF'
 import json, sys
-cursors = [json.loads(line).get("cursor", 0) for line in open(sys.argv[1])]
+# A proto3 int64 renders as a JSON string; compare the numbers, not the text.
+cursors = [int(json.loads(line).get("cursor", 0)) for line in open(sys.argv[1])]
 if cursors != sorted(cursors) or len(cursors) != len(set(cursors)):
     print("watch cursors regressed or duplicated across the worker restart", file=sys.stderr)
     sys.exit(1)

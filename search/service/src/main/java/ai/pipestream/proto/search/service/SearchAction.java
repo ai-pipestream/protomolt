@@ -4,18 +4,18 @@ import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.search.v1.SearchLane;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.search.v1.SearchRequest;
 import ai.pipestream.proto.search.v1.SearchResponse;
 import ai.pipestream.proto.search.v1.SubjectInfo;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 /**
  * Querying a mapping subject, as an agent-operable action.
@@ -37,14 +37,7 @@ public final class SearchAction implements ProtoAction {
     /** The action name: {@value}. */
     public static final String NAME = "search";
 
-    /** Lane names a caller writes, and the enum each one means. */
-    private static final Map<String, SearchLane> LANES = Map.of(
-            "lexical", SearchLane.SEARCH_LANE_LEXICAL,
-            "vector", SearchLane.SEARCH_LANE_VECTOR,
-            "hybrid", SearchLane.SEARCH_LANE_HYBRID);
-
-    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
-            new com.fasterxml.jackson.databind.ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final SubjectSearch index;
     private final ProtoValidator validator;
@@ -81,54 +74,25 @@ public final class SearchAction implements ProtoAction {
 
     @Override
     public String description() {
-        return "Searches one mapping subject and returns the best hits. Lanes: 'lexical' is"
-                + " analyzed term matching over the subject's text fields, 'vector' is KNN over"
-                + " its chunk vectors and needs a chunking policy, 'hybrid' runs both and fuses"
-                + " them by reciprocal rank. Hits carry the document id, the chunk id for"
-                + " vector-lane chunk hits, the lane score, and the mapping's stored fields as"
-                + " typed values (each is an object with one of stringValue, int64Value,"
-                + " doubleValue, boolValue, timestampValue or bytesValue, so a caller never has"
-                + " to re-parse a rendered string). Use list-subjects, or an unknown subject's"
-                + " refusal, to discover what can be searched.";
+        return "Searches one mapping subject and returns the best hits."
+                + " SEARCH_LANE_LEXICAL is analyzed term matching over the subject's text"
+                + " fields, SEARCH_LANE_VECTOR is nearest-neighbour search over its chunk"
+                + " vectors and requires a chunking policy, and SEARCH_LANE_HYBRID runs both"
+                + " and fuses them by reciprocal rank. Hits carry the document id, the chunk"
+                + " id for vector-lane chunk hits, the lane score, and the mapping's stored"
+                + " fields as typed values, each an object carrying one of stringValue,"
+                + " int64Value, doubleValue, boolValue, timestampValue or bytesValue, so a"
+                + " caller never re-parses a rendered string. An unknown subject is refused"
+                + " with the list of subjects this index serves.";
     }
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = MAPPER.createObjectNode();
-        schema.put("type", "object");
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("mappingSubject")
-                .put("type", "string")
-                .put("description", "The mapping subject to search.");
-        properties.putObject("query")
-                .put("type", "string")
-                .put("description", "The query text.");
-        ObjectNode k = properties.putObject("k");
-        k.put("type", "integer");
-        k.put("minimum", 1);
-        k.put("maximum", 10000);
-        k.put("description", "Maximum hits to return. An over-cap value is refused by name"
-                + " rather than clamped, so one query cannot ask for the whole index.");
-        ObjectNode lane = properties.putObject("lane");
-        lane.put("type", "string");
-        ArrayNode laneValues = lane.putArray("enum");
-        laneValues.add("lexical");
-        laneValues.add("vector");
-        laneValues.add("hybrid");
-        lane.put("description", "Which lane to run.");
-        ObjectNode fields = properties.putObject("fields");
-        fields.put("type", "array");
-        fields.putObject("items").put("type", "string");
-        fields.put("description", "Text fields to match in the lexical lane, by index field"
-                + " name. Omit for every text field in the subject's mapping; a field outside"
-                + " the mapping is refused by name.");
-        ArrayNode required = schema.putArray("required");
-        required.add("mappingSubject");
-        required.add("query");
-        required.add("k");
-        required.add("lane");
-        schema.put("additionalProperties", false);
-        return schema;
+        // Derived from the request message so the declared rules travel with the contract: a
+        // caller sees the positive, capped k and the required lane before sending, and a rule
+        // added to the proto reaches this manifest without a second edit.
+        return MAPPER.valueToTree(
+                ProtoJsonSchemaGenerator.create().generate(SearchRequest.getDescriptor()));
     }
 
     @Override
@@ -155,22 +119,22 @@ public final class SearchAction implements ProtoAction {
         }
     }
 
-    /** Reads the input into a request and holds it to the rules the gRPC door holds it to. */
+    /**
+     * Reads the envelope into a request and holds it to the same rules the gRPC surface holds
+     * it to.
+     *
+     * <p>The envelope is the request message's canonical proto3 JSON form. The gRPC surface
+     * enforces the declared rules through a validating interceptor, which this path does not
+     * sit behind, so the rules are applied here rather than left to the index to discover.
+     */
     private SearchRequest requestFrom(ObjectNode input, ActionContext context)
             throws ActionException {
         SearchRequest.Builder request = SearchRequest.newBuilder();
-        request.setMappingSubject(text(input, "mappingSubject"));
-        request.setQuery(text(input, "query"));
-        JsonNode k = input.get("k");
-        if (k != null && k.isNumber()) {
-            request.setK(k.asInt());
-        }
-        request.setLane(lane(input));
-        JsonNode fields = input.get("fields");
-        if (fields != null && fields.isArray()) {
-            for (JsonNode field : fields) {
-                request.addFields(field.asText());
-            }
+        try {
+            JsonFormat.parser().merge(input.toString(), request);
+        } catch (InvalidProtocolBufferException e) {
+            throw new ActionException("invalid-query",
+                    "the query is not a valid SearchRequest: " + e.getMessage(), null);
         }
         SearchRequest built = request.build();
         ValidationResult result = validator.validate(built);
@@ -188,30 +152,6 @@ public final class SearchAction implements ProtoAction {
                     details);
         }
         return built;
-    }
-
-    private static String text(ObjectNode input, String field) {
-        JsonNode node = input.get(field);
-        return node == null || node.isNull() ? "" : node.asText();
-    }
-
-    /**
-     * The lane, refused by name when it is not one of the three. Left unspecified when
-     * absent, so the declared rules produce the missing-field violation rather than this
-     * inventing a default lane, which would silently answer a different question.
-     */
-    private SearchLane lane(ObjectNode input) throws ActionException {
-        JsonNode node = input.get("lane");
-        if (node == null || node.isNull() || node.asText().isBlank()) {
-            return SearchLane.SEARCH_LANE_UNSPECIFIED;
-        }
-        String name = node.asText().trim().toLowerCase(Locale.ROOT);
-        SearchLane lane = LANES.get(name);
-        if (lane == null) {
-            throw new ActionException("invalid-query", "lane '" + node.asText()
-                    + "' is not one of: lexical, vector, hybrid", null);
-        }
-        return lane;
     }
 
     /**

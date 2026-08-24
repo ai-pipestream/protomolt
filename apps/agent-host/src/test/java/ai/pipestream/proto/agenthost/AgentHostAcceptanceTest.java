@@ -450,7 +450,7 @@ class AgentHostAcceptanceTest {
                 }
                 if (hasPayload(packet, "completion")) {
                     commands.add(command("delegation-review", MAPPER.createObjectNode()
-                            .put("taskId", TASK).put("decision", "accept")
+                            .put("taskId", TASK).put("decision", "REVIEW_DECISION_ACCEPT")
                             .put("verdict", "required check and commit verified")));
                 }
                 if (commands.isEmpty()) {

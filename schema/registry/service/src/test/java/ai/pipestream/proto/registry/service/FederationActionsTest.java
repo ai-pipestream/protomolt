@@ -63,31 +63,36 @@ class FederationActionsTest {
 
     @Test
     void remotesRoundTripThroughTheVerb() throws Exception {
-        ObjectNode empty = catalog.execute("registry-remotes", input("{\"op\":\"list\"}"));
+        ObjectNode empty = catalog.execute("registry-remotes", input("{\"operation\":\"REMOTE_OPERATION_LIST\"}"));
         assertThat(empty.get("remotes")).isEmpty();
 
         String url = tempDir.resolve("remote").toUri().toString();
         ObjectNode added = catalog.execute("registry-remotes",
-                input("{\"op\":\"add\",\"name\":\"upstream\",\"url\":\"" + url + "\"}"));
+                input("{\"operation\":\"REMOTE_OPERATION_ADD\",\"name\":\"upstream\",\"url\":\"" + url + "\"}"));
         assertThat(added.get("remotes")).hasSize(1);
         assertThat(added.get("remotes").get(0).get("name").asText()).isEqualTo("upstream");
 
         ObjectNode removed = catalog.execute("registry-remotes",
-                input("{\"op\":\"remove\",\"name\":\"upstream\"}"));
+                input("{\"operation\":\"REMOTE_OPERATION_REMOVE\",\"name\":\"upstream\"}"));
         assertThat(removed.get("remotes")).isEmpty();
     }
 
     @Test
     void missingFieldsAreRefusedByName() throws Exception {
-        assertThatThrownBy(() -> catalog.execute("registry-remotes", input("{\"op\":\"add\"}")))
+        // Adding a remote needs both a name and a URL, and the message says so through two
+        // cross-field rules rather than through checks in the verb.
+        assertThatThrownBy(() -> catalog.execute("registry-remotes",
+                input("{\"operation\":\"REMOTE_OPERATION_ADD\"}")))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("name is required");
-        assertThatThrownBy(() -> catalog.execute("registry-remotes", input("{\"op\":\"boom\"}")))
+                .hasMessageContaining("name");
+        // An operation the enum does not declare cannot be parsed at all.
+        assertThatThrownBy(() -> catalog.execute("registry-remotes",
+                input("{\"operation\":\"REMOTE_OPERATION_BOOM\"}")))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("op must be");
+                .hasMessageContaining("REMOTE_OPERATION_BOOM");
         assertThatThrownBy(() -> catalog.execute("registry-sync", input("{}")))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("remote is required");
+                .hasMessageContaining("remote field is required");
     }
 
     @Test
@@ -95,7 +100,7 @@ class FederationActionsTest {
         remote.register("common/v1/core.proto", CORE_PROTO, List.of());
         String url = tempDir.resolve("remote").toUri().toString();
         catalog.execute("registry-remotes",
-                input("{\"op\":\"add\",\"name\":\"upstream\",\"url\":\"" + url + "\"}"));
+                input("{\"operation\":\"REMOTE_OPERATION_ADD\",\"name\":\"upstream\",\"url\":\"" + url + "\"}"));
 
         ObjectNode report = catalog.execute("registry-sync", input("{\"remote\":\"upstream\"}"));
         assertThat(report.get("remote").asText()).isEqualTo("upstream");

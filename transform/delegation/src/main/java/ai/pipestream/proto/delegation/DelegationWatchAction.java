@@ -2,6 +2,8 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.delegation.v1.WatchEventsRequest;
+import ai.pipestream.proto.delegation.v1.WatchEventsResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.time.Duration;
@@ -16,8 +18,11 @@ import java.util.Optional;
  */
 final class DelegationWatchAction extends DelegationAction {
 
-    /** The largest long-poll a single call may hold open. */
-    static final int MAX_TIMEOUT_MS = 30_000;
+    /** The wait a request that does not choose one gets. */
+    static final int DEFAULT_TIMEOUT_MS = 1_000;
+
+    /** The batch size a request that does not choose one gets. */
+    static final int DEFAULT_EVENTS_PER_CALL = 64;
 
     DelegationWatchAction(DelegationBridge bridge) {
         super(bridge);
@@ -39,42 +44,33 @@ final class DelegationWatchAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("afterCursor")
-                .put("type", "integer")
-                .put("minimum", 0)
-                .put("description", "Resume position; 0 reads from the beginning. Defaults "
-                        + "to 0.");
-        putString(properties, "taskId", "Optional task uuid restricting the watch.");
-        putInteger(properties, "timeoutMs",
-                "How long to wait for the first event, in milliseconds.", 0, MAX_TIMEOUT_MS);
-        putInteger(properties, "maxEvents",
-                "The largest batch one call returns.", 1, MAX_EVENTS_PER_CALL);
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(WatchEventsRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        long afterCursor = DelegationActionJson.boundedLong(input, "afterCursor", 0,
-                Long.MAX_VALUE);
-        String taskId = DelegationActionJson.optionalUuid(input, "taskId");
-        int timeoutMs = DelegationActionJson.boundedInt(input, "timeoutMs", 1_000, 0,
-                MAX_TIMEOUT_MS);
-        int maxEvents = DelegationActionJson.boundedInt(input, "maxEvents", 64, 1,
-                MAX_EVENTS_PER_CALL);
+        WatchEventsRequest request = DelegationActionJson
+                .parse(input, WatchEventsRequest.newBuilder(), name()).build();
+        // The timeout tracks presence on the wire, because 0 is a legal request (poll and
+        // return at once) and must not be read as "the caller said nothing".
+        int timeoutMs = request.hasTimeoutMs() ? request.getTimeoutMs() : DEFAULT_TIMEOUT_MS;
+        // The batch size has no such collision: 0 is not a legal batch, so it means omitted.
+        int maxEvents = request.getMaxEvents() == 0
+                ? DEFAULT_EVENTS_PER_CALL
+                : request.getMaxEvents();
+        // An omitted task id arrives as the empty string, which watches every task.
+        String taskId = request.getTaskId().isEmpty() ? null : request.getTaskId();
+        long afterCursor = request.getAfterCursor();
         List<InProcessDelegationCoordinator.Event> events;
         try {
             Optional<InProcessDelegationCoordinator.Event> first = bridge.coordinator()
                     .waitForEvent(taskId, afterCursor, Duration.ofMillis(timeoutMs));
             if (first.isEmpty()) {
-                ObjectNode output = context.objectMapper().createObjectNode();
-                output.put("ok", true);
-                output.putArray("events");
-                output.put("cursor", afterCursor);
-                output.put("timedOut", true);
-                return output;
+                return DelegationActionJson.render(WatchEventsResponse.newBuilder()
+                        .setOk(true)
+                        .setCursor(afterCursor)
+                        .setTimedOut(true)
+                        .build(), context);
             }
             events = bridge.coordinator().eventsAfter(taskId, afterCursor);
         } catch (InterruptedException e) {
@@ -87,8 +83,12 @@ final class DelegationWatchAction extends DelegationAction {
         if (truncated) {
             events = events.subList(0, maxEvents);
         }
-        ObjectNode output = eventsJson(events, truncated, context);
-        output.put("timedOut", false);
-        return output;
+        WatchEventsResponse.Builder response = WatchEventsResponse.newBuilder()
+                .setOk(true)
+                .setCursor(resumeCursor(events))
+                .setTruncated(truncated)
+                .setTimedOut(false);
+        events.forEach(event -> response.addEvents(observed(event)));
+        return DelegationActionJson.render(response.build(), context);
     }
 }

@@ -71,6 +71,8 @@ modules:
     name: buf.build/ai-pipestream/parse-grparse
   - path: acquire/confluence/src/main/proto
     name: buf.build/ai-pipestream/acquire-confluence
+  - path: acquire/pull/src/main/proto
+    name: buf.build/ai-pipestream/acquire-pull
   - path: transform/projection/src/main/proto
     name: buf.build/ai-pipestream/projection
   - path: surface/grpc/workflow/src/main/proto
@@ -118,10 +120,6 @@ lint:
     # GetDocumentResponse: same payload, two coordinate systems.
     RPC_REQUEST_RESPONSE_UNIQUE:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
-      # ProtoMoltService returns google.protobuf.Struct from its render/invoke
-      # verbs by design: the service is descriptor-native and the canonical
-      # proto3 JSON form of each action envelope IS the response payload.
-      - surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto
     # Every ProtoMolt proto that generates Java sets java_multiple_files. These
     # two fixtures are deliberately inconsistent with each other because they
     # stand in for FOREIGN descriptors, which ProtoMolt must consume whatever
@@ -135,11 +133,17 @@ lint:
       - sink/kafka/serde/src/test/proto/serde/gen/v1/legacy_event.proto
     RPC_RESPONSE_STANDARD_NAME:
       - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
-      # Same deliberate Struct responses as RPC_REQUEST_RESPONSE_UNIQUE above.
-      - surface/grpc/service/src/main/resources/ai/pipestream/proto/grpc/service/v1/protomolt_service.proto
 breaking:
   use:
     - FILE
+  except:
+    # Temporary, for the response-type change that gave every ProtoMoltService
+    # method a declared response message in place of google.protobuf.Struct.
+    # Eight RPCs changed response type, which FILE correctly reports as a wire
+    # break. Nothing consumes these responses yet, so the break is deliberate.
+    # Drop this block in the next pull request that touches this file, per the
+    # convention recorded below.
+    - RPC_SAME_RESPONSE_TYPE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

@@ -141,10 +141,13 @@ class ProtoMoltGrpcServiceTest {
     }
 
     @Test
-    void serviceWorkspaceStructRoundTripsThroughTheTypedSurface() throws Exception {
+    void serviceWorkspaceAnswersWithItsDeclaredResponseType() throws Exception {
         JsonNode result = call("ServiceList", "{}");
 
-        assertThat(result.path("services").isArray()).isTrue();
+        // ServiceList returns ServiceListResponse. An empty repeated field is omitted from
+        // canonical proto3 JSON rather than rendered as [], so an empty workspace produces an
+        // object with no 'services' member.
+        assertThat(result.isObject()).isTrue();
         assertThat(result.path("services")).isEmpty();
     }
 
@@ -206,10 +209,13 @@ class ProtoMoltGrpcServiceTest {
     }
 
     @Test
-    void renderJsonSchemaReturnsTheDocumentItself() throws Exception {
-        JsonNode result = call("RenderJsonSchema", """
+    void renderJsonSchemaCarriesTheDocumentInItsResponseField() throws Exception {
+        JsonNode response = call("RenderJsonSchema", """
                 {"schema": {"sources": {"shop/v1/order.proto": %s}}, "type": "shop.v1.Order"}
                 """.formatted(MAPPER.writeValueAsString(ORDER_PROTO)));
+        // The document is nested under 'schema' so the RPC has a declared response type. A
+        // JSON Schema has no protobuf contract of its own, so the document stays a structure.
+        JsonNode result = response.path("schema");
         assertThat(result.path("$schema").asText()).contains("json-schema.org");
         assertThat(result.path("$defs").path("shop.v1.Order")
                 .path("properties").path("qty").path("type").asText()).isEqualTo("integer");
@@ -342,10 +348,10 @@ class ProtoMoltGrpcServiceTest {
             JsonNode result = call("GrpcInvoke", """
                     {"target": "localhost:%d",
                      "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
-                     "schema": {"sources": {"%s": %s}},
+                     "schema": {"sources": %s},
                      "request": {"schema": {"sources": {"shop/v1/order.proto": %s}}}}
-                    """.formatted(self.port(), ProtoMoltServiceSchema.RESOURCE_PATH,
-                    MAPPER.writeValueAsString(ProtoMoltServiceSchema.protoSource()),
+                    """.formatted(self.port(),
+                    MAPPER.writeValueAsString(ProtoMoltServiceSchema.protoSources()),
                     MAPPER.writeValueAsString(ORDER_PROTO)));
             assertThat(result.path("ok").asBoolean()).isTrue();
             assertThat(result.path("status").asText()).isEqualTo("OK");

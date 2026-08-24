@@ -391,11 +391,11 @@ class MetricServicesTest {
         ObjectNode described = actions.get(0).execute(describeInput, context);
         assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
 
-        ObjectNode queryInput = mapper.createObjectNode();
-        queryInput.putObject("request")
+        // The envelope IS the request message, not a wrapper around one.
+        ObjectNode queryInput = mapper.createObjectNode()
                 .put("mappingSubject", "orders")
-                .put("limit", 10)
-                .putArray("measures").add("revenue");
+                .put("limit", 10);
+        queryInput.putArray("measures").add("revenue");
         ObjectNode answered = actions.get(1).execute(queryInput, context);
         assertThat(answered.get("rows").get(0).get("measures").get("revenue").asDouble())
                 .isEqualTo(180.0);
@@ -408,17 +408,15 @@ class MetricServicesTest {
                             .isEqualTo("orders");
                 });
 
-        ObjectNode badMember = mapper.createObjectNode();
-        badMember.putObject("request")
+        ObjectNode badMember = mapper.createObjectNode()
                 .put("mappingSubject", "orders")
-                .put("limit", 10)
-                .putArray("measures").add("nope");
+                .put("limit", 10);
+        badMember.putArray("measures").add("nope");
         assertThatThrownBy(() -> actions.get(1).execute(badMember, context))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("unknown-member"));
 
-        ObjectNode garbage = mapper.createObjectNode();
-        garbage.putObject("request").put("limit", "not-a-number");
+        ObjectNode garbage = mapper.createObjectNode().put("limit", "not-a-number");
         assertThatThrownBy(() -> actions.get(1).execute(garbage, context))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("invalid-input"));
@@ -434,11 +432,10 @@ class MetricServicesTest {
         ObjectMapper mapper = new ObjectMapper();
 
         ObjectNode input = mapper.createObjectNode();
-        ObjectNode request = input.putObject("request");
-        request.put("mappingSubject", "orders");
-        request.put("table", "revenue_by_segment");
-        request.putArray("measures").add("revenue");
-        request.putArray("dimensions").addObject().put("name", "segment");
+        input.put("mappingSubject", "orders");
+        input.put("table", "revenue_by_segment");
+        input.putArray("measures").add("revenue");
+        input.putArray("dimensions").addObject().put("name", "segment");
         ObjectNode written = rebuild.execute(input, context);
         assertThat(written.get("table").asText()).isEqualTo("protomolt.revenue_by_segment");
         assertThat(written.get("rowsWritten").asText()).isEqualTo("1");
@@ -452,11 +449,11 @@ class MetricServicesTest {
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("missing-sink"));
 
-        // The verb re-checks what the interceptor enforces on the wire.
-        ObjectNode noTable = mapper.createObjectNode();
-        noTable.putObject("request")
-                .put("mappingSubject", "orders")
-                .putArray("measures").add("revenue");
+        // The catalog path is not behind the validating interceptor, so the verb enforces the
+        // request message's declared rules itself. A missing table is a 'required' violation.
+        ObjectNode noTable = mapper.createObjectNode()
+                .put("mappingSubject", "orders");
+        noTable.putArray("measures").add("revenue");
         assertThatThrownBy(() -> rebuild.execute(noTable, context))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.code()).isEqualTo("invalid-input"));
