@@ -1,5 +1,6 @@
 package ai.pipestream.proto.codegen;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -111,8 +112,9 @@ class GenerateStubsActionValidationTest {
         // than guessed at, and the published schema lists the values a caller may use.
         ObjectNode input = singleFileInput();
         input.putArray("generators").add("java");
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).replace(action);
 
-        assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+        assertThatThrownBy(() -> catalog.execute("generate-stubs", input))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("CodeGenerator");
     }

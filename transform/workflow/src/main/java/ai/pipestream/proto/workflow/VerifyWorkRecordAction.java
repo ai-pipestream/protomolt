@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Base64;
 import java.util.Map;
 import java.util.function.Supplier;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Verifies a signed work record offline against a caller-supplied trust snapshot. */
 final class VerifyWorkRecordAction implements ProtoAction {
@@ -55,8 +56,19 @@ final class VerifyWorkRecordAction implements ProtoAction {
     }
 
     @Override
+    public Descriptor requestType() {
+        return CatalogContract.request("VerifyWorkRecordRequest");
+    }
+
+    /**
+     * Adds trust to the required list when this node has no pinned snapshot.
+     *
+     * <p>One of the few contracts that cannot live in the message: the same request is
+     * correct with and without the field depending on what the node can fall back on.
+     */
+    @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = CatalogContract.schemaFor("VerifyWorkRecordRequest");
+        ObjectNode schema = CatalogContract.schemaFor(requestType());
         // A node with a pinned snapshot supplies trust itself, so the request may
         // omit it. Without a pin there is nothing to fall back on, and the verb
         // says so in the schema it publishes rather than only when a call fails.
@@ -68,7 +80,6 @@ final class VerifyWorkRecordAction implements ProtoAction {
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "VerifyWorkRecordRequest", name());
         byte[] record;
         try {
             record = Base64.getDecoder()

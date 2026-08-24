@@ -33,13 +33,12 @@ final class EvalCelAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("EvalCelRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("EvalCelRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "EvalCelRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         ObjectNode messageNode = Inputs.requireObject(input, "message");

@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.Base64;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code emit-okf} verb: render a schema as an Open Knowledge Format (OKF v0.1) bundle —
@@ -46,13 +47,12 @@ public final class EmitOkfAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("EmitOkfRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("EmitOkfRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "EmitOkfRequest", name());
         SchemaResolver.ResolvedSchema resolved = SchemaResolver.resolve(input, "schema", context);
         JsonNode titleNode = input.get("title");
         String title = titleNode != null && titleNode.isTextual() ? titleNode.asText() : null;

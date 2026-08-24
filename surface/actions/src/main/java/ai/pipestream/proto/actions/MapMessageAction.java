@@ -43,13 +43,12 @@ final class MapMessageAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("MapMessageRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("MapMessageRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "MapMessageRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         ObjectNode messageNode = Inputs.requireObject(input, "message");

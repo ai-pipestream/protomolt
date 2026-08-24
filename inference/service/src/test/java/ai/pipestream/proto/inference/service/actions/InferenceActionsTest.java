@@ -1,5 +1,6 @@
 package ai.pipestream.proto.inference.service.actions;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.inference.spi.ChunkObserver;
@@ -122,12 +123,15 @@ class InferenceActionsTest {
 
     @Test
     void generateRejectsRuleViolations() {
-        // temperature above the contract's declared maximum fails validation, not the model.
-        assertThatThrownBy(() -> new GenerateAction(engines).execute(input(Map.of(
+        // A temperature above the contract's declared maximum fails validation, not the
+        // model. Dispatching through a catalog because that is where the envelope is checked
+        // against the verb's request message; calling execute directly is below that line.
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create())
+                .replace(new GenerateAction(engines));
+        assertThatThrownBy(() -> catalog.execute("inference-generate", input(Map.of(
                 "model", "judge",
                 "temperature", 3.0,
-                "messages", List.of(Map.of("role", "user", "content", "hi")))),
-                ActionContext.create()))
+                "messages", List.of(Map.of("role", "user", "content", "hi"))))))
                 .isInstanceOfSatisfying(ActionException.class, e ->
                         assertThat(e.getMessage()).contains("temperature must be within"));
     }

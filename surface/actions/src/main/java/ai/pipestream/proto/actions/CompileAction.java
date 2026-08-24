@@ -11,6 +11,7 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 
 import java.util.Base64;
 import java.util.Map;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Compiles inline proto sources into a serialized {@code FileDescriptorSet}. */
 final class CompileAction implements ProtoAction {
@@ -34,13 +35,12 @@ final class CompileAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("CompileRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("CompileRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "CompileRequest", name());
         ObjectNode sourcesNode = Inputs.requireObject(input, "sources");
         ProtoSourceSet.Builder builder = ProtoSourceSet.builder();
         for (Map.Entry<String, JsonNode> entry : sourcesNode.properties()) {

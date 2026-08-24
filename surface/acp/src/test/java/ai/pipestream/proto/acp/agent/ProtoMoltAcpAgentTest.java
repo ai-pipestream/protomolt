@@ -17,6 +17,8 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /**
  * Drives the catalog agent through the ACP protocol over in-memory pipes: initialize, open a
@@ -148,8 +150,10 @@ class ProtoMoltAcpAgentTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return JsonNodeFactory.instance.objectNode();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override

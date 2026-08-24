@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Diffs two schema versions and reports every change with its compatibility impacts. */
 final class DiffSchemasAction implements ProtoAction {
@@ -28,13 +29,12 @@ final class DiffSchemasAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("DiffSchemasRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("DiffSchemasRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "DiffSchemasRequest", name());
         SchemaResolver.ResolvedSchema oldSchema = SchemaResolver.resolve(input, "old", context);
         SchemaResolver.ResolvedSchema newSchema = SchemaResolver.resolve(input, "new", context);
         List<SchemaChange> changes =

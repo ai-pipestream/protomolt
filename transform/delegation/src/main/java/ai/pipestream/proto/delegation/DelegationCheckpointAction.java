@@ -6,6 +6,7 @@ import ai.pipestream.proto.delegation.v1.RecordCheckpointRequest;
 import ai.pipestream.proto.delegation.v1.RecordCheckpointResponse;
 import ai.pipestream.proto.grpc.workflow.v1.ArtifactReference;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Records one resumable checkpoint of worker state on the leased attempt. */
 final class DelegationCheckpointAction extends DelegationAction {
@@ -28,8 +29,8 @@ final class DelegationCheckpointAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(RecordCheckpointRequest.getDescriptor());
+    public Descriptor requestType() {
+        return RecordCheckpointRequest.getDescriptor();
     }
 
     @Override

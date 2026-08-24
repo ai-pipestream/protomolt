@@ -38,13 +38,12 @@ final class SynthesizeShapeAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("SynthesizeShapeRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("SynthesizeShapeRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "SynthesizeShapeRequest", name());
         String mode = Inputs.requireString(input, "mode");
         String name = Inputs.requireString(input, "name");
         List<ShapeSynthesizer.NamedType> sources = namedSources(input, context);

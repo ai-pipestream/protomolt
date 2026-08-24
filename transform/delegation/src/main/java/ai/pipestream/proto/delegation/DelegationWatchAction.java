@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * Long-polls the coordinator's event feed from a caller-owned cursor. The call blocks
@@ -43,8 +44,8 @@ final class DelegationWatchAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(WatchEventsRequest.getDescriptor());
+    public Descriptor requestType() {
+        return WatchEventsRequest.getDescriptor();
     }
 
     @Override

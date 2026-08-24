@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /**
  * Drives {@link CatalogLineRunner} directly with a recording {@link PromptContext}: the console
@@ -156,10 +158,10 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode inputSchema() {
-            ObjectNode schema = mapper.createObjectNode();
-            schema.put("type", "object");
-            return schema;
+        public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
         }
 
         @Override
@@ -182,8 +184,10 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode inputSchema() {
-            return mapper.createObjectNode();
+        public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
         }
 
         @Override
@@ -204,8 +208,10 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode inputSchema() {
-            return mapper.createObjectNode();
+        public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
         }
 
         @Override
@@ -226,8 +232,10 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode inputSchema() {
-            return mapper.createObjectNode();
+        public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
         }
 
         @Override

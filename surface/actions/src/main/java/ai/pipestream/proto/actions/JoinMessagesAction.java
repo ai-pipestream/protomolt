@@ -45,13 +45,12 @@ final class JoinMessagesAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("JoinMessagesRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("JoinMessagesRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "JoinMessagesRequest", name());
         List<ShapeSynthesizer.NamedType> named =
                 SynthesizeShapeAction.namedSources(input, context);
         MessageScope scope = buildScope(input, named, context);

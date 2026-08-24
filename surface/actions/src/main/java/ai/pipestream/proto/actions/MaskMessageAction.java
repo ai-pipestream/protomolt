@@ -49,13 +49,12 @@ final class MaskMessageAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("MaskMessageRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("MaskMessageRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "MaskMessageRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         ObjectNode messageNode = Inputs.requireObject(input, "message");
