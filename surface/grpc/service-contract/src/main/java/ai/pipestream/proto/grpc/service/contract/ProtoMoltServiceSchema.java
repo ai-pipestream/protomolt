@@ -39,7 +39,8 @@ public final class ProtoMoltServiceSchema {
             "ai/pipestream/proto/inference/v1/inference.proto",
             "ai/pipestream/proto/inference/v1/structured.proto",
             "ai/pipestream/proto/meta/v1/metadata.proto",
-            "ai/pipestream/proto/prompt/v1/prompt.proto");
+            "ai/pipestream/proto/prompt/v1/prompt.proto",
+            "ai/pipestream/proto/receipt/v1/receipt.proto");
 
     /** Fully qualified service name. */
     public static final String SERVICE_FULL_NAME = "ai.pipestream.proto.grpc.service.v1.ProtoMoltService";
