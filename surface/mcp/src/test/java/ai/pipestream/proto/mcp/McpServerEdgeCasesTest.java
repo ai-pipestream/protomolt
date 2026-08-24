@@ -2,6 +2,7 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -16,9 +17,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Protocol edge cases around {@link McpServer#handle(JsonNode)} and the stream loop that the
@@ -175,7 +176,7 @@ class McpServerEdgeCasesTest {
 
     /** Counts the top-level fields of whatever envelope it is handed. */
     private ProtoAction echoAction() {
-        return new ProtoAction() {
+        return new JsonAction() {
             @Override
             public String name() {
                 return "echo";
@@ -188,6 +189,13 @@ class McpServerEdgeCasesTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();

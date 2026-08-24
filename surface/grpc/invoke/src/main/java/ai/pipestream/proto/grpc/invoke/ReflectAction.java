@@ -1,8 +1,9 @@
 package ai.pipestream.proto.grpc.invoke;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -12,9 +13,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Base64;
 import java.util.function.Function;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code reflect}: ask a live gRPC server for its own schema over the server-reflection protocol,
@@ -26,7 +27,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * integration": no schema needs to be registered or pasted first. Servers that do not enable
  * reflection return {@code ok: false} with the reason, rather than an error.</p>
  */
-public final class ReflectAction implements ProtoAction {
+public final class ReflectAction implements JsonAction {
 
     private static final int DEFAULT_DEADLINE_MS = 15_000;
 
@@ -67,6 +68,11 @@ public final class ReflectAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("ReflectRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("ReflectResponse");
     }
 
     @Override

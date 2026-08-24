@@ -2,6 +2,7 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
@@ -10,11 +11,11 @@ import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.DynamicMessage;
 
 /** Registers a reflected gRPC service without returning its descriptor bytes to the caller. */
-public final class ServiceRegisterAction implements ProtoAction {
+public final class ServiceRegisterAction implements JsonAction {
 
     private final ServiceProfileRepository repository;
     private final ChannelFactory channels;
@@ -47,6 +48,11 @@ public final class ServiceRegisterAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return ServiceActionJson.request("ServiceRegisterRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return ServiceActionJson.request("ServiceRegisterResponse");
     }
 
     @Override

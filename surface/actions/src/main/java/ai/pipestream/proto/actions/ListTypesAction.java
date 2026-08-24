@@ -13,7 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /** Lists the types a schema (or the shared registry) declares — the LLM's grounding verb. */
-final class ListTypesAction implements ProtoAction {
+final class ListTypesAction implements JsonAction {
 
     @Override
     public String name() {
@@ -35,6 +35,11 @@ final class ListTypesAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("ListTypesRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("ListTypesResponse");
     }
 
     @Override

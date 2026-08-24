@@ -6,10 +6,10 @@ import ai.pipestream.proto.delegation.v1.WatchEventsRequest;
 import ai.pipestream.proto.delegation.v1.WatchEventsResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * Long-polls the coordinator's event feed from a caller-owned cursor. The call blocks
@@ -46,6 +46,11 @@ final class DelegationWatchAction extends DelegationAction {
     @Override
     public Descriptor requestType() {
         return WatchEventsRequest.getDescriptor();
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return WatchEventsResponse.getDescriptor();
     }
 
     @Override

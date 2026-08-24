@@ -1,8 +1,9 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.receipt.RecordVerifier;
@@ -10,13 +11,13 @@ import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.receipt.Verification;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Base64;
 import java.util.Map;
 import java.util.function.Supplier;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Verifies a signed work record offline against a caller-supplied trust snapshot. */
-final class VerifyWorkRecordAction implements ProtoAction {
+final class VerifyWorkRecordAction implements JsonAction {
 
     private final Supplier<TrustSnapshot> defaultTrust;
 
@@ -58,6 +59,11 @@ final class VerifyWorkRecordAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("VerifyWorkRecordRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("VerifyWorkRecordResponse");
     }
 
     /**

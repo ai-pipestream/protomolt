@@ -1,8 +1,9 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
@@ -16,7 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** MCP/action surface for conservative descriptor-grounded mapping candidates. */
-final class SuggestMappingsAction implements ProtoAction {
+final class SuggestMappingsAction implements JsonAction {
 
     private static final int MAX_SOURCES = 64;
     private static final String SOURCE_NAME_PATTERN = "[A-Za-z_][A-Za-z0-9_]{0,127}";
@@ -41,6 +42,11 @@ final class SuggestMappingsAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("SuggestMappingsRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("SuggestMappingsResponse");
     }
 
     @Override

@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CatalogIndexTest {
 
     /** A verb that names a message and does no checking of its own. */
-    private static final class Echo implements ProtoAction {
+    private static final class Echo implements JsonAction {
         @Override
         public String name() {
             return "echo";
@@ -36,8 +36,17 @@ class CatalogIndexTest {
         }
 
         @Override
+        public Descriptor responseType() {
+            return CatalogContract.request("ListTypesResponse");
+        }
+
+        @Override
         public ObjectNode execute(ObjectNode input, ActionContext context) {
-            return input.deepCopy();
+            // Reports what it was given, but as its own response message: a verb answers
+            // under the contract it names, so it cannot simply hand the request back.
+            ObjectNode output = JsonNodeFactory.instance.objectNode();
+            output.putArray("types").addObject().put("fullName", input.path("filter").asText());
+            return output;
         }
     }
 
@@ -71,6 +80,7 @@ class CatalogIndexTest {
         ObjectNode input = JsonNodeFactory.instance.objectNode();
         input.put("filter", "shop");
 
-        assertThat(catalog().execute("echo", input).path("filter").asText()).isEqualTo("shop");
+        assertThat(catalog().execute("echo", input)
+                .path("types").path(0).path("fullName").asText()).isEqualTo("shop");
     }
 }

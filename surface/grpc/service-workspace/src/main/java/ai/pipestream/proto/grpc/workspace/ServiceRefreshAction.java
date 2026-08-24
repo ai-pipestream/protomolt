@@ -2,6 +2,7 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
@@ -12,11 +13,11 @@ import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 
-import java.io.IOException;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.io.IOException;
 
 /** Re-reflects a stored profile and advances its content-addressed schema identity. */
-public final class ServiceRefreshAction implements ProtoAction {
+public final class ServiceRefreshAction implements JsonAction {
 
     private final ServiceProfileRepository repository;
     private final ChannelFactory channels;
@@ -48,6 +49,11 @@ public final class ServiceRefreshAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return ServiceActionJson.request("ServiceRefreshRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return ServiceActionJson.request("ServiceRefreshResponse");
     }
 
     @Override

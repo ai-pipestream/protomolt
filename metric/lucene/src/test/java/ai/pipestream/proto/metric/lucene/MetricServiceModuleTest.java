@@ -449,8 +449,8 @@ class MetricServiceModuleTest {
                 .environment(Map.of())
                 .build()
                 .boot(List.of("repo", "search", "metric"))) {
-            ai.pipestream.proto.actions.ProtoAction rebuild =
-                    node.context().contributions()
+            ai.pipestream.proto.actions.JsonAction rebuild =
+                    (ai.pipestream.proto.actions.JsonAction) node.context().contributions()
                             .all(ai.pipestream.proto.actions.ProtoAction.class).stream()
                             .filter(action -> action.name().equals("rebuild-rollup"))
                             .findFirst().orElseThrow();

@@ -1,27 +1,29 @@
 package ai.pipestream.proto.acquire.s3;
 
-import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.ProtoAction;
-import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.acquire.pull.PullReport;
 import ai.pipestream.proto.acquire.pull.v1.PullFromS3Request;
+import ai.pipestream.proto.acquire.pull.v1.PullFromS3Response;
+import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.util.JsonFormat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 
 /**
  * The {@code pull-s3} verb: one {@link S3Pull} pass as an action. The caller owns the
  * watermark — hand back the report's {@code watermark} on the next call for an incremental
  * pull, or persist it wherever operations state lives.
  */
-public final class S3PullAction implements ProtoAction {
+public final class S3PullAction implements JsonAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "pull-s3";
@@ -69,6 +71,11 @@ public final class S3PullAction implements ProtoAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return PullFromS3Response.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         PullFromS3Request request = parse(input);
         PullReport report;
@@ -88,14 +95,19 @@ public final class S3PullAction implements ProtoAction {
         return toJson(report);
     }
 
+    /**
+     * The pass result as the response document: a {@code PullReport} under {@code report},
+     * which is the one field the response message declares.
+     */
     static ObjectNode toJson(PullReport report) {
         ObjectNode output = MAPPER.createObjectNode();
-        output.put("submitted", report.submitted());
-        output.put("deduplicated", report.deduplicated());
-        output.put("failed", report.failed());
-        ArrayNode errors = output.putArray("errors");
+        ObjectNode node = output.putObject("report");
+        node.put("submitted", report.submitted());
+        node.put("deduplicated", report.deduplicated());
+        node.put("failed", report.failed());
+        ArrayNode errors = node.putArray("errors");
         report.errors().forEach(errors::add);
-        output.put("watermark", report.watermark());
+        node.put("watermark", report.watermark());
         return output;
     }
 

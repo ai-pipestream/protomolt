@@ -2,6 +2,7 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,9 +18,9 @@ import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Drives the server exactly as an MCP client does: newline-delimited JSON-RPC over streams,
@@ -100,7 +101,7 @@ class StdioRoundTripTest {
     @Test
     void concurrentToolResponsesRemainIndividuallyFramed() throws Exception {
         CyclicBarrier barrier = new CyclicBarrier(2);
-        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new ProtoAction() {
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new JsonAction() {
             @Override
             public String name() {
                 return "rendezvous";
@@ -113,6 +114,13 @@ class StdioRoundTripTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();

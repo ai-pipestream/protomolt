@@ -1,6 +1,7 @@
 package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.delegation.v1.ObservedEvent;
@@ -9,7 +10,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Shared base for the delegation catalog actions: the bridge plus event rendering. */
-abstract class DelegationAction implements ProtoAction {
+abstract class DelegationAction implements JsonAction {
 
     final DelegationBridge bridge;
 

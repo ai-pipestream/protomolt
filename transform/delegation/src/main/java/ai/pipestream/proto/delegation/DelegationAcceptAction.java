@@ -32,6 +32,11 @@ final class DelegationAcceptAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return AcceptTaskResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         AcceptTaskRequest request =
                 DelegationActionJson.parse(input, AcceptTaskRequest.newBuilder(), name()).build();

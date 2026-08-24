@@ -14,7 +14,7 @@ import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 
 /** Renders the prompt packet for a protobuf message type: the complete LLM form-filling briefing. */
-final class RenderPromptAction implements ProtoAction {
+final class RenderPromptAction implements JsonAction {
 
     @Override
     public String name() {
@@ -37,6 +37,11 @@ final class RenderPromptAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("RenderPromptRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("RenderPromptResponse");
     }
 
     @Override
@@ -64,7 +69,7 @@ final class RenderPromptAction implements ProtoAction {
             }
         }
 
-        String descriptorSetRef = Inputs.optionalString(input, "descriptor_set_ref");
+        String descriptorSetRef = Inputs.optionalString(input, "descriptorSetRef");
         if (descriptorSetRef == null) {
             descriptorSetRef = "";
         }
@@ -78,17 +83,17 @@ final class RenderPromptAction implements ProtoAction {
         }
 
         ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("target_type", packet.getTargetType());
-        output.put("descriptor_set_ref", packet.getDescriptorSetRef());
+        output.put("targetType", packet.getTargetType());
+        output.put("descriptorSetRef", packet.getDescriptorSetRef());
         output.put("instructions", packet.getInstructions());
         try {
-            output.set("response_json_schema",
+            output.set("responseJsonSchema",
                     context.objectMapper().readTree(packet.getResponseJsonSchema()));
             if (packet.hasPersona()) {
                 output.set("persona", context.objectMapper()
                         .readTree(context.transcoder().toJson(packet.getPersona())));
             }
-            ArrayNode fewShot = output.putArray("few_shot");
+            ArrayNode fewShot = output.putArray("fewShot");
             for (Any example : packet.getFewShotList()) {
                 fewShot.add(context.objectMapper()
                         .readTree(context.transcoder().toJson(example)));

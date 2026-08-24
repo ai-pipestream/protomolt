@@ -11,12 +11,12 @@ import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 import static ai.pipestream.proto.actions.TestFixtures.MAPPER;
 import static ai.pipestream.proto.actions.TestFixtures.obj;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 class ActionCatalogTest {
 
@@ -42,7 +42,7 @@ class ActionCatalogTest {
     @Test
     void executeStreamingDispatchesToStreamingActions() throws Exception {
         AtomicInteger emissions = new AtomicInteger();
-        catalog.register(new StreamingAction() {
+        catalog.register(new JsonStreamingAction() {
             @Override
             public String name() {
                 return "test-stream";
@@ -61,13 +61,20 @@ class ActionCatalogTest {
             }
 
             @Override
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
             public ObjectNode execute(ObjectNode input, ActionContext context) {
                 return JsonNodeFactory.instance.objectNode().put("unary", true);
             }
 
             @Override
             public void executeStreaming(ObjectNode input, ActionContext context,
-                    StreamEmitter emitter) {
+                    JsonStreamEmitter emitter) throws ActionException {
                 emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 1));
                 emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 2));
                 emissions.addAndGet(2);
@@ -136,14 +143,14 @@ class ActionCatalogTest {
 
     @Test
     void nullInputIsInvalidInput() {
-        assertThatThrownBy(() -> catalog.execute("list-types", null))
+        assertThatThrownBy(() -> catalog.execute("list-types", (ObjectNode) null))
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
     }
 
     @Test
     void registeringACustomActionExtendsTheCatalog() throws Exception {
-        ProtoAction custom = new ProtoAction() {
+        ProtoAction custom = new JsonAction() {
             @Override
             public String name() {
                 return "noop";
@@ -162,6 +169,13 @@ class ActionCatalogTest {
             }
 
             @Override
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
             public ObjectNode execute(ObjectNode input, ActionContext context) {
                 return MAPPER.createObjectNode().put("ok", true);
             }
@@ -172,7 +186,7 @@ class ActionCatalogTest {
 
     @Test
     void duplicateNamesAreRejectedUnlessReplaceIsExplicit() throws Exception {
-        ProtoAction shadow = new ProtoAction() {
+        ProtoAction shadow = new JsonAction() {
             @Override
             public String name() {
                 return "list-types";
@@ -185,6 +199,13 @@ class ActionCatalogTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();
@@ -255,7 +276,7 @@ class ActionCatalogTest {
     }
 
     private static ProtoAction noop(String name) {
-        return new ProtoAction() {
+        return new JsonAction() {
             @Override
             public String name() {
                 return name;
@@ -268,6 +289,13 @@ class ActionCatalogTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();

@@ -1,11 +1,12 @@
 package ai.pipestream.proto.grpc.invoke;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonStreamingAction;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.actions.StreamEmitter;
+import ai.pipestream.proto.actions.JsonStreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -20,12 +21,12 @@ import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code grpc-invoke}: call a unary or server-streaming gRPC method on a live server, driven
@@ -38,7 +39,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * to repair. Input problems (unknown method, streaming shapes, malformed metadata) are
  * {@code invalid-input} action errors.</p>
  */
-public final class GrpcInvokeAction implements StreamingAction {
+public final class GrpcInvokeAction implements JsonStreamingAction {
 
     private static final int DEFAULT_DEADLINE_MS = 15_000;
     private static final int DEFAULT_MAX_RESPONSES = 64;
@@ -80,6 +81,11 @@ public final class GrpcInvokeAction implements StreamingAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("GrpcInvokeRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("GrpcInvokeResponse");
     }
 
     @Override
@@ -135,7 +141,7 @@ public final class GrpcInvokeAction implements StreamingAction {
      * end marker whether the call succeeded or not.
      */
     @Override
-    public void executeStreaming(ObjectNode input, ActionContext context, StreamEmitter emitter)
+    public void executeStreaming(ObjectNode input, ActionContext context, JsonStreamEmitter emitter)
             throws ActionException {
         CallPlan plan = prepare(input, context);
         ManagedChannel channel;

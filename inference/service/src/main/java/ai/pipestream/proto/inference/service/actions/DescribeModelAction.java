@@ -1,8 +1,9 @@
 package ai.pipestream.proto.inference.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.inference.spi.InferenceEngines;
@@ -19,7 +20,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * A null facade means inference is not configured on this server; every call
  * then answers {@code unavailable}.
  */
-public final class DescribeModelAction implements ProtoAction {
+public final class DescribeModelAction implements JsonAction {
 
     private final InferenceEngines engines;
 
@@ -50,6 +51,11 @@ public final class DescribeModelAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("InferenceDescribeModelRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("InferenceDescribeModelResponse");
     }
 
     @Override

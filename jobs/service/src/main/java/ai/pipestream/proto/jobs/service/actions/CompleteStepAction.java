@@ -1,28 +1,29 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.workflow.CompiledWorkflow;
-import ai.pipestream.proto.workflow.WorkflowJson;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.jobs.service.events.WorkflowRunEventFactory;
+import ai.pipestream.proto.jobs.service.store.ParkedCompletion;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
-import ai.pipestream.proto.jobs.service.store.ParkedCompletion;
-import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
+import ai.pipestream.proto.workflow.CompiledWorkflow;
+import ai.pipestream.proto.workflow.WorkflowJson;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Optional;
 import java.util.UUID;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code complete-step} verb: supply the response for a parked
@@ -38,7 +39,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * A null store means workflow runs are not configured on this server; every
  * call then answers {@code unavailable}.
  */
-public final class CompleteStepAction implements ProtoAction {
+public final class CompleteStepAction implements JsonAction {
 
     private final WorkflowRunStore store;
 
@@ -71,6 +72,11 @@ public final class CompleteStepAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("CompleteStepRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("CompleteStepResponse");
     }
 
     @Override

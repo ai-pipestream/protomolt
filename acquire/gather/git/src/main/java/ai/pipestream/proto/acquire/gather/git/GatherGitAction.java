@@ -3,6 +3,7 @@ package ai.pipestream.proto.acquire.gather.git;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.sources.CompiledProtos;
@@ -14,11 +15,11 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code gather-git} verb: pull {@code .proto} sources straight from a git repository,
@@ -27,7 +28,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * the fallback lane for services that publish their contract in git instead of enabling
  * reflection.
  */
-public final class GatherGitAction implements ProtoAction {
+public final class GatherGitAction implements JsonAction {
 
     private final Path cacheRoot;
 
@@ -66,6 +67,11 @@ public final class GatherGitAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("GatherGitRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("GatherGitResponse");
     }
 
     @Override

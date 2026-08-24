@@ -4,6 +4,9 @@ import ai.pipestream.proto.acp.PromptContext;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.JsonStreamEmitter;
+import ai.pipestream.proto.actions.JsonStreamingAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
@@ -15,9 +18,9 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Drives {@link CatalogLineRunner} directly with a recording {@link PromptContext}: the console
@@ -146,7 +149,7 @@ class CatalogLineRunnerTest {
     }
 
     /** Echoes the field count of its envelope; succeeds on any object, including empty. */
-    private final class EchoAction implements ProtoAction {
+    private final class EchoAction implements JsonAction {
         @Override
         public String name() {
             return "echo";
@@ -165,6 +168,13 @@ class CatalogLineRunnerTest {
         }
 
         @Override
+        public Descriptor responseType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
+        }
+
+        @Override
         public ObjectNode execute(ObjectNode input, ActionContext actionContext) {
             ObjectNode out = mapper.createObjectNode();
             out.put("fieldCount", input.size());
@@ -172,7 +182,7 @@ class CatalogLineRunnerTest {
         }
     }
 
-    private final class FailingAction implements ProtoAction {
+    private final class FailingAction implements JsonAction {
         @Override
         public String name() {
             return "fail";
@@ -191,12 +201,19 @@ class CatalogLineRunnerTest {
         }
 
         @Override
+        public Descriptor responseType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
+        }
+
+        @Override
         public ObjectNode execute(ObjectNode input, ActionContext actionContext) throws ActionException {
             throw new ActionException("bad-input", "the envelope was rejected");
         }
     }
 
-    private final class BoomAction implements ProtoAction {
+    private final class BoomAction implements JsonAction {
         @Override
         public String name() {
             return "boom";
@@ -215,12 +232,19 @@ class CatalogLineRunnerTest {
         }
 
         @Override
+        public Descriptor responseType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
+        }
+
+        @Override
         public ObjectNode execute(ObjectNode input, ActionContext actionContext) {
             throw new IllegalStateException("kapow");
         }
     }
 
-    private final class TickAction implements StreamingAction {
+    private final class TickAction implements JsonStreamingAction {
         @Override
         public String name() {
             return "tick";
@@ -239,6 +263,13 @@ class CatalogLineRunnerTest {
         }
 
         @Override
+        public Descriptor responseType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
+        }
+
+        @Override
         public ObjectNode execute(ObjectNode input, ActionContext actionContext) {
             ObjectNode out = mapper.createObjectNode();
             out.put("ticks", 2);
@@ -247,7 +278,7 @@ class CatalogLineRunnerTest {
 
         @Override
         public void executeStreaming(ObjectNode input, ActionContext actionContext,
-                StreamEmitter emitter) {
+                JsonStreamEmitter emitter) throws ActionException {
             for (int i = 1; i <= 2; i++) {
                 ObjectNode tick = mapper.createObjectNode();
                 tick.put("tick", i);

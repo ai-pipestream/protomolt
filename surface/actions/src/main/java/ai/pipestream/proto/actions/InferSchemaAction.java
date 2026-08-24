@@ -8,17 +8,17 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Struct;
 import com.google.protobuf.util.JsonFormat;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * Struct-to-proto: reverse-engineers a message type from data-rich JSON samples and returns
  * it exactly like the other shape verbs — registrable proto source plus the linked
  * descriptor set.
  */
-final class InferSchemaAction implements ProtoAction {
+final class InferSchemaAction implements JsonAction {
 
     @Override
     public String name() {
@@ -45,6 +45,11 @@ final class InferSchemaAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("InferSchemaRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("InferSchemaResponse");
     }
 
     @Override

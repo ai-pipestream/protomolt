@@ -2,8 +2,9 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonStreamingAction;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.actions.StreamEmitter;
+import ai.pipestream.proto.actions.JsonStreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.invoke.ChannelFactory;
 import ai.pipestream.proto.grpc.invoke.GrpcInvokeAction;
@@ -18,13 +19,13 @@ import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Base64;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Invokes a registered service while keeping its descriptor inside ProtoMolt. */
-public final class ServiceInvokeAction implements StreamingAction {
+public final class ServiceInvokeAction implements JsonStreamingAction {
 
     private static final int MAX_RESPONSES = 4_096;
 
@@ -63,6 +64,11 @@ public final class ServiceInvokeAction implements StreamingAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return ServiceActionJson.request("ServiceInvokeResponse");
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         Invocation invocation = prepare(input, context);
         ObjectNode result = delegate.execute(invocation.delegateInput(), context);
@@ -74,7 +80,7 @@ public final class ServiceInvokeAction implements StreamingAction {
     }
 
     @Override
-    public void executeStreaming(ObjectNode input, ActionContext context, StreamEmitter emitter)
+    public void executeStreaming(ObjectNode input, ActionContext context, JsonStreamEmitter emitter)
             throws ActionException {
         delegate.executeStreaming(prepare(input, context).delegateInput(), context, emitter);
     }

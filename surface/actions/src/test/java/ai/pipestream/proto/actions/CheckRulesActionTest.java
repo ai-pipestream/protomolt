@@ -74,7 +74,8 @@ class CheckRulesActionTest {
         assertThat(findings.get(0).get("error").asText()).contains("no field 'nope'");
         assertThat(findings.get(1).get("kind").asText()).isEqualTo("filter");
         assertThat(findings.get(1).get("error").asText()).contains("must be a boolean");
-        // No dry run on a broken ruleset.
+        // No dry run on a broken ruleset. 'message' is a Struct, which carries presence,
+        // so not running the dry pass still reads as a missing member.
         assertThat(result.has("message")).isFalse();
     }
 
@@ -125,6 +126,7 @@ class CheckRulesActionTest {
         ObjectNode result = catalog.execute("check-rules", input);
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(result.has("message")).isFalse();
-        assertThat(result.has("filterResults")).isFalse();
+        // A repeated field has no presence, so an empty run reads as an empty list.
+        assertThat(result.get("filterResults")).isEmpty();
     }
 }

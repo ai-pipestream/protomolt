@@ -2,12 +2,14 @@ package ai.pipestream.proto.registry.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
-import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.pipestream.proto.schema.registry.v1.RegistrySyncRequest;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.registry.RegistryFederation;
 import ai.pipestream.proto.registry.RegistryStoreException;
+import ai.pipestream.proto.schema.registry.v1.RegistrySyncRequest;
+import ai.pipestream.proto.schema.registry.v1.RegistrySyncResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -19,7 +21,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * compatibility-gated) and descriptor artifacts. The answer is the full sync report — what
  * imported, what was already present, and what was rejected with the gate's violations.
  */
-public final class RegistrySyncAction implements ProtoAction {
+public final class RegistrySyncAction implements JsonAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "registry-sync";
@@ -61,6 +63,11 @@ public final class RegistrySyncAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return RegistrySyncRequest.getDescriptor();
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return RegistrySyncResponse.getDescriptor();
     }
 
     @Override

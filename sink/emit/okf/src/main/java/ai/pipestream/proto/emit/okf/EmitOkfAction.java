@@ -1,8 +1,9 @@
 package ai.pipestream.proto.emit.okf;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
@@ -12,8 +13,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.util.Base64;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.Base64;
 
 /**
  * The {@code emit-okf} verb: render a schema as an Open Knowledge Format (OKF v0.1) bundle —
@@ -24,7 +25,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * git repository is the caller's move through the emit sinks. No destination ever rides in
  * the request.
  */
-public final class EmitOkfAction implements ProtoAction {
+public final class EmitOkfAction implements JsonAction {
 
     @Override
     public String name() {
@@ -49,6 +50,11 @@ public final class EmitOkfAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("EmitOkfRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("EmitOkfResponse");
     }
 
     @Override

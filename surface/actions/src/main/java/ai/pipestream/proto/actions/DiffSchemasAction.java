@@ -5,11 +5,11 @@ import ai.pipestream.proto.compat.SchemaDiff;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.List;
 
 /** Diffs two schema versions and reports every change with its compatibility impacts. */
-final class DiffSchemasAction implements ProtoAction {
+final class DiffSchemasAction implements JsonAction {
 
     @Override
     public String name() {
@@ -31,6 +31,11 @@ final class DiffSchemasAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("DiffSchemasRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("DiffSchemasResponse");
     }
 
     @Override

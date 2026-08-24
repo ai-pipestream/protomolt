@@ -1,8 +1,9 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
@@ -12,11 +13,11 @@ import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 
-import java.io.IOException;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.io.IOException;
 
 /** Runs an inline workflow and records redacted content-addressed evidence for replay. */
-final class RecordWorkflowRunAction implements ProtoAction {
+final class RecordWorkflowRunAction implements JsonAction {
 
     private final WorkflowRunner runner;
     private final ArtifactRepository artifacts;
@@ -49,6 +50,11 @@ final class RecordWorkflowRunAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("RecordWorkflowRunRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("RecordWorkflowRunResponse");
     }
 
     @Override

@@ -13,7 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 
 /** Renders the search-index artifact (OpenSearch/Solr/Lucene/Qdrant) for a protobuf message type. */
-final class RenderIndexMappingsAction implements ProtoAction {
+final class RenderIndexMappingsAction implements JsonAction {
 
     @Override
     public String name() {
@@ -37,6 +37,11 @@ final class RenderIndexMappingsAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("RenderIndexMappingsRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("RenderIndexMappingsResponse");
     }
 
     @Override

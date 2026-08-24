@@ -3,6 +3,7 @@ package ai.pipestream.proto.registry.service;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
@@ -20,9 +21,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The {@code {nativePrefix}/workflows} routes: verbatim workflow storage over a
@@ -171,7 +172,7 @@ class WorkflowsEndpointTest {
 
     @Test
     void aThrowingCheckWorkflowAlsoBlocksTheWrite() throws Exception {
-        ProtoAction broken = new ProtoAction() {
+        ProtoAction broken = new JsonAction() {
             @Override
             public String name() {
                 return "check-workflow";
@@ -184,6 +185,13 @@ class WorkflowsEndpointTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();
@@ -235,7 +243,7 @@ class WorkflowsEndpointTest {
 
     /** A {@code check-workflow} double returning {@code ok} with findings when it fails. */
     private static ProtoAction checkWorkflow(boolean ok) {
-        return new ProtoAction() {
+        return new JsonAction() {
             @Override
             public String name() {
                 return "check-workflow";
@@ -248,6 +256,13 @@ class WorkflowsEndpointTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();

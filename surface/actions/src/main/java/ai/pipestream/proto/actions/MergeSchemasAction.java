@@ -6,18 +6,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The schema-level join/union: validate (clash report), resolve (rename, prefer, coalesce),
  * emit (merged proto, descriptor set, and both rulesets in one move).
  */
-final class MergeSchemasAction implements ProtoAction {
+final class MergeSchemasAction implements JsonAction {
 
     @Override
     public String name() {
@@ -45,6 +45,11 @@ final class MergeSchemasAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("MergeSchemasRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("MergeSchemasResponse");
     }
 
     @Override

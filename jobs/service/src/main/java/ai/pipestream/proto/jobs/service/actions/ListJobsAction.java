@@ -1,8 +1,9 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
@@ -11,8 +12,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.List;
 
 /**
  * The {@code list-jobs} verb: page workflow runs, newest first, with optional
@@ -22,7 +23,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * A null store means workflow runs are not configured on this server; every
  * call then answers {@code unavailable}.
  */
-public final class ListJobsAction implements ProtoAction {
+public final class ListJobsAction implements JsonAction {
 
     /**
      * Proto enum values carry their type name, so the wire form of COMPLETED is
@@ -67,6 +68,11 @@ public final class ListJobsAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("ListJobsRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("ListJobsResponse");
     }
 
     @Override

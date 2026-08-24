@@ -35,6 +35,11 @@ final class DelegationCandidateAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return SubmitCandidateResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         SubmitCandidateRequest request = DelegationActionJson
                 .parse(input, SubmitCandidateRequest.newBuilder(), name()).build();

@@ -40,6 +40,11 @@ final class DelegationWorkerRegisterAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return RegisterWorkerResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         RegisterWorkerRequest request = DelegationActionJson
                 .parse(input, RegisterWorkerRequest.newBuilder(), name()).build();

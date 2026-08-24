@@ -1,5 +1,6 @@
 package ai.pipestream.proto.authz.grpc;
 
+import ai.pipestream.proto.actions.JsonAction;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -13,6 +14,8 @@ import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.CallerResolver;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -29,8 +32,6 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 /**
  * One node, one ledger. A principal budgeted on a scope has that budget enforced across
@@ -150,7 +151,7 @@ class SharedScopeBudgetTest {
     }
 
     /** A verb requiring the same scope the gRPC table requires. */
-    private static final class MeteredAction implements ProtoAction {
+    private static final class MeteredAction implements JsonAction {
 
         @Override
         public String name() {
@@ -169,6 +170,13 @@ class SharedScopeBudgetTest {
 
         @Override
         public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
+        }
+
+        @Override
+        public Descriptor responseType() {
             // Struct accepts any JSON object, so a fixture is not constrained by a
             // contract it is not testing.
             return Struct.getDescriptor();

@@ -1,24 +1,25 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
-import ai.pipestream.proto.grpc.workflow.v1.Workflow;
+import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.v1.VersionedWorkflow;
+import ai.pipestream.proto.grpc.workflow.v1.Workflow;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Timestamp;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Promotes validated workflow content as one immutable registry version. */
-final class PromoteWorkflowAction implements ProtoAction {
+final class PromoteWorkflowAction implements JsonAction {
 
     private final WorkflowVersionRepository workflows;
     private final Clock clock;
@@ -52,6 +53,11 @@ final class PromoteWorkflowAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("PromoteWorkflowRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("PromoteWorkflowResponse");
     }
 
     @Override

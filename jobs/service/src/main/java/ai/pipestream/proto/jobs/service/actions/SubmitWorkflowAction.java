@@ -1,13 +1,14 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.jobs.service.WorkflowRunSubmitter;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
+import ai.pipestream.proto.workflow.WorkflowRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -25,7 +26,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * A null store means workflow runs are not configured on this server; every
  * call then answers {@code unavailable}.
  */
-public final class SubmitWorkflowAction implements ProtoAction {
+public final class SubmitWorkflowAction implements JsonAction {
 
     private final WorkflowRunStore store;
     private final WorkflowRunSubmitter submitter;
@@ -67,6 +68,11 @@ public final class SubmitWorkflowAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("SubmitWorkflowRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("SubmitWorkflowResponse");
     }
 
     @Override

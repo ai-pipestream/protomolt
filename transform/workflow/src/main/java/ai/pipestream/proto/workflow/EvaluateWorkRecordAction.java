@@ -1,8 +1,9 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
@@ -17,16 +18,16 @@ import ai.pipestream.proto.receipt.WorkRecord;
 import ai.pipestream.proto.receipt.WorkRecords;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
-import java.util.function.Supplier;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import com.google.protobuf.Descriptors.Descriptor;
+import java.util.function.Supplier;
 
 /**
  * The relying-party evaluation sidecar: a reproducible decision procedure
@@ -34,7 +35,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * replay — under the predeclared policy. The evaluation is written beside
  * the record; the signed record is never modified.
  */
-final class EvaluateWorkRecordAction implements ProtoAction {
+final class EvaluateWorkRecordAction implements JsonAction {
 
     /** The evaluation policy's identity. */
     static final String POLICY_ID = "record-evaluation";
@@ -122,6 +123,11 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("EvaluateWorkRecordRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("EvaluateWorkRecordResponse");
     }
 
     /**

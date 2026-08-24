@@ -10,7 +10,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 
 /** Validates a JSON message against the validation rules declared on its protobuf schema. */
-final class ValidateMessageAction implements ProtoAction {
+final class ValidateMessageAction implements JsonAction {
 
     @Override
     public String name() {
@@ -32,6 +32,11 @@ final class ValidateMessageAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("ValidateMessageRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("ValidateMessageResponse");
     }
 
     @Override

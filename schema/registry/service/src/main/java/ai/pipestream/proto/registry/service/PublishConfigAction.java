@@ -2,14 +2,16 @@ package ai.pipestream.proto.registry.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
-import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.pipestream.proto.schema.registry.v1.PublishConfigRequest;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.registry.ConfigSupport;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.InvalidConfigException;
 import ai.pipestream.proto.registry.RegistryStoreException;
+import ai.pipestream.proto.schema.registry.v1.PublishConfigRequest;
+import ai.pipestream.proto.schema.registry.v1.PublishConfigResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -22,7 +24,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * enforced), then commits it. The commit id is the version every consumer
  * reports. Exact or refused: an invalid document never lands.
  */
-public final class PublishConfigAction implements ProtoAction {
+public final class PublishConfigAction implements JsonAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "publish-config";
@@ -62,6 +64,11 @@ public final class PublishConfigAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return PublishConfigRequest.getDescriptor();
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return PublishConfigResponse.getDescriptor();
     }
 
     @Override

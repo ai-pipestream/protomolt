@@ -7,11 +7,11 @@ import ai.pipestream.proto.compat.SchemaChange;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.util.Arrays;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.Arrays;
 
 /** Checks a new schema version against an old one under a compatibility mode. */
-final class CheckCompatAction implements ProtoAction {
+final class CheckCompatAction implements JsonAction {
 
     /**
      * Proto enum values carry their type name, so the wire form of BACKWARD is
@@ -41,6 +41,11 @@ final class CheckCompatAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("CheckCompatRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("CheckCompatResponse");
     }
 
     @Override

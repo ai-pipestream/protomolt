@@ -2144,6 +2144,10 @@ message WorkflowRun {
   string updated_at = 11;
   // RFC 3339; set when the job reached a terminal state.
   string completed_at = 12;
+  // One line on how the run ended, written at the terminal commit point: what
+  // completed, or which gate failed it. Set once the job is COMPLETED, FAILED
+  // or DEAD.
+  string verdict = 13;
 }
 
 // The input of get-job.

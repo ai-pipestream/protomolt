@@ -33,6 +33,11 @@ final class DelegationReviewAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return ReviewCandidateResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         // Which fields each decision needs is declared as message-level CEL on the request:
         // an acceptance carries its verdict, a revision request carries its feedback, and

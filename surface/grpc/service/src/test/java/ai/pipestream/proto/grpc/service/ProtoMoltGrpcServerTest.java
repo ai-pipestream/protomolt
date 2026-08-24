@@ -1,13 +1,16 @@
 package ai.pipestream.proto.grpc.service;
 
-import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import io.grpc.CallOptions;
@@ -18,9 +21,8 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class ProtoMoltGrpcServerTest {
 
@@ -37,7 +39,17 @@ class ProtoMoltGrpcServerTest {
             try {
                 MethodDescriptor method = ProtoMoltServiceSchema.service()
                         .findMethodByName("Compile");
-                DynamicMessage request = DynamicMessage.newBuilder(method.getInputType())
+                // A request the contract accepts: the catalog checks it before dispatch,
+                // so an empty one would be refused before any thread is captured.
+                Descriptor input = method.getInputType();
+                FieldDescriptor sources = input.findFieldByName("sources");
+                Descriptor entry = sources.getMessageType();
+                DynamicMessage request = DynamicMessage.newBuilder(input)
+                        .addRepeatedField(sources, DynamicMessage.newBuilder(entry)
+                                .setField(entry.findFieldByName("key"), "a.proto")
+                                .setField(entry.findFieldByName("value"),
+                                        "syntax = \"proto3\"; message A {}")
+                                .build())
                         .build();
 
                 var responses = DynamicGrpcCalls.call(channel,
@@ -54,7 +66,7 @@ class ProtoMoltGrpcServerTest {
         }
     }
 
-    private record ThreadCapturingCompileAction(AtomicBoolean virtual) implements ProtoAction {
+    private record ThreadCapturingCompileAction(AtomicBoolean virtual) implements JsonAction {
 
         @Override
         public String name() {
@@ -68,9 +80,12 @@ class ProtoMoltGrpcServerTest {
 
         @Override
         public Descriptor requestType() {
-            // Struct accepts any JSON object, so a fixture is not constrained by a
-            // contract it is not testing.
-            return Struct.getDescriptor();
+            return CatalogContract.request("CompileRequest");
+        }
+
+        @Override
+        public Descriptor responseType() {
+            return CatalogContract.response("CompileResponse");
         }
 
         @Override

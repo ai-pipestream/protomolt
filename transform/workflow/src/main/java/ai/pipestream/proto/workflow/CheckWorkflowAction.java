@@ -3,6 +3,7 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -10,8 +11,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.List;
 
 /**
  * The {@code check-workflow} verb: verify a workflow without executing anything — methods
@@ -19,7 +20,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * rule, and CEL expression type-checks against exactly the scope its step will see. The
  * lint gate for consoles, CI, and registration.
  */
-public final class CheckWorkflowAction implements ProtoAction {
+public final class CheckWorkflowAction implements JsonAction {
 
     @Override
     public String name() {
@@ -43,6 +44,11 @@ public final class CheckWorkflowAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("CheckWorkflowRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("CheckWorkflowResponse");
     }
 
     @Override

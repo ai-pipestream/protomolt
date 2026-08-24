@@ -2,6 +2,7 @@ package ai.pipestream.proto.search.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
@@ -13,10 +14,10 @@ import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import java.util.List;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * Querying a mapping subject, as an agent-operable action.
@@ -33,7 +34,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * what a legal query is, rather than this one quietly accepting a {@code k} the other
  * refuses.
  */
-public final class SearchAction implements ProtoAction {
+public final class SearchAction implements JsonAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "search";
@@ -90,6 +91,11 @@ public final class SearchAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return SearchRequest.getDescriptor();
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return SearchResponse.getDescriptor();
     }
 
     @Override

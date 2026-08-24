@@ -2,6 +2,7 @@ package ai.pipestream.proto.metric.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
@@ -10,6 +11,7 @@ import ai.pipestream.proto.metric.DescribeMappingResponse;
 import ai.pipestream.proto.metric.QueryMetricsRequest;
 import ai.pipestream.proto.metric.QueryMetricsResponse;
 import ai.pipestream.proto.metric.RebuildRollupRequest;
+import ai.pipestream.proto.metric.RebuildRollupResponse;
 import ai.pipestream.proto.metric.spi.MetricQueries;
 import ai.pipestream.proto.metric.spi.MetricRefusal;
 import ai.pipestream.proto.validate.ProtoValidator;
@@ -173,7 +175,7 @@ public final class MetricActions {
     }
 
     /** One subject's queryable surface: members, roles, backends. */
-    static final class DescribeMappingAction implements ProtoAction {
+    static final class DescribeMappingAction implements JsonAction {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
@@ -204,6 +206,10 @@ public final class MetricActions {
             return DescribeMappingRequest.getDescriptor();
         }
 
+        @Override public Descriptor responseType() {
+            return DescribeMappingResponse.getDescriptor();
+        }
+
         @Override
         public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
@@ -219,7 +225,7 @@ public final class MetricActions {
     }
 
     /** One aggregate query, request and response in proto3 JSON. */
-    static final class QueryMetricsAction implements ProtoAction {
+    static final class QueryMetricsAction implements JsonAction {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.pipestream.proto.metric.spi.MetricSubjectResolver resolver;
@@ -251,6 +257,10 @@ public final class MetricActions {
             return QueryMetricsRequest.getDescriptor();
         }
 
+        @Override public Descriptor responseType() {
+            return QueryMetricsResponse.getDescriptor();
+        }
+
         @Override
         public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
@@ -270,7 +280,7 @@ public final class MetricActions {
     }
 
     /** One declared-rollup rebuild, request and response in proto3 JSON. */
-    static final class RebuildRollupAction implements ProtoAction {
+    static final class RebuildRollupAction implements JsonAction {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.pipestream.proto.metric.spi.RollupSink rollups;
@@ -304,6 +314,10 @@ public final class MetricActions {
 
         @Override public Descriptor requestType() {
             return RebuildRollupRequest.getDescriptor();
+        }
+
+        @Override public Descriptor responseType() {
+            return RebuildRollupResponse.getDescriptor();
         }
 
         @Override

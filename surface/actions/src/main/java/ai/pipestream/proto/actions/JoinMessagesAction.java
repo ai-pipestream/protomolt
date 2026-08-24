@@ -23,7 +23,7 @@ import java.util.List;
  * scoped mapping rules, or a shape synthesized on the fly (envelope, projection, union)
  * joined by its implied rules.
  */
-final class JoinMessagesAction implements ProtoAction {
+final class JoinMessagesAction implements JsonAction {
 
     @Override
     public String name() {
@@ -47,6 +47,11 @@ final class JoinMessagesAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("JoinMessagesRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("JoinMessagesResponse");
     }
 
     @Override

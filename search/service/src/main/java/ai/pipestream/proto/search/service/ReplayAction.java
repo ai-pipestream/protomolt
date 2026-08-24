@@ -2,6 +2,8 @@ package ai.pipestream.proto.search.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
@@ -9,19 +11,20 @@ import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.search.v1.ReplayDocumentsRequest;
+import ai.pipestream.proto.search.v1.ReplayDocumentsResponse;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The replay operation: re-runs a stored workflow over every document a
@@ -45,7 +48,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * the subject's index. The indexed set is captured before the listing
  * pages, so a document indexed concurrently is never a prune candidate.
  */
-public final class ReplayAction implements ProtoAction {
+public final class ReplayAction implements JsonAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "replay-documents";
@@ -109,6 +112,11 @@ public final class ReplayAction implements ProtoAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return ReplayDocumentsResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         // The message declares that a scoped replay names a drive and a reconciling one takes
         // neither drive nor account. Those rules are checked here because the catalog path does
@@ -158,7 +166,11 @@ public final class ReplayAction implements ProtoAction {
                             replayId, workflowName, mappingSubject, drive,
                             document.getDocId()));
                 }
-                ObjectNode result = submit.execute(envelope, context);
+                // The submit verb runs on its own request message, so the envelope built
+                // here converts at this call the same way it would at any other front.
+                ObjectNode result = CatalogContract.toReply(submit.execute(
+                        CatalogContract.toRequest(envelope, submit.requestType(), submit.name()),
+                        context), submit.name());
                 jobIds.add(result.path("jobId").asText());
                 submitted++;
             }

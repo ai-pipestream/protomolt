@@ -9,12 +9,12 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Base64;
 import java.util.Map;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Compiles inline proto sources into a serialized {@code FileDescriptorSet}. */
-final class CompileAction implements ProtoAction {
+final class CompileAction implements JsonAction {
 
     @Override
     public String name() {
@@ -37,6 +37,11 @@ final class CompileAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("CompileRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("CompileResponse");
     }
 
     @Override

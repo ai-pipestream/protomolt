@@ -1,23 +1,24 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
-import ai.pipestream.proto.grpc.workflow.v1.Workflow;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
+import ai.pipestream.proto.grpc.workflow.v1.Workflow;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.io.IOException;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.io.IOException;
 
 /** Offline fixture replay action over repository-backed run evidence. */
-final class ReplayWorkflowAction implements ProtoAction {
+final class ReplayWorkflowAction implements JsonAction {
 
     private final ArtifactRepository artifacts;
     private final RunEvidenceRepository runs;
@@ -47,6 +48,11 @@ final class ReplayWorkflowAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("ReplayWorkflowRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("ReplayWorkflowResponse");
     }
 
     @Override

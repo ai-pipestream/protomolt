@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /** Extracts the descriptive metadata bag declared on a message and its fields. */
-final class ExtractMetadataAction implements ProtoAction {
+final class ExtractMetadataAction implements JsonAction {
 
     @Override
     public String name() {
@@ -30,6 +30,11 @@ final class ExtractMetadataAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("ExtractMetadataRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("ExtractMetadataResponse");
     }
 
     @Override

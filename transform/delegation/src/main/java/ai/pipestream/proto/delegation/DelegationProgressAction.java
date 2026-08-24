@@ -32,6 +32,11 @@ final class DelegationProgressAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return ReportProgressResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         ReportProgressRequest request = DelegationActionJson
                 .parse(input, ReportProgressRequest.newBuilder(), name()).build();

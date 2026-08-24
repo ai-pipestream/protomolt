@@ -2,6 +2,7 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
@@ -9,11 +10,11 @@ import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.io.IOException;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.io.IOException;
 
 /** Reads one profile and renders its service/method contracts without returning descriptor bytes. */
-public final class ServiceInspectAction implements ProtoAction {
+public final class ServiceInspectAction implements JsonAction {
 
     private final ServiceProfileRepository repository;
     private final SchemaRegistryStore registry;
@@ -42,6 +43,11 @@ public final class ServiceInspectAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return ServiceActionJson.request("ServiceInspectRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return ServiceActionJson.request("ServiceInspectResponse");
     }
 
     @Override

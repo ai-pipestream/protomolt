@@ -1,8 +1,9 @@
 package ai.pipestream.proto.codegen;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
@@ -13,12 +14,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.compiler.PluginProtos;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code generate-stubs}: produce client and message source code for a schema, live, with no
@@ -30,7 +31,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * message code, and {@code grpc-java} service stubs. Generator-reported failures return
  * {@code ok: false} with protoc's message; malformed input is an {@code invalid-input} error.</p>
  */
-public final class GenerateStubsAction implements ProtoAction {
+public final class GenerateStubsAction implements JsonAction {
 
     /**
      * Proto enum values carry their type name, so the wire form of the Java generator is
@@ -60,6 +61,11 @@ public final class GenerateStubsAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("GenerateStubsRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("GenerateStubsResponse");
     }
 
     @Override

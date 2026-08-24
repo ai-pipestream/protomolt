@@ -15,7 +15,7 @@ import java.util.Set;
  * policy travels inside the descriptor, so every surface enforces exactly what the schema
  * authors declared.
  */
-final class MaskMessageAction implements ProtoAction {
+final class MaskMessageAction implements JsonAction {
 
     /**
      * Proto enum values carry their type name, so the wire form of REDACT is
@@ -51,6 +51,11 @@ final class MaskMessageAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("MaskMessageRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("MaskMessageResponse");
     }
 
     @Override

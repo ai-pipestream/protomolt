@@ -36,6 +36,11 @@ final class DelegationMessageAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return SendTaskMessageResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         // The two directions differ in who the recipient may be. Both rules are declared as
         // message-level CEL on the request, so by this point a coordinator message names its

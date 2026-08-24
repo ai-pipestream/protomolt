@@ -2,6 +2,7 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,15 +10,15 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
-import java.util.Optional;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Focused MCP lifecycle, cursor, capability, and revision fixtures. */
 class McpLifecycleTest {
@@ -179,7 +180,7 @@ class McpLifecycleTest {
     @Test
     void aSessionBoundsConcurrentToolWork() {
         ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create())
-                .register(new ProtoAction() {
+                .register(new JsonAction() {
                     @Override
                     public String name() {
                         return "wait-for-capacity";
@@ -192,6 +193,13 @@ class McpLifecycleTest {
 
                     @Override
                     public Descriptor requestType() {
+                        // Struct accepts any JSON object, so a fixture is not constrained by a
+                        // contract it is not testing.
+                        return Struct.getDescriptor();
+                    }
+
+                    @Override
+                    public Descriptor responseType() {
                         // Struct accepts any JSON object, so a fixture is not constrained by a
                         // contract it is not testing.
                         return Struct.getDescriptor();
@@ -226,7 +234,7 @@ class McpLifecycleTest {
     @Test
     void stdioCancellationSuppressesAnInFlightToolResult() throws Exception {
         ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create())
-                .register(new ProtoAction() {
+                .register(new JsonAction() {
                     @Override
                     public String name() {
                         return "wait";
@@ -239,6 +247,13 @@ class McpLifecycleTest {
 
                     @Override
                     public Descriptor requestType() {
+                        // Struct accepts any JSON object, so a fixture is not constrained by a
+                        // contract it is not testing.
+                        return Struct.getDescriptor();
+                    }
+
+                    @Override
+                    public Descriptor responseType() {
                         // Struct accepts any JSON object, so a fixture is not constrained by a
                         // contract it is not testing.
                         return Struct.getDescriptor();

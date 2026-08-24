@@ -79,14 +79,16 @@ class WorkflowRunActionInputValidationTest {
         assertInvalidInput(catchThrowable(() -> dispatch("get-job", envelope("{}"))),
                 "jobId field is required");
         assertInvalidInput(catchThrowable(() -> dispatch("get-job", envelope("{\"jobId\": 42}"))),
-                "jobId value must be a valid UUID");
+                "'jobId' must be a string");
     }
 
     @Test
     void listJobsValidatesLimitOffsetAndStatus() throws Exception {
-        assertInvalidInput(
-                catchThrowable(() -> dispatch("list-jobs", envelope("{\"limit\": 0}"))),
-                "'limit' must be >= 1");
+        // Zero selects the default of 50, as the message says: proto3 cannot tell a zero
+        // that was sent from one that was left out, so the contract gives it a meaning
+        // rather than refusing it.
+        assertThat(dispatch("list-jobs", envelope("{\"limit\": 0}")).get("ok").asBoolean())
+                .isTrue();
         assertInvalidInput(
                 catchThrowable(() -> dispatch("list-jobs", envelope("{\"limit\": \"50\"}"))),
                 "'limit' must be an integer");
@@ -143,7 +145,7 @@ class WorkflowRunActionInputValidationTest {
         numericJobId.putObject("input").put("text", "hi");
         numericJobId.put("jobId", 42);
         assertInvalidInput(catchThrowable(() -> dispatch("submit-workflow", numericJobId)),
-                "jobId value must be a valid UUID");
+                "'jobId' must be a string");
 
         assertThat(store.list(null, null, 10, 0)).isEmpty();
     }

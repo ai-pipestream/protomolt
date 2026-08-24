@@ -30,7 +30,7 @@ import java.util.Map;
  * (unscoped paths, in place); multiple sources or an explicit target checks the join
  * dialect (scoped paths).
  */
-final class CheckRulesAction implements ProtoAction {
+final class CheckRulesAction implements JsonAction {
 
     @Override
     public String name() {
@@ -56,6 +56,11 @@ final class CheckRulesAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("CheckRulesRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("CheckRulesResponse");
     }
 
     @Override

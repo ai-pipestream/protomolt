@@ -32,6 +32,11 @@ final class DelegationCancelAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return CancelTaskResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         CancelTaskRequest request =
                 DelegationActionJson.parse(input, CancelTaskRequest.newBuilder(), name()).build();

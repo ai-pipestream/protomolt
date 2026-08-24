@@ -34,6 +34,11 @@ final class DelegationCheckpointAction extends DelegationAction {
     }
 
     @Override
+    public Descriptor responseType() {
+        return RecordCheckpointResponse.getDescriptor();
+    }
+
+    @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         RecordCheckpointRequest request = DelegationActionJson
                 .parse(input, RecordCheckpointRequest.newBuilder(), name()).build();

@@ -8,9 +8,9 @@ import ai.pipestream.proto.delegation.v1.OfferTaskResponse;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.time.Duration;
 import java.util.UUID;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Offers one bounded task attempt to an admitted worker, with its lease. */
 final class DelegationOfferAction extends DelegationAction {
@@ -39,6 +39,11 @@ final class DelegationOfferAction extends DelegationAction {
     @Override
     public Descriptor requestType() {
         return OfferTaskRequest.getDescriptor();
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return OfferTaskResponse.getDescriptor();
     }
 
     @Override

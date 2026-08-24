@@ -2,12 +2,14 @@ package ai.pipestream.proto.registry.service;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
-import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.pipestream.proto.schema.registry.v1.RegistryRemotesRequest;
 import ai.pipestream.proto.actions.Scopes;
+import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.pipestream.proto.registry.RegistryFederation;
 import ai.pipestream.proto.registry.RegistryStoreException;
+import ai.pipestream.proto.schema.registry.v1.RegistryRemotesRequest;
+import ai.pipestream.proto.schema.registry.v1.RegistryRemotesResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -18,7 +20,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * Remotes are node-local git config (a deployment fact), so nothing here commits; every
  * operation answers with the resulting remote list.
  */
-public final class RegistryRemotesAction implements ProtoAction {
+public final class RegistryRemotesAction implements JsonAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "registry-remotes";
@@ -60,6 +62,11 @@ public final class RegistryRemotesAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return RegistryRemotesRequest.getDescriptor();
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return RegistryRemotesResponse.getDescriptor();
     }
 
     @Override

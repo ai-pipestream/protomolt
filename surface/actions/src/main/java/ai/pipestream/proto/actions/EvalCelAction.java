@@ -13,7 +13,7 @@ import com.google.protobuf.DynamicMessage;
 import java.util.Map;
 
 /** Evaluates a CEL expression over a JSON message typed by its protobuf schema. */
-final class EvalCelAction implements ProtoAction {
+final class EvalCelAction implements JsonAction {
 
     @Override
     public String name() {
@@ -35,6 +35,11 @@ final class EvalCelAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("EvalCelRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("EvalCelResponse");
     }
 
     @Override

@@ -1,11 +1,12 @@
 package ai.pipestream.proto.grpc.service;
 
-import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.MethodDescriptor;
@@ -24,10 +25,9 @@ import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeUnit;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 /**
  * The error-sanitization boundary every verb shares. Action failures map onto stable gRPC codes
@@ -137,7 +137,13 @@ class ErrorContractTest {
     }
 
     private static ProtoAction alwaysThrows(String name, RuntimeException toThrow) {
-        return new ProtoAction() {
+        // A stand-in answers under the contract of the verb it replaces: the catalog checks
+        // the request against the type the verb names, so a fixture that named something
+        // else would be refused before it ever got to throw.
+        MethodDescriptor rpc = ProtoMoltServiceSchema.service().getMethods().stream()
+                .filter(method -> CatalogBridge.actionName(method).equals(name))
+                .findFirst().orElseThrow();
+        return new JsonAction() {
             @Override
             public String name() {
                 return name;
@@ -150,9 +156,12 @@ class ErrorContractTest {
 
             @Override
             public Descriptor requestType() {
-                // Struct accepts any JSON object, so a fixture is not constrained by a
-                // contract it is not testing.
-                return Struct.getDescriptor();
+                return rpc.getInputType();
+            }
+
+            @Override
+            public Descriptor responseType() {
+                return rpc.getOutputType();
             }
 
             @Override

@@ -3,6 +3,7 @@ package ai.pipestream.proto.mesh.cluster;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
@@ -12,14 +13,21 @@ import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
 import ai.pipestream.proto.mesh.cluster.v1.DirectoryCommit;
 import ai.pipestream.proto.mesh.cluster.v1.GetSnapshotRequest;
+import ai.pipestream.proto.mesh.cluster.v1.GetSnapshotResponse;
 import ai.pipestream.proto.mesh.cluster.v1.HeartbeatRequest;
+import ai.pipestream.proto.mesh.cluster.v1.HeartbeatResponse;
 import ai.pipestream.proto.mesh.cluster.v1.NodeAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.NodePresence;
 import ai.pipestream.proto.mesh.cluster.v1.ProcessorAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.RegisterNodeRequest;
+import ai.pipestream.proto.mesh.cluster.v1.RegisterNodeResponse;
 import ai.pipestream.proto.mesh.cluster.v1.RegisterProcessorRequest;
+import ai.pipestream.proto.mesh.cluster.v1.RegisterProcessorResponse;
 import ai.pipestream.proto.mesh.cluster.v1.SweepRequest;
+import ai.pipestream.proto.mesh.cluster.v1.SweepResponse;
+import ai.pipestream.proto.mesh.cluster.v1.SweepResponse;
 import ai.pipestream.proto.mesh.cluster.v1.UpdateCapacityRequest;
+import ai.pipestream.proto.mesh.cluster.v1.UpdateCapacityResponse;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -66,7 +74,7 @@ public final class ClusterActions {
      */
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
-    private abstract static class ClusterAction implements ProtoAction {
+    private abstract static class ClusterAction implements JsonAction {
         final PersistentClusterDirectory directory;
 
         ClusterAction(PersistentClusterDirectory directory) {
@@ -177,6 +185,10 @@ public final class ClusterActions {
             return RegisterNodeRequest.getDescriptor();
         }
 
+        @Override public Descriptor responseType() {
+            return RegisterNodeResponse.getDescriptor();
+        }
+
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
             NodeAdvertisement advertisement =
@@ -204,6 +216,10 @@ public final class ClusterActions {
 
         @Override public Descriptor requestType() {
             return HeartbeatRequest.getDescriptor();
+        }
+
+        @Override public Descriptor responseType() {
+            return HeartbeatResponse.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
@@ -235,6 +251,10 @@ public final class ClusterActions {
             return RegisterProcessorRequest.getDescriptor();
         }
 
+        @Override public Descriptor responseType() {
+            return RegisterProcessorResponse.getDescriptor();
+        }
+
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
             ProcessorAdvertisement advertisement = parse(
@@ -264,6 +284,10 @@ public final class ClusterActions {
             return UpdateCapacityRequest.getDescriptor();
         }
 
+        @Override public Descriptor responseType() {
+            return UpdateCapacityResponse.getDescriptor();
+        }
+
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
             CapacityAdvertisement capacity =
@@ -290,13 +314,16 @@ public final class ClusterActions {
         }
 
         @Override public Descriptor requestType() {
-            return SweepRequest.getDescriptor();
+            return GetSnapshotRequest.getDescriptor();
+        }
+
+        @Override public Descriptor responseType() {
+            return GetSnapshotResponse.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)
                 throws ActionException {
             ObjectNode result = context.objectMapper().createObjectNode();
-            result.put("ok", true);
             result.set("snapshot", render(directory.snapshot(), context));
             return result;
         }
@@ -317,6 +344,10 @@ public final class ClusterActions {
 
         @Override public Descriptor requestType() {
             return SweepRequest.getDescriptor();
+        }
+
+        @Override public Descriptor responseType() {
+            return SweepResponse.getDescriptor();
         }
 
         @Override public ObjectNode execute(ObjectNode input, ActionContext context)

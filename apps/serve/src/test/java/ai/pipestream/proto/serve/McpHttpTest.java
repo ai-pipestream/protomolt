@@ -2,6 +2,7 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.mcp.McpServer;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,9 +22,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The MCP streamable HTTP transport on the one-process server: an MCP client needs only
@@ -220,7 +221,8 @@ class McpHttpTest {
 
         JsonNode content = MAPPER.readTree(response.body()).path("result")
                 .path("structuredContent");
-        assertThat(content.path("ok").asBoolean()).isTrue();
+        // GetSnapshotResponse declares the snapshot and nothing else, so the reading
+        // itself is the whole answer.
         assertThat(content.path("snapshot").path("cluster").path("clusterId").asText())
                 .isEqualTo("protomolt");
     }
@@ -238,7 +240,7 @@ class McpHttpTest {
     @Test
     void concurrentCancellationSuppressesTheHttpToolResponse() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
-        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new ProtoAction() {
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new JsonAction() {
             @Override
             public String name() {
                 return "wait-http";
@@ -251,6 +253,13 @@ class McpHttpTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();

@@ -55,7 +55,7 @@ class MergeSchemasActionTest {
     void unresolvedClashesReportWithoutEmitting() throws Exception {
         ObjectNode result = catalog.execute("merge-schemas", mergeInput(""));
         assertThat(result.get("resolved").asBoolean()).isFalse();
-        assertThat(result.has("protoSource")).isFalse();
+        assertThat(result.get("protoSource").asText()).isEmpty();
         JsonNode clashes = result.get("clashes");
         assertThat(clashes.findValuesAsText("field")).containsExactly("id", "status");
         JsonNode status = clashes.get(1);
@@ -74,7 +74,7 @@ class MergeSchemasActionTest {
                 """);
         ObjectNode result = catalog.execute("merge-schemas", input);
         assertThat(result.get("resolved").asBoolean()).isFalse();
-        assertThat(result.has("protoSource")).isFalse();
+        assertThat(result.get("protoSource").asText()).isEmpty();
         assertThat(result.get("clashes").size()).isEqualTo(2);
     }
 

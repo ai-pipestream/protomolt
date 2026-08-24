@@ -1,8 +1,9 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
@@ -10,9 +11,9 @@ import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Optional;
 import java.util.UUID;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code get-job} verb: a single-record read of one workflow run — the CLI,
@@ -22,7 +23,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * A null store means workflow runs are not configured on this server; every
  * call then answers {@code unavailable}.
  */
-public final class GetJobAction implements ProtoAction {
+public final class GetJobAction implements JsonAction {
 
     private final WorkflowRunStore store;
 
@@ -53,6 +54,11 @@ public final class GetJobAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("GetJobRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("GetJobResponse");
     }
 
     @Override

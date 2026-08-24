@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Applies text and/or CEL mapping rules to a JSON message and returns the mapped message. */
-final class MapMessageAction implements ProtoAction {
+final class MapMessageAction implements JsonAction {
 
     @Override
     public String name() {
@@ -45,6 +45,11 @@ final class MapMessageAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("MapMessageRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("MapMessageResponse");
     }
 
     @Override

@@ -1,8 +1,9 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
@@ -15,6 +16,7 @@ import ai.pipestream.proto.receipt.WorkRecords;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Timestamp;
 import java.io.IOException;
 import java.time.Clock;
@@ -23,10 +25,9 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /** Projects a stored run's evidence into a canonical signed work record. */
-final class ExportWorkRecordAction implements ProtoAction {
+final class ExportWorkRecordAction implements JsonAction {
 
     private final RunEvidenceRepository runs;
     private final RecordSigning signing;
@@ -65,6 +66,11 @@ final class ExportWorkRecordAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("ExportWorkRecordRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("ExportWorkRecordResponse");
     }
 
     @Override

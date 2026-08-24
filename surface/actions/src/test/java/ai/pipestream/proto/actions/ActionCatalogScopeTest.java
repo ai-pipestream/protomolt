@@ -5,14 +5,14 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 /** Pins the catalog's authorization behavior: scoped refusal before dispatch, filtered listing. */
 class ActionCatalogScopeTest {
@@ -24,7 +24,7 @@ class ActionCatalogScopeTest {
     private final ActionCatalog catalog = ActionCatalog.defaults(TestFixtures.personContext());
 
     private static ProtoAction stub(String name, String scope, AtomicBoolean ran) {
-        return new ProtoAction() {
+        return new JsonAction() {
             @Override
             public String name() {
                 return name;
@@ -42,6 +42,13 @@ class ActionCatalogScopeTest {
 
             @Override
             public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Descriptor responseType() {
                 // Struct accepts any JSON object, so a fixture is not constrained by a
                 // contract it is not testing.
                 return Struct.getDescriptor();
@@ -87,11 +94,11 @@ class ActionCatalogScopeTest {
     @Test
     void theRefusalPrecedesEnvelopeValidation() {
         ActionException denied = catchThrowableOfType(ActionException.class, () ->
-                catalog.execute("compile", null, INVOKER));
+                catalog.execute("compile", (ObjectNode) null, INVOKER));
         assertThat(denied.code()).isEqualTo("permission-denied");
 
         ActionException dispatched = catchThrowableOfType(ActionException.class, () ->
-                catalog.execute("compile", null, READER));
+                catalog.execute("compile", (ObjectNode) null, READER));
         assertThat(dispatched.code()).isEqualTo("invalid-input");
     }
 

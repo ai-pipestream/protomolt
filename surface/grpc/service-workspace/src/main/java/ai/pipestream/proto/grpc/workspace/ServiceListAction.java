@@ -2,16 +2,17 @@ package ai.pipestream.proto.grpc.workspace;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.io.IOException;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.io.IOException;
 
 /** Lists the durable service identities without loading descriptor artifacts. */
-public final class ServiceListAction implements ProtoAction {
+public final class ServiceListAction implements JsonAction {
 
     private final ServiceProfileRepository repository;
 
@@ -38,6 +39,11 @@ public final class ServiceListAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return ServiceActionJson.request("ServiceListRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return ServiceActionJson.request("ServiceListResponse");
     }
 
     @Override

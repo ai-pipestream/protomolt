@@ -1,8 +1,9 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
@@ -10,11 +11,11 @@ import ai.pipestream.proto.grpc.workflow.v1.Workflow;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.List;
 
 /** Compiles an existing checked workflow definition into the durable workflow contract. */
-final class CompileWorkflowAction implements ProtoAction {
+final class CompileWorkflowAction implements JsonAction {
 
     @Override
     public String name() {
@@ -36,6 +37,11 @@ final class CompileWorkflowAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("CompileWorkflowRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("CompileWorkflowResponse");
     }
 
     @Override

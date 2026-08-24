@@ -7,7 +7,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Map;
 
 /** Renders the JSON Schema document for a protobuf message type. */
-final class RenderJsonSchemaAction implements ProtoAction {
+final class RenderJsonSchemaAction implements JsonAction {
 
     @Override
     public String name() {
@@ -29,6 +29,11 @@ final class RenderJsonSchemaAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("RenderJsonSchemaRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("RenderJsonSchemaResponse");
     }
 
     @Override

@@ -5,6 +5,9 @@ import ai.pipestream.proto.acp.AcpClient;
 import ai.pipestream.proto.acp.TestPipes;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.JsonStreamEmitter;
+import ai.pipestream.proto.actions.JsonStreamingAction;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import ai.pipestream.proto.grpc.service.ProtoMoltCatalog;
@@ -16,9 +19,9 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Drives the catalog agent through the ACP protocol over in-memory pipes: initialize, open a
@@ -138,7 +141,7 @@ class ProtoMoltAcpAgentTest {
     @Test
     void streamingVerbChunksEachEmission() {
         ActionCatalog catalog = ProtoMoltCatalog.full(ActionContext.create());
-        catalog.register(new StreamingAction() {
+        catalog.register(new JsonStreamingAction() {
             @Override
             public String name() {
                 return "tick-stream";
@@ -157,6 +160,13 @@ class ProtoMoltAcpAgentTest {
             }
 
             @Override
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
             public ObjectNode execute(ObjectNode input, ActionContext context) {
                 ObjectNode out = JsonNodeFactory.instance.objectNode();
                 out.put("ticks", 3);
@@ -165,7 +175,7 @@ class ProtoMoltAcpAgentTest {
 
             @Override
             public void executeStreaming(ObjectNode input, ActionContext context,
-                    StreamEmitter emitter) {
+                    JsonStreamEmitter emitter) throws ActionException {
                 for (int i = 1; i <= 3; i++) {
                     ObjectNode tick = JsonNodeFactory.instance.objectNode();
                     tick.put("tick", i);

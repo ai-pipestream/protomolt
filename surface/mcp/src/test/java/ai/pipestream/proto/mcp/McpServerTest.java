@@ -10,9 +10,9 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class McpServerTest {
 
@@ -257,7 +257,7 @@ class McpServerTest {
     @Test
     void internalErrorsNeverEchoExceptionDetail() {
         ActionCatalog exploding = ActionCatalog.defaults(ActionContext.create())
-                .replace(new ai.pipestream.proto.actions.ProtoAction() {
+                .replace(new ai.pipestream.proto.actions.JsonAction() {
                     @Override
                     public String name() {
                         return "compile";
@@ -270,6 +270,13 @@ class McpServerTest {
 
                     @Override
                     public Descriptor requestType() {
+                        // Struct accepts any JSON object, so a fixture is not constrained by a
+                        // contract it is not testing.
+                        return Struct.getDescriptor();
+                    }
+
+                    @Override
+                    public Descriptor responseType() {
                         // Struct accepts any JSON object, so a fixture is not constrained by a
                         // contract it is not testing.
                         return Struct.getDescriptor();

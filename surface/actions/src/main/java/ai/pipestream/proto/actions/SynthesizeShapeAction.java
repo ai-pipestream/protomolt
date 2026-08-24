@@ -15,7 +15,7 @@ import java.util.List;
  * source types — returning the linked descriptor set, the registrable proto source, and the
  * mapping rules the shape implies.
  */
-final class SynthesizeShapeAction implements ProtoAction {
+final class SynthesizeShapeAction implements JsonAction {
 
     @Override
     public String name() {
@@ -40,6 +40,11 @@ final class SynthesizeShapeAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("SynthesizeShapeRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("SynthesizeShapeResponse");
     }
 
     @Override

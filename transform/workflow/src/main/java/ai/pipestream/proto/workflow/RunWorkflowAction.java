@@ -3,6 +3,7 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
@@ -13,8 +14,8 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.List;
 
 /**
  * The {@code run-workflow} verb: execute an inline workflow — serial typed gRPC calls, each
@@ -22,7 +23,7 @@ import com.google.protobuf.Descriptors.Descriptor;
  * statically verified first; execution failures return {@code ok=false} with the failing
  * step, never a stack trace.
  */
-public final class RunWorkflowAction implements ProtoAction {
+public final class RunWorkflowAction implements JsonAction {
 
     private final WorkflowRunner runner;
     private final WorkflowRepository repository;
@@ -65,6 +66,11 @@ public final class RunWorkflowAction implements ProtoAction {
     @Override
     public Descriptor requestType() {
         return CatalogContract.request("RunWorkflowRequest");
+    }
+
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("RunWorkflowResponse");
     }
 
     @Override
