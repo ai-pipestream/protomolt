@@ -863,9 +863,17 @@ message MapMessageResponse {
 // The input of extract-metadata.
 message ExtractMetadataRequest {
   // The schema declaring the message type and its metadata options.
-  SchemaSource schema = 1;
-  // Fully qualified message type to extract metadata from.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to extract metadata from; not required,
+  // because a schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 }
 
 // The metadata bag of one message type.
@@ -1069,11 +1077,24 @@ message EmitOkfResponse {
 // case name.
 message ShapeSource {
   // The scope name; becomes the synthesized field or case name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
   // The schema declaring the source type.
-  SchemaSource schema = 2;
-  // Fully qualified message type; required unless the schema identifies one.
-  string type = 3;
+  SchemaSource schema = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type; not required, because a schema declaring
+  // exactly one message identifies it on its own.
+  string type = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // join-messages only: the source message as proto3 JSON.
   google.protobuf.Struct message = 4;
 }
@@ -1086,16 +1107,45 @@ message ProjectedField {
   string from = 2;
 }
 
+// How a shape is built from its sources.
+enum ShapeMode {
+  // Unset. A synthesis has no sensible default, so this is refused.
+  SHAPE_MODE_UNSPECIFIED = 0;
+  // One field per source, each holding that source's message.
+  SHAPE_MODE_ENVELOPE = 1;
+  // A flat message carrying the named fields selected from the sources.
+  SHAPE_MODE_PROJECTION = 2;
+  // A oneof with one case per source.
+  SHAPE_MODE_UNION = 3;
+}
+
 // The input of synthesize-shape.
 message SynthesizeShapeRequest {
-  // 'envelope', 'projection', or 'union'.
-  string mode = 1;
+  // How to build the shape.
+  ShapeMode mode = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
   // Fully qualified name of the synthesized message.
-  string name = 2;
+  string name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // The named source types, in shape order.
-  repeated ShapeSource sources = 3;
+  repeated ShapeSource sources = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 64}
+    }
+  ];
   // Projection only.
-  repeated ProjectedField fields = 4;
+  repeated ProjectedField fields = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512}
+    }
+  ];
 }
 
 // The synthesized shape, ready to register.
@@ -1122,12 +1172,25 @@ message JoinTarget {
 
 // A shape to synthesize as the join output.
 message JoinShape {
-  // 'envelope', 'projection', or 'union'.
-  string mode = 1;
+  // How to build the shape; the same vocabulary synthesize-shape names.
+  ShapeMode mode = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
   // Fully qualified name of the synthesized output message.
-  string name = 2;
+  string name = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // Projection only: the projected fields.
-  repeated ProjectedField fields = 3;
+  repeated ProjectedField fields = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 512}
+    }
+  ];
 }
 
 // The input of join-messages.
@@ -1172,10 +1235,20 @@ message MergeResolution {
 // The input of merge-schemas.
 message MergeSchemasRequest {
   // Fully qualified name of the merged message.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // Two or more; for coalesced singular fields, later sources overwrite
-  // earlier ones at join time. 'message' is unused here.
-  repeated ShapeSource sources = 2;
+  // earlier ones at join time. 'message' is unused here. Merging fewer than
+  // two schemas has no merge to perform.
+  repeated ShapeSource sources = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 2, max_items: 64}
+    }
+  ];
   // Keyed by clashing field name.
   map<string, MergeResolution> resolutions = 3;
   // Return only the clash report, even when the merge is clean.
@@ -1809,10 +1882,21 @@ message CompleteStepResponse {
 // The input of infer-schema.
 message InferSchemaRequest {
   // Fully qualified name for the inferred message.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // Sample documents; keys union across samples and numbers stay int64 only
-  // when integral in every occurrence.
-  repeated google.protobuf.Struct samples = 2;
+  // when integral in every occurrence. At least one, because inferring a
+  // schema from nothing has no evidence to work from. The cap bounds what one
+  // call asks the inferencer to read.
+  repeated google.protobuf.Struct samples = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 1000}
+    }
+  ];
 }
 
 // The inferred message type, ready to register.

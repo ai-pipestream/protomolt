@@ -74,8 +74,8 @@ final class JoinMessagesAction implements ProtoAction {
                 "Fully qualified output message type."));
         ObjectNode shape = properties.putObject("shape");
         shape.put("type", "object");
-        shape.put("description", "Synthesized output shape: {mode: envelope|projection|"
-                + "union, name, fields?} as in synthesize-shape. Give either 'target' or "
+        shape.put("description", "Synthesized output shape: {mode, name, fields?} as in "
+                + "synthesize-shape, where mode is a ShapeMode value. Give either 'target' or "
                 + "'shape'.");
         ObjectNode rules = properties.putObject("rules");
         rules.put("type", "array");
@@ -177,8 +177,8 @@ final class JoinMessagesAction implements ProtoAction {
         ShapeSynthesizer synthesizer = new ShapeSynthesizer();
         try {
             return switch (mode) {
-                case "envelope" -> synthesizer.envelope(name, named);
-                case "projection" -> {
+                case "SHAPE_MODE_ENVELOPE" -> synthesizer.envelope(name, named);
+                case "SHAPE_MODE_PROJECTION" -> {
                     List<ShapeSynthesizer.ProjectedField> fields = new ArrayList<>();
                     ArrayNode fieldsNode = Inputs.optionalArray(shapeNode, "fields");
                     if (fieldsNode == null || fieldsNode.isEmpty()) {
@@ -197,9 +197,9 @@ final class JoinMessagesAction implements ProtoAction {
                     }
                     yield synthesizer.projection(name, named, fields);
                 }
-                case "union" -> synthesizer.taggedUnion(name, named);
+                case "SHAPE_MODE_UNION" -> synthesizer.taggedUnion(name, named);
                 default -> throw Inputs.invalidInput(
-                        "'shape.mode' must be 'envelope', 'projection', or 'union'; got '"
+                        "'shape.mode' names a shape this synthesizer does not build: '"
                                 + mode + "'", "/shape/mode");
             };
         } catch (IllegalArgumentException e) {

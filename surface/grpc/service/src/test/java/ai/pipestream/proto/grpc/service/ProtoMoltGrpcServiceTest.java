@@ -232,7 +232,7 @@ class ProtoMoltGrpcServiceTest {
                    {"name": "other", "schema": {"sources": {"shop/v1/order.proto": %s}},
                     "type": "shop.v1.Order", "message": {"id": "o-2", "qty": 4}}
                  ],
-                 "shape": {"mode": "projection", "name": "derived.v1.Pair",
+                 "shape": {"mode": "SHAPE_MODE_PROJECTION", "name": "derived.v1.Pair",
                            "fields": [{"name": "left_id", "from": "order.id"},
                                       {"name": "right_id", "from": "other.id"}]},
                  "celRules": [{"selector": "order.qty * other.qty", "target": "left_id"}]}

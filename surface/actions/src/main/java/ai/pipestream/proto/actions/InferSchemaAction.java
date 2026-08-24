@@ -43,25 +43,12 @@ final class InferSchemaAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("name")
-                .put("type", "string")
-                .put("description", "Fully qualified name for the inferred message, e.g. "
-                        + "'inferred.v1.Event'.");
-        ObjectNode samples = properties.putObject("samples");
-        samples.put("type", "array");
-        samples.put("description", "Sample documents (JSON objects). More samples make a "
-                + "better schema: keys union and the numeric heuristic sees every "
-                + "occurrence.");
-        samples.putObject("items").put("type", "object");
-        ActionJson.required(schema, "name", "samples");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("InferSchemaRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "InferSchemaRequest", name());
         String name = Inputs.requireString(input, "name");
         ArrayNode samplesNode = Inputs.optionalArray(input, "samples");
         if (samplesNode == null || samplesNode.isEmpty()) {
