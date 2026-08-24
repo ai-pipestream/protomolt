@@ -6,15 +6,14 @@ import ai.pipestream.proto.prompt.PromptPacket;
 import ai.pipestream.proto.prompt.PromptRenderException;
 import ai.pipestream.proto.prompt.PromptRenderer;
 import ai.pipestream.proto.prompt.RenderPromptRequest;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /** Renders the prompt packet for a protobuf message type: the complete LLM form-filling briefing. */
-final class RenderPromptAction implements JsonAction {
+final class RenderPromptAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -45,17 +44,18 @@ final class RenderPromptAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
+        Descriptor descriptor = schema.message(
+                SynthesizeShapeAction.named(input, "type"), "/type");
 
         RenderPromptRequest.Builder request = RenderPromptRequest.newBuilder()
                 .setTargetType(descriptor.getFullName());
-        if (input.has("persona")) {
-            ObjectNode personaNode = Inputs.requireObject(input, "persona");
+        if (Fields.has(input, "persona")) {
+            // The persona is a structure here: prompt.v1 owns its shape, not this contract.
             try {
                 request.setPersona(context.transcoder()
-                        .fromJson(personaNode.toString(), Persona.class));
+                        .fromJson(Fields.json(input, "persona").toString(), Persona.class));
             } catch (MalformedProtobufJsonException e) {
                 ObjectNode details = JsonNodeFactory.instance.objectNode();
                 details.put("pointer", "/persona");
@@ -69,10 +69,7 @@ final class RenderPromptAction implements JsonAction {
             }
         }
 
-        String descriptorSetRef = Inputs.optionalString(input, "descriptorSetRef");
-        if (descriptorSetRef == null) {
-            descriptorSetRef = "";
-        }
+        String descriptorSetRef = Fields.string(input, "descriptorSetRef");
         PromptPacket packet;
         try {
             packet = PromptRenderer.create().render(descriptor, request.build(), descriptorSetRef);
@@ -82,26 +79,22 @@ final class RenderPromptAction implements JsonAction {
             throw new ActionException("render-failed", e.getMessage(), details);
         }
 
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("targetType", packet.getTargetType());
-        output.put("descriptorSetRef", packet.getDescriptorSetRef());
-        output.put("instructions", packet.getInstructions());
+        Reply output = Reply.of(responseType())
+                .set("targetType", packet.getTargetType())
+                .set("descriptorSetRef", packet.getDescriptorSetRef())
+                .set("instructions", packet.getInstructions());
         try {
-            output.set("responseJsonSchema",
-                    context.objectMapper().readTree(packet.getResponseJsonSchema()));
+            output.set("responseJsonSchema", packet.getResponseJsonSchema());
             if (packet.hasPersona()) {
-                output.set("persona", context.objectMapper()
-                        .readTree(context.transcoder().toJson(packet.getPersona())));
+                output.set("persona", context.transcoder().toJson(packet.getPersona()));
             }
-            ArrayNode fewShot = output.putArray("fewShot");
             for (Any example : packet.getFewShotList()) {
-                fewShot.add(context.objectMapper()
-                        .readTree(context.transcoder().toJson(example)));
+                output.add("fewShot", context.transcoder().toJson(example));
             }
-        } catch (JsonProcessingException | MalformedProtobufJsonException e) {
+        } catch (MalformedProtobufJsonException e) {
             throw new ActionException("render-failed",
                     "rendered packet could not be serialized to JSON: " + e.getMessage());
         }
-        return output;
+        return output.build();
     }
 }

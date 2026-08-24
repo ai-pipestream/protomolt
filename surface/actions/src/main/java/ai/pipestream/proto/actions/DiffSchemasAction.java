@@ -2,14 +2,12 @@ package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.compat.SchemaChange;
 import ai.pipestream.proto.compat.SchemaDiff;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.util.List;
 
 /** Diffs two schema versions and reports every change with its compatibility impacts. */
-final class DiffSchemasAction implements JsonAction {
+final class DiffSchemasAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -39,16 +37,15 @@ final class DiffSchemasAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema oldSchema = SchemaResolver.resolve(input, "old", context);
         SchemaResolver.ResolvedSchema newSchema = SchemaResolver.resolve(input, "new", context);
         List<SchemaChange> changes =
                 SchemaDiff.diff(oldSchema.descriptorSet(), newSchema.descriptorSet());
-        ObjectNode output = context.objectMapper().createObjectNode();
-        ArrayNode changesNode = output.putArray("changes");
+        Reply output = Reply.of(responseType());
         for (SchemaChange change : changes) {
-            changesNode.add(ActionJson.change(change, context.objectMapper()));
+            ActionJson.writeChange(output, "changes", change);
         }
-        return output;
+        return output.build();
     }
 }

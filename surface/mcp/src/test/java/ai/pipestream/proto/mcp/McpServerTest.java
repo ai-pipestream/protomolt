@@ -2,16 +2,16 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.Optional;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpServerTest {
@@ -257,7 +257,7 @@ class McpServerTest {
     @Test
     void internalErrorsNeverEchoExceptionDetail() {
         ActionCatalog exploding = ActionCatalog.defaults(ActionContext.create())
-                .replace(new ai.pipestream.proto.actions.JsonAction() {
+                .replace(new ai.pipestream.proto.actions.ProtoAction() {
                     @Override
                     public String name() {
                         return "compile";
@@ -283,8 +283,7 @@ class McpServerTest {
                     }
 
                     @Override
-                    public ObjectNode execute(ObjectNode input,
-                                              ActionContext context) {
+                    public Message execute(Message input, ActionContext context) {
                         throw new IllegalStateException(
                                 "/secret/host/path credential=hunter2");
                     }

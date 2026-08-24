@@ -4,22 +4,21 @@ import ai.pipestream.proto.acp.PromptContext;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.JsonStreamEmitter;
-import ai.pipestream.proto.actions.JsonStreamingAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.StreamEmitter;
 import ai.pipestream.proto.actions.StreamingAction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import java.util.ArrayList;
 import java.util.List;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -149,7 +148,7 @@ class CatalogLineRunnerTest {
     }
 
     /** Echoes the field count of its envelope; succeeds on any object, including empty. */
-    private final class EchoAction implements JsonAction {
+    private final class EchoAction implements ProtoAction {
         @Override
         public String name() {
             return "echo";
@@ -175,14 +174,14 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext actionContext) {
-            ObjectNode out = mapper.createObjectNode();
-            out.put("fieldCount", input.size());
-            return out;
+        public Message execute(Message input, ActionContext actionContext) throws ActionException {
+            return Struct.newBuilder().putFields("fieldCount", Value.newBuilder()
+                    .setNumberValue(CatalogContract.as(input, Struct.getDefaultInstance(), name())
+                        .getFieldsCount()).build()).build();
         }
     }
 
-    private final class FailingAction implements JsonAction {
+    private final class FailingAction implements ProtoAction {
         @Override
         public String name() {
             return "fail";
@@ -208,12 +207,12 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext actionContext) throws ActionException {
+        public Message execute(Message input, ActionContext actionContext) throws ActionException {
             throw new ActionException("bad-input", "the envelope was rejected");
         }
     }
 
-    private final class BoomAction implements JsonAction {
+    private final class BoomAction implements ProtoAction {
         @Override
         public String name() {
             return "boom";
@@ -239,12 +238,12 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext actionContext) {
+        public Message execute(Message input, ActionContext actionContext) {
             throw new IllegalStateException("kapow");
         }
     }
 
-    private final class TickAction implements JsonStreamingAction {
+    private final class TickAction implements StreamingAction {
         @Override
         public String name() {
             return "tick";
@@ -270,20 +269,23 @@ class CatalogLineRunnerTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext actionContext) {
-            ObjectNode out = mapper.createObjectNode();
-            out.put("ticks", 2);
-            return out;
+        public Message execute(Message input, ActionContext actionContext) {
+            return number("ticks", 2);
         }
 
         @Override
-        public void executeStreaming(ObjectNode input, ActionContext actionContext,
-                JsonStreamEmitter emitter) throws ActionException {
+        public void executeStreaming(Message input, ActionContext actionContext,
+                StreamEmitter emitter) throws ActionException {
             for (int i = 1; i <= 2; i++) {
-                ObjectNode tick = mapper.createObjectNode();
-                tick.put("tick", i);
-                emitter.emit(tick);
+                emitter.emit(number("tick", i));
             }
         }
     }
+
+    /** A one-field Struct, which is what these fixtures answer with. */
+    private static Struct number(String field, int value) {
+        return Struct.newBuilder().putFields(field,
+                Value.newBuilder().setNumberValue(value).build()).build();
+    }
+
 }

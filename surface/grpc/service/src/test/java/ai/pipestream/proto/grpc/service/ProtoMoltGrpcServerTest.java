@@ -4,24 +4,21 @@ import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Message;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
-import org.junit.jupiter.api.Test;
-
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import com.google.protobuf.Descriptors.Descriptor;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProtoMoltGrpcServerTest {
@@ -66,7 +63,7 @@ class ProtoMoltGrpcServerTest {
         }
     }
 
-    private record ThreadCapturingCompileAction(AtomicBoolean virtual) implements JsonAction {
+    private record ThreadCapturingCompileAction(AtomicBoolean virtual) implements ProtoAction {
 
         @Override
         public String name() {
@@ -89,14 +86,13 @@ class ProtoMoltGrpcServerTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context)
+        public Message execute(Message input, ActionContext context)
                 throws ActionException {
             virtual.set(Thread.currentThread().isVirtual());
-            ObjectNode response = context.objectMapper().createObjectNode();
-            response.put("ok", true);
-            response.putArray("files");
-            response.put("descriptorSetBase64", "");
-            return response;
+            return Reply.of(responseType())
+                    .set("ok", true)
+                    .set("descriptorSetBase64", "")
+                    .build();
         }
     }
 }

@@ -2,21 +2,20 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Test;
-
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -180,7 +179,7 @@ class McpLifecycleTest {
     @Test
     void aSessionBoundsConcurrentToolWork() {
         ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create())
-                .register(new JsonAction() {
+                .register(new ProtoAction() {
                     @Override
                     public String name() {
                         return "wait-for-capacity";
@@ -206,13 +205,13 @@ class McpLifecycleTest {
                     }
 
                     @Override
-                    public ObjectNode execute(ObjectNode input, ActionContext context) {
+                    public Message execute(Message input, ActionContext context) {
                         try {
                             Thread.sleep(60_000);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                         }
-                        return context.objectMapper().createObjectNode();
+                        return Struct.getDefaultInstance();
                     }
                 });
         McpServer.Session session = new McpServer(catalog, null, "test", "0").openSession();
@@ -234,7 +233,7 @@ class McpLifecycleTest {
     @Test
     void stdioCancellationSuppressesAnInFlightToolResult() throws Exception {
         ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create())
-                .register(new JsonAction() {
+                .register(new ProtoAction() {
                     @Override
                     public String name() {
                         return "wait";
@@ -260,13 +259,14 @@ class McpLifecycleTest {
                     }
 
                     @Override
-                    public ObjectNode execute(ObjectNode input, ActionContext context) {
+                    public Message execute(Message input, ActionContext context) {
                         try {
                             Thread.sleep(60_000);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                         }
-                        return context.objectMapper().createObjectNode().put("completed", true);
+                        return Struct.newBuilder().putFields("completed",
+                        Value.newBuilder().setBoolValue(true).build()).build();
                     }
                 });
         McpServer server = new McpServer(catalog, null, "protomolt-test", "0.0-test");

@@ -2,16 +2,14 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.mcp.McpServer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -21,9 +19,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -240,7 +238,7 @@ class McpHttpTest {
     @Test
     void concurrentCancellationSuppressesTheHttpToolResponse() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
-        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new JsonAction() {
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new ProtoAction() {
             @Override
             public String name() {
                 return "wait-http";
@@ -266,15 +264,17 @@ class McpHttpTest {
             }
 
             @Override
-            public com.fasterxml.jackson.databind.node.ObjectNode execute(
-                    com.fasterxml.jackson.databind.node.ObjectNode input, ActionContext context) {
+            public com.google.protobuf.Message execute(
+                    com.google.protobuf.Message input, ActionContext context) {
                 started.countDown();
                 try {
                     Thread.sleep(60_000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                return context.objectMapper().createObjectNode().put("completed", true);
+                return Struct.newBuilder().putFields("completed",
+                        com.google.protobuf.Value.newBuilder().setBoolValue(true).build())
+                        .build();
             }
         });
         McpServer mcpServer = new McpServer(catalog, null, "test", "0");

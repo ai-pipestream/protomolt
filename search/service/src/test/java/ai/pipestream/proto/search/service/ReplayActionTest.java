@@ -1,19 +1,18 @@
 package ai.pipestream.proto.search.service;
 
 import ai.pipestream.proto.actions.ActionCatalog;
-import ai.pipestream.proto.actions.JsonAction;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -21,6 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Replay pages the listing and rides the submit action: one durable run
@@ -31,7 +32,7 @@ class ReplayActionTest {
     static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** Records every submission and answers with a synthetic job id. */
-    static class RecordingSubmit implements JsonAction {
+    static class RecordingSubmit implements ProtoAction {
 
         final List<ObjectNode> submissions = new ArrayList<>();
 
@@ -47,26 +48,22 @@ class ReplayActionTest {
 
         @Override
         public Descriptor requestType() {
-            // Struct accepts any JSON object, so a fixture is not constrained by a
-            // contract it is not testing.
-            return Struct.getDescriptor();
+            return CatalogContract.request("SubmitWorkflowRequest");
         }
 
         @Override
         public Descriptor responseType() {
-            // Struct accepts any JSON object, so a fixture is not constrained by a
-            // contract it is not testing.
-            return Struct.getDescriptor();
+            return CatalogContract.response("SubmitWorkflowResponse");
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context)
+        public Message execute(Message input, ActionContext context)
                 throws ActionException {
-            submissions.add(input.deepCopy());
-            ObjectNode result = MAPPER.createObjectNode();
-            result.put("ok", true);
-            result.put("jobId", "job-" + submissions.size());
-            return result;
+            submissions.add(CatalogContract.toEnvelope(input, name()));
+            return Reply.of(responseType())
+                    .set("ok", true)
+                    .set("jobId", "job-" + submissions.size())
+                    .build();
         }
     }
 
@@ -198,7 +195,7 @@ class ReplayActionTest {
     void aSubmissionFailureStopsTheReplayAndSurfaces() {
         RecordingSubmit submit = new RecordingSubmit() {
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context)
+            public Message execute(Message input, ActionContext context)
                     throws ActionException {
                 if (submissions.size() == 1) {
                     throw new ActionException("submit-refused", "the jobs module refused");

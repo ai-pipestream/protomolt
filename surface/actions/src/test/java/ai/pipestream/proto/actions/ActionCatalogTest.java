@@ -4,15 +4,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Test;
-
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import org.junit.jupiter.api.Test;
 import static ai.pipestream.proto.actions.TestFixtures.MAPPER;
 import static ai.pipestream.proto.actions.TestFixtures.obj;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,7 +42,7 @@ class ActionCatalogTest {
     @Test
     void executeStreamingDispatchesToStreamingActions() throws Exception {
         AtomicInteger emissions = new AtomicInteger();
-        catalog.register(new JsonStreamingAction() {
+        catalog.register(new StreamingAction() {
             @Override
             public String name() {
                 return "test-stream";
@@ -68,15 +68,18 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return JsonNodeFactory.instance.objectNode().put("unary", true);
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("unary",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
 
             @Override
-            public void executeStreaming(ObjectNode input, ActionContext context,
-                    JsonStreamEmitter emitter) throws ActionException {
-                emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 1));
-                emitter.emit(JsonNodeFactory.instance.objectNode().put("n", 2));
+            public void executeStreaming(Message input, ActionContext context,
+                    StreamEmitter emitter) throws ActionException {
+                emitter.emit(Struct.newBuilder().putFields("n",
+                        Value.newBuilder().setNumberValue(1).build()).build());
+                emitter.emit(Struct.newBuilder().putFields("n",
+                        Value.newBuilder().setNumberValue(2).build()).build());
                 emissions.addAndGet(2);
             }
         });
@@ -150,7 +153,7 @@ class ActionCatalogTest {
 
     @Test
     void registeringACustomActionExtendsTheCatalog() throws Exception {
-        ProtoAction custom = new JsonAction() {
+        ProtoAction custom = new ProtoAction() {
             @Override
             public String name() {
                 return "noop";
@@ -176,8 +179,9 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return MAPPER.createObjectNode().put("ok", true);
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         };
         catalog.register(custom);
@@ -186,7 +190,7 @@ class ActionCatalogTest {
 
     @Test
     void duplicateNamesAreRejectedUnlessReplaceIsExplicit() throws Exception {
-        ProtoAction shadow = new JsonAction() {
+        ProtoAction shadow = new ProtoAction() {
             @Override
             public String name() {
                 return "list-types";
@@ -212,8 +216,9 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return MAPPER.createObjectNode().put("impostor", true);
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("impostor",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         };
         assertThatThrownBy(() -> catalog.register(shadow))
@@ -276,7 +281,7 @@ class ActionCatalogTest {
     }
 
     private static ProtoAction noop(String name) {
-        return new JsonAction() {
+        return new ProtoAction() {
             @Override
             public String name() {
                 return name;
@@ -302,8 +307,9 @@ class ActionCatalogTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return MAPPER.createObjectNode().put("ok", true);
+            public Message execute(Message input, ActionContext context) {
+                return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         };
     }

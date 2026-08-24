@@ -9,19 +9,16 @@ import ai.pipestream.proto.cel.CelProtoMapper;
 import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.mapper.ProtoFieldMapperImpl;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
-
 import java.util.ArrayList;
 import java.util.List;
 
 /** Applies text and/or CEL mapping rules to a JSON message and returns the mapped message. */
-final class MapMessageAction implements JsonAction {
+final class MapMessageAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -53,15 +50,13 @@ final class MapMessageAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
-        ObjectNode messageNode = Inputs.requireObject(input, "message");
-        ArrayNode rulesNode = Inputs.optionalArray(input, "rules");
-        ArrayNode celRulesNode = Inputs.optionalArray(input, "celRules");
-        List<String> textRules = rulesNode == null
-                ? List.of() : Inputs.stringElements(rulesNode, "/rules");
-        List<CelMappingRule> celRules = parseCelRules(celRulesNode);
+        Descriptor descriptor = schema.message(named(input, "type"), "/type");
+        // The message is a structure: its shape is the named type, not this contract.
+        ObjectNode messageNode = Fields.json(input, "message");
+        List<String> textRules = Fields.strings(input, "rules");
+        List<CelMappingRule> celRules = celRules(input);
         if (textRules.isEmpty() && celRules.isEmpty()) {
             throw Inputs.invalidInput("At least one of 'rules' or 'celRules' must be provided", "");
         }
@@ -102,37 +97,32 @@ final class MapMessageAction implements JsonAction {
             throw new ActionException("mapping-failed",
                     "Mapping rule failed: " + e.getMessage(), details);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.set("message", ActionJson.messageToJson(builder.build(), context));
-        return output;
+        return Reply.of(responseType())
+                .set("message", context.transcoder().toJson(builder.build()))
+                .build();
     }
 
-    static List<CelMappingRule> parseCelRules(ArrayNode celRulesNode) throws ActionException {
-        if (celRulesNode == null) {
-            return List.of();
-        }
-        List<CelMappingRule> rules = new ArrayList<>(celRulesNode.size());
-        for (int i = 0; i < celRulesNode.size(); i++) {
-            JsonNode node = celRulesNode.get(i);
-            String pointer = "/celRules/" + i;
-            if (!node.isObject()) {
-                throw Inputs.invalidInput("CEL rules must be objects", pointer);
-            }
-            ObjectNode rule = (ObjectNode) node;
-            String target = Inputs.optionalString(rule, "target");
-            if (target == null) {
-                throw Inputs.invalidInput("CEL rule requires a 'target' field path",
-                        pointer + "/target");
-            }
-            ArrayNode fallbackNode = Inputs.optionalArray(rule, "fallback");
-            List<String> fallback = fallbackNode == null
-                    ? List.of() : Inputs.stringElements(fallbackNode, pointer + "/fallback");
+    /**
+     * The CEL rules a request carries. The message declares each rule's target required, so
+     * a rule without one is refused before the verb runs.
+     */
+    static List<CelMappingRule> celRules(Message input) {
+        List<Message> declared = Fields.list(input, "celRules");
+        List<CelMappingRule> rules = new ArrayList<>(declared.size());
+        for (Message rule : declared) {
             rules.add(new CelMappingRule(
-                    Inputs.optionalString(rule, "filter"),
-                    Inputs.optionalString(rule, "selector"),
-                    target,
-                    fallback));
+                    Fields.string(rule, "filter"),
+                    Fields.string(rule, "selector"),
+                    Fields.string(rule, "target"),
+                    Fields.strings(rule, "fallback")));
         }
         return rules;
     }
+
+    /** A named type, or null when the caller left the schema's own default to apply. */
+    private static String named(Message input, String field) {
+        String value = Fields.string(input, field);
+        return value.isEmpty() ? null : value;
+    }
+
 }

@@ -87,16 +87,16 @@ final class ActionJson {
 
     // ---- result rendering ----
 
-    static ObjectNode change(SchemaChange change, ObjectMapper mapper) {
-        ObjectNode node = mapper.createObjectNode();
-        node.put("ruleId", change.ruleId());
-        node.put("path", change.path());
-        node.put("before", change.before());
-        node.put("after", change.after());
-        node.put("message", change.message());
-        ArrayNode impacts = node.putArray("impacts");
-        change.impacts().stream().map(Impact::name).sorted().forEach(impacts::add);
-        return node;
+    /** One schema change appended to {@code field} on {@code reply}. */
+    static void writeChange(Reply reply, String field, SchemaChange change) {
+        reply.append(field)
+                .set("ruleId", change.ruleId())
+                .set("path", change.path())
+                .set("before", change.before())
+                .set("after", change.after())
+                .set("message", change.message())
+                .addAll("impacts", change.impacts().stream().map(Impact::name).sorted().toList())
+                .build();
     }
 
     /** A protobuf message as a Jackson tree, via canonical proto3 JSON. */

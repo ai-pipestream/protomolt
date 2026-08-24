@@ -2,13 +2,10 @@ package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.shapes.SchemaInferrer;
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
 import com.google.protobuf.util.JsonFormat;
-
-import com.google.protobuf.Descriptors.Descriptor;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -18,7 +15,7 @@ import java.util.List;
  * it exactly like the other shape verbs — registrable proto source plus the linked
  * descriptor set.
  */
-final class InferSchemaAction implements JsonAction {
+final class InferSchemaAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -53,26 +50,13 @@ final class InferSchemaAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String name = Inputs.requireString(input, "name");
-        ArrayNode samplesNode = Inputs.optionalArray(input, "samples");
-        if (samplesNode == null || samplesNode.isEmpty()) {
-            throw Inputs.invalidInput("'samples' must be a non-empty array", "/samples");
-        }
-        List<Struct> samples = new ArrayList<>(samplesNode.size());
-        for (int i = 0; i < samplesNode.size(); i++) {
-            JsonNode node = samplesNode.get(i);
-            if (!node.isObject()) {
-                throw Inputs.invalidInput("Each sample must be a JSON object", "/samples/" + i);
-            }
-            Struct.Builder struct = Struct.newBuilder();
-            try {
-                JsonFormat.parser().merge(node.toString(), struct);
-            } catch (Exception e) {
-                throw Inputs.invalidInput("Sample does not parse: " + e.getMessage(),
-                        "/samples/" + i);
-            }
-            samples.add(struct.build());
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        String name = Fields.string(input, "name");
+        // Samples are structures, and the message requires at least one, so what arrives
+        // here is a list of documents that already parsed.
+        List<Struct> samples = new ArrayList<>();
+        for (Message sample : Fields.<Message>list(input, "samples")) {
+            samples.add(CatalogContract.as(sample, Struct.getDefaultInstance(), name()));
         }
         ShapeSynthesizer.SynthesizedShape shape;
         try {
@@ -80,12 +64,12 @@ final class InferSchemaAction implements JsonAction {
         } catch (IllegalArgumentException e) {
             throw Inputs.invalidInput(e.getMessage(), "/samples");
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("type", shape.type().getFullName());
-        output.put("file", shape.file().getName());
-        output.put("protoSource", shape.protoSource());
-        output.put("descriptorSetBase64",
-                Base64.getEncoder().encodeToString(shape.descriptorSet().toByteArray()));
-        return output;
+        return Reply.of(responseType())
+                .set("type", shape.type().getFullName())
+                .set("file", shape.file().getName())
+                .set("protoSource", shape.protoSource())
+                .set("descriptorSetBase64",
+                        Base64.getEncoder().encodeToString(shape.descriptorSet().toByteArray()))
+                .build();
     }
 }

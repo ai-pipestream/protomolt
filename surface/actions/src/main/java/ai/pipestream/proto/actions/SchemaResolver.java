@@ -70,15 +70,20 @@ public final class SchemaResolver {
      */
     public static ResolvedSchema resolve(Message request, String field, ActionContext context)
             throws ActionException {
-        Message schema = Fields.message(request, field);
-        String pointer = "/" + field;
+        return resolveSource(Fields.message(request, field), "/" + field, context);
+    }
+
+    /** Resolves a {@code SchemaSource} that is itself the message in hand. */
+    public static ResolvedSchema resolveSource(Message schema, String pointer,
+            ActionContext context) throws ActionException {
         String type = Fields.string(schema, "type");
         if (!type.isEmpty()) {
             return fromRegistry(type, pointer + "/type", context);
         }
         Map<String, String> sources = Fields.map(schema, "sources");
         if (!sources.isEmpty()) {
-            return fromSources(sources, Fields.string(schema, "root"), pointer, context);
+            String root = Fields.string(schema, "root");
+        return fromSources(sources, root.isEmpty() ? null : root, pointer, context);
         }
         String descriptorSet = Fields.string(schema, "descriptorSetBase64");
         if (descriptorSet.isEmpty()) {

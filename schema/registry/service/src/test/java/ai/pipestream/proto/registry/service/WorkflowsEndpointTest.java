@@ -3,26 +3,26 @@ package ai.pipestream.proto.registry.service;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -172,7 +172,7 @@ class WorkflowsEndpointTest {
 
     @Test
     void aThrowingCheckWorkflowAlsoBlocksTheWrite() throws Exception {
-        ProtoAction broken = new JsonAction() {
+        ProtoAction broken = new ProtoAction() {
             @Override
             public String name() {
                 return "check-workflow";
@@ -185,20 +185,16 @@ class WorkflowsEndpointTest {
 
             @Override
             public Descriptor requestType() {
-                // Struct accepts any JSON object, so a fixture is not constrained by a
-                // contract it is not testing.
-                return Struct.getDescriptor();
+                return CatalogContract.request("CheckWorkflowRequest");
             }
 
             @Override
             public Descriptor responseType() {
-                // Struct accepts any JSON object, so a fixture is not constrained by a
-                // contract it is not testing.
-                return Struct.getDescriptor();
+                return CatalogContract.response("CheckWorkflowResponse");
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+            public Message execute(Message input, ActionContext context) throws ActionException {
                 throw new ActionException("verify-broken", "kaboom in the verifier");
             }
         };
@@ -243,7 +239,7 @@ class WorkflowsEndpointTest {
 
     /** A {@code check-workflow} double returning {@code ok} with findings when it fails. */
     private static ProtoAction checkWorkflow(boolean ok) {
-        return new JsonAction() {
+        return new ProtoAction() {
             @Override
             public String name() {
                 return "check-workflow";
@@ -256,25 +252,21 @@ class WorkflowsEndpointTest {
 
             @Override
             public Descriptor requestType() {
-                // Struct accepts any JSON object, so a fixture is not constrained by a
-                // contract it is not testing.
-                return Struct.getDescriptor();
+                return CatalogContract.request("CheckWorkflowRequest");
             }
 
             @Override
             public Descriptor responseType() {
-                // Struct accepts any JSON object, so a fixture is not constrained by a
-                // contract it is not testing.
-                return Struct.getDescriptor();
+                return CatalogContract.response("CheckWorkflowResponse");
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                ObjectNode out = JSON.createObjectNode().put("ok", ok);
+            public Message execute(Message input, ActionContext context) {
+                Reply out = Reply.of(responseType()).set("ok", ok);
                 if (!ok) {
-                    out.putArray("findings").addObject().put("message", "step s1 has no target");
+                    out.append("findings").set("error", "step s1 has no target").build();
                 }
-                return out;
+                return out.build();
             }
         };
     }

@@ -4,17 +4,14 @@ import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoCompilationException;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.util.Base64;
 import java.util.Map;
 
 /** Compiles inline proto sources into a serialized {@code FileDescriptorSet}. */
-final class CompileAction implements JsonAction {
+final class CompileAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -45,37 +42,27 @@ final class CompileAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        ObjectNode sourcesNode = Inputs.requireObject(input, "sources");
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        // The message bounds the source map and requires at least one entry, so an empty
+        // one is refused before the verb runs.
         ProtoSourceSet.Builder builder = ProtoSourceSet.builder();
-        for (Map.Entry<String, JsonNode> entry : sourcesNode.properties()) {
-            if (!entry.getValue().isTextual()) {
-                throw Inputs.invalidInput("Source file contents must be strings",
-                        "/sources/" + entry.getKey());
-            }
-            builder.add(entry.getKey(), entry.getValue().asText(), "inline");
-        }
-        ProtoSourceSet sources = builder.build();
-        if (sources.isEmpty()) {
-            throw Inputs.invalidInput("'sources' must contain at least one proto file", "/sources");
-        }
-        ObjectNode result = context.objectMapper().createObjectNode();
+        Fields.map(input, "sources").forEach((path, text) -> builder.add(path, text, "inline"));
         CompiledProtos compiled;
         try {
-            compiled = new ProtoSourceCompiler().compile(sources);
+            compiled = new ProtoSourceCompiler().compile(builder.build());
         } catch (ProtoCompilationException e) {
-            result.put("ok", false);
-            ArrayNode errors = result.putArray("errors");
-            errors.add(e.getMessage());
-            return result;
+            // A compilation failure is a result, not an error: the diagnostics are the answer.
+            return Reply.of(responseType())
+                    .set("ok", false)
+                    .add("errors", e.getMessage())
+                    .build();
         }
-        result.put("ok", true);
-        ArrayNode files = result.putArray("files");
-        compiled.descriptorSet().getFileList().stream()
-                .map(FileDescriptorProto::getName)
-                .forEach(files::add);
-        result.put("descriptorSetBase64",
-                Base64.getEncoder().encodeToString(compiled.descriptorSet().toByteArray()));
-        return result;
+        return Reply.of(responseType())
+                .set("ok", true)
+                .addAll("files", compiled.descriptorSet().getFileList().stream()
+                        .map(FileDescriptorProto::getName).toList())
+                .set("descriptorSetBase64", Base64.getEncoder()
+                        .encodeToString(compiled.descriptorSet().toByteArray()))
+                .build();
     }
 }

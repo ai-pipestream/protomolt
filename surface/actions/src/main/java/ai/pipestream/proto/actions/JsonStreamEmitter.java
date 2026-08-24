@@ -2,7 +2,10 @@ package ai.pipestream.proto.actions;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-/** The {@link StreamEmitter} a {@link JsonStreamingAction} sees, taking result documents. */
+/**
+ * The emitter a JSON front hands {@link ActionCatalog#executeStreaming}: each emission is
+ * rendered from the verb's response message into the document the front reads.
+ */
 @FunctionalInterface
 public interface JsonStreamEmitter {
 

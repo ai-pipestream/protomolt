@@ -3,14 +3,14 @@ package ai.pipestream.proto.actions;
 import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Message;
 
 /** Validates a JSON message against the validation rules declared on its protobuf schema. */
-final class ValidateMessageAction implements JsonAction {
+final class ValidateMessageAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -40,10 +40,11 @@ final class ValidateMessageAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
-        ObjectNode messageNode = Inputs.requireObject(input, "message");
+        Descriptor descriptor = schema.message(named(input, "type"), "/type");
+        // The message is a structure: its shape is the named type, not this contract.
+        ObjectNode messageNode = Fields.json(input, "message");
         DynamicMessage message;
         try {
             message = context.transcoder().fromJsonDynamic(messageNode.toString(), descriptor);
@@ -58,16 +59,22 @@ final class ValidateMessageAction implements JsonAction {
                     details);
         }
         ValidationResult result = ProtoValidator.forMessageType(descriptor).validate(message);
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("valid", result.valid());
-        ArrayNode violations = output.putArray("violations");
+        Reply output = Reply.of(responseType()).set("valid", result.valid());
         for (ValidationResult.Violation violation : result.violations()) {
-            ObjectNode node = violations.addObject();
-            node.put("field", violation.path());
-            node.put("rule", violation.rulePath());
-            node.put("ruleId", violation.ruleId());
-            node.put("message", violation.message());
+            output.append("violations")
+                    .set("field", violation.path())
+                    .set("rule", violation.rulePath())
+                    .set("ruleId", violation.ruleId())
+                    .set("message", violation.message())
+                    .build();
         }
-        return output;
+        return output.build();
     }
+
+    /** A named type, or null when the caller left the schema's own default to apply. */
+    private static String named(Message input, String field) {
+        String value = Fields.string(input, field);
+        return value.isEmpty() ? null : value;
+    }
+
 }

@@ -2,14 +2,14 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Test;
-
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -17,9 +17,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -101,7 +99,7 @@ class StdioRoundTripTest {
     @Test
     void concurrentToolResponsesRemainIndividuallyFramed() throws Exception {
         CyclicBarrier barrier = new CyclicBarrier(2);
-        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new JsonAction() {
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create()).register(new ProtoAction() {
             @Override
             public String name() {
                 return "rendezvous";
@@ -127,13 +125,14 @@ class StdioRoundTripTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
+            public Message execute(Message input, ActionContext context) {
                 try {
                     barrier.await(5, TimeUnit.SECONDS);
                 } catch (Exception e) {
                     throw new AssertionError(e);
                 }
-                return context.objectMapper().createObjectNode().put("ok", true);
+                return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         });
         McpServer server = new McpServer(catalog, null, "protomolt-test", "0.0-test");

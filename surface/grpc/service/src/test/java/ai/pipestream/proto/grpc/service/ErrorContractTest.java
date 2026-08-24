@@ -3,14 +3,15 @@ package ai.pipestream.proto.grpc.service;
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Message;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -19,13 +20,10 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-
-import java.util.concurrent.TimeUnit;
-
-import com.google.protobuf.Descriptors.Descriptor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -143,7 +141,7 @@ class ErrorContractTest {
         MethodDescriptor rpc = ProtoMoltServiceSchema.service().getMethods().stream()
                 .filter(method -> CatalogBridge.actionName(method).equals(name))
                 .findFirst().orElseThrow();
-        return new JsonAction() {
+        return new ProtoAction() {
             @Override
             public String name() {
                 return name;
@@ -165,7 +163,7 @@ class ErrorContractTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
+            public Message execute(Message input, ActionContext context) {
                 throw toThrow;
             }
         };

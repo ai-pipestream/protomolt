@@ -1,11 +1,8 @@
 package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
-
+import com.google.protobuf.Message;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -15,7 +12,7 @@ import java.util.List;
  * source types — returning the linked descriptor set, the registrable proto source, and the
  * mapping rules the shape implies.
  */
-final class SynthesizeShapeAction implements JsonAction {
+final class SynthesizeShapeAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -48,9 +45,9 @@ final class SynthesizeShapeAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String mode = Inputs.requireString(input, "mode");
-        String name = Inputs.requireString(input, "name");
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        String mode = Fields.enumName(input, "mode");
+        String name = Fields.string(input, "name");
         List<ShapeSynthesizer.NamedType> sources = namedSources(input, context);
         ShapeSynthesizer synthesizer = new ShapeSynthesizer();
         ShapeSynthesizer.SynthesizedShape shape;
@@ -69,38 +66,34 @@ final class SynthesizeShapeAction implements JsonAction {
         } catch (IllegalArgumentException e) {
             throw Inputs.invalidInput(e.getMessage(), "/sources");
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("type", shape.type().getFullName());
-        output.put("file", shape.file().getName());
-        output.put("protoSource", shape.protoSource());
-        output.put("descriptorSetBase64",
-                Base64.getEncoder().encodeToString(shape.descriptorSet().toByteArray()));
-        ArrayNode implied = output.putArray("impliedRules");
-        shape.impliedRules().forEach(implied::add);
-        return output;
+        return Reply.of(responseType())
+                .set("type", shape.type().getFullName())
+                .set("file", shape.file().getName())
+                .set("protoSource", shape.protoSource())
+                .set("descriptorSetBase64",
+                        Base64.getEncoder().encodeToString(shape.descriptorSet().toByteArray()))
+                .addAll("impliedRules", shape.impliedRules())
+                .build();
     }
 
     /** Parses and resolves the named source types shared by both shape verbs. */
-    static List<ShapeSynthesizer.NamedType> namedSources(ObjectNode input, ActionContext context)
+    static List<ShapeSynthesizer.NamedType> namedSources(Message input, ActionContext context)
             throws ActionException {
-        ArrayNode sources = Inputs.optionalArray(input, "sources");
-        if (sources == null || sources.isEmpty()) {
+        List<Message> sources = Fields.list(input, "sources");
+        if (sources.isEmpty()) {
             throw Inputs.invalidInput("'sources' must be a non-empty array", "/sources");
         }
         List<ShapeSynthesizer.NamedType> named = new ArrayList<>(sources.size());
         for (int i = 0; i < sources.size(); i++) {
-            JsonNode node = sources.get(i);
+            Message source = sources.get(i);
             String pointer = "/sources/" + i;
-            if (!(node instanceof ObjectNode source)) {
-                throw Inputs.invalidInput("Each source must be an object", pointer);
-            }
-            String name = Inputs.requireString(source, "name");
-            SchemaResolver.ResolvedSchema schema = SchemaResolver.resolveNode(
-                    source.get("schema"), pointer + "/schema", context);
+            SchemaResolver.ResolvedSchema schema = SchemaResolver.resolveSource(
+                    Fields.message(source, "schema"), pointer + "/schema", context);
             Descriptor type = schema.message(
-                    Inputs.optionalString(source, "type"), pointer + "/type");
+                    named(source, "type"), pointer + "/type");
             try {
-                named.add(new ShapeSynthesizer.NamedType(name, type));
+                named.add(new ShapeSynthesizer.NamedType(
+                        Fields.string(source, "name"), type));
             } catch (IllegalArgumentException e) {
                 throw Inputs.invalidInput(e.getMessage(), pointer + "/name");
             }
@@ -108,23 +101,25 @@ final class SynthesizeShapeAction implements JsonAction {
         return named;
     }
 
-    static List<ShapeSynthesizer.ProjectedField> projectedFields(ObjectNode input)
+    /** A named type, or null when the caller left the schema's own default to apply. */
+    static String named(Message message, String field) {
+        String value = Fields.string(message, field);
+        return value.isEmpty() ? null : value;
+    }
+
+    static List<ShapeSynthesizer.ProjectedField> projectedFields(Message input)
             throws ActionException {
-        ArrayNode fields = Inputs.optionalArray(input, "fields");
-        if (fields == null || fields.isEmpty()) {
+        List<Message> fields = Fields.list(input, "fields");
+        if (fields.isEmpty()) {
             throw Inputs.invalidInput(
                     "'fields' must be a non-empty array for a projection", "/fields");
         }
         List<ShapeSynthesizer.ProjectedField> projected = new ArrayList<>(fields.size());
         for (int i = 0; i < fields.size(); i++) {
-            JsonNode node = fields.get(i);
-            if (!(node instanceof ObjectNode field)) {
-                throw Inputs.invalidInput("Each field must be an object", "/fields/" + i);
-            }
+            Message field = fields.get(i);
             try {
                 projected.add(new ShapeSynthesizer.ProjectedField(
-                        Inputs.requireString(field, "name"),
-                        Inputs.requireString(field, "from")));
+                        Fields.string(field, "name"), Fields.string(field, "from")));
             } catch (IllegalArgumentException e) {
                 throw Inputs.invalidInput(e.getMessage(), "/fields/" + i);
             }

@@ -2,15 +2,14 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Test;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class WorkspaceResourcesTest {
@@ -53,7 +52,7 @@ class WorkspaceResourcesTest {
     }
 
     private ProtoAction markerAction() {
-        return new JsonAction() {
+        return new ProtoAction() {
             @Override
             public String name() {
                 return "marker";
@@ -79,8 +78,8 @@ class WorkspaceResourcesTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return context.objectMapper().createObjectNode();
+            public Message execute(Message input, ActionContext context) {
+                return Struct.getDefaultInstance();
             }
         };
     }

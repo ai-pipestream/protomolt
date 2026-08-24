@@ -8,12 +8,9 @@ import ai.pipestream.proto.mapper.MappingException;
 import ai.pipestream.proto.shapes.MessageJoiner;
 import ai.pipestream.proto.shapes.MessageScope;
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
-
+import com.google.protobuf.Message;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -23,7 +20,7 @@ import java.util.List;
  * scoped mapping rules, or a shape synthesized on the fly (envelope, projection, union)
  * joined by its implied rules.
  */
-final class JoinMessagesAction implements JsonAction {
+final class JoinMessagesAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -55,40 +52,39 @@ final class JoinMessagesAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         List<ShapeSynthesizer.NamedType> named =
                 SynthesizeShapeAction.namedSources(input, context);
         MessageScope scope = buildScope(input, named, context);
-        ObjectNode targetNode = Inputs.optionalObject(input, "target");
-        ObjectNode shapeNode = Inputs.optionalObject(input, "shape");
-        if ((targetNode == null) == (shapeNode == null)) {
+        boolean hasTarget = Fields.has(input, "target");
+        boolean hasShape = Fields.has(input, "shape");
+        if (hasTarget == hasShape) {
             throw Inputs.invalidInput("Give exactly one of 'target' or 'shape'", "");
         }
-        ArrayNode rulesNode = Inputs.optionalArray(input, "rules");
-        List<String> rules = rulesNode == null
-                ? List.of() : Inputs.stringElements(rulesNode, "/rules");
-        List<CelMappingRule> celRules =
-                MapMessageAction.parseCelRules(Inputs.optionalArray(input, "celRules"));
+        List<String> rules = Fields.strings(input, "rules");
+        List<CelMappingRule> celRules = MapMessageAction.celRules(input);
 
         MessageJoiner joiner = new MessageJoiner();
-        ObjectNode output = context.objectMapper().createObjectNode();
+        Reply output = Reply.of(responseType());
         DynamicMessage joined;
         try {
-            if (shapeNode != null) {
-                ShapeSynthesizer.SynthesizedShape shape = synthesize(shapeNode, named, context);
+            if (hasShape) {
+                ShapeSynthesizer.SynthesizedShape shape =
+                        synthesize(Fields.message(input, "shape"), named, context);
                 joined = joiner.join(shape, scope, rules, celRules);
-                output.put("descriptorSetBase64", Base64.getEncoder()
-                        .encodeToString(shape.descriptorSet().toByteArray()));
-                output.put("protoSource", shape.protoSource());
+                output.set("descriptorSetBase64", Base64.getEncoder()
+                                .encodeToString(shape.descriptorSet().toByteArray()))
+                        .set("protoSource", shape.protoSource());
             } else {
                 if (rules.isEmpty() && celRules.isEmpty()) {
                     throw Inputs.invalidInput("An authored 'target' needs 'rules' and/or "
                             + "'celRules' to populate it", "/rules");
                 }
-                SchemaResolver.ResolvedSchema schema = SchemaResolver.resolveNode(
-                        targetNode.get("schema"), "/target/schema", context);
+                Message targetSource = Fields.message(input, "target");
+                SchemaResolver.ResolvedSchema schema = SchemaResolver.resolveSource(
+                        Fields.message(targetSource, "schema"), "/target/schema", context);
                 Descriptor target = schema.message(
-                        Inputs.optionalString(targetNode, "type"), "/target/type");
+                        SynthesizeShapeAction.named(targetSource, "type"), "/target/type");
                 joined = joiner.join(target, scope, rules, celRules);
             }
         } catch (CelCompilationException e) {
@@ -101,23 +97,23 @@ final class JoinMessagesAction implements JsonAction {
             throw new ActionException("mapping-failed",
                     "Join rule failed: " + e.getMessage());
         }
-        output.put("type", joined.getDescriptorForType().getFullName());
-        output.set("message", ActionJson.messageToJson(joined, context));
-        return output;
+        return output
+                .set("type", joined.getDescriptorForType().getFullName())
+                .set("message", context.transcoder().toJson(joined))
+                .build();
     }
 
-    private static MessageScope buildScope(ObjectNode input,
+    private static MessageScope buildScope(Message input,
                                            List<ShapeSynthesizer.NamedType> named,
                                            ActionContext context) throws ActionException {
-        ArrayNode sources = Inputs.optionalArray(input, "sources");
+        List<Message> sources = Fields.list(input, "sources");
         MessageScope.Builder scope = MessageScope.builder();
         for (int i = 0; i < named.size(); i++) {
-            ObjectNode source = (ObjectNode) sources.get(i);
-            ObjectNode messageNode = Inputs.requireObject(source, "message");
+            Message source = sources.get(i);
             String pointer = "/sources/" + i + "/message";
             try {
-                scope.add(named.get(i).name(), context.transcoder()
-                        .fromJsonDynamic(messageNode.toString(), named.get(i).type()));
+                scope.add(named.get(i).name(), context.transcoder().fromJsonDynamic(
+                        Fields.json(source, "message").toString(), named.get(i).type()));
             } catch (MalformedProtobufJsonException e) {
                 throw Inputs.invalidInput("Message is not valid proto3 JSON for "
                         + named.get(i).type().getFullName() + ": "
@@ -131,30 +127,24 @@ final class JoinMessagesAction implements JsonAction {
     }
 
     private static ShapeSynthesizer.SynthesizedShape synthesize(
-            ObjectNode shapeNode, List<ShapeSynthesizer.NamedType> named,
+            Message shapeNode, List<ShapeSynthesizer.NamedType> named,
             ActionContext context) throws ActionException {
-        String mode = Inputs.requireString(shapeNode, "mode");
-        String name = Inputs.requireString(shapeNode, "name");
+        String mode = Fields.enumName(shapeNode, "mode");
+        String name = Fields.string(shapeNode, "name");
         ShapeSynthesizer synthesizer = new ShapeSynthesizer();
         try {
             return switch (mode) {
                 case "SHAPE_MODE_ENVELOPE" -> synthesizer.envelope(name, named);
                 case "SHAPE_MODE_PROJECTION" -> {
                     List<ShapeSynthesizer.ProjectedField> fields = new ArrayList<>();
-                    ArrayNode fieldsNode = Inputs.optionalArray(shapeNode, "fields");
-                    if (fieldsNode == null || fieldsNode.isEmpty()) {
+                    List<Message> declared = Fields.list(shapeNode, "fields");
+                    if (declared.isEmpty()) {
                         throw Inputs.invalidInput("A projection shape needs 'fields'",
                                 "/shape/fields");
                     }
-                    for (int i = 0; i < fieldsNode.size(); i++) {
-                        JsonNode field = fieldsNode.get(i);
-                        if (!(field instanceof ObjectNode fieldNode)) {
-                            throw Inputs.invalidInput("Each field must be an object",
-                                    "/shape/fields/" + i);
-                        }
+                    for (Message field : declared) {
                         fields.add(new ShapeSynthesizer.ProjectedField(
-                                Inputs.requireString(fieldNode, "name"),
-                                Inputs.requireString(fieldNode, "from")));
+                                Fields.string(field, "name"), Fields.string(field, "from")));
                     }
                     yield synthesizer.projection(name, named, fields);
                 }

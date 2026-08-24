@@ -1,9 +1,5 @@
 package ai.pipestream.proto.authz.grpc;
 
-import ai.pipestream.proto.actions.JsonAction;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
@@ -15,7 +11,9 @@ import ai.pipestream.proto.authz.CallerResolver;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -32,6 +30,8 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * One node, one ledger. A principal budgeted on a scope has that budget enforced across
@@ -151,7 +151,7 @@ class SharedScopeBudgetTest {
     }
 
     /** A verb requiring the same scope the gRPC table requires. */
-    private static final class MeteredAction implements JsonAction {
+    private static final class MeteredAction implements ProtoAction {
 
         @Override
         public String name() {
@@ -183,8 +183,9 @@ class SharedScopeBudgetTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context) {
-            return JsonNodeFactory.instance.objectNode().put("ok", true);
+        public Message execute(Message input, ActionContext context) {
+            return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
         }
     }
 }

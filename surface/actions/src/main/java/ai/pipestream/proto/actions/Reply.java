@@ -8,7 +8,9 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
+import com.google.protobuf.ListValue;
 import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import com.google.protobuf.util.JsonFormat;
 
 import java.util.List;
@@ -189,26 +191,28 @@ public final class Reply {
     }
 
     /**
-     * A message-typed value. A structure field takes JSON as well, because that is what a
-     * field carrying a document with no protobuf contract is for.
+     * A message-typed value. The three JSON-carrying well-known types take JSON as well,
+     * because that is what a field carrying a document with no protobuf contract is for.
      */
     private static Object message(FieldDescriptor field, Object value) {
         if (value instanceof Message message) {
             return message;
         }
-        if (!Struct.getDescriptor().getFullName().equals(field.getMessageType().getFullName())) {
-            throw new IllegalArgumentException(field.getFullName() + " takes a "
+        Message.Builder builder = switch (field.getMessageType().getFullName()) {
+            case "google.protobuf.Struct" -> Struct.newBuilder();
+            case "google.protobuf.Value" -> Value.newBuilder();
+            case "google.protobuf.ListValue" -> ListValue.newBuilder();
+            default -> throw new IllegalArgumentException(field.getFullName() + " takes a "
                     + field.getMessageType().getFullName() + ", not a "
                     + value.getClass().getName());
-        }
+        };
         String json = value instanceof JsonNode node ? node.toString() : value.toString();
-        Struct.Builder struct = Struct.newBuilder();
         try {
-            JsonFormat.parser().merge(json, struct);
+            JsonFormat.parser().merge(json, builder);
         } catch (InvalidProtocolBufferException e) {
             throw new IllegalArgumentException(
                     field.getFullName() + " was given JSON it cannot hold: " + e.getMessage(), e);
         }
-        return struct.build();
+        return builder.build();
     }
 }

@@ -1,18 +1,19 @@
 package ai.pipestream.proto.actions;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.catchThrowableOfType;
-
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 /** Pins the catalog's authorization behavior: scoped refusal before dispatch, filtered listing. */
 class ActionCatalogScopeTest {
@@ -24,7 +25,7 @@ class ActionCatalogScopeTest {
     private final ActionCatalog catalog = ActionCatalog.defaults(TestFixtures.personContext());
 
     private static ProtoAction stub(String name, String scope, AtomicBoolean ran) {
-        return new JsonAction() {
+        return new ProtoAction() {
             @Override
             public String name() {
                 return name;
@@ -55,9 +56,10 @@ class ActionCatalogScopeTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
+            public Message execute(Message input, ActionContext context) {
                 ran.set(true);
-                return JsonNodeFactory.instance.objectNode().put("ok", true);
+                return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
             }
         };
     }

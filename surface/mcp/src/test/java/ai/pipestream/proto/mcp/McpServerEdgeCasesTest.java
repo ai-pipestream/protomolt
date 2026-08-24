@@ -2,23 +2,24 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.registry.InMemorySchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
-
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -176,7 +177,7 @@ class McpServerEdgeCasesTest {
 
     /** Counts the top-level fields of whatever envelope it is handed. */
     private ProtoAction echoAction() {
-        return new JsonAction() {
+        return new ProtoAction() {
             @Override
             public String name() {
                 return "echo";
@@ -202,10 +203,10 @@ class McpServerEdgeCasesTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                ObjectNode out = mapper.createObjectNode();
-                out.put("fieldCount", input.size());
-                return out;
+            public Message execute(Message input, ActionContext context) throws ActionException {
+                return Struct.newBuilder().putFields("fieldCount", Value.newBuilder()
+                        .setNumberValue(CatalogContract.as(input, Struct.getDefaultInstance(), name())
+                        .getFieldsCount()).build()).build();
             }
         };
     }

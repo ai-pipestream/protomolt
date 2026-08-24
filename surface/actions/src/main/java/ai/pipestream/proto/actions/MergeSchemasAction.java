@@ -2,11 +2,8 @@ package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.shapes.SchemaMerger;
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,7 +14,7 @@ import java.util.Map;
  * The schema-level join/union: validate (clash report), resolve (rename, prefer, coalesce),
  * emit (merged proto, descriptor set, and both rulesets in one move).
  */
-final class MergeSchemasAction implements JsonAction {
+final class MergeSchemasAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -53,12 +50,12 @@ final class MergeSchemasAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String name = Inputs.requireString(input, "name");
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        String name = Fields.string(input, "name");
         List<ShapeSynthesizer.NamedType> sources =
                 SynthesizeShapeAction.namedSources(input, context);
-        Map<String, SchemaMerger.Resolution> resolutions = parseResolutions(input);
-        boolean reportOnly = Inputs.optionalBoolean(input, "reportOnly", false);
+        Map<String, SchemaMerger.Resolution> resolutions = resolutions(input);
+        boolean reportOnly = Fields.flag(input, "reportOnly");
 
         SchemaMerger.MergeResult result;
         try {
@@ -68,69 +65,52 @@ final class MergeSchemasAction implements JsonAction {
             throw Inputs.invalidInput(e.getMessage(), "");
         }
 
-        ObjectNode output = context.objectMapper().createObjectNode();
         boolean resolved = !reportOnly && result.resolved();
-        output.put("resolved", resolved);
-        ArrayNode clashes = output.putArray("clashes");
+        Reply output = Reply.of(responseType()).set("resolved", resolved);
         for (SchemaMerger.Clash clash : result.clashes()) {
-            ObjectNode entry = clashes.addObject();
-            entry.put("field", clash.field());
-            entry.put("kind", clash.kind().name().toLowerCase(Locale.ROOT).replace('_', '-'));
-            ArrayNode origins = entry.putArray("origins");
+            Reply entry = output.append("clashes")
+                    .set("field", clash.field())
+                    .set("kind", clash.kind().name().toLowerCase(Locale.ROOT).replace('_', '-'));
             for (SchemaMerger.Origin origin : clash.origins()) {
-                ObjectNode originNode = origins.addObject();
-                originNode.put("source", origin.source());
-                originNode.put("type", origin.display());
+                entry.append("origins")
+                        .set("source", origin.source())
+                        .set("type", origin.display())
+                        .build();
             }
-            ObjectNode suggested = entry.putObject("suggested");
-            suggested.put("action", clash.suggested().action());
-            if (!clash.suggested().names().isEmpty()) {
-                ObjectNode names = suggested.putObject("names");
-                clash.suggested().names().forEach(names::put);
-            }
+            Reply suggested = entry.nest("suggested").set("action", clash.suggested().action());
+            clash.suggested().names().forEach((from, to) ->
+                    suggested.append("names").set("key", from).set("value", to).build());
+            suggested.build();
+            entry.build();
         }
         if (resolved) {
             ShapeSynthesizer.SynthesizedShape shape = result.shape();
-            output.put("type", shape.type().getFullName());
-            output.put("file", shape.file().getName());
-            output.put("protoSource", shape.protoSource());
-            output.put("descriptorSetBase64", Base64.getEncoder()
-                    .encodeToString(shape.descriptorSet().toByteArray()));
-            ArrayNode joinRules = output.putArray("joinRules");
-            shape.impliedRules().forEach(joinRules::add);
-            // {"<source>": {"rules": [...]}} — the proto3 JSON of map<string, MergeRuleList>.
-            ObjectNode unionRules = output.putObject("unionRules");
+            output.set("type", shape.type().getFullName())
+                    .set("file", shape.file().getName())
+                    .set("protoSource", shape.protoSource())
+                    .set("descriptorSetBase64", Base64.getEncoder()
+                            .encodeToString(shape.descriptorSet().toByteArray()))
+                    .addAll("joinRules", shape.impliedRules());
             result.unionRules().forEach((sourceName, rules) -> {
-                ArrayNode list = unionRules.putObject(sourceName).putArray("rules");
-                rules.forEach(list::add);
+                Reply entry = output.append("unionRules").set("key", sourceName);
+                entry.nest("value").addAll("rules", rules).build();
+                entry.build();
             });
         }
-        return output;
+        return output.build();
     }
 
-    private static Map<String, SchemaMerger.Resolution> parseResolutions(ObjectNode input)
+    private static Map<String, SchemaMerger.Resolution> resolutions(Message input)
             throws ActionException {
-        ObjectNode node = Inputs.optionalObject(input, "resolutions");
-        if (node == null) {
-            return Map.of();
-        }
         Map<String, SchemaMerger.Resolution> resolutions = new LinkedHashMap<>();
-        for (Map.Entry<String, JsonNode> entry : node.properties()) {
-            String pointer = "/resolutions/" + entry.getKey();
-            if (!(entry.getValue() instanceof ObjectNode resolution)) {
-                throw Inputs.invalidInput("Each resolution must be an object", pointer);
-            }
-            Map<String, String> names = new LinkedHashMap<>();
-            ObjectNode namesNode = Inputs.optionalObject(resolution, "names");
-            if (namesNode != null) {
-                for (Map.Entry<String, JsonNode> nameEntry : namesNode.properties()) {
-                    names.put(nameEntry.getKey(), nameEntry.getValue().asText());
-                }
-            }
-            resolutions.put(entry.getKey(), new SchemaMerger.Resolution(
-                    Inputs.requireString(resolution, "action"),
-                    Inputs.optionalString(resolution, "source"),
-                    names));
+        for (Object element : Fields.<Message>list(input, "resolutions")) {
+            Message pair = (Message) element;
+            String field = Fields.string(pair, "key");
+            Message resolution = Fields.message(pair, "value");
+            resolutions.put(field, new SchemaMerger.Resolution(
+                    Fields.string(resolution, "action"),
+                    SynthesizeShapeAction.named(resolution, "source"),
+                    Fields.map(resolution, "names")));
         }
         return resolutions;
     }

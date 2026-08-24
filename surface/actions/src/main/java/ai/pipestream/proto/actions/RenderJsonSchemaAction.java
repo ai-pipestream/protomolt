@@ -1,13 +1,12 @@
 package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
-
+import com.google.protobuf.Message;
 import java.util.Map;
 
 /** Renders the JSON Schema document for a protobuf message type. */
-final class RenderJsonSchemaAction implements JsonAction {
+final class RenderJsonSchemaAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -37,15 +36,21 @@ final class RenderJsonSchemaAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
+        Descriptor descriptor = schema.message(type(input), "/type");
         Map<String, Object> document = ProtoJsonSchemaGenerator.create().generate(descriptor);
         // The schema document is nested under a named field rather than returned as the whole
         // envelope, so the response has a declared protobuf contract. A JSON Schema has no
         // protobuf shape of its own, so the document itself stays a structure.
-        ObjectNode result = context.objectMapper().createObjectNode();
-        result.set("schema", context.objectMapper().valueToTree(document));
-        return result;
+        return Reply.of(responseType())
+                .set("schema", context.objectMapper().valueToTree(document))
+                .build();
+    }
+
+    /** The named type, or null when the caller left the schema's own default to apply. */
+    private static String type(Message input) {
+        String type = Fields.string(input, "type");
+        return type.isEmpty() ? null : type;
     }
 }

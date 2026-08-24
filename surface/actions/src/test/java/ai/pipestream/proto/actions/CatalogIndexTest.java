@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CatalogIndexTest {
 
     /** A verb that names a message and does no checking of its own. */
-    private static final class Echo implements JsonAction {
+    private static final class Echo implements ProtoAction {
         @Override
         public String name() {
             return "echo";
@@ -41,12 +41,12 @@ class CatalogIndexTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context) {
+        public Message execute(Message input, ActionContext context) {
             // Reports what it was given, but as its own response message: a verb answers
             // under the contract it names, so it cannot simply hand the request back.
-            ObjectNode output = JsonNodeFactory.instance.objectNode();
-            output.putArray("types").addObject().put("fullName", input.path("filter").asText());
-            return output;
+            Reply output = Reply.of(responseType());
+            output.append("types").set("fullName", Fields.string(input, "filter")).build();
+            return output.build();
         }
     }
 
