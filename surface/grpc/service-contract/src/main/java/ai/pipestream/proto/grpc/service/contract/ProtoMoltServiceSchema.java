@@ -1,4 +1,4 @@
-package ai.pipestream.proto.grpc.service;
+package ai.pipestream.proto.grpc.service.contract;
 
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;

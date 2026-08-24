@@ -16,7 +16,7 @@ modules:
     name: buf.build/ai-pipestream/protobuf-llm-testdata
   - path: protobuf/prompt/src/test/proto
     name: buf.build/ai-pipestream/protobuf-prompt-testdata
-  - path: surface/grpc/service/src/main/resources
+  - path: surface/grpc/service-contract/src/main/resources
     name: buf.build/ai-pipestream/protomolt-service
   - path: protobuf/validation/src/main/proto
     name: buf.build/ai-pipestream/protobuf-validation

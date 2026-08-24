@@ -1,7 +1,7 @@
 package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
-import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;

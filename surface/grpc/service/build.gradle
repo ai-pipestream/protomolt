@@ -2,9 +2,9 @@ description = 'The action catalog as a gRPC service: every verb a typed RPC, ser
 
 dependencies {
     api project(':protomolt-actions')
-    // The service definition imports the house validation options, and it is compiled
-    // from source at load, so that .proto must be readable from the classpath as text.
-    implementation project(':protomolt-protobuf-validation')
+    // The service definition and its compiled schema; api because this module's own
+    // public surface hands out descriptors from it.
+    api project(':protomolt-grpc-service-contract')
     api project(':protomolt-authz-grpc')
     api project(':protomolt-grpc-channel-policy')
     api libs.grpc.api

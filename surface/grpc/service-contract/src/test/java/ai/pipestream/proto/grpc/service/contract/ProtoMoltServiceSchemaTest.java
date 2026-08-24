@@ -1,4 +1,4 @@
-package ai.pipestream.proto.grpc.service;
+package ai.pipestream.proto.grpc.service.contract;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
