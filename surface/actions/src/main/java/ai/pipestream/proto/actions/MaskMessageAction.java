@@ -17,6 +17,13 @@ import java.util.Set;
  */
 final class MaskMessageAction implements ProtoAction {
 
+    /**
+     * Proto enum values carry their type name, so the wire form of REDACT is
+     * MASK_STRATEGY_REDACT. The masker's own enum does not, and the two are otherwise
+     * the same vocabulary.
+     */
+    private static final String STRATEGY_PREFIX = "MASK_STRATEGY_";
+
     @Override
     public String name() {
         return "mask-message";
@@ -43,33 +50,12 @@ final class MaskMessageAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type; required unless the schema identifies one."));
-        properties.putObject("message")
-                .put("type", "object")
-                .put("description", "The message to mask, as canonical proto3 JSON.");
-        ObjectNode classes = properties.putObject("classes");
-        classes.put("type", "array");
-        classes.put("description", "Sensitivity classes to mask, e.g. [\"pii\"].");
-        classes.putObject("items").put("type", "string");
-        properties.putObject("strategy")
-                .put("type", "string")
-                .put("description", "'remove' (default), 'redact', 'encrypt', or 'decrypt'.");
-        properties.putObject("key")
-                .put("type", "string")
-                .put("description", "Base64 AES key (16/24/32 bytes), required for "
-                        + "encrypt/decrypt. The caller's key — never stored, never in the "
-                        + "schema.");
-        ActionJson.required(schema, "schema", "message", "classes");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("MaskMessageRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "MaskMessageRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         ObjectNode messageNode = Inputs.requireObject(input, "message");
@@ -79,16 +65,13 @@ final class MaskMessageAction implements ProtoAction {
         }
         Set<String> classes = new LinkedHashSet<>(
                 Inputs.stringElements(classesNode, "/classes"));
+        // The contract names the strategy with an enum, so an unknown one is refused
+        // before the verb runs and whatever arrives is a value the masker implements.
         String strategyName = Inputs.optionalString(input, "strategy");
-        SensitivityMasker.Strategy strategy;
-        try {
-            strategy = strategyName == null
-                    ? SensitivityMasker.Strategy.REMOVE
-                    : SensitivityMasker.Strategy.of(strategyName);
-        } catch (IllegalArgumentException e) {
-            throw Inputs.invalidInput("'strategy' must be remove, redact, encrypt, or "
-                    + "decrypt; got '" + strategyName + "'", "/strategy");
-        }
+        SensitivityMasker.Strategy strategy = strategyName == null || strategyName.isBlank()
+                ? SensitivityMasker.Strategy.REMOVE
+                : SensitivityMasker.Strategy.of(strategyName.startsWith(STRATEGY_PREFIX)
+                        ? strategyName.substring(STRATEGY_PREFIX.length()) : strategyName);
         byte[] key = null;
         String keyText = Inputs.optionalString(input, "key");
         if (keyText != null) {

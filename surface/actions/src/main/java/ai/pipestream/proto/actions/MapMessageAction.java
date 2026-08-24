@@ -44,58 +44,12 @@ final class MapMessageAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.set("schema", ActionJson.schemaSourceSchema());
-        properties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type of the message; required unless the schema already "
-                        + "identifies a single message."));
-        properties.putObject("message")
-                .put("type", "object")
-                .put("description", "The message to transform, as canonical proto3 JSON.");
-        ObjectNode rules = properties.putObject("rules");
-        rules.put("type", "array");
-        rules.put("description",
-                "Text mapping rules applied in order: 'target = source.path', 'target += source.path', "
-                        + "'-field.to.clear'. Paths are protobuf field paths on the message itself.");
-        rules.putObject("items").put("type", "string");
-        ObjectNode celRules = properties.putObject("celRules");
-        celRules.put("type", "array");
-        celRules.put("description",
-                "CEL mapping rules applied in order after 'rules'; each sees the progressive "
-                        + "message as 'input'.");
-        ObjectNode celRule = celRules.putObject("items");
-        celRule.put("type", "object");
-        ObjectNode celRuleProps = celRule.putObject("properties");
-        celRuleProps.putObject("filter")
-                .put("type", "string")
-                .put("description", "Optional boolean CEL gate; the rule is skipped when false.");
-        celRuleProps.putObject("selector")
-                .put("type", "string")
-                .put("description",
-                        "Optional CEL value expression; its result is written to 'target'. "
-                                + "Literals like \"'text'\" or \"42\" are valid CEL.");
-        celRuleProps.putObject("target")
-                .put("type", "string")
-                .put("description", "Protobuf field path to write.");
-        ObjectNode fallback = celRuleProps.putObject("fallback");
-        fallback.put("type", "array");
-        fallback.put("description", "Text rules applied when no selector is given.");
-        fallback.putObject("items").put("type", "string");
-        celRule.putArray("required").add("target");
-        celRule.put("additionalProperties", false);
-        ActionJson.required(schema, "schema", "message");
-        // No root anyOf for "at least one of rules/celRules": MCP clients
-        // require the root inputSchema.type to be "object" while strict API
-        // validators reject a root type beside anyOf, and the two constraints
-        // cannot both hold with anyOf at the root. The requirement is stated
-        // in the description and enforced in execute().
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("MapMessageRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "MapMessageRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         ObjectNode messageNode = Inputs.requireObject(input, "message");

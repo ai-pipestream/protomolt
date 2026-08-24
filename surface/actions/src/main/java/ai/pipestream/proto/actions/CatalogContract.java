@@ -96,7 +96,7 @@ public final class CatalogContract {
         ArrayNode listed = details.putArray("violations");
         for (ValidationResult.Violation violation : result.violations()) {
             ObjectNode node = listed.addObject();
-            node.put("field", violation.path());
+            node.put("field", jsonPath(violation.path()));
             node.put("ruleId", violation.ruleId());
             node.put("message", violation.message());
         }
@@ -105,12 +105,28 @@ public final class CatalogContract {
 
     /**
      * A validator path rendered as a JSON Pointer into the envelope: dotted proto field
-     * names become slash-separated JSON names, which is how the caller wrote them.
+     * names become slash-separated JSON names, which is how the caller wrote them, and a
+     * repeated element's bracketed index becomes its own segment, as RFC 6901 requires.
      */
     private static String pointer(String path) {
         StringBuilder out = new StringBuilder();
+        for (String segment : jsonPath(path).split("\\.")) {
+            out.append('/').append(segment.replace("[", "/").replace("]", ""));
+        }
+        return out.toString();
+    }
+
+    /** A validator path with each field named as the caller wrote it in the envelope. */
+    private static String jsonPath(String path) {
+        StringBuilder out = new StringBuilder();
         for (String segment : path.split("\\.")) {
-            out.append('/').append(jsonName(segment));
+            if (out.length() > 0) {
+                out.append('.');
+            }
+            int bracket = segment.indexOf('[');
+            out.append(bracket < 0
+                    ? jsonName(segment)
+                    : jsonName(segment.substring(0, bracket)) + segment.substring(bracket));
         }
         return out.toString();
     }
@@ -140,7 +156,7 @@ public final class CatalogContract {
             if (out.length() > 0) {
                 out.append("; ");
             }
-            out.append(violation.path()).append(' ').append(violation.message());
+            out.append(jsonPath(violation.path())).append(' ').append(violation.message());
         }
         return out.toString();
     }

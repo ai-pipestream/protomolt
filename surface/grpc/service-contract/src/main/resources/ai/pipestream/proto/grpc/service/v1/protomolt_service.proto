@@ -769,20 +769,101 @@ message RenderPromptResponse {
 }
 
 
+// The search engine an index artifact is rendered for.
+enum IndexEngine {
+  // Unset. There is no default engine, because the artifacts differ in kind.
+  INDEX_ENGINE_UNSPECIFIED = 0;
+  // OpenSearch index mappings, and the only engine that renders security.
+  INDEX_ENGINE_OPENSEARCH = 1;
+  // Solr schema fields.
+  INDEX_ENGINE_SOLR = 2;
+  // Lucene field specifications.
+  INDEX_ENGINE_LUCENE = 3;
+  // Qdrant collection schema and vector specifications.
+  INDEX_ENGINE_QDRANT = 4;
+}
+
+// An OpenSearch security role rendered beside the mappings, complete enough
+// to PUT at _plugins/_security/api/roles/{name}.
+message IndexSecurityRole {
+  // The index names the role covers. Required: a role covering no index
+  // grants nothing and is almost certainly a mistake.
+  repeated string index_patterns = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 128, items: {string: {min_len: 1, max_len: 256}}}
+    }
+  ];
+  // The actions the role permits; empty renders the role without them.
+  repeated string allowed_actions = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 128, items: {string: {min_len: 1, max_len: 256}}}
+    }
+  ];
+}
+
+// How schema-declared sensitivity classes shape the rendered artifacts.
+// OpenSearch only: the other engines have nowhere to put this.
+message IndexSensitivity {
+  // Classes rendered as store-only ciphertext containers, indexed false. The
+  // engine cannot search what it cannot read, so it is told not to try.
+  repeated string encrypt = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // Classes emitted as masked_fields in the security role fragment.
+  repeated string mask = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // Classes emitted as field-level security exclusions.
+  repeated string exclude = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // Per-class masked_fields format suffix, for example '::SHA-512' or
+  // '::/regex/::replacement', keyed by sensitivity class.
+  map<string, string> mask_format = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {max_pairs: 64, keys: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // When set, a complete security role is rendered beside the mappings.
+  IndexSecurityRole role = 5;
+}
+
 // The input of render-index-mappings.
 message RenderIndexMappingsRequest {
   // The schema declaring the message type and its indexing hints.
-  SchemaSource schema = 1;
-  // Fully qualified message type to render mappings for.
-  string type = 2;
-  // 'opensearch', 'solr', or 'lucene'.
-  string engine = 3;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified message type to render mappings for; not required,
+  // because a schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
+  // The engine to render for.
+  IndexEngine engine = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Apply schema-declared sensitivity classes; OpenSearch only. Absent
+  // renders mappings alone.
+  IndexSensitivity sensitivity = 4;
 }
 
 // The rendered search-index artifact for one engine.
 message RenderIndexMappingsResponse {
-  // Engine the artifact was rendered for, echoed from the request.
-  string engine = 1;
+  // Engine the artifact was rendered for, echoed from the request in the same
+  // vocabulary the request names it in.
+  IndexEngine engine = 1;
   // The artifact itself. Its shape is defined by the target engine rather
   // than by ProtoMolt, so it is carried as a structure.
   google.protobuf.Struct mappings = 2;
@@ -830,13 +911,30 @@ message EvalCelResponse {
 // the target it writes to.
 message CelRule {
   // Optional boolean CEL gate; the rule is skipped when false.
-  string filter = 1;
+  string filter = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 8192}
+    }
+  ];
   // Optional CEL value expression written to 'target'.
-  string selector = 2;
+  string selector = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 8192}
+    }
+  ];
   // The output field path the selector value is written to.
-  string target = 3;
+  string target = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024}
+    }
+  ];
   // Text rules applied when no selector is given.
-  repeated string fallback = 4;
+  repeated string fallback = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 2048}}}
+    }
+  ];
 }
 
 // The input of map-message.
@@ -1102,9 +1200,20 @@ message ShapeSource {
 // A projected field: its type is inferred from the scoped source path.
 message ProjectedField {
   // The field's name in the projected output.
-  string name = 1;
-  // e.g. 'order.ship_to.city'.
-  string from = 2;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, identifier: true}
+    }
+  ];
+  // The scoped source path the field is taken from, for example
+  // 'order.ship_to.city'.
+  string from = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024}
+    }
+  ];
 }
 
 // How a shape is built from its sources.
@@ -1165,9 +1274,17 @@ message SynthesizeShapeResponse {
 // The authored output type of a join.
 message JoinTarget {
   // The schema declaring the target type.
-  SchemaSource schema = 1;
-  // Fully qualified target message type.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified target message type; not required, because a schema
+  // declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
 }
 
 // A shape to synthesize as the join output.
@@ -1912,18 +2029,62 @@ message InferSchemaResponse {
   string descriptor_set_base64 = 4;
 }
 
+// What masking does to a field it covers.
+enum MaskStrategy {
+  // Selects REMOVE, the verb's default.
+  MASK_STRATEGY_UNSPECIFIED = 0;
+  // The field is dropped from the output entirely.
+  MASK_STRATEGY_REMOVE = 1;
+  // The field is kept with its value replaced.
+  MASK_STRATEGY_REDACT = 2;
+  // String and bytes values become AES-GCM ciphertext and other types clear.
+  // Requires a key.
+  MASK_STRATEGY_ENCRYPT = 3;
+  // Reverses ENCRYPT with the same key. A wrong key fails loudly.
+  MASK_STRATEGY_DECRYPT = 4;
+}
+
 // The input of mask-message.
 message MaskMessageRequest {
   // The schema declaring the field sensitivity classes.
-  SchemaSource schema = 1;
-  // Fully qualified type of the message to mask.
-  string type = 2;
+  SchemaSource schema = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Fully qualified type of the message to mask; not required, because a
+  // schema declaring exactly one message identifies it.
+  string type = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 512, protobuf_fqn: true}
+    }
+  ];
   // The message to mask, as canonical proto3 JSON.
-  google.protobuf.Struct message = 3;
-  // Sensitivity classes to mask, e.g. 'pii'.
-  repeated string classes = 4;
-  // 'remove' (default) or 'redact'.
-  string strategy = 5;
+  google.protobuf.Struct message = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Sensitivity classes to mask, for example 'pii'. At least one: masking no
+  // class would return the message unchanged, which the caller can do without
+  // calling this verb.
+  repeated string classes = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
+  // What to do with a covered field; unspecified removes it.
+  MaskStrategy strategy = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      enum: {defined_only: true}
+    }
+  ];
+  // Base64 AES key of 16, 24, or 32 bytes, required by ENCRYPT and DECRYPT
+  // and unused by the other strategies. The caller's key: it is never stored
+  // and never appears in a response.
+  string key = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {base64: true, max_len: 128}
+    }
+  ];
 }
 
 // The masked message.

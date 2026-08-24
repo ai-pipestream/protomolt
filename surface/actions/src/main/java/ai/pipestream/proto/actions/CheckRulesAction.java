@@ -55,53 +55,12 @@ final class CheckRulesAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = ActionJson.baseInputSchema();
-        ObjectNode properties = schema.putObject("properties");
-        ObjectNode sources = properties.putObject("sources");
-        sources.put("type", "array");
-        sources.put("description", "The named sources: one (in-place mode; the name is the "
-                + "CEL variable, conventionally 'input') or many (scoped mode). Each may "
-                + "carry a sample 'message' for the dry run.");
-        ObjectNode source = sources.putObject("items");
-        source.put("type", "object");
-        ObjectNode sourceProperties = source.putObject("properties");
-        sourceProperties.putObject("name").put("type", "string");
-        sourceProperties.set("schema", ActionJson.schemaSourceSchema());
-        sourceProperties.set("type", ActionJson.typeProperty(
-                "Fully qualified message type; required unless the schema identifies one."));
-        sourceProperties.putObject("message")
-                .put("type", "object")
-                .put("description", "Optional sample message (proto3 JSON) for the dry run.");
-        source.putArray("required").add("name").add("schema");
-        ObjectNode target = properties.putObject("target");
-        target.put("type", "object");
-        target.put("description", "The output type rules write to (scoped mode); omitted "
-                + "with a single source, rules apply in place.");
-        ObjectNode targetProperties = target.putObject("properties");
-        targetProperties.set("schema", ActionJson.schemaSourceSchema());
-        targetProperties.set("type", ActionJson.typeProperty(
-                "Fully qualified output message type."));
-        ObjectNode rules = properties.putObject("rules");
-        rules.put("type", "array");
-        rules.put("description", "Text mapping rules to check.");
-        rules.putObject("items").put("type", "string");
-        ObjectNode celRules = properties.putObject("celRules");
-        celRules.put("type", "array");
-        celRules.put("description", "CEL mapping rules to check "
-                + "({filter?, selector?, target, fallback?}).");
-        celRules.putObject("items").put("type", "object");
-        ObjectNode filters = properties.putObject("filters");
-        filters.put("type", "array");
-        filters.put("description", "Boolean CEL predicates to check (and evaluate in the "
-                + "dry run).");
-        filters.putObject("items").put("type", "string");
-        ActionJson.required(schema, "sources");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("CheckRulesRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "CheckRulesRequest", name());
         List<ShapeSynthesizer.NamedType> named =
                 SynthesizeShapeAction.namedSources(input, context);
         ObjectNode targetNode = Inputs.optionalObject(input, "target");
