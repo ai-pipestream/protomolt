@@ -1,5 +1,6 @@
 package ai.pipestream.proto.grpc.service;
 
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;

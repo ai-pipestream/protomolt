@@ -1,0 +1,13 @@
+description = 'The ProtoMolt service definition and its compiled schema: the contract every catalog verb is declared in, separate from the server that serves it'
+
+dependencies {
+    // The definition is compiled from its own source at load rather than bound to
+    // generated stubs, so the compiler is a runtime dependency, not a build-time one.
+    api project(':protomolt-sources')
+    // Contracts the definition imports. Each must be readable from the classpath as
+    // text, because the source closure is compiled rather than linked.
+    api project(':protomolt-grpc-service-profile')
+    api project(':protomolt-protobuf-validation')
+
+    testImplementation project(':protomolt-protobuf-validation')
+}

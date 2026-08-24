@@ -1,4 +1,4 @@
-package ai.pipestream.proto.grpc.service;
+package ai.pipestream.proto.grpc.service.contract;
 
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;

@@ -12,7 +12,7 @@
  * a call is one print, one dispatch, and one parse for every verb alike. That correspondence is
  * what keeps the gRPC, JSON/REST, and MCP surfaces byte-identical in their payloads.
  *
- * <p>The service is served descriptor-natively. {@link ProtoMoltServiceSchema} compiles
+ * <p>The service is served descriptor-natively. {@link ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema} compiles
  * {@code protomolt_service.proto} at class load and the compiled file descriptor is attached to
  * the binding, so server reflection lists the service as it would a stub-generated one.
  * {@link ProtoMoltGrpcServer} is a ready-to-run server with reflection enabled, and

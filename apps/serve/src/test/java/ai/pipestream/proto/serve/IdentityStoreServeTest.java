@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
+import ai.pipestream.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.pipestream.proto.grpc.invoke.DynamicGrpcCalls;
 import com.google.protobuf.DynamicMessage;
 import com.sun.net.httpserver.HttpServer;

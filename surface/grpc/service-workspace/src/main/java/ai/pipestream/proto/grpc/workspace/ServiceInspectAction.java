@@ -40,13 +40,14 @@ public final class ServiceInspectAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        return ServiceActionSupport.nameSchema();
+        return ServiceActionJson.schemaFor("ServiceInspectRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
         ServiceProfileRepository store = ServiceActionSupport.requireRepository(repository);
-        String name = ServiceActionSupport.requireString(input, "name");
+        String name = ServiceActionJson.string(
+                ServiceActionJson.parse(input, "ServiceInspectRequest", name()), "name");
         ServiceProfile profile;
         try {
             profile = store.find(name).orElseThrow(() -> ServiceActionSupport.notFound(name));
