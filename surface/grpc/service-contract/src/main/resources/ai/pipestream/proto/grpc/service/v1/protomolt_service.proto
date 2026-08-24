@@ -1588,13 +1588,28 @@ message CompiledWorkflow {
 
 // The input of run-workflow: an inline workflow or the name of a stored one.
 message RunWorkflowRequest {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "run_workflow.one_definition"
+      message: "name either an inline workflow or a stored workflowName, not both and not neither"
+      expression: "has(this.workflow) != (this.workflow_name != '')"
+    }
+  };
+
   // The inline workflow definition to execute.
   CompiledWorkflow workflow = 1;
-  // The workflow input, as proto3 JSON of input_type.
-  google.protobuf.Struct input = 2;
-  // A stored workflow to run instead of an inline 'workflow' (registered via the
-  // registry's workflows endpoint).
-  string workflow_name = 3;
+  // The workflow input, as proto3 JSON of the workflow's declared input type.
+  google.protobuf.Struct input = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // A stored workflow to run instead of an inline one, registered through the
+  // registry's workflows endpoint.
+  string workflow_name = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The outcome of one workflow step.
@@ -1626,7 +1641,9 @@ message RunWorkflowResponse {
 // The input of check-workflow.
 message CheckWorkflowRequest {
   // The workflow definition to verify.
-  CompiledWorkflow workflow = 1;
+  CompiledWorkflow workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One problem found while verifying a workflow.
@@ -1650,7 +1667,9 @@ message CheckWorkflowResponse {
 // A checked workflow to compile into a workflow.
 message CompileWorkflowRequest {
   // Descriptor-grounded workflow to check and compile.
-  CompiledWorkflow workflow = 1;
+  CompiledWorkflow workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // Deterministic workflow content and its SHA-256 identity.
@@ -1664,9 +1683,15 @@ message CompileWorkflowResponse {
 // Descriptor-grounded mapping suggestion input.
 message SuggestMappingsRequest {
   // Named source message types available to mapping rules.
-  repeated ShapeSource sources = 1;
+  repeated ShapeSource sources = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 64}
+    }
+  ];
   // Message type whose fields need source mappings.
-  JoinTarget target = 2;
+  JoinTarget target = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One proposed target=source.path mapping.
@@ -1692,13 +1717,28 @@ message SuggestMappingsResponse {
 // A live draft-workflow probe to record for offline replay.
 message RecordWorkflowRunRequest {
   // Descriptor-grounded workflow to execute.
-  CompiledWorkflow workflow = 1;
+  CompiledWorkflow workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Workflow input encoded as proto3 JSON.
-  google.protobuf.Struct input = 2;
-  // Client-selected path-safe run identity.
-  string run_id = 3;
+  google.protobuf.Struct input = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // Client-selected run identity. The caller chooses it so a retry can name
+  // the same run rather than recording a second one.
+  string run_id = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
   // Promoted workflow version, or empty for a draft probe.
-  string workflow_version = 4;
+  string workflow_version = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The persisted run evidence; failed executions still return their evidence.
@@ -1715,12 +1755,26 @@ message RecordWorkflowRunResponse {
 
 // Exact workflow, evidence identity, and descriptor set for offline replay.
 message ReplayWorkflowRequest {
-  // Workflow encoded as protobuf JSON.
-  google.protobuf.Struct workflow = 1;
+  // Carried as a structure rather than declared: the workflow model lives in
+  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
+  // narrower copy of it that omits dependencies and the richer step model.
+  // Referencing the real type is the correct fix and belongs in the change
+  // that retires the copy.
+  google.protobuf.Struct workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Stored run-evidence identity to replay.
-  string run_id = 2;
-  // Exact descriptor set used to decode and verify fixtures.
-  SchemaSource schema = 3;
+  string run_id = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
+  // The exact descriptor set the run used, which is what makes a replay a
+  // comparison rather than a re-interpretation.
+  SchemaSource schema = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // One step's offline replay verdict.
@@ -1747,10 +1801,23 @@ message ReplayWorkflowResponse {
 
 // Workflow content to promote under one immutable version.
 message PromoteWorkflowRequest {
-  // Workflow encoded as protobuf JSON.
-  google.protobuf.Struct workflow = 1;
-  // Path-safe immutable version identity.
-  string version = 2;
+  // Carried as a structure rather than declared: the workflow model lives in
+  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
+  // narrower copy of it that omits dependencies and the richer step model.
+  // Referencing the real type is the correct fix and belongs in the change
+  // that retires the copy.
+  google.protobuf.Struct workflow = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The version identity to publish under. Immutable once promoted, so a
+  // second promotion under the same version is refused rather than replacing
+  // what the first one published.
+  string version = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
 }
 
 // The immutable promotion envelope stored in the registry.
@@ -1764,16 +1831,40 @@ message PromoteWorkflowResponse {
 // The stored run to project and the record identity to issue it under.
 message ExportWorkRecordRequest {
   // Stored run-evidence identity to project.
-  string run_id = 1;
+  string run_id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, path_safe_name: true}
+    }
+  ];
   // Record identity; derived as "record-<run_id>" when empty.
-  string record_id = 2;
+  string record_id = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {max_len: 256, path_safe_name: true}
+    }
+  ];
   // Manifest digest of the record this one re-issues, or empty.
-  string prior_manifest_sha256 = 3;
+  string prior_manifest_sha256 = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {sha256_hex: true}
+    }
+  ];
   // Sensitivity classes removed from the evidence before projection; a
   // disclosure names these and disclose_of together.
-  repeated string mask_classes = 4;
+  repeated string mask_classes = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 64, items: {string: {min_len: 1, max_len: 128}}}
+    }
+  ];
   // Manifest digest of the record this disclosure projects, or empty.
-  string disclose_of = 5;
+  string disclose_of = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {sha256_hex: true}
+    }
+  ];
 }
 
 // The signed record and its identity.
@@ -1790,9 +1881,19 @@ message ExportWorkRecordResponse {
 
 // A signed record and the trust snapshot to verify it against.
 message VerifyWorkRecordRequest {
-  // Serialized SignedWorkRecord, base64.
-  string record_base64 = 1;
-  // TrustSnapshot encoded as protobuf JSON.
+  // The record to verify: a serialized SignedWorkRecord, base64. It stays
+  // encoded rather than declared, because verification covers the exact bytes
+  // that were signed and re-encoding a parsed message would not reproduce
+  // them.
+  string record_base64 = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, base64: true}
+    }
+  ];
+  // TrustSnapshot encoded as protobuf JSON. Not required here, because a node
+  // may pin one through PROTOMOLT_TRUST_SNAPSHOT; the verb publishes it as
+  // required only when its own node has no pin to fall back on.
   google.protobuf.Struct trust = 2;
   // Referenced artifact bytes by SHA-256, base64-encoded; when present the
   // rehash check runs all-or-nothing instead of being skipped.
@@ -1824,14 +1925,30 @@ message VerifyWorkRecordResponse {
 // A signed record, its trust snapshot, and the replay inputs to evaluate it
 // beside its stored evidence.
 message EvaluateWorkRecordRequest {
-  // Serialized SignedWorkRecord, base64.
-  string record_base64 = 1;
-  // TrustSnapshot encoded as protobuf JSON.
+  // The record to evaluate: a serialized SignedWorkRecord, base64, for the
+  // same reason verify-work-record takes it encoded.
+  string record_base64 = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, base64: true}
+    }
+  ];
+  // TrustSnapshot encoded as protobuf JSON. Not required here, because a node
+  // may pin one through PROTOMOLT_TRUST_SNAPSHOT; the verb publishes it as
+  // required only when its own node has no pin to fall back on.
   google.protobuf.Struct trust = 2;
-  // The workflow the run executed, encoded as protobuf JSON, for replay.
-  google.protobuf.Struct workflow = 3;
+  // Carried as a structure rather than declared: the workflow model lives in
+  // grpc_workflow.proto, and the CompiledWorkflow in this file is an older,
+  // narrower copy of it that omits dependencies and the richer step model.
+  // Referencing the real type is the correct fix and belongs in the change
+  // that retires the copy.
+  google.protobuf.Struct workflow = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Exact descriptor set used by the recorded run.
-  SchemaSource schema = 4;
+  SchemaSource schema = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Referenced artifact bytes by SHA-256, base64; runs the rehash check.
   google.protobuf.Struct artifacts = 5;
 }

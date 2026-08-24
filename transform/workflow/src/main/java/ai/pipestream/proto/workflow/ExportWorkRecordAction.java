@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -62,33 +63,12 @@ final class ExportWorkRecordAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        WorkflowActionJson.identitySchema(properties, "runId")
-                .put("description", "Stored run-evidence identity to project.");
-        WorkflowActionJson.identitySchema(properties, "recordId")
-                .put("description", "Record identity; 'record-<runId>' when omitted.");
-        properties.putObject("priorManifestSha256").put("type", "string")
-                .put("pattern", "^[0-9a-f]{64}$")
-                .put("description", "Manifest digest of the record this one re-issues.");
-        ObjectNode maskClasses = properties.putObject("maskClasses");
-        maskClasses.put("type", "array");
-        maskClasses.putObject("items").put("type", "string");
-        maskClasses.put("description",
-                "Sensitivity classes removed from the evidence before projection; "
-                        + "requires discloseOf.");
-        properties.putObject("discloseOf").put("type", "string")
-                .put("pattern", "^[0-9a-f]{64}$")
-                .put("description",
-                        "Manifest digest of the record this disclosure projects; "
-                                + "requires maskClasses.");
-        schema.putArray("required").add("runId");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("ExportWorkRecordRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "ExportWorkRecordRequest", name());
         if (runs == null) {
             throw WorkflowActionJson.unavailable("work-record export",
                     "start protomolt-serve with --workflow-workspace");

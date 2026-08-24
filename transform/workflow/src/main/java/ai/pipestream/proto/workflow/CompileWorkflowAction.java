@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -33,15 +34,12 @@ final class CompileWorkflowAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        schema.putObject("properties").set("workflow", RunWorkflowAction.workflowSchema());
-        schema.putArray("required").add("workflow");
-        schema.put("additionalProperties", false);
-        return schema;
+        return CatalogContract.schemaFor("CompileWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "CompileWorkflowRequest", name());
         CompiledWorkflow definition = parseChecked(WorkflowActionJson.object(input, "workflow"), context);
         Workflow workflow;
         try {

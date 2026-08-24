@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
@@ -55,33 +56,19 @@ final class VerifyWorkRecordAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("recordBase64").put("type", "string")
-                .put("description", "Serialized SignedWorkRecord, base64.");
-        properties.putObject("trust").put("type", "object")
-                .put("description", defaultTrust.get() == null
-                        ? "TrustSnapshot encoded as protobuf JSON."
-                        : "TrustSnapshot encoded as protobuf JSON; defaults to the "
-                                + "server's pinned snapshot when omitted.");
-        ObjectNode artifacts = properties.putObject("artifacts");
-        artifacts.put("type", "object");
-        artifacts.putObject("additionalProperties").put("type", "string");
-        artifacts.put("description",
-                "Referenced artifact bytes by SHA-256, base64-encoded; when present the "
-                        + "rehash check runs all-or-nothing instead of being skipped.");
-        var required = schema.putArray("required").add("recordBase64");
-        // Read live: a node whose custody arrives on the lane stops demanding
-        // 'trust' from the next request onward.
-        if (defaultTrust.get() == null) {
-            required.add("trust");
-        }
-        schema.put("additionalProperties", false);
-        return schema;
+        ObjectNode schema = CatalogContract.schemaFor("VerifyWorkRecordRequest");
+        // A node with a pinned snapshot supplies trust itself, so the request may
+        // omit it. Without a pin there is nothing to fall back on, and the verb
+        // says so in the schema it publishes rather than only when a call fails.
+        // Read live rather than at registration: a snapshot arriving on the config
+        // lane changes what the next call needs, so it changes what is published.
+        return defaultTrust.get() == null
+                ? CatalogContract.requiring(schema, "trust") : schema;
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        CatalogContract.check(input, "VerifyWorkRecordRequest", name());
         byte[] record;
         try {
             record = Base64.getDecoder()

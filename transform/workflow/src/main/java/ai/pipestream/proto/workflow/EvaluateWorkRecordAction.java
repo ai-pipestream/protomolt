@@ -1,6 +1,7 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.SchemaResolver;
@@ -119,40 +120,26 @@ final class EvaluateWorkRecordAction implements ProtoAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = WorkflowActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        properties.putObject("recordBase64").put("type", "string")
-                .put("description", "Serialized SignedWorkRecord, base64.");
-        properties.putObject("trust").put("type", "object")
-                .put("description", defaultTrust.get() == null
-                        ? "TrustSnapshot encoded as protobuf JSON."
-                        : "TrustSnapshot encoded as protobuf JSON; defaults to the "
-                                + "server's pinned snapshot when omitted.");
-        properties.putObject("workflow").put("type", "object")
-                .put("description", "The workflow the run executed, for offline replay.");
-        properties.putObject("schema").put("type", "object")
-                .put("description", "The exact descriptors used by the recorded run.");
-        ObjectNode artifactBytes = properties.putObject("artifacts");
-        artifactBytes.put("type", "object");
-        artifactBytes.putObject("additionalProperties").put("type", "string");
-        artifactBytes.put("description",
-                "Referenced artifact bytes by SHA-256, base64; runs the rehash check.");
-        var required = schema.putArray("required").add("recordBase64");
-        // Read live: see VerifyWorkRecordAction.
-        if (defaultTrust.get() == null) {
-            required.add("trust");
-        }
-        required.add("workflow").add("schema");
-        schema.put("additionalProperties", false);
-        return schema;
+        ObjectNode schema = CatalogContract.schemaFor("EvaluateWorkRecordRequest");
+        // A node with a pinned snapshot supplies trust itself, so the request may
+        // omit it. Without a pin there is nothing to fall back on, and the verb
+        // says so in the schema it publishes rather than only when a call fails.
+        // Read live rather than at registration: a snapshot arriving on the config
+        // lane changes what the next call needs, so it changes what is published.
+        return defaultTrust.get() == null
+                ? CatalogContract.requiring(schema, "trust") : schema;
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        // Availability first: a node without a workspace cannot evaluate any request, so
+        // reporting that is more use to the caller than listing fields on a verb that was
+        // never going to run.
         if (artifacts == null || runs == null) {
             throw WorkflowActionJson.unavailable("work-record evaluation",
                     "start protomolt-serve with --workflow-workspace");
         }
+        CatalogContract.check(input, "EvaluateWorkRecordRequest", name());
         byte[] record;
         try {
             record = Base64.getDecoder()
