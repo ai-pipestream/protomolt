@@ -13,6 +13,8 @@ dependencies {
     // the ones it imports must be readable from the classpath as text.
     api project(':protomolt-grpc-workflow')
     api project(':protomolt-protobuf-prompt')
+    // The trust snapshot the work-record verbs verify against.
+    api project(':protomolt-receipt')
 
     testImplementation project(':protomolt-protobuf-validation')
 }
