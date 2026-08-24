@@ -35,13 +35,12 @@ final class RenderIndexMappingsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("RenderIndexMappingsRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("RenderIndexMappingsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "RenderIndexMappingsRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         String engine = Inputs.requireString(input, "engine");

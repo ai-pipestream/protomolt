@@ -6,6 +6,7 @@ import ai.pipestream.proto.delegation.v1.RegisterWorkerRequest;
 import ai.pipestream.proto.delegation.v1.RegisterWorkerResponse;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * Registers a worker on the delegation bridge: opens a real delegation stream, sends
@@ -34,8 +35,8 @@ final class DelegationWorkerRegisterAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(RegisterWorkerRequest.getDescriptor());
+    public Descriptor requestType() {
+        return RegisterWorkerRequest.getDescriptor();
     }
 
     @Override

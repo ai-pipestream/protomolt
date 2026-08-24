@@ -13,6 +13,7 @@ import ai.pipestream.proto.registry.RegistryStoreException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The config lane's write verb: publishes one typed config document
@@ -59,11 +60,8 @@ public final class PublishConfigAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        // Derived from the request message, so the caller sees that the type name must be a
-        // fully qualified protobuf name and that all three members are required.
-        return new ObjectMapper().valueToTree(ProtoJsonSchemaGenerator.create()
-                .generate(PublishConfigRequest.getDescriptor()));
+    public Descriptor requestType() {
+        return PublishConfigRequest.getDescriptor();
     }
 
     @Override

@@ -8,6 +8,7 @@ import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Lists the durable service identities without loading descriptor artifacts. */
 public final class ServiceListAction implements ProtoAction {
@@ -35,8 +36,8 @@ public final class ServiceListAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return ServiceActionJson.schemaFor("ServiceListRequest");
+    public Descriptor requestType() {
+        return ServiceActionJson.request("ServiceListRequest");
     }
 
     @Override

@@ -200,9 +200,8 @@ public final class MetricActions {
                     + "descriptions and sensitivity, and the backends this mount can run.";
         }
 
-        @Override
-        public ObjectNode inputSchema() {
-            return schemaFor(DescribeMappingRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return DescribeMappingRequest.getDescriptor();
         }
 
         @Override
@@ -248,9 +247,8 @@ public final class MetricActions {
                     + "bounded limit, as a proto3-JSON QueryMetricsRequest under 'request'.";
         }
 
-        @Override
-        public ObjectNode inputSchema() {
-            return schemaFor(QueryMetricsRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return QueryMetricsRequest.getDescriptor();
         }
 
         @Override
@@ -304,9 +302,8 @@ public final class MetricActions {
                     + "proto3-JSON RebuildRollupRequest under 'request'.";
         }
 
-        @Override
-        public ObjectNode inputSchema() {
-            return schemaFor(RebuildRollupRequest.getDescriptor());
+        @Override public Descriptor requestType() {
+            return RebuildRollupRequest.getDescriptor();
         }
 
         @Override

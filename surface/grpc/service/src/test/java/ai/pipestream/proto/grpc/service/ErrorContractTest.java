@@ -26,6 +26,8 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /**
  * The error-sanitization boundary every verb shares. Action failures map onto stable gRPC codes
@@ -147,8 +149,10 @@ class ErrorContractTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return JsonNodeFactory.instance.objectNode();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override

@@ -33,13 +33,12 @@ final class ListTypesAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("ListTypesRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("ListTypesRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "ListTypesRequest", name());
         String filter = Inputs.optionalString(input, "filter");
         Map<String, FileDescriptor> files = new LinkedHashMap<>();
         if (input.has("schema")) {

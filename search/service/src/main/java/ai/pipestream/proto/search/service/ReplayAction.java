@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The replay operation: re-runs a stored workflow over every document a
@@ -103,11 +104,8 @@ public final class ReplayAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        // Derived from the request message, so the schema states the two cross-field rules the
-        // gate enforces rather than describing them only in prose.
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
-                .generate(ReplayDocumentsRequest.getDescriptor()));
+    public Descriptor requestType() {
+        return ReplayDocumentsRequest.getDescriptor();
     }
 
     @Override

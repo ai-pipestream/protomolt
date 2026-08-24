@@ -15,6 +15,7 @@ import com.google.protobuf.Timestamp;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Promotes validated workflow content as one immutable registry version. */
 final class PromoteWorkflowAction implements ProtoAction {
@@ -49,13 +50,12 @@ final class PromoteWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("PromoteWorkflowRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("PromoteWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "PromoteWorkflowRequest", name());
         if (workflows == null) {
             throw WorkflowActionJson.unavailable("workflow promotion",
                     "start protomolt-serve with --registry-git");

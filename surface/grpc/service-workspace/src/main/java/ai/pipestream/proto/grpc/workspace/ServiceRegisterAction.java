@@ -11,6 +11,7 @@ import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Registers a reflected gRPC service without returning its descriptor bytes to the caller. */
 public final class ServiceRegisterAction implements ProtoAction {
@@ -44,8 +45,8 @@ public final class ServiceRegisterAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return ServiceActionJson.schemaFor("ServiceRegisterRequest");
+    public Descriptor requestType() {
+        return ServiceActionJson.request("ServiceRegisterRequest");
     }
 
     @Override

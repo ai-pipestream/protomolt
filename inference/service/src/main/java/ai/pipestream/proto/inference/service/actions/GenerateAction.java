@@ -15,6 +15,7 @@ import ai.pipestream.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code inference-generate} verb: one unary generation against a catalog
@@ -56,13 +57,12 @@ public final class GenerateAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("InferenceGenerateRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("InferenceGenerateRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "InferenceGenerateRequest", name());
         InferenceActionSupport.requireEngines(engines);
         GenerateRequest.Builder request = GenerateRequest.newBuilder()
                 .setModel(InferenceActionSupport.requireString(input, "model"));

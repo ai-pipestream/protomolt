@@ -14,6 +14,7 @@ import com.google.protobuf.util.JsonFormat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code pull-s3} verb: one {@link S3Pull} pass as an action. The caller owns the
@@ -63,11 +64,8 @@ public final class S3PullAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        // Derived from the request message, so the bounds and the required fields the pass
-        // enforces are visible to a caller before it starts one.
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create()
-                .generate(PullFromS3Request.getDescriptor()));
+    public Descriptor requestType() {
+        return PullFromS3Request.getDescriptor();
     }
 
     @Override

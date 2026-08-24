@@ -14,6 +14,7 @@ import io.grpc.ManagedChannelBuilder;
 
 import java.util.Base64;
 import java.util.function.Function;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * {@code reflect}: ask a live gRPC server for its own schema over the server-reflection protocol,
@@ -64,13 +65,12 @@ public final class ReflectAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("ReflectRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("ReflectRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "ReflectRequest", name());
         JsonNode targetNode = input.get("target");
         if (targetNode == null || !targetNode.isTextual() || targetNode.asText().isBlank()) {
             throw invalidInput("'target' must be a non-empty string", "/target");

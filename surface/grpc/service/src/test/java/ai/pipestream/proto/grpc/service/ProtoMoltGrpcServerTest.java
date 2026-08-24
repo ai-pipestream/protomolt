@@ -19,6 +19,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 class ProtoMoltGrpcServerTest {
 
@@ -65,8 +67,10 @@ class ProtoMoltGrpcServerTest {
         }
 
         @Override
-        public ObjectNode inputSchema() {
-            return JsonNodeFactory.instance.objectNode();
+        public Descriptor requestType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
         }
 
         @Override

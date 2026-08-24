@@ -12,6 +12,7 @@ import ai.pipestream.proto.inference.v1.ModelEntry;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code inference-list-models} verb: reads the server's inference model
@@ -50,13 +51,12 @@ public final class ListModelsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("InferenceListModelsRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("InferenceListModelsRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "InferenceListModelsRequest", name());
         InferenceActionSupport.requireEngines(engines);
         String provider = InferenceActionSupport.optionalString(input, "provider");
         ListModelsResponse response = engines.listModels(ListModelsRequest.newBuilder()

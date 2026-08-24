@@ -28,13 +28,12 @@ final class ExtractMetadataAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("ExtractMetadataRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("ExtractMetadataRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "ExtractMetadataRequest", name());
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         Map<String, Object> bag = DescriptorMetadata.asBag(descriptor);

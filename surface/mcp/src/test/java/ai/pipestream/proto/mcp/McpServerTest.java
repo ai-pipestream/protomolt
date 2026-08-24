@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 class McpServerTest {
 
@@ -267,12 +269,10 @@ class McpServerTest {
                     }
 
                     @Override
-                    public ObjectNode inputSchema() {
-                        ObjectNode schema = mapper.createObjectNode();
-                        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-                        schema.put("type", "object");
-                        schema.putObject("properties");
-                        return schema;
+                    public Descriptor requestType() {
+                        // Struct accepts any JSON object, so a fixture is not constrained by a
+                        // contract it is not testing.
+                        return Struct.getDescriptor();
                     }
 
                     @Override

@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Compiles an existing checked workflow definition into the durable workflow contract. */
 final class CompileWorkflowAction implements ProtoAction {
@@ -33,13 +34,12 @@ final class CompileWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("CompileWorkflowRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("CompileWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "CompileWorkflowRequest", name());
         CompiledWorkflow definition = parseChecked(WorkflowActionJson.object(input, "workflow"), context);
         Workflow workflow;
         try {

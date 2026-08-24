@@ -5,6 +5,7 @@ import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.delegation.v1.ReviewCandidateRequest;
 import ai.pipestream.proto.delegation.v1.ReviewCandidateResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Applies an external review decision to the open completion candidate. */
 final class DelegationReviewAction extends DelegationAction {
@@ -27,8 +28,8 @@ final class DelegationReviewAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return DelegationActionJson.schemaFor(ReviewCandidateRequest.getDescriptor());
+    public Descriptor requestType() {
+        return ReviewCandidateRequest.getDescriptor();
     }
 
     @Override

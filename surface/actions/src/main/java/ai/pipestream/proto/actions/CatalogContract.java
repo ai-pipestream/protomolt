@@ -52,7 +52,12 @@ public final class CatalogContract {
 
     /** The input schema for a verb, derived from the request message it accepts. */
     public static ObjectNode schemaFor(String message) {
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create().generateRooted(request(message)));
+        return schemaFor(request(message));
+    }
+
+    /** The input schema derived from a request message. */
+    public static ObjectNode schemaFor(Descriptor request) {
+        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create().generateRooted(request));
     }
 
     /**
@@ -86,7 +91,19 @@ public final class CatalogContract {
      */
     public static void check(ObjectNode input, String message, String verb)
             throws ActionException {
-        Descriptor descriptor = request(message);
+        check(input, request(message), verb);
+    }
+
+    /**
+     * Refuses an envelope the request message does not accept.
+     *
+     * <p>The envelope is the message's canonical proto3 JSON form, so the same document works
+     * over the catalog, over the JSON gateway, and as a tool call. Unknown members are refused
+     * rather than ignored: a caller that misspells a field has written a request it did not
+     * mean, and silently dropping it would do something else.
+     */
+    public static void check(ObjectNode input, Descriptor descriptor, String verb)
+            throws ActionException {
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
         try {
             JsonFormat.parser().merge(input.toString(), builder);

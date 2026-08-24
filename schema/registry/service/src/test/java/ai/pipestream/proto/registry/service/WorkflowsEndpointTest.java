@@ -21,6 +21,8 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /**
  * The {@code {nativePrefix}/workflows} routes: verbatim workflow storage over a
@@ -181,8 +183,10 @@ class WorkflowsEndpointTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return JSON.createObjectNode();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override
@@ -243,8 +247,10 @@ class WorkflowsEndpointTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return JSON.createObjectNode();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override

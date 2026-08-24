@@ -54,13 +54,12 @@ final class CheckRulesAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("CheckRulesRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("CheckRulesRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "CheckRulesRequest", name());
         List<ShapeSynthesizer.NamedType> named =
                 SynthesizeShapeAction.namedSources(input, context);
         ObjectNode targetNode = Inputs.optionalObject(input, "target");

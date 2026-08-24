@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Struct;
 
 /** Pins the catalog's authorization behavior: scoped refusal before dispatch, filtered listing. */
 class ActionCatalogScopeTest {
@@ -39,8 +41,10 @@ class ActionCatalogScopeTest {
             }
 
             @Override
-            public ObjectNode inputSchema() {
-                return JsonNodeFactory.instance.objectNode();
+            public Descriptor requestType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
             }
 
             @Override

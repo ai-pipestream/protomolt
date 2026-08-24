@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The schema-level join/union: validate (clash report), resolve (rename, prefer, coalesce),
@@ -42,13 +43,12 @@ final class MergeSchemasAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("MergeSchemasRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("MergeSchemasRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "MergeSchemasRequest", name());
         String name = Inputs.requireString(input, "name");
         List<ShapeSynthesizer.NamedType> sources =
                 SynthesizeShapeAction.namedSources(input, context);

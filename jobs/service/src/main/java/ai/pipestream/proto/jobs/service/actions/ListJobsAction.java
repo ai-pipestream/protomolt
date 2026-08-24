@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code list-jobs} verb: page workflow runs, newest first, with optional
@@ -64,8 +65,8 @@ public final class ListJobsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("ListJobsRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("ListJobsRequest");
     }
 
     @Override
@@ -73,7 +74,6 @@ public final class ListJobsAction implements ProtoAction {
         // Availability first: a node with no job store cannot serve any request, so
         // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
-        CatalogContract.check(input, "ListJobsRequest", name());
         // The contract names the status with an enum, so an unknown one is refused
         // before the verb runs; the store's own vocabulary drops the type-name prefix
         // that proto enum values carry.

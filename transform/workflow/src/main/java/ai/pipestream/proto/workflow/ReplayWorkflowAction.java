@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
+import com.google.protobuf.Descriptors.Descriptor;
 
 /** Offline fixture replay action over repository-backed run evidence. */
 final class ReplayWorkflowAction implements ProtoAction {
@@ -44,13 +45,12 @@ final class ReplayWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode inputSchema() {
-        return CatalogContract.schemaFor("ReplayWorkflowRequest");
+    public Descriptor requestType() {
+        return CatalogContract.request("ReplayWorkflowRequest");
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CatalogContract.check(input, "ReplayWorkflowRequest", name());
         if (artifacts == null || runs == null) {
             throw WorkflowActionJson.unavailable("workflow replay",
                     "start protomolt-serve with --workflow-workspace");
