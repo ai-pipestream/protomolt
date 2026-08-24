@@ -3,18 +3,16 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.DynamicMessage;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Message;
 import java.util.List;
 
 /**
@@ -23,7 +21,7 @@ import java.util.List;
  * statically verified first; execution failures return {@code ok=false} with the failing
  * step, never a stack trace.
  */
-public final class RunWorkflowAction implements JsonAction {
+public final class RunWorkflowAction implements ProtoAction {
 
     private final WorkflowRunner runner;
     private final WorkflowRepository repository;
@@ -74,86 +72,79 @@ public final class RunWorkflowAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context)
+    public Message execute(Message input, ActionContext context)
             throws ActionException {
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        JsonNode workflowNode = input.get("workflow");
-        JsonNode nameNode = input.get("workflowName");
-        if (workflowNode == null && nameNode != null && nameNode.isTextual()) {
+        // The message states that a run names either an inline workflow or a stored one, so
+        // the choice between them is all that is left to make here.
+        ObjectNode stored = null;
+        if (!Fields.has(input, "workflow")) {
+            String named = Fields.string(input, "workflowName");
             if (repository == null) {
-                result.put("ok", false);
-                result.put("error", "No workflow repository is mounted; run with an inline "
+                return refusal("No workflow repository is mounted; run with an inline "
                         + "'workflow' or start a server with a registry");
-                return result;
             }
-            workflowNode = repository.workflow(nameNode.asText()).orElse(null);
-            if (workflowNode == null) {
-                result.put("ok", false);
-                result.put("error", "No stored workflow named '" + nameNode.asText() + "'");
-                return result;
+            stored = repository.workflow(named).orElse(null);
+            if (stored == null) {
+                return refusal("No stored workflow named '" + named + "'");
             }
-        }
-        JsonNode inputNode = input.get("input");
-        if (!(workflowNode instanceof ObjectNode workflow) || !(inputNode instanceof ObjectNode)) {
-            result.put("ok", false);
-            result.put("error", "'workflow' (or 'workflowName') and 'input' objects are required");
-            return result;
         }
         CompiledWorkflow definition;
         try {
-            definition = WorkflowJson.parse(workflow, context);
+            definition = stored == null
+                    ? WorkflowJson.parse(Fields.message(input, "workflow"), context)
+                    : WorkflowJson.parse(stored, context);
         } catch (WorkflowJson.WorkflowParseException e) {
-            result.put("ok", false);
-            result.put("failedStep", e.step);
-            result.put("error", e.getMessage());
-            return result;
+            return refusal(e.step, e.getMessage());
         }
         List<WorkflowVerifier.Finding> findings = new WorkflowVerifier().verify(definition);
         if (!findings.isEmpty()) {
             WorkflowVerifier.Finding first = findings.get(0);
-            result.put("ok", false);
-            result.put("failedStep", first.step());
-            result.put("error", "workflow does not verify (" + findings.size() + " finding"
-                    + (findings.size() == 1 ? "" : "s") + "); first: [" + first.kind() + "] "
-                    + first.error());
-            return result;
+            return refusal(first.step(), "workflow does not verify (" + findings.size()
+                    + " finding" + (findings.size() == 1 ? "" : "s") + "); first: ["
+                    + first.kind() + "] " + first.error());
         }
         DynamicMessage message;
         try {
-            message = context.transcoder()
-                    .fromJsonDynamic(inputNode.toString(), definition.inputType());
+            message = context.transcoder().fromJsonDynamic(
+                    Fields.json(input, "input").toString(), definition.inputType());
         } catch (MalformedProtobufJsonException e) {
-            result.put("ok", false);
-            result.put("error", "'input' is not valid proto3 JSON for "
+            return refusal("'input' is not valid proto3 JSON for "
                     + definition.inputType().getFullName() + ": " + e.getMessage());
-            return result;
         }
         WorkflowRunner.Result outcome;
         try {
             outcome = runner.run(definition, message);
         } catch (WorkflowRunner.WorkflowExecutionException e) {
-            result.put("ok", false);
-            result.put("failedStep", e.step());
-            result.put("error", e.getMessage());
-            return result;
+            return refusal(e.step(), e.getMessage());
         }
-        result.put("ok", true);
-        result.put("outputType", outcome.output().getDescriptorForType().getFullName());
+        Reply result = Reply.of(responseType())
+                .set("ok", true)
+                .set("outputType", outcome.output().getDescriptorForType().getFullName());
         try {
-            result.set("output", context.objectMapper()
-                    .readTree(context.transcoder().toJson(outcome.output())));
-        } catch (JsonProcessingException e) {
-            result.put("ok", false);
-            result.put("error", "failed to render the workflow output: " + e.getMessage());
-            return result;
+            result.set("output", context.transcoder().toJson(outcome.output()));
+        } catch (RuntimeException e) {
+            return refusal("failed to render the workflow output: " + e.getMessage());
         }
-        ArrayNode steps = result.putArray("steps");
         for (WorkflowRunner.StepOutcome step : outcome.steps()) {
-            ObjectNode node = steps.addObject();
-            node.put("name", step.name());
-            node.put("skipped", step.skipped());
+            result.append("steps")
+                    .set("name", step.name())
+                    .set("skipped", step.skipped())
+                    .build();
         }
-        return result;
+        return result.build();
+    }
+
+    /** A run that did not happen, reported as a result rather than as an error. */
+    private Message refusal(String error) {
+        return refusal("", error);
+    }
+
+    private Message refusal(String failedStep, String error) {
+        return Reply.of(responseType())
+                .set("ok", false)
+                .set("failedStep", failedStep)
+                .set("error", error)
+                .build();
     }
 
     static ObjectNode baseSchema() {

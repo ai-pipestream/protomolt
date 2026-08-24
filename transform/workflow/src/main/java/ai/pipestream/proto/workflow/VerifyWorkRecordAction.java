@@ -3,21 +3,21 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.receipt.RecordVerifier;
 import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.receipt.Verification;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.util.Base64;
 import java.util.Map;
 import java.util.function.Supplier;
 
 /** Verifies a signed work record offline against a caller-supplied trust snapshot. */
-final class VerifyWorkRecordAction implements JsonAction {
+final class VerifyWorkRecordAction implements ProtoAction {
 
     private final Supplier<TrustSnapshot> defaultTrust;
 
@@ -85,7 +85,7 @@ final class VerifyWorkRecordAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         byte[] record;
         try {
             record = Base64.getDecoder()
@@ -102,20 +102,17 @@ final class VerifyWorkRecordAction implements JsonAction {
         } catch (IllegalArgumentException e) {
             throw WorkflowActionJson.invalid(e.getMessage(), "/trust");
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("verified", verification.verified());
-        if (!verification.manifestDigest().isEmpty()) {
-            output.put("manifestDigest", verification.manifestDigest());
-        }
-        ArrayNode checks = output.putArray("checks");
+        Reply output = Reply.of(responseType())
+                .set("verified", verification.verified())
+                .set("manifestDigest", verification.manifestDigest())
+                .addAll("nonClaims", verification.nonClaims());
         for (Verification.Check check : verification.checks()) {
-            ObjectNode node = checks.addObject();
-            node.put("id", check.id());
-            node.put("status", check.status().name());
-            node.put("detail", check.detail());
+            output.append("checks")
+                    .set("id", check.id())
+                    .set("status", check.status().name())
+                    .set("detail", check.detail())
+                    .build();
         }
-        ArrayNode nonClaims = output.putArray("nonClaims");
-        verification.nonClaims().forEach(nonClaims::add);
-        return output;
+        return output.build();
     }
 }

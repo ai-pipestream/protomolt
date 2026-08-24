@@ -3,22 +3,21 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
 import ai.pipestream.proto.grpc.workflow.v1.Workflow;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.io.IOException;
 
 /** Offline fixture replay action over repository-backed run evidence. */
-final class ReplayWorkflowAction implements JsonAction {
+final class ReplayWorkflowAction implements ProtoAction {
 
     private final ArtifactRepository artifacts;
     private final RunEvidenceRepository runs;
@@ -56,13 +55,13 @@ final class ReplayWorkflowAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         if (artifacts == null || runs == null) {
             throw WorkflowActionJson.unavailable("workflow replay",
                     "start protomolt-serve with --workflow-workspace");
         }
-        Workflow workflow = (Workflow) WorkflowActionJson.parse(
-                WorkflowActionJson.object(input, "workflow"), Workflow.newBuilder(), "/workflow");
+        Workflow workflow = CatalogContract.as(
+                Fields.message(input, "workflow"), Workflow.getDefaultInstance(), name());
         String runId = WorkflowActionJson.identity(input, "runId");
         RunEvidence evidence;
         WorkflowReplay.ReplayResult result;
@@ -78,19 +77,17 @@ final class ReplayWorkflowAction implements JsonAction {
         } catch (IOException e) {
             throw new ActionException("repository-failed", "Replay failed: " + e.getMessage());
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", result.ok());
-        if (!result.failure().isBlank()) {
-            output.put("failure", result.failure());
-        }
-        ArrayNode steps = output.putArray("steps");
+        Reply output = Reply.of(responseType())
+                .set("ok", result.ok())
+                .set("failure", result.failure());
         for (WorkflowReplay.StepReplay step : result.steps()) {
-            ObjectNode node = steps.addObject();
-            node.put("stepName", step.stepName());
-            node.put("recordedStatus", step.recordedStatus().name());
-            node.put("ok", step.ok());
-            node.put("detail", step.detail());
+            output.append("steps")
+                    .set("stepName", step.stepName())
+                    .set("recordedStatus", step.recordedStatus().name())
+                    .set("ok", step.ok())
+                    .set("detail", step.detail())
+                    .build();
         }
-        return output;
+        return output.build();
     }
 }

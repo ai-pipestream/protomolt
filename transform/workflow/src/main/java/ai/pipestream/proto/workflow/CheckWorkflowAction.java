@@ -3,15 +3,12 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.util.List;
 
 /**
@@ -20,7 +17,7 @@ import java.util.List;
  * rule, and CEL expression type-checks against exactly the scope its step will see. The
  * lint gate for consoles, CI, and registration.
  */
-public final class CheckWorkflowAction implements JsonAction {
+public final class CheckWorkflowAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -52,36 +49,30 @@ public final class CheckWorkflowAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context)
+    public Message execute(Message input, ActionContext context)
             throws ActionException {
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        ArrayNode findingsNode = result.putArray("findings");
-        JsonNode workflowNode = input.get("workflow");
-        if (!(workflowNode instanceof ObjectNode workflow)) {
-            result.put("ok", false);
-            finding(findingsNode, "", "workflow", "'workflow' object is required");
-            return result;
-        }
+        // This verb reports on a workflow rather than refusing one, so a definition it
+        // cannot read comes back as a finding.
+        Reply result = Reply.of(responseType());
         CompiledWorkflow definition;
         try {
-            definition = WorkflowJson.parse(workflow, context);
+            definition = WorkflowJson.parse(Fields.message(input, "workflow"), context);
         } catch (WorkflowJson.WorkflowParseException e) {
-            result.put("ok", false);
-            finding(findingsNode, e.step, "workflow", e.getMessage());
-            return result;
+            finding(result, e.step, "workflow", e.getMessage());
+            return result.set("ok", false).build();
         }
         List<WorkflowVerifier.Finding> findings = new WorkflowVerifier().verify(definition);
         for (WorkflowVerifier.Finding entry : findings) {
-            finding(findingsNode, entry.step(), entry.kind(), entry.error());
+            finding(result, entry.step(), entry.kind(), entry.error());
         }
-        result.put("ok", findings.isEmpty());
-        return result;
+        return result.set("ok", findings.isEmpty()).build();
     }
 
-    private static void finding(ArrayNode findings, String step, String kind, String error) {
-        ObjectNode node = findings.addObject();
-        node.put("step", step);
-        node.put("kind", kind);
-        node.put("error", error);
+    private static void finding(Reply result, String step, String kind, String error) {
+        result.append("findings")
+                .set("step", step)
+                .set("kind", kind)
+                .set("error", error)
+                .build();
     }
 }

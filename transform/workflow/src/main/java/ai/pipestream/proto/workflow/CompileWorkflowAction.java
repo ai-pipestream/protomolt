@@ -3,19 +3,20 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.WorkflowValidation;
 import ai.pipestream.proto.grpc.workflow.v1.Workflow;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.util.List;
 
 /** Compiles an existing checked workflow definition into the durable workflow contract. */
-final class CompileWorkflowAction implements JsonAction {
+final class CompileWorkflowAction implements ProtoAction {
 
     @Override
     public String name() {
@@ -45,21 +46,21 @@ final class CompileWorkflowAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        CompiledWorkflow definition = parseChecked(WorkflowActionJson.object(input, "workflow"), context);
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        CompiledWorkflow definition = parseChecked(Fields.message(input, "workflow"), context);
         Workflow workflow;
         try {
             workflow = WorkflowCompiler.compile(definition);
         } catch (IllegalArgumentException e) {
             throw WorkflowActionJson.invalid(e.getMessage(), "/workflow");
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.set("workflow", WorkflowActionJson.render(workflow, context));
-        output.put("workflowFingerprint", WorkflowValidation.fingerprint(workflow));
-        return output;
+        return Reply.of(responseType())
+                .set("workflow", workflow)
+                .set("workflowFingerprint", WorkflowValidation.fingerprint(workflow))
+                .build();
     }
 
-    static CompiledWorkflow parseChecked(ObjectNode workflow, ActionContext context)
+    static CompiledWorkflow parseChecked(Message workflow, ActionContext context)
             throws ActionException {
         CompiledWorkflow definition;
         try {

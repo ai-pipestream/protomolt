@@ -3,8 +3,9 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
-import ai.pipestream.proto.actions.JsonAction;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
@@ -13,10 +14,8 @@ import ai.pipestream.proto.receipt.Disclosure;
 import ai.pipestream.proto.receipt.SignedWorkRecord;
 import ai.pipestream.proto.receipt.WorkRecord;
 import ai.pipestream.proto.receipt.WorkRecords;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import java.io.IOException;
 import java.time.Clock;
@@ -27,7 +26,7 @@ import java.util.List;
 import java.util.Set;
 
 /** Projects a stored run's evidence into a canonical signed work record. */
-final class ExportWorkRecordAction implements JsonAction {
+final class ExportWorkRecordAction implements ProtoAction {
 
     private final RunEvidenceRepository runs;
     private final RecordSigning signing;
@@ -74,7 +73,7 @@ final class ExportWorkRecordAction implements JsonAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         if (runs == null) {
             throw WorkflowActionJson.unavailable("work-record export",
                     "start protomolt-serve with --workflow-workspace");
@@ -148,36 +147,27 @@ final class ExportWorkRecordAction implements JsonAction {
                     .build();
         }
         SignedWorkRecord record = signing.signer().sign(manifest);
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("recordBase64",
-                Base64.getEncoder().encodeToString(record.toByteArray()));
-        output.put("manifestDigest",
-                WorkRecords.sha256Hex(record.getManifest().toByteArray()));
-        output.put("recordId", recordId);
-        if (!maskedPaths.isEmpty()) {
-            ArrayNode paths = output.putArray("maskedPaths");
-            maskedPaths.forEach(paths::add);
-        }
-        return output;
+        return Reply.of(responseType())
+                .set("recordBase64", Base64.getEncoder().encodeToString(record.toByteArray()))
+                .set("manifestDigest",
+                        WorkRecords.sha256Hex(record.getManifest().toByteArray()))
+                .set("recordId", recordId)
+                .addAll("maskedPaths", maskedPaths)
+                .build();
     }
 
-    private static List<String> maskClasses(ObjectNode input) throws ActionException {
-        JsonNode node = input.get("maskClasses");
-        if (node == null || node.isNull()) {
+    private static List<String> maskClasses(Message input) throws ActionException {
+        List<String> declared = Fields.strings(input, "maskClasses");
+        if (declared.isEmpty()) {
             return null;
         }
-        if (!node.isArray() || node.isEmpty()) {
-            throw WorkflowActionJson.invalid(
-                    "'maskClasses' must be a non-empty array of sensitivity classes",
-                    "/maskClasses");
-        }
         List<String> classes = new ArrayList<>();
-        for (JsonNode entry : node) {
-            if (!entry.isTextual() || entry.asText().isBlank()) {
+        for (String entry : declared) {
+            if (entry.isBlank()) {
                 throw WorkflowActionJson.invalid(
                         "'maskClasses' entries must be non-empty strings", "/maskClasses");
             }
-            classes.add(entry.asText());
+            classes.add(entry);
         }
         return classes;
     }

@@ -80,8 +80,15 @@ public final class SchemaResolver {
         if (!sources.isEmpty()) {
             return fromSources(sources, Fields.string(schema, "root"), pointer, context);
         }
-        return fromDescriptorSet(Fields.string(schema, "descriptorSetBase64"),
-                pointer + "/descriptorSetBase64");
+        String descriptorSet = Fields.string(schema, "descriptorSetBase64");
+        if (descriptorSet.isEmpty()) {
+            // The message says a source names exactly one of the three, and the rule refuses
+            // a request that does not. A stored document is read without the rules, so this
+            // is where naming none is reported.
+            throw Inputs.invalidInput("Schema must contain exactly one of 'type', 'sources', "
+                    + "'descriptorSetBase64' but had 0", pointer);
+        }
+        return fromDescriptorSet(descriptorSet, pointer + "/descriptorSetBase64");
     }
 
     static ResolvedSchema resolveNode(JsonNode node, String pointer, ActionContext context)

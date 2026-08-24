@@ -1,10 +1,9 @@
 package ai.pipestream.proto.workflow;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
@@ -55,6 +54,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The evaluation sidecar's decision procedure: verification, the
@@ -212,9 +213,9 @@ class EvaluateWorkRecordActionTest {
         Workflow workflow = workflow();
         RunEvidence evidence = golden(workflow, artifacts);
 
-        ObjectNode output = new EvaluateWorkRecordAction(artifacts,
-                new StubRuns(evidence), clock)
-                .execute(input(manifest(evidence), workflow), CONTEXT);
+        ObjectNode output = dispatch(new EvaluateWorkRecordAction(artifacts,
+                new StubRuns(evidence), clock),
+                input(manifest(evidence), workflow));
 
         assertThat(output.path("accepted").asBoolean())
                 .as(output.toString())
@@ -241,9 +242,9 @@ class EvaluateWorkRecordActionTest {
                 .setSteps(0, evidence.getSteps(0).toBuilder().setSummary("altered"))
                 .build();
 
-        ObjectNode output = new EvaluateWorkRecordAction(artifacts,
-                new StubRuns(evidence), clock)
-                .execute(input(manifest(altered), workflow), CONTEXT);
+        ObjectNode output = dispatch(new EvaluateWorkRecordAction(artifacts,
+                new StubRuns(evidence), clock),
+                input(manifest(altered), workflow));
 
         assertThat(output.path("accepted").asBoolean()).isFalse();
         JsonNode match = check(output, EvaluateWorkRecordAction.CHECK_RECORD_MATCHES_EVIDENCE);
@@ -262,9 +263,9 @@ class EvaluateWorkRecordActionTest {
                         .setRequestArtifact(save(artifacts, text("forged"))))
                 .build();
 
-        ObjectNode output = new EvaluateWorkRecordAction(artifacts,
-                new StubRuns(forged), clock)
-                .execute(input(manifest(forged), workflow), CONTEXT);
+        ObjectNode output = dispatch(new EvaluateWorkRecordAction(artifacts,
+                new StubRuns(forged), clock),
+                input(manifest(forged), workflow));
 
         assertThat(output.path("accepted").asBoolean()).isFalse();
         assertThat(check(output, EvaluateWorkRecordAction.CHECK_RECORD_MATCHES_EVIDENCE)
@@ -281,8 +282,8 @@ class EvaluateWorkRecordActionTest {
         ObjectNode input = input(manifest(evidence).toBuilder()
                 .setIssuer("nobody.example").build(), workflow);
 
-        ObjectNode output = new EvaluateWorkRecordAction(artifacts,
-                new StubRuns(evidence), clock).execute(input, CONTEXT);
+        ObjectNode output = dispatch(new EvaluateWorkRecordAction(artifacts,
+                new StubRuns(evidence), clock), input);
 
         assertThat(output.path("accepted").asBoolean()).isFalse();
         assertThat(check(output, EvaluateWorkRecordAction.CHECK_RECORD_MATCHES_EVIDENCE)
@@ -299,9 +300,9 @@ class EvaluateWorkRecordActionTest {
         Workflow workflow = workflow();
         RunEvidence evidence = golden(workflow, artifacts);
 
-        ObjectNode output = new EvaluateWorkRecordAction(artifacts,
-                new StubRuns(), clock)
-                .execute(input(manifest(evidence), workflow), CONTEXT);
+        ObjectNode output = dispatch(new EvaluateWorkRecordAction(artifacts,
+                new StubRuns(), clock),
+                input(manifest(evidence), workflow));
 
         assertThat(output.path("accepted").asBoolean()).isFalse();
         JsonNode match = check(output, EvaluateWorkRecordAction.CHECK_RECORD_MATCHES_EVIDENCE);
@@ -322,9 +323,9 @@ class EvaluateWorkRecordActionTest {
                         .setPolicy("remove internal"))
                 .build();
 
-        ObjectNode output = new EvaluateWorkRecordAction(artifacts,
-                new StubRuns(evidence), clock)
-                .execute(input(disclosure, workflow), CONTEXT);
+        ObjectNode output = dispatch(new EvaluateWorkRecordAction(artifacts,
+                new StubRuns(evidence), clock),
+                input(disclosure, workflow));
 
         assertThat(output.path("accepted").asBoolean())
                 .as(output.toString())
@@ -336,9 +337,13 @@ class EvaluateWorkRecordActionTest {
     }
 
     @Test
-    void unavailableWithoutAWorkspace() {
-        assertThatThrownBy(() -> new EvaluateWorkRecordAction(null, null)
-                .execute(MAPPER.createObjectNode(), CONTEXT))
+    void unavailableWithoutAWorkspace(@TempDir Path dir) throws Exception {
+        // A request the contract accepts, so the verb is reached and answers for itself:
+        // an unavailable node has nothing to say about a request that was never valid.
+        Workflow workflow = workflow();
+        ObjectNode request = input(
+                manifest(golden(workflow, new FileSystemArtifactRepository(dir))), workflow);
+        assertThatThrownBy(() -> dispatch(new EvaluateWorkRecordAction(null, null), request))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("--workflow-workspace");
     }
@@ -377,4 +382,15 @@ class EvaluateWorkRecordActionTest {
             throw new IOException("read-only");
         }
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

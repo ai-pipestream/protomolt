@@ -118,6 +118,26 @@ public final class CatalogContract {
     }
 
     /**
+     * Reads a document as {@code descriptor} without applying the message's rules.
+     *
+     * <p>For a document that is stored rather than sent: one read out of a job row or a
+     * registry. The rules guard the door a caller comes through; a stored document may
+     * predate them, and something is going to read it and report on what it finds, which it
+     * cannot do if the read refuses first.
+     */
+    public static Message read(ObjectNode document, Descriptor descriptor, String what)
+            throws ActionException {
+        DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
+        try {
+            JsonFormat.parser().merge(document.toString(), builder);
+        } catch (InvalidProtocolBufferException e) {
+            throw new ActionException("invalid-input",
+                    what + " is not a " + descriptor.getName() + ": " + e.getMessage());
+        }
+        return builder.build();
+    }
+
+    /**
      * Parses an envelope into the request message a verb accepts, refusing what the message
      * does not allow.
      *
