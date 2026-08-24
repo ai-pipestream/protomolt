@@ -112,6 +112,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private final DocumentGrpcService documentService;
     private final DriveLedger drives;
     private final BlobStore blobStore;
+    private final byte[] expectedToken;
 
     private HttpServer server;
     private ExecutorService executor;
@@ -124,9 +125,52 @@ public final class UploadHttpServer implements AutoCloseable {
      */
     public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
             BlobStore blobStore) {
+        this(documentService, drives, blobStore, null);
+    }
+
+    /**
+     * @param documentService the gRPC document service whose blocking intake
+     *        save this route reuses (one save path, one dedupe semantic)
+     * @param drives the drive ledger (drive name + account → bucket/prefix)
+     * @param blobStore the object-storage port the body streams into
+     * @param apiToken the credential every request must present in
+     *        {@code api_token} or {@code Authorization: Bearer}, or null to
+     *        serve open on a trusted network. This route writes documents into
+     *        any account's drive, so an open listener reachable beyond that
+     *        network is a write path into the whole repository.
+     */
+    public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
+            BlobStore blobStore, String apiToken) {
         this.documentService = documentService;
         this.drives = drives;
         this.blobStore = blobStore;
+        this.expectedToken = apiToken == null
+                ? null : apiToken.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Refuses a request that does not present the configured credential. Compared in
+     * constant time, so a wrong credential costs the same as a right one and the
+     * comparison leaks nothing about how much of it matched. The refusal names the
+     * missing header and never echoes what was presented.
+     */
+    private void requireCredential(HttpExchange exchange) throws HttpError {
+        if (expectedToken == null) {
+            return;
+        }
+        String presented = exchange.getRequestHeaders().getFirst("api_token");
+        if (presented == null) {
+            String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+            if (authorization != null
+                    && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                presented = authorization.substring(7).trim();
+            }
+        }
+        if (presented == null || presented.isBlank()
+                || !MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8),
+                        expectedToken)) {
+            throw new HttpError(401, "missing or invalid credential 'api_token'");
+        }
     }
 
     /**
@@ -190,6 +234,9 @@ public final class UploadHttpServer implements AutoCloseable {
 
     private void handle(HttpExchange exchange) throws IOException {
         try {
+            // Ahead of route and method matching, so an unauthenticated probe learns
+            // nothing about which routes exist or which methods they accept.
+            requireCredential(exchange);
             // createContext prefix-matches; only the exact path is the route.
             if (!UPLOAD_PATH.equals(exchange.getRequestURI().getPath())) {
                 throw new HttpError(404, "unknown route " + exchange.getRequestURI().getPath());
