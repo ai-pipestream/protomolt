@@ -2,9 +2,10 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
-import ai.pipestream.proto.delegation.v1.WorkerCapability;
+import ai.pipestream.proto.delegation.v1.ListWorkersRequest;
+import ai.pipestream.proto.delegation.v1.ListWorkersResponse;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
-import com.fasterxml.jackson.databind.node.ArrayNode;
+import ai.pipestream.proto.delegation.v1.WorkerRegistrationSummary;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
@@ -33,44 +34,38 @@ final class DelegationWorkerListAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        schema.putObject("properties");
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(ListWorkersRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+        // The verb takes no input, but the envelope is still parsed against the declared
+        // request so a caller that sends members gets told, rather than having them ignored.
+        DelegationActionJson.parse(input, ListWorkersRequest.newBuilder(), name());
         List<InProcessDelegationCoordinator.WorkerView> workers;
         try {
             workers = bridge.coordinator().workers();
         } catch (RuntimeException e) {
             throw failure(e);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        ArrayNode array = output.putArray("workers");
-        workers.stream().limit(MAX_WORKERS).forEach(worker -> array.add(workerJson(worker)));
-        output.put("truncated", workers.size() > MAX_WORKERS);
-        return output;
+        ListWorkersResponse.Builder response = ListWorkersResponse.newBuilder()
+                .setOk(true)
+                .setTruncated(workers.size() > MAX_WORKERS);
+        workers.stream().limit(MAX_WORKERS).forEach(worker -> response.addWorkers(summary(worker)));
+        return DelegationActionJson.render(response.build(), context);
     }
 
-    private static ObjectNode workerJson(InProcessDelegationCoordinator.WorkerView worker) {
-        ObjectNode node = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
-                .objectNode();
+    private static WorkerRegistrationSummary summary(
+            InProcessDelegationCoordinator.WorkerView worker) {
         WorkerHello hello = worker.hello();
-        node.put("workerId", worker.workerId());
-        node.put("admitted", worker.admitted());
-        node.put("connected", worker.connected());
-        node.put("provider", hello.getProvider());
-        node.put("model", hello.getModel());
-        node.put("modelVersion", hello.getModelVersion());
-        ArrayNode capabilities = node.putArray("capabilities");
-        for (WorkerCapability capability : hello.getCapabilitiesList()) {
-            ObjectNode entry = capabilities.addObject();
-            entry.put("name", capability.getName());
-            entry.put("description", capability.getDescription());
-        }
-        return node;
+        return WorkerRegistrationSummary.newBuilder()
+                .setWorkerId(worker.workerId())
+                .setAdmitted(worker.admitted())
+                .setConnected(worker.connected())
+                .setProvider(hello.getProvider())
+                .setModel(hello.getModel())
+                .setModelVersion(hello.getModelVersion())
+                .addAllCapabilities(hello.getCapabilitiesList())
+                .build();
     }
 }

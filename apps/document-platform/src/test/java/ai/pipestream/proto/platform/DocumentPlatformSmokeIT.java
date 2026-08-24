@@ -420,11 +420,12 @@ class DocumentPlatformSmokeIT {
                 .contains("category")
                 .contains("processed_date");
 
+        // The verb accepts a QueryMetricsRequest as its envelope, the same message the
+        // MetricService RPC takes, so the payload is not wrapped.
         ObjectNode query = MAPPER.createObjectNode();
-        ObjectNode request = query.putObject("request");
-        request.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        request.putArray("measures").add("documents");
-        request.put("limit", 10);
+        query.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        query.putArray("measures").add("documents");
+        query.put("limit", 10);
         JsonNode counted = postAction("query-metrics", query);
         assertThat(counted.path("rows").get(0).path("measures").path("documents").asDouble())
                 .isEqualTo(1.0);

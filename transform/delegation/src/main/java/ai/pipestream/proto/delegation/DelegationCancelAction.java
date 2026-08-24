@@ -2,6 +2,8 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.delegation.v1.CancelTaskRequest;
+import ai.pipestream.proto.delegation.v1.CancelTaskResponse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** Cancels a task's open offer, lease, or candidate review. */
@@ -25,27 +27,21 @@ final class DelegationCancelAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        putString(properties, "taskId", "The task uuid whose open attempt is cancelled.");
-        putString(properties, "reason", "Why the work is called off.");
-        require(schema, "taskId", "reason");
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(CancelTaskRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String taskId = DelegationActionJson.uuid(input, "taskId");
-        String reason = DelegationActionJson.text(input, "reason");
+        CancelTaskRequest request =
+                DelegationActionJson.parse(input, CancelTaskRequest.newBuilder(), name()).build();
         try {
-            bridge.cancel(taskId, reason);
+            bridge.cancel(request.getTaskId(), request.getReason());
         } catch (RuntimeException e) {
             throw failure(e);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        output.put("taskId", taskId);
-        return output;
+        return DelegationActionJson.render(CancelTaskResponse.newBuilder()
+                .setOk(true)
+                .setTaskId(request.getTaskId())
+                .build(), context);
     }
 }

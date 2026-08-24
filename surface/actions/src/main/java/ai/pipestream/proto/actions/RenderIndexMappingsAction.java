@@ -74,6 +74,18 @@ final class RenderIndexMappingsAction implements ProtoAction {
         String engine = Inputs.requireString(input, "engine");
         IndexMapping mapping = IndexMappingFactory.defaults(new CatalogIndexingHintSource())
                 .create(descriptor);
+        // The artifact is nested under a named field, alongside the engine it was rendered
+        // for, so the response has a declared protobuf contract. Each engine defines its own
+        // artifact shape, so the artifact itself stays a structure.
+        ObjectNode result = context.objectMapper().createObjectNode();
+        result.put("engine", engine);
+        result.set("mappings", renderFor(engine, mapping, descriptor, input, context));
+        return result;
+    }
+
+    private static ObjectNode renderFor(String engine, IndexMapping mapping, Descriptor descriptor,
+                                        ObjectNode input, ActionContext context)
+            throws ActionException {
         return switch (engine) {
             case "opensearch" -> {
                 ObjectNode mappings = context.objectMapper()

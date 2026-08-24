@@ -1,5 +1,7 @@
 package ai.pipestream.proto.serve;
 
+import ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
@@ -49,10 +51,10 @@ class NamedWorkflowTest {
 
     /** A workflow over ProtoMoltService itself: compile inline sources, then list the types. */
     private static String workflowJson() {
-        String selfProto = ProtoMoltServiceJson();
+        String selfSources = protoMoltServiceSources();
         return """
                 {"name": "compile-and-list",
-                 "schema": {"sources": {"%s": %s}},
+                 "schema": {"sources": %s},
                  "inputType": "ai.pipestream.proto.grpc.service.v1.CompileRequest",
                  "steps": [
                    {"name": "compiled", "target": "127.0.0.1:%d",
@@ -62,15 +64,17 @@ class NamedWorkflowTest {
                     "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
                     "rules": ["schema.descriptor_set_base64 = compiled.descriptor_set_base64"]}
                  ]}
-                """.formatted(
-                ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema.RESOURCE_PATH,
-                selfProto, serve.grpcPort(), serve.grpcPort());
+                """.formatted(selfSources, serve.grpcPort(), serve.grpcPort());
     }
 
-    private static String ProtoMoltServiceJson() {
+    /**
+     * The service definition's whole source closure as a JSON object keyed by import path. The
+     * definition imports first-party contracts, so a workflow schema built from the entry file
+     * alone would not compile.
+     */
+    private static String protoMoltServiceSources() {
         try {
-            return MAPPER.writeValueAsString(
-                    ai.pipestream.proto.grpc.service.ProtoMoltServiceSchema.protoSource());
+            return MAPPER.writeValueAsString(ProtoMoltServiceSchema.protoSources());
         } catch (Exception e) {
             throw new AssertionError(e);
         }

@@ -18,9 +18,22 @@ class RenderIndexMappingsActionTest {
     }
 
     private ObjectNode render(String engine) throws Exception {
+        return mappingsOf(renderResponse(engine));
+    }
+
+    private ObjectNode renderResponse(String engine) throws Exception {
         return catalog.execute("render-index-mappings", obj("""
                 {"schema": {"type": "actions.test.HintedDoc"}, "engine": "%s"}
                 """.formatted(engine)));
+    }
+
+    /**
+     * The rendered artifact, unwrapped from its response envelope. The action returns a
+     * {@code RenderIndexMappingsResponse} whose {@code mappings} field carries the artifact and
+     * whose {@code engine} field names the engine it was rendered for.
+     */
+    private static ObjectNode mappingsOf(ObjectNode response) {
+        return (ObjectNode) response.get("mappings");
     }
 
     @Test
@@ -39,20 +52,20 @@ class RenderIndexMappingsActionTest {
     @Test
     void sensitivityRendersSecurityFragmentAndEncryptedContainers() throws Exception {
         // mask: the field stays searchable; the security plugin hashes it at query time.
-        ObjectNode masked = catalog.execute("render-index-mappings", obj("""
+        ObjectNode masked = mappingsOf(catalog.execute("render-index-mappings", obj("""
                 {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
                  "sensitivity": {"mask": ["pii"]}}
-                """));
+                """)));
         assertThat(masked.get("security").get("maskedFields"))
                 .extracting(JsonNode::asText).containsExactly("title");
         assertThat(masked.get("mappings").get("properties").get("title")
                 .get("type").asText()).isEqualTo("text");
 
         // encrypt: the field becomes a store-only ciphertext container.
-        ObjectNode encrypted = catalog.execute("render-index-mappings", obj("""
+        ObjectNode encrypted = mappingsOf(catalog.execute("render-index-mappings", obj("""
                 {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
                  "sensitivity": {"encrypt": ["pii"], "exclude": ["secret"]}}
-                """));
+                """)));
         JsonNode title = encrypted.get("mappings").get("properties").get("title");
         assertThat(title.get("type").asText()).isEqualTo("keyword");
         assertThat(title.get("index").asBoolean()).isFalse();
@@ -63,12 +76,12 @@ class RenderIndexMappingsActionTest {
     /** The complete role body, ready to PUT at _plugins/_security/api/roles/{name}. */
     @Test
     void sensitivityRoleRendersAnApplyableRoleBody() throws Exception {
-        ObjectNode result = catalog.execute("render-index-mappings", obj("""
+        ObjectNode result = mappingsOf(catalog.execute("render-index-mappings", obj("""
                 {"schema": {"type": "actions.test.HintedDoc"}, "engine": "opensearch",
                  "sensitivity": {"mask": ["pii"],
                                  "maskFormat": {"pii": "::SHA-512"},
                                  "role": {"indexPatterns": ["docs-*"]}}}
-                """));
+                """)));
 
         // The per-class format rides on the masked_fields entry itself.
         assertThat(result.get("security").get("maskedFields"))
@@ -175,7 +188,7 @@ class RenderIndexMappingsActionTest {
                   bool archived = 4;
                 }
                 """);
-        ObjectNode result = catalog.execute("render-index-mappings", input);
+        ObjectNode result = mappingsOf(catalog.execute("render-index-mappings", input));
         JsonNode properties = result.get("properties");
         assertThat(properties.get("doc_id").get("type").asText()).isEqualTo("keyword");
         assertThat(properties.get("title").get("type").asText()).isEqualTo("text");

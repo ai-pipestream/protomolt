@@ -44,6 +44,11 @@ final class RenderJsonSchemaAction implements ProtoAction {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
         Map<String, Object> document = ProtoJsonSchemaGenerator.create().generate(descriptor);
-        return context.objectMapper().valueToTree(document);
+        // The schema document is nested under a named field rather than returned as the whole
+        // envelope, so the response has a declared protobuf contract. A JSON Schema has no
+        // protobuf shape of its own, so the document itself stays a structure.
+        ObjectNode result = context.objectMapper().createObjectNode();
+        result.set("schema", context.objectMapper().valueToTree(document));
+        return result;
     }
 }

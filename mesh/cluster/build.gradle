@@ -24,6 +24,9 @@ dependencies {
     // Cluster directory mutations are mounted as bounded JSON actions on the
     // same REST, gRPC catalog, and MCP surfaces as the other ProtoMolt verbs.
     api project(':protomolt-actions')
+    // Verb input schemas are derived from the request descriptors rather than
+    // hand-written, so the declared rules reach every caller that reads the manifest.
+    implementation project(':protomolt-http-jsonschema')
 
     testImplementation libs.grpc.inprocess
 }

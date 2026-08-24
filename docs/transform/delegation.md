@@ -248,6 +248,13 @@ review and cancellation (`delegation-review`, `delegation-cancel`),
 structured messaging (`delegation-message`), event watching
 (`delegation-watch`), and transcript inspection (`delegation-transcript`).
 
+Each verb takes one request message and returns one response message, both
+declared in `delegation_actions.proto` alongside the stream contract. The
+envelope is that request's canonical proto3 JSON: there is no wrapper member,
+the verb's published schema is derived from the descriptor, and the request's
+declared rules are checked on the catalog path, which does not sit behind the
+validating gRPC interceptor.
+
 `delegation-watch` is a long poll over the coordinator's cursor-addressable
 event feed. The caller passes its last cursor and a bounded timeout; the
 call blocks on a virtual thread until an event appears or the timeout

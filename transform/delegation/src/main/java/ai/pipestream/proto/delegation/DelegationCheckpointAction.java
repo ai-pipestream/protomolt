@@ -2,6 +2,8 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.delegation.v1.RecordCheckpointRequest;
+import ai.pipestream.proto.delegation.v1.RecordCheckpointResponse;
 import ai.pipestream.proto.grpc.workflow.v1.ArtifactReference;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -27,50 +29,25 @@ final class DelegationCheckpointAction extends DelegationAction {
 
     @Override
     public ObjectNode inputSchema() {
-        ObjectNode schema = DelegationActionJson.schema();
-        ObjectNode properties = schema.putObject("properties");
-        putString(properties, "workerId", "The registered worker recording the checkpoint.");
-        putString(properties, "taskId", "The task uuid.");
-        putInteger(properties, "attempt", "The leased attempt.", 1, 1_024);
-        putString(properties, "resumeToken",
-                "The opaque token a later offer's resumeFrom echoes back.");
-        putString(properties, "note", "Optional bounded note about what the checkpoint covers.");
-        properties.putObject("state")
-                .put("type", "object")
-                .put("description", "Optional ArtifactReference (proto3 JSON) holding the "
-                        + "checkpointed state when it is too large for the token.");
-        require(schema, "workerId", "taskId", "attempt", "resumeToken");
-        schema.put("additionalProperties", false);
-        return schema;
+        return DelegationActionJson.schemaFor(RecordCheckpointRequest.getDescriptor());
     }
 
     @Override
     public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        String workerId = DelegationActionJson.identity(input, "workerId");
-        String taskId = DelegationActionJson.uuid(input, "taskId");
-        int attempt = DelegationActionJson.boundedInt(input, "attempt", -1, 1, 1_024);
-        if (attempt < 0) {
-            throw DelegationActionJson.invalid("'attempt' is required", "/attempt");
-        }
-        String resumeToken = DelegationActionJson.text(input, "resumeToken");
-        String note = DelegationActionJson.optionalText(input, "note");
-        ArtifactReference state = null;
-        if (input.has("state") && !input.get("state").isNull()) {
-            state = (ArtifactReference) DelegationActionJson.parse(
-                    DelegationActionJson.object(input, "state"),
-                    ArtifactReference.newBuilder(), "/state");
-        }
+        RecordCheckpointRequest request = DelegationActionJson
+                .parse(input, RecordCheckpointRequest.newBuilder(), name()).build();
+        ArtifactReference state = request.hasState() ? request.getState() : null;
         int checkpointSeq;
         try {
-            checkpointSeq = bridge.checkpoint(workerId, taskId, attempt, resumeToken, note,
-                    state);
+            checkpointSeq = bridge.checkpoint(request.getWorkerId(), request.getTaskId(),
+                    request.getAttempt(), request.getResumeToken(), request.getNote(), state);
         } catch (RuntimeException e) {
-            throw failure(workerId, e);
+            throw failure(request.getWorkerId(), e);
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        output.put("checkpointSeq", checkpointSeq);
-        output.put("resumeToken", resumeToken);
-        return output;
+        return DelegationActionJson.render(RecordCheckpointResponse.newBuilder()
+                .setOk(true)
+                .setCheckpointSeq(checkpointSeq)
+                .setResumeToken(request.getResumeToken())
+                .build(), context);
     }
 }

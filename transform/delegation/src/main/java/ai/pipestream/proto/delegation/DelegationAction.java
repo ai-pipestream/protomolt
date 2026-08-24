@@ -1,19 +1,15 @@
 package ai.pipestream.proto.delegation;
 
-import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.actions.Scopes;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import ai.pipestream.proto.delegation.v1.ObservedEvent;
 
+import java.util.List;
 import java.util.Objects;
 
 /** Shared base for the delegation catalog actions: the bridge plus event rendering. */
 abstract class DelegationAction implements ProtoAction {
-
-    /** Upper bound on events one watch or transcript call returns. */
-    static final int MAX_EVENTS_PER_CALL = 256;
 
     final DelegationBridge bridge;
 
@@ -26,35 +22,20 @@ abstract class DelegationAction implements ProtoAction {
         return Scopes.WORKER_COORDINATE;
     }
 
-    /** Renders one cursor-addressable transcript event. */
-    static ObjectNode eventJson(InProcessDelegationCoordinator.Event event,
-                                ActionContext context) throws ActionException {
-        ObjectNode node = context.objectMapper().createObjectNode();
-        node.put("cursor", event.cursor());
-        node.put("workerId", event.workerId());
-        node.put("taskId", event.taskId());
-        node.put("lane", event.entry().getLane().name());
-        node.set("entry", DelegationActionJson.render(event.entry(), context));
-        return node;
+    /** One cursor-addressable transcript event as its declared contract message. */
+    static ObservedEvent observed(InProcessDelegationCoordinator.Event event) {
+        return ObservedEvent.newBuilder()
+                .setCursor(event.cursor())
+                .setWorkerId(event.workerId())
+                .setTaskId(event.taskId())
+                .setLane(event.entry().getLane())
+                .setEntry(event.entry())
+                .build();
     }
 
-    /** Renders a bounded run of transcript events plus the resumption cursor. */
-    static ObjectNode eventsJson(java.util.List<InProcessDelegationCoordinator.Event> events,
-                                 boolean truncated, ActionContext context)
-            throws ActionException {
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("ok", true);
-        ArrayNode array = output.putArray("events");
-        long cursor = 0;
-        for (InProcessDelegationCoordinator.Event event : events) {
-            array.add(eventJson(event, context));
-            cursor = event.cursor();
-        }
-        if (!events.isEmpty()) {
-            output.put("cursor", cursor);
-        }
-        output.put("truncated", truncated);
-        return output;
+    /** The resumption cursor for a returned run: the last event's, or 0 when empty. */
+    static long resumeCursor(List<InProcessDelegationCoordinator.Event> events) {
+        return events.isEmpty() ? 0 : events.get(events.size() - 1).cursor();
     }
 
     /** Maps bridge and coordinator failures onto the stable delegation error codes. */
@@ -72,23 +53,5 @@ abstract class DelegationAction implements ProtoAction {
     /** Maps coordinator-side failures onto the stable delegation error codes. */
     static ActionException failure(RuntimeException e) {
         return failure("", e);
-    }
-
-    static void putString(ObjectNode properties, String name, String description) {
-        properties.putObject(name).put("type", "string").put("description", description);
-    }
-
-    static void putInteger(ObjectNode properties, String name, String description,
-                           int min, int max) {
-        properties.putObject(name).put("type", "integer")
-                .put("minimum", min).put("maximum", max)
-                .put("description", description);
-    }
-
-    static void require(ObjectNode schema, String... fields) {
-        ArrayNode required = schema.putArray("required");
-        for (String field : fields) {
-            required.add(field);
-        }
     }
 }
