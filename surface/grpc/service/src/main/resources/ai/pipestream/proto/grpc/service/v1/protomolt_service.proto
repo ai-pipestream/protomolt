@@ -14,6 +14,7 @@ syntax = "proto3";
 package ai.pipestream.proto.grpc.service.v1;
 
 import "ai/pipestream/proto/grpc/profile/v1/service_profile.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/struct.proto";
 
 // The ProtoMolt toolkit: compile, introspect, validate, diff, render,
@@ -219,11 +220,23 @@ message SchemaSource {
 // published protobuf standard.
 message ServiceRegisterRequest {
   // Caller-authored profile; reflection replaces its schemaSource value.
-  google.protobuf.Struct profile = 1;
+  ai.pipestream.proto.grpc.profile.v1.ServiceProfile profile = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Endpoint name to reflect; empty selects the first endpoint.
-  string endpoint = 2;
-  // Reflection deadline in milliseconds; zero selects the action default.
-  int32 deadline_ms = 3;
+  string endpoint = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 128}
+    }
+  ];
+  // Reflection deadline in milliseconds; zero selects the action default of
+  // 15000. The ceiling matches the outbound channel policy, which refuses a
+  // longer deadline than 60000 whatever a caller asks for.
+  int32 deadline_ms = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
 }
 
 // One field of a reflected message, as the service workspace reports it.
@@ -314,7 +327,12 @@ message ServiceListResponse {
 // Identifies one stored service profile to inspect.
 message ServiceInspectRequest {
   // Stable profile name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
 }
 
 // One profile and the contracts reflection found behind it.
@@ -329,11 +347,25 @@ message ServiceInspectResponse {
 // Selects a registered endpoint to reflect again.
 message ServiceRefreshRequest {
   // Stable profile name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
   // Endpoint name to reflect; empty selects the first endpoint.
-  string endpoint = 2;
-  // Reflection deadline in milliseconds; zero selects the action default.
-  int32 deadline_ms = 3;
+  string endpoint = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 128}
+    }
+  ];
+  // Reflection deadline in milliseconds; zero selects the action default of
+  // 15000, and 60000 is the outbound channel policy's ceiling.
+  int32 deadline_ms = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
 }
 
 // Outcome of re-reflecting a registered endpoint.
@@ -357,17 +389,46 @@ message ServiceRefreshResponse {
 // bounds deadline_ms and max_responses before resolving registry state.
 message ServiceInvokeRequest {
   // Stable profile name.
-  string name = 1;
+  string name = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, path_safe_name: true}
+    }
+  ];
   // Fully qualified method as package.Service/Method.
-  string method = 2;
-  // Request message as canonical proto3 JSON.
-  google.protobuf.Struct request = 3;
+  string method = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 3, max_len: 512, contains: "/"}
+    }
+  ];
+  // Request message as canonical proto3 JSON. Struct is the honest type here:
+  // the message type is only known once the profile's descriptors resolve the
+  // method, so the payload cannot be declared any more narrowly at this layer.
+  google.protobuf.Struct request = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Named profile endpoint; empty selects the first endpoint.
-  string endpoint = 4;
-  // Call deadline in milliseconds; zero selects the registered/default value.
-  int32 deadline_ms = 5;
-  // Maximum server-streaming responses; zero selects the action default.
-  int32 max_responses = 6;
+  string endpoint = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 128}
+    }
+  ];
+  // Call deadline in milliseconds; zero selects the registered method policy's
+  // value, or 15000. A registered method deadline is a ceiling, and 60000 is
+  // the outbound channel policy's.
+  int32 deadline_ms = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
+  // Maximum server-streaming responses to collect; zero selects the action
+  // default. The cap bounds what one call can hold in memory.
+  int32 max_responses = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 4096}
+    }
+  ];
 }
 
 // Outcome of invoking a method on a registered profile. The invocation fields
@@ -699,9 +760,19 @@ message ExtractMetadataResponse {
 // The input of reflect: where the server is and how to reach it.
 message ReflectRequest {
   // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
-  string target = 1;
-  // Default 15000.
-  int32 deadline_ms = 2;
+  string target = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, endpoint_address: true}
+    }
+  ];
+  // Reflection deadline in milliseconds; zero selects 15000, and 60000 is the
+  // outbound channel policy's ceiling.
+  int32 deadline_ms = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
   // Connect with TLS (system trust roots); plaintext by default.
   bool tls = 3;
 }
@@ -724,19 +795,49 @@ message ReflectResponse {
 // The input of grpc-invoke.
 message GrpcInvokeRequest {
   // gRPC target, e.g. 'localhost:9090' or 'dns:///svc:443'.
-  string target = 1;
+  string target = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, endpoint_address: true}
+    }
+  ];
   // Fully qualified 'package.Service/Method'.
-  string method = 2;
+  string method = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 3, max_len: 512, contains: "/"}
+    }
+  ];
   // Must declare the target service.
-  SchemaSource schema = 3;
-  // The request message as canonical proto3 JSON.
-  google.protobuf.Struct request = 4;
+  SchemaSource schema = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The request message as canonical proto3 JSON. Struct is the honest type
+  // here: the message type is only known once the schema source compiles and
+  // resolves the method, so it cannot be declared more narrowly at this layer.
+  google.protobuf.Struct request = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
   // Optional ASCII request headers.
-  map<string, string> metadata = 5;
-  // Default 15000.
-  int32 deadline_ms = 6;
-  // Cap on collected server-streaming responses; default 64.
-  int32 max_responses = 7;
+  map<string, string> metadata = 5 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      map: {max_pairs: 64}
+    }
+  ];
+  // Call deadline in milliseconds; zero selects 15000, and 60000 is the
+  // outbound channel policy's ceiling.
+  int32 deadline_ms = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 60000}
+    }
+  ];
+  // Cap on collected server-streaming responses; zero selects 64. The cap
+  // bounds what one call can hold in memory.
+  int32 max_responses = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 4096}
+    }
+  ];
   // Connect with TLS (system trust roots); plaintext by default.
   bool tls = 8;
 }
