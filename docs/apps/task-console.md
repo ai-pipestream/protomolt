@@ -80,3 +80,15 @@ candidate is refused.
 The transcript exports as a plain-text record: cursor-ordered frames with
 their texts and recorded facts, stating on its face that it is a projection
 of the recorded protocol frames and carries no provider reasoning.
+
+The console also offers tasks (`POST /api/tasks/offer`): a worker, an
+objective, the acceptance checks that define done, allowed scopes, and a
+lease. The task identity is generated server-side and the offer lands on the
+transcript like any other protocol fact.
+
+A terminal task hands over a receipt: `POST /api/tasks/{id}/record` projects
+its transcript into a signed work record under the `delegation-task` subject
+kind ([signed work records](../design/receipts.md)), which verifies offline
+against a trust snapshot authorizing the issuer for that kind. Signing uses
+the same `PROTOMOLT_RECEIPT_*` environment as workflow-run records, and an
+unsigned server refuses by naming what it needs.

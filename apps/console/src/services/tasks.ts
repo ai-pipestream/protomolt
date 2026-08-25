@@ -65,6 +65,22 @@ export interface ReviewResult {
   phase: string
 }
 
+export interface OfferedCheck {
+  name: string
+  description: string
+}
+
+export interface OfferResult {
+  taskId: string
+  workerId: string
+}
+
+export interface ExportedTaskRecord {
+  recordBase64: string
+  manifestDigest: string
+  recordId: string
+}
+
 /** One acceptance check joined with the latest candidate's evidence for it. */
 export interface CheckStatus {
   name: string
@@ -166,6 +182,28 @@ export class TaskApi {
       text,
       ...(replyTo ? { replyTo } : {}),
     })
+  }
+
+  /** Offers a durable task to a worker; the server generates the task identity. */
+  offerTask(
+    workerId: string,
+    objective: string,
+    requiredChecks: OfferedCheck[],
+    allowedScopes: string[] = [],
+    leaseMinutes = 30,
+  ): Promise<OfferResult> {
+    return this.json('POST', `${this.base}/offer`, {
+      workerId,
+      objective,
+      requiredChecks,
+      ...(allowedScopes.length ? { allowedScopes } : {}),
+      leaseMinutes,
+    })
+  }
+
+  /** The task's transcript, projected into a signed work record. */
+  exportRecord(taskId: string): Promise<ExportedTaskRecord> {
+    return this.json('POST', `${this.base}/${encodeURIComponent(taskId)}/record`, {})
   }
 
   /** Accepts the open candidate, with the reviewer's verdict on the record. */
