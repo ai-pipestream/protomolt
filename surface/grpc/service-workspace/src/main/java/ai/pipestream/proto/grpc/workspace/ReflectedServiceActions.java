@@ -69,6 +69,40 @@ public final class ReflectedServiceActions {
         return List.copyOf(registered);
     }
 
+    /**
+     * Registers the reflected verbs of every stored profile, for a host binding its
+     * catalog at startup.
+     *
+     * <p>One stale profile must not keep the rest of the catalog from serving, so a
+     * profile whose descriptors cannot be read is skipped and reported instead of
+     * thrown: the result maps each skipped profile's name to why, and is empty when
+     * every stored profile registered.
+     */
+    public static Map<String, String> registerStored(ActionCatalog catalog,
+                                                     ServiceProfileRepository repository,
+                                                     SchemaRegistryStore registry,
+                                                     ChannelFactory channels) {
+        Map<String, String> skipped = new LinkedHashMap<>();
+        if (repository == null) {
+            return skipped;
+        }
+        List<ServiceProfile> profiles;
+        try {
+            profiles = repository.list();
+        } catch (IOException e) {
+            skipped.put("", "list service profiles: " + e.getMessage());
+            return skipped;
+        }
+        for (ServiceProfile profile : profiles) {
+            try {
+                register(catalog, profile, repository, registry, channels);
+            } catch (ActionException e) {
+                skipped.put(profile.getName(), e.getMessage());
+            }
+        }
+        return skipped;
+    }
+
     /** Every method the profile's descriptors declare that one request can drive. */
     private static List<MethodDescriptor> unaryMethods(ServiceProfile profile,
                                                        ServiceProfileRepository repository,

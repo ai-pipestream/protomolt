@@ -36,27 +36,12 @@
       </template>
 
       <v-btn
-        prepend-icon="mdi-link-variant"
-        variant="tonal"
-        size="small"
-        class="mr-2"
-        :to="{ name: 'schema-registry-workflows' }"
-      >Workflows</v-btn>
-
-      <v-btn
         prepend-icon="mdi-set-merge"
         variant="tonal"
         size="small"
         class="mr-2"
         :to="{ name: 'schema-registry-merge' }"
       >Merge schemas</v-btn>
-
-      <v-btn
-        prepend-icon="mdi-connection"
-        variant="tonal"
-        size="small"
-        :to="{ name: 'schema-registry-connect' }"
-      >Connect a service</v-btn>
 
       <v-btn
         icon="mdi-refresh"

@@ -20,6 +20,7 @@ import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
+import ai.pipestream.proto.grpc.workspace.ReflectedServiceActions;
 import ai.pipestream.proto.grpc.workspace.ServiceWorkspaceActions;
 import ai.pipestream.proto.inference.service.actions.DescribeModelAction;
 import ai.pipestream.proto.inference.service.actions.GenerateAction;
@@ -32,6 +33,9 @@ import ai.pipestream.proto.jobs.service.actions.ListJobsAction;
 import ai.pipestream.proto.jobs.service.actions.SubmitWorkflowAction;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.function.Supplier;
@@ -58,6 +62,8 @@ import java.util.function.Supplier;
  * The inference verbs behave the same way without an {@link InferenceEngines}.
  */
 public final class ProtoMoltCatalog {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ProtoMoltCatalog.class);
 
     private ProtoMoltCatalog() {
     }
@@ -213,6 +219,9 @@ public final class ProtoMoltCatalog {
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
         ServiceWorkspaceActions.register(catalog, serviceProfiles, registry, channels);
+        ReflectedServiceActions.registerStored(catalog, serviceProfiles, registry, channels)
+                .forEach((profile, why) -> LOG.warn(
+                        "stored service profile '{}' did not become verbs: {}", profile, why));
         return trust == null
                 ? WorkflowWorkbenchActions.register(catalog, runner, artifacts,
                         runEvidence, workflowVersions)

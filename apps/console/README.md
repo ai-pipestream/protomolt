@@ -1,8 +1,13 @@
 # ProtoMolt console
 
-The schema-registry console: a Vue 3 / Vuetify application for browsing
-subjects and versions, exploring types, diffing versions, checking
-compatibility, and trying the verbs — ProtoMolt's own frontend.
+ProtoMolt's own frontend: a Vue 3 / Vuetify application whose sections are
+the platform's surfaces. Tasks follows durable agent work; Schemas browses,
+diffs, and compatibility-checks registry subjects; Workflows edits, verifies,
+and runs stored workflows with findings attributed to their steps; Services
+registers gRPC services and calls every reflected method through generated
+forms; Search and Metrics query a platform node found by its contract through
+a registered service profile; Receipts verifies and evaluates signed work
+records.
 
 ## Running it
 
