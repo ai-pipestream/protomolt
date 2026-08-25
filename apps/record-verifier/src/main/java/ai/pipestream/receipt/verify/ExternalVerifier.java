@@ -479,21 +479,61 @@ public final class ExternalVerifier {
 
     private static String subjectRules(Subject subject) {
         String violation = Rules.requiredSlug(subject.kind(), 64, "subject.kind");
-        if (violation == null) {
-            violation = Rules.requiredSlug(subject.workflowName(), 128,
-                    "subject.workflow_name");
-        }
-        if (violation == null && !subject.workflowVersion().isEmpty()) {
-            violation = Rules.requiredSlug(subject.workflowVersion(), 128,
-                    "subject.workflow_version");
-        }
         if (violation != null) {
             return violation;
         }
-        if (!Rules.isSha256Hex(subject.workflowFingerprint())) {
+        // Set fields validate their format whatever the kind; the kind then
+        // demands its own identity fields, mirroring the manifest rules.
+        if (!subject.workflowName().isEmpty()) {
+            violation = Rules.requiredSlug(subject.workflowName(), 128,
+                    "subject.workflow_name");
+            if (violation != null) {
+                return violation;
+            }
+        }
+        if (!subject.workflowVersion().isEmpty()) {
+            violation = Rules.requiredSlug(subject.workflowVersion(), 128,
+                    "subject.workflow_version");
+            if (violation != null) {
+                return violation;
+            }
+        }
+        if (!subject.workflowFingerprint().isEmpty()
+                && !Rules.isSha256Hex(subject.workflowFingerprint())) {
             return "subject.workflow_fingerprint: must be a lowercase hex sha-256";
         }
-        return Rules.requiredSlug(subject.runId(), 128, "subject.run_id");
+        if (!subject.runId().isEmpty()) {
+            violation = Rules.requiredSlug(subject.runId(), 128, "subject.run_id");
+            if (violation != null) {
+                return violation;
+            }
+        }
+        if (!subject.taskId().isEmpty() && !Rules.isUuid(subject.taskId())) {
+            return "subject.task_id: must be a UUID";
+        }
+        if (!subject.workerId().isEmpty()) {
+            violation = Rules.requiredSlug(subject.workerId(), 128, "subject.worker_id");
+            if (violation != null) {
+                return violation;
+            }
+        }
+        if (!subject.specSha256().isEmpty() && !Rules.isSha256Hex(subject.specSha256())) {
+            return "subject.spec_sha256: must be a lowercase hex sha-256";
+        }
+        return switch (subject.kind()) {
+            case "workflow-run" -> subject.workflowName().isEmpty()
+                    || subject.workflowFingerprint().isEmpty() || subject.runId().isEmpty()
+                    ? "subject: a workflow-run subject names the workflow, its fingerprint,"
+                            + " and the run"
+                    : null;
+            case "delegation-task" -> subject.taskId().isEmpty()
+                    || subject.workerId().isEmpty() || subject.specSha256().isEmpty()
+                    ? "subject: a delegation-task subject names the task, its worker, and"
+                            + " the spec fingerprint"
+                    : null;
+            default -> "subject.kind: '" + subject.kind()
+                    + "' is not a kind this manifest version defines";
+        };
     }
 
     private static String stepRules(Step step) {

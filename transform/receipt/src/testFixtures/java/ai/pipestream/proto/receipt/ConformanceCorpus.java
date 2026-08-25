@@ -148,8 +148,15 @@ public final class ConformanceCorpus {
                         RecordVerifier.CHECK_KEY_TRUSTED),
                 new Fixture("forged-signature", tamperSignature(canonical),
                         RecordVerifier.CHECK_SIGNATURE_VALID),
+                // A schema-valid subject of a kind the trust snapshot does not
+                // authorize this issuer for: the refusal must come from trust,
+                // not from the manifest rules.
                 new Fixture("unauthorized-kind", sign(manifest()
-                        .setSubject(subject().setKind("delegation-run"))
+                        .setSubject(RecordSubject.newBuilder()
+                                .setKind("delegation-task")
+                                .setTaskId("6f9619ff-8b86-4d01-b42d-00cf4fc964ff")
+                                .setWorkerId("kimi-worker")
+                                .setSpecSha256("a".repeat(64)))
                         .build(), KEY_ID, PRIVATE_KEY),
                         RecordVerifier.CHECK_ISSUER_AUTHORIZED),
                 new Fixture("complete-with-reasons", sign(manifest()

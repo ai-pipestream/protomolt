@@ -46,6 +46,26 @@ final class Rules {
     }
 
     /** Lowercase hex SHA-256 digest: exactly 64 chars of {@code 0-9a-f}. */
+    /** Dashed UUID text, either hex case: the platform's own uuid rule. */
+    static boolean isUuid(String value) {
+        if (value.length() != 36) {
+            return false;
+        }
+        for (int i = 0; i < 36; i++) {
+            char character = value.charAt(i);
+            if (i == 8 || i == 13 || i == 18 || i == 23) {
+                if (character != '-') {
+                    return false;
+                }
+            } else if ((character < '0' || character > '9')
+                    && (character < 'a' || character > 'f')
+                    && (character < 'A' || character > 'F')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static boolean isSha256Hex(String value) {
         if (value.length() != 64) {
             return false;

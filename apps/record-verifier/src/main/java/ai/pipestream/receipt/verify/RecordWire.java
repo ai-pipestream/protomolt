@@ -40,7 +40,8 @@ final class RecordWire {
     }
 
     record Subject(String kind, String workflowName, String workflowVersion,
-                   String workflowFingerprint, String runId) {
+                   String workflowFingerprint, String runId, String taskId,
+                   String workerId, String specSha256) {
     }
 
     record Step(String name, String method, long outcome, Artifact requestArtifact,
@@ -226,6 +227,9 @@ final class RecordWire {
         String version = "";
         String fingerprint = "";
         String runId = "";
+        String taskId = "";
+        String workerId = "";
+        String specSha256 = "";
         Set<Integer> seen = new HashSet<>();
         while (wire.hasMore()) {
             int tag = wire.readTag();
@@ -239,13 +243,17 @@ final class RecordWire {
                 case 4 -> fingerprint = string(wire, number, wireType, seen,
                         "workflow_fingerprint");
                 case 5 -> runId = string(wire, number, wireType, seen, "run_id");
+                case 6 -> taskId = string(wire, number, wireType, seen, "task_id");
+                case 7 -> workerId = string(wire, number, wireType, seen, "worker_id");
+                case 8 -> specSha256 = string(wire, number, wireType, seen, "spec_sha256");
                 default -> {
                     wire.noteUnknown(number);
                     wire.skip(wireType, number, "field " + number);
                 }
             }
         }
-        return new Subject(kind, name, version, fingerprint, runId);
+        return new Subject(kind, name, version, fingerprint, runId, taskId, workerId,
+                specSha256);
     }
 
     private static Step step(Wire wire) throws MalformedException {
