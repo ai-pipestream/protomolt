@@ -119,6 +119,37 @@
             <v-card-subtitle class="pb-3">
               {{ selected.workerId }} · attempt {{ selected.attempt }} · checkpoint {{ selected.lastCheckpointSeq }}
             </v-card-subtitle>
+            <div v-if="contract.length" class="px-4 pb-3 d-flex flex-wrap align-center ga-2">
+              <span class="text-caption text-medium-emphasis">Contract of done</span>
+              <v-tooltip v-for="check in contract" :key="check.name" location="bottom">
+                <template #activator="{ props: activator }">
+                  <v-chip
+                    v-bind="activator"
+                    size="small"
+                    variant="tonal"
+                    :color="check.status === 'passed' ? 'success'
+                        : check.status === 'failed' ? 'error' : undefined"
+                    :prepend-icon="check.status === 'passed' ? 'mdi-check-circle-outline'
+                        : check.status === 'failed' ? 'mdi-close-circle-outline'
+                        : 'mdi-circle-outline'"
+                  >
+                    {{ check.name }}
+                  </v-chip>
+                </template>
+                <div>
+                  <div v-if="check.description">{{ check.description }}</div>
+                  <div>{{ check.status === 'unproven'
+                      ? 'No evidence recorded yet.' : check.detail || check.status }}</div>
+                </div>
+              </v-tooltip>
+              <v-spacer />
+              <v-btn
+                size="x-small"
+                variant="text"
+                prepend-icon="mdi-download"
+                @click="exportTranscript"
+              >Transcript</v-btn>
+            </div>
             <v-divider />
 
             <div class="timeline pa-5">
@@ -158,6 +189,60 @@
             </div>
 
             <v-divider />
+            <div v-if="selected.phase === 'candidate' && candidate" class="review-panel pa-4">
+              <div class="d-flex align-center ga-2 mb-1">
+                <v-icon icon="mdi-gavel" size="small" color="secondary" />
+                <strong>Candidate revision {{ candidate.revision }} awaits your judgement</strong>
+              </div>
+              <p class="text-body-2 text-medium-emphasis mb-3">{{ candidate.summary }}</p>
+              <v-text-field
+                v-model="reviewVerdict"
+                label="Acceptance verdict"
+                hint="Why this candidate is done — your words go on the transcript"
+                persistent-hint
+                density="compact"
+                class="mb-2"
+              />
+              <div class="d-flex mb-4">
+                <v-btn
+                  color="success"
+                  prepend-icon="mdi-check-decagram"
+                  :loading="reviewing"
+                  :disabled="!reviewVerdict.trim()"
+                  @click="acceptCandidate"
+                >Accept the work</v-btn>
+              </div>
+              <v-textarea
+                v-model="reviewFeedback"
+                label="Revision feedback"
+                hint="What the next revision must change — recorded for the worker"
+                persistent-hint
+                rows="2"
+                auto-grow
+                density="compact"
+                class="mb-1"
+              />
+              <div class="d-flex flex-wrap align-center ga-2 mb-2">
+                <span class="text-caption text-medium-emphasis">Failed checks</span>
+                <v-chip
+                  v-for="check in contract"
+                  :key="check.name"
+                  size="small"
+                  :variant="failedChecks.includes(check.name) ? 'flat' : 'outlined'"
+                  :color="failedChecks.includes(check.name) ? 'error' : undefined"
+                  @click="toggleFailedCheck(check.name)"
+                >{{ check.name }}</v-chip>
+              </div>
+              <v-btn
+                variant="tonal"
+                color="warning"
+                prepend-icon="mdi-file-undo-outline"
+                :loading="reviewing"
+                :disabled="!reviewFeedback.trim()"
+                @click="requestRevision"
+              >Request revision</v-btn>
+            </div>
+            <v-divider v-if="selected.phase === 'candidate' && candidate" />
             <v-form class="pa-4" @submit.prevent="sendGuidance">
               <div class="d-flex flex-wrap ga-3">
                 <v-select
@@ -203,10 +288,16 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  checkStatuses,
+  frameFacts,
+  frameKind,
+  frameText,
+  latestCandidate,
   taskApi,
   TaskApiError,
+  transcriptText,
   type TaskEvent,
   type TaskFinding,
   type TaskMessageKind,
@@ -231,7 +322,14 @@ const messageKind = ref<TaskMessageKind>('guidance')
 const messageText = ref('')
 const sending = ref(false)
 const messageKinds: TaskMessageKind[] = ['guidance', 'question', 'answer', 'note']
+const reviewVerdict = ref('')
+const reviewFeedback = ref('')
+const failedChecks = ref<string[]>([])
+const reviewing = ref(false)
 let watchController: AbortController | null = null
+
+const contract = computed(() => checkStatuses(events.value))
+const candidate = computed(() => latestCandidate(events.value))
 
 onMounted(async () => {
   try {
@@ -355,87 +453,71 @@ async function sendGuidance() {
   }
 }
 
+async function acceptCandidate() {
+  if (!selected.value || !reviewVerdict.value.trim()) return
+  reviewing.value = true
+  try {
+    await taskApi.reviewAccept(selected.value.taskId, reviewVerdict.value.trim())
+    reviewVerdict.value = ''
+    failedChecks.value = []
+    await refreshSummaries()
+  } catch (failure) {
+    error.value = message(failure)
+  } finally {
+    reviewing.value = false
+  }
+}
+
+async function requestRevision() {
+  if (!selected.value || !reviewFeedback.value.trim()) return
+  reviewing.value = true
+  try {
+    await taskApi.reviewRevise(selected.value.taskId, reviewFeedback.value.trim(),
+      failedChecks.value)
+    reviewFeedback.value = ''
+    failedChecks.value = []
+    await refreshSummaries()
+  } catch (failure) {
+    error.value = message(failure)
+  } finally {
+    reviewing.value = false
+  }
+}
+
+function toggleFailedCheck(name: string) {
+  failedChecks.value = failedChecks.value.includes(name)
+    ? failedChecks.value.filter((check) => check !== name)
+    : [...failedChecks.value, name]
+}
+
+/** Saves the recorded transcript as a plain-text file, cursor-ordered. */
+function exportTranscript() {
+  if (!selected.value) return
+  const blob = new Blob([transcriptText(selected.value, events.value)],
+    { type: 'text/plain;charset=utf-8' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = `task-${selected.value.taskId.slice(0, 8)}-transcript.txt`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 function uniqueEvents(input: TaskEvent[]): TaskEvent[] {
   return [...new Map(input.map((event) => [event.cursor, event])).values()].sort(
     (left, right) => left.cursor - right.cursor,
   )
 }
 
-function frame(event: TaskEvent): Record<string, any> {
-  return (event.entry.coordinatorFrame ?? event.entry.workerFrame ?? {}) as Record<string, any>
-}
-
-function eventKind(event: TaskEvent): string {
-  const value = frame(event)
-  return (
-    [
-      'hello',
-      'admission',
-      'offer',
-      'accept',
-      'reject',
-      'progress',
-      'checkpoint',
-      'renewal',
-      'completion',
-      'revision',
-      'acceptance',
-      'blocked',
-      'failure',
-      'cancellation',
-      'taskMessage',
-    ].find((key) => value[key] !== undefined) ?? 'frame'
-  )
-}
-
 function eventTitle(event: TaskEvent): string {
-  return eventKind(event).replace(/([A-Z])/g, ' $1').toLowerCase()
+  return frameKind(event).replace(/([A-Z])/g, ' $1').toLowerCase()
 }
 
 function eventActor(event: TaskEvent): string {
   return event.lane === 'LANE_WORKER' ? event.workerId : 'coordinator'
 }
 
-function eventText(event: TaskEvent): string {
-  const value = frame(event)[eventKind(event)] as Record<string, any> | undefined
-  if (!value) return 'Recorded protocol frame'
-  return (
-    value.text ??
-    value.message ??
-    value.summary ??
-    value.reason ??
-    value.feedback ??
-    value.note ??
-    value.spec?.objective ??
-    value.resumeToken ??
-    'Recorded protocol frame'
-  )
-}
-
-function eventFacts(event: TaskEvent): string[] {
-  const value = frame(event)[eventKind(event)] as Record<string, any> | undefined
-  if (!value) return []
-  const facts: string[] = []
-  for (const check of value.evidence ?? value.spec?.requiredChecks ?? []) {
-    facts.push(
-      [check.checkName ?? check.name, check.verdict, check.detail ?? check.description]
-        .filter(Boolean)
-        .join(' · '),
-    )
-  }
-  for (const commit of value.commits ?? []) {
-    facts.push(
-      [commit.repository, commit.commit?.slice(0, 12), commit.subject].filter(Boolean).join(' · '),
-    )
-  }
-  for (const artifact of value.artifacts ?? []) {
-    facts.push(`artifact · ${artifact.uri ?? artifact.digest ?? artifact.objectKey ?? 'recorded'}`)
-  }
-  if (value.state) {
-    facts.push(`checkpoint state · ${value.state.uri ?? value.state.digest ?? 'recorded'}`)
-  }
-  return facts.filter(Boolean)
-}
+const eventText = frameText
+const eventFacts = frameFacts
 
 function phaseColor(phase: string): string {
   if (phase === 'accepted') return 'success'
