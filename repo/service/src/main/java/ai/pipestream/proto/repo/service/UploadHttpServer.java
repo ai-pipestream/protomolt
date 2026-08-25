@@ -103,8 +103,11 @@ import java.util.concurrent.Executors;
  */
 public final class UploadHttpServer implements AutoCloseable {
 
-    /** The single route this server serves. */
+    /** The claim-check store's upload route. */
     public static final String UPLOAD_PATH = "/v1/documents:upload";
+
+    /** The archive's upload route (served when the archive surface is wired). */
+    public static final String ARCHIVE_UPLOAD_PATH = "/v1/archive:upload";
 
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -113,6 +116,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private final DriveLedger drives;
     private final BlobStore blobStore;
     private final byte[] expectedToken;
+    private final ArchiveOperations archiveOperations;
 
     private HttpServer server;
     private ExecutorService executor;
@@ -141,11 +145,28 @@ public final class UploadHttpServer implements AutoCloseable {
      */
     public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
             BlobStore blobStore, String apiToken) {
+        this(documentService, drives, blobStore, apiToken, null);
+    }
+
+    /**
+     * @param documentService the gRPC document service whose blocking intake
+     *        save this route reuses (one save path, one dedupe semantic)
+     * @param drives the drive ledger (drive name + account → bucket/prefix)
+     * @param blobStore the object-storage port the body streams into
+     * @param apiToken the credential every request must present, or null to
+     *        serve open on a trusted network
+     * @param archiveOperations the archive flows behind
+     *        {@link #ARCHIVE_UPLOAD_PATH}, or null to serve the document
+     *        route alone
+     */
+    public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
+            BlobStore blobStore, String apiToken, ArchiveOperations archiveOperations) {
         this.documentService = documentService;
         this.drives = drives;
         this.blobStore = blobStore;
         this.expectedToken = apiToken == null
                 ? null : apiToken.getBytes(StandardCharsets.UTF_8);
+        this.archiveOperations = archiveOperations;
     }
 
     /**
@@ -192,6 +213,9 @@ public final class UploadHttpServer implements AutoCloseable {
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
         try {
             created.createContext(UPLOAD_PATH, this::handle);
+            if (archiveOperations != null) {
+                created.createContext(ARCHIVE_UPLOAD_PATH, this::handleArchive);
+            }
             created.setExecutor(pool);
             created.start();
         } catch (RuntimeException e) {
@@ -389,6 +413,89 @@ public final class UploadHttpServer implements AutoCloseable {
                 .put("sha256", sha256);
         response.set("storage_ref", storageRef);
         return response;
+    }
+
+    // ------------------------------------------------------------------ archive route
+
+    private void handleArchive(HttpExchange exchange) throws IOException {
+        try {
+            requireCredential(exchange);
+            if (!ARCHIVE_UPLOAD_PATH.equals(exchange.getRequestURI().getPath())) {
+                throw new HttpError(404, "unknown route " + exchange.getRequestURI().getPath());
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                throw new HttpError(405, "method not allowed: " + exchange.getRequestMethod());
+            }
+            writeJson(exchange, 200, archiveUpload(exchange));
+        } catch (HttpError e) {
+            writeError(exchange, e.status, e.getMessage());
+        } catch (StatusRuntimeException e) {
+            // The archive flows' gRPC status vocabulary, flattened onto HTTP.
+            int status = switch (e.getStatus().getCode()) {
+                case INVALID_ARGUMENT -> 400;
+                case NOT_FOUND -> 404;
+                case FAILED_PRECONDITION -> 409;
+                case ABORTED -> 409;
+                default -> 502;
+            };
+            writeError(exchange, status, e.getStatus().getDescription());
+        } catch (RuntimeException | IOException e) {
+            LOG.warn("archive upload failed: {}", e.getMessage());
+            writeError(exchange, 502, "backing store failure: " + e.getMessage());
+        } finally {
+            exchange.close();
+        }
+    }
+
+    /**
+     * The archive's zero-dependency door: the body is one rendition's bytes,
+     * identity rides query parameters or headers (query wins) — account_id,
+     * archive, entry_id, rendition (default {@code original}), filename,
+     * Content-Type, optional X-Content-Sha256 — streamed through the same
+     * verified, content-addressed landing as the gRPC streaming door, one
+     * new entry version per upload.
+     */
+    private ObjectNode archiveUpload(HttpExchange exchange) throws IOException {
+        Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
+        String accountId = required(identity(exchange, query, "account_id", "x-account-id"),
+                "account_id");
+        String archive = required(identity(exchange, query, "archive", "x-archive"), "archive");
+        String entryId = required(identity(exchange, query, "entry_id", "x-entry-id"),
+                "entry_id");
+        String rendition = identity(exchange, query, "rendition", "x-rendition");
+        String filename = identity(exchange, query, "filename", "x-filename");
+        String contentType = first(query.get("content_type"),
+                exchange.getRequestHeaders().getFirst("Content-Type"));
+        String declaredSha = exchange.getRequestHeaders().getFirst("X-Content-Sha256");
+        long contentLength = contentLength(exchange);
+        if (contentLength <= 0) {
+            throw new HttpError(411, "Content-Length must be positive for an archive upload");
+        }
+
+        ai.pipestream.proto.repo.archive.v1.EntryAddress address =
+                ai.pipestream.proto.repo.archive.v1.EntryAddress.newBuilder()
+                        .setAccountId(accountId)
+                        .setArchive(archive)
+                        .setEntryId(entryId)
+                        .build();
+        ai.pipestream.proto.repo.archive.v1.RenditionDescriptor descriptor =
+                ai.pipestream.proto.repo.archive.v1.RenditionDescriptor.newBuilder()
+                        .setName(rendition == null ? "original" : rendition)
+                        .setMediaType(contentType)
+                        .build();
+        ArchiveOperations.UploadResult result = archiveOperations.uploadStream(address,
+                descriptor, contentLength,
+                declaredSha == null ? "" : declaredSha,
+                null, filename, exchange.getRequestBody());
+        return MAPPER.createObjectNode()
+                .put("entry_uuid", result.entryUuid())
+                .put("version", result.version())
+                .put("rendition", descriptor.getName())
+                .put("size_bytes", result.sizeBytes())
+                .put("sha256", result.sha256())
+                .put("object_key", result.objectKey())
+                .put("root_checksum", result.rootChecksum())
+                .put("deduplicated", result.deduplicated());
     }
 
     // ------------------------------------------------------------------ plumbing

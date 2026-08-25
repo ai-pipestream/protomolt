@@ -21,6 +21,9 @@ dependencies {
     implementation project(':protomolt-repo-proto')
     implementation project(':protomolt-authz-grpc')
     implementation project(':protomolt-repo-container')
+    // The archive request validators mirror the contract's validate.v1
+    // annotations onto the house format parsers.
+    implementation project(':protomolt-formats')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess

@@ -16,6 +16,11 @@
         <class>ai.pipestream.proto.repo.container.ledger.DriveRecord</class>
         <class>ai.pipestream.proto.repo.container.ledger.DocumentPurgeRecord</class>
         <class>ai.pipestream.proto.repo.container.ledger.DocumentEventRecord</class>
+        <class>ai.pipestream.proto.repo.container.archive.ArchiveRecord</class>
+        <class>ai.pipestream.proto.repo.container.archive.ArchiveEntryRecord</class>
+        <class>ai.pipestream.proto.repo.container.archive.ArchiveVersionRecord</class>
+        <class>ai.pipestream.proto.repo.container.archive.ArchiveStatsRecord</class>
+        <class>ai.pipestream.proto.repo.container.archive.ArchiveRenditionStatsRecord</class>
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
         <properties>
             <!-- Schema is owned by Flyway (db/migration); hbm2ddl is set to
