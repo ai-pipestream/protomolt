@@ -20,6 +20,8 @@ vi.mock('../services/tasks', async (importOriginal) => {
       sendMessage: vi.fn(),
       reviewAccept: vi.fn(),
       reviewRevise: vi.fn(),
+      offerTask: vi.fn(),
+      exportRecord: vi.fn(),
     },
   }
 })
@@ -144,5 +146,56 @@ describe('TaskConsoleView', () => {
       .trigger('click')
     await flushPromises()
     expect(api.reviewRevise).toHaveBeenCalledWith('task-1', 'lint still complains', ['lint-clean'])
+  })
+
+  it('offers a task through the dialog with its contract of done', async () => {
+    api.sessionStatus.mockResolvedValue({ authenticated: true, loginRequired: true })
+    api.listTasks.mockResolvedValue({ tasks: [], cursor: 0, findings: [] })
+    api.listWorkers.mockResolvedValue([
+      { workerId: 'worker-a', admitted: true, connected: true,
+        provider: 'scripted', model: 'm', capabilities: [] },
+    ])
+    api.offerTask.mockResolvedValue({ taskId: 'task-new', workerId: 'worker-a' })
+    const wrapper = await mountView()
+
+    await wrapper.findAll('button').find((b) => b.text().includes('Offer a task'))!
+      .trigger('click')
+    await flushPromises()
+    const dialog = wrapper.getComponent({ name: 'VDialog' })
+    await dialog.findComponent({ name: 'VSelect' }).setValue('worker-a')
+    await dialog.findComponent({ name: 'VTextarea' }).setValue('Prove the offer lane')
+    // VSelect renders an internal VTextField, so the row is: select, scopes,
+    // check name, check description, lease minutes.
+    const checkFields = dialog.findAllComponents({ name: 'VTextField' })
+    await checkFields[2].setValue('unit-tests')
+    await checkFields[3].setValue('focused tests pass')
+    // The dialog teleports its DOM, so buttons are found through the
+    // component tree rather than the wrapper's subtree.
+    await dialog.findAllComponents({ name: 'VBtn' })
+      .find((b) => b.text() === 'Offer')!.trigger('click')
+    await flushPromises()
+
+    expect(api.offerTask).toHaveBeenCalledWith('worker-a', 'Prove the offer lane',
+      [{ name: 'unit-tests', description: 'focused tests pass' }], [], 30)
+  })
+
+  it('shows the signed-record export only for a terminal task', async () => {
+    api.sessionStatus.mockResolvedValue({ authenticated: true, loginRequired: true })
+    api.listWorkers.mockResolvedValue([])
+    api.listTasks.mockResolvedValue({
+      tasks: [{ ...task, phase: 'accepted' }], cursor: 0, findings: [] })
+    api.task.mockResolvedValue({
+      task: { ...task, phase: 'accepted' }, events: [offerEvent], cursor: 1, findings: [] })
+    api.watchEvents.mockReturnValue(new Promise(() => {}))
+    const wrapper = await mountView()
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Signed record')))
+      .toBe(true)
+
+    // An in-flight task offers no receipt.
+    api.listTasks.mockResolvedValue({ tasks: [task], cursor: 0, findings: [] })
+    api.task.mockResolvedValue({ task, events: [offerEvent], cursor: 1, findings: [] })
+    const inFlight = await mountView()
+    expect(inFlight.findAll('button').some((b) => b.text().includes('Signed record')))
+      .toBe(false)
   })
 })

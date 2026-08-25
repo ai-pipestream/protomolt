@@ -249,6 +249,42 @@ class TaskConsoleHttpTest {
                 .build();
     }
 
+    /** The one coordinator move the browser could not make: offering a task. */
+    @Test
+    void aConsoleOfferLandsOnTheTranscriptWithItsContract() throws Exception {
+        HttpResponse<String> offered = post("/api/tasks/offer", """
+                {"workerId":"console-worker",
+                 "objective":"Wire the offer lane",
+                 "allowedScopes":["apps/console"],
+                 "requiredChecks":[{"name":"unit-tests","description":"focused tests pass"}],
+                 "leaseMinutes":10}
+                """, cookie);
+        assertThat(offered.statusCode()).isEqualTo(201);
+        String offeredTask = body(offered).path("taskId").asText();
+        assertThat(offeredTask).isNotBlank();
+
+        JsonNode detail = body(get("/api/tasks/" + offeredTask, cookie));
+        assertThat(detail.path("task").path("phase").asText()).isEqualTo("offered");
+        assertThat(detail.path("task").path("objective").asText())
+                .isEqualTo("Wire the offer lane");
+        assertThat(detail.path("events").toString()).contains("unit-tests");
+
+        // A worker the coordinator does not know is a state conflict, not a parse
+        // failure: there is nobody to offer to.
+        HttpResponse<String> unknown = post("/api/tasks/offer", """
+                {"workerId":"nobody","objective":"x"}
+                """, cookie);
+        assertThat(unknown.statusCode()).isEqualTo(409);
+    }
+
+    /** Without signing configured, the record route refuses by naming what it needs. */
+    @Test
+    void anUnsignedServerRefusesRecordExportByName() throws Exception {
+        HttpResponse<String> refused = post("/api/tasks/" + taskId + "/record", "{}", cookie);
+        assertThat(refused.statusCode()).isEqualTo(503);
+        assertThat(refused.body()).contains("PROTOMOLT_RECEIPT_KEY_FILE");
+    }
+
     @Test
     void logoutRevokesOnlyThatBrowserSession() throws Exception {
         HttpResponse<String> login = post("/api/task-session",
