@@ -86,6 +86,9 @@ describe('stored values', () => {
     expect(renderStored({ boolValue: false })).toBe('false')
     expect(renderStored({ timestampValue: '2026-08-24T00:00:00Z' }))
       .toBe('2026-08-24T00:00:00Z')
+    // 'AAAA' encodes 3 bytes; 'AA==' encodes 1. The label counts decoded bytes.
+    expect(renderStored({ bytesValue: 'AAAA' })).toBe('3 bytes')
+    expect(renderStored({ bytesValue: 'AA==' })).toBe('1 byte')
     expect(renderStored({})).toBe('')
   })
 })

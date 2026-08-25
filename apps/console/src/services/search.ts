@@ -98,6 +98,11 @@ export function renderStored(value: StoredValue): string {
   if (value.doubleValue !== undefined) return String(value.doubleValue)
   if (value.boolValue !== undefined) return String(value.boolValue)
   if (value.timestampValue !== undefined) return value.timestampValue
-  if (value.bytesValue !== undefined) return `${value.bytesValue.length} bytes (base64)`
+  if (value.bytesValue !== undefined) {
+    // The JSON arm is base64; the person is told how many bytes the field holds.
+    const encoded = value.bytesValue.replace(/=+$/, '')
+    const count = Math.floor((encoded.length * 3) / 4)
+    return `${count} byte${count === 1 ? '' : 's'}`
+  }
   return ''
 }
