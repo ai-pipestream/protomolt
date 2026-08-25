@@ -10,10 +10,6 @@
           </span>
         </router-link>
       </template>
-      <v-btn to="/tasks" prepend-icon="mdi-account-network" variant="text">Tasks</v-btn>
-      <v-btn to="/schema-registry" prepend-icon="mdi-source-repository" variant="text">
-        Schemas
-      </v-btn>
       <v-spacer />
       <v-chip
         v-if="!taskRoute"
@@ -33,6 +29,19 @@
       />
     </v-app-bar>
 
+    <v-navigation-drawer rail expand-on-hover permanent floating border>
+      <v-list density="compact" nav aria-label="Console sections">
+        <v-list-item
+          v-for="section in sections"
+          :key="section.to"
+          :to="section.to"
+          :prepend-icon="section.icon"
+          :title="section.title"
+          :subtitle="section.hint"
+        />
+      </v-list>
+    </v-navigation-drawer>
+
     <v-main>
       <v-container fluid style="max-width: 1400px">
         <router-view />
@@ -49,6 +58,17 @@ import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import ToastHost from './components/ToastHost.vue'
 import { registryApi } from './services/api'
+
+/** The console's sections; each one is a top-level route the rail links to. */
+const sections = [
+  { to: '/tasks', icon: 'mdi-account-network', title: 'Tasks', hint: 'Follow durable agent work' },
+  { to: '/schema-registry', icon: 'mdi-source-repository', title: 'Schemas', hint: 'Browse and version subjects' },
+  { to: '/workflows', icon: 'mdi-link-variant', title: 'Workflows', hint: 'Compose services, one typed call' },
+  { to: '/services', icon: 'mdi-connection', title: 'Services', hint: 'Registered gRPC services as verbs' },
+  { to: '/search', icon: 'mdi-magnify', title: 'Search', hint: 'Query indexed subjects' },
+  { to: '/metrics', icon: 'mdi-chart-box-outline', title: 'Metrics', hint: 'Measures over indexed rows' },
+  { to: '/receipts', icon: 'mdi-file-certificate-outline', title: 'Receipts', hint: 'Verify signed work records' },
+]
 
 const theme = useTheme()
 const route = useRoute()

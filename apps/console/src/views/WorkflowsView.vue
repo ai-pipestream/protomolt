@@ -2,8 +2,6 @@
   <v-container fluid class="pa-6">
     <v-card variant="flat" border class="mb-4">
       <v-card-title class="text-subtitle-1 d-flex align-center">
-        <v-btn icon="mdi-arrow-left" variant="text" size="small" class="mr-2"
-               :to="{ name: 'schema-registry-subjects' }" aria-label="Back to subjects" />
         <v-icon size="small" class="mr-2">mdi-link-variant</v-icon>
         Workflows
         <v-spacer />
@@ -80,17 +78,8 @@
                      density="compact">
               The workflow verifies: every method resolves, every rule and gate type-checks.
             </v-alert>
-            <template v-if="findings.length">
-              <v-alert type="warning" variant="tonal" density="compact" class="mb-2">
-                {{ findings.length }} finding{{ findings.length === 1 ? '' : 's' }}
-              </v-alert>
-              <div v-for="(finding, i) in findings" :key="i" class="text-caption mb-1">
-                <v-chip size="x-small" variant="tonal" color="warning" class="mr-1">
-                  {{ finding.step || 'workflow' }} · {{ finding.kind }}
-                </v-chip>
-                <code>{{ finding.error }}</code>
-              </div>
-            </template>
+            <WorkflowFindingsPanel v-if="findings.length" :findings="findings"
+                                   :source="findingsSource" />
             <v-alert v-if="error" type="error" variant="tonal" density="compact">
               {{ error }}
             </v-alert>
@@ -171,6 +160,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import type { JsonValue } from '@bufbuild/protobuf'
 import ProtoMessageView from '../components/ProtoMessageView.vue'
+import WorkflowFindingsPanel from '../components/WorkflowFindingsPanel.vue'
 import { errorMessage } from '../services/api'
 import { registryFromDescriptorSet } from '../services/descriptorModel'
 import {
@@ -200,6 +190,7 @@ const saving = ref(false)
 const running = ref(false)
 const checkResult = ref<WorkflowCheck | null>(null)
 const findings = ref<WorkflowFinding[]>([])
+const findingsSource = ref<'check' | 'save'>('check')
 const runResult = ref<WorkflowRun | null>(null)
 const resultView = ref<'typed' | 'json'>('typed')
 const outputDesc = ref<import('@bufbuild/protobuf').DescMessage | null>(null)
@@ -262,6 +253,7 @@ async function check() {
   checking.value = true
   checkResult.value = null
   findings.value = []
+  findingsSource.value = 'check'
   try {
     const definition = parseDefinition(editor.value)
     const result = await checkWorkflow(definition)
@@ -278,6 +270,7 @@ async function check() {
 async function save() {
   saving.value = true
   findings.value = []
+  findingsSource.value = 'save'
   try {
     const definition = parseDefinition(editor.value)
     await putWorkflow(saveName.value, definition)

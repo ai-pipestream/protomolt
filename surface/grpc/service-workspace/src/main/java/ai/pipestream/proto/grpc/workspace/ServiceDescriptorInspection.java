@@ -119,7 +119,10 @@ public final class ServiceDescriptorInspection {
                     .set("jsonName", field.getJsonName())
                     .set("number", field.getNumber())
                     .set("type", field.getType().name().toLowerCase(java.util.Locale.ROOT))
-                    .set("cardinality", field.isRepeated() ? "repeated" : "singular");
+                    // A map is repeated on the wire but an object in proto3 JSON, so a
+                    // caller building a request from this inspection has to know which.
+                    .set("cardinality", field.isMapField() ? "map"
+                            : field.isRepeated() ? "repeated" : "singular");
             if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 node.set("typeName", field.getMessageType().getFullName());
             } else if (field.getJavaType() == FieldDescriptor.JavaType.ENUM) {

@@ -29,11 +29,15 @@ public final class ServiceWorkspaceActions {
                                          SchemaRegistryStore registry, ChannelFactory channels) {
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(channels, "channels");
+        // A stored profile's methods become live verbs the moment register or
+        // refresh lands, so the workbench never advertises a verb that is not there.
+        ProfileStored reflected = profile -> ReflectedServiceActions.register(
+                catalog, profile, repository, registry, channels);
         return catalog
-                .register(new ServiceRegisterAction(repository, registry, channels))
+                .register(new ServiceRegisterAction(repository, registry, channels, reflected))
                 .register(new ServiceListAction(repository))
                 .register(new ServiceInspectAction(repository, registry))
-                .register(new ServiceRefreshAction(repository, registry, channels))
+                .register(new ServiceRefreshAction(repository, registry, channels, reflected))
                 .register(new ServiceInvokeAction(repository, registry, channels));
     }
 }
