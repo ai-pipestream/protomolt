@@ -82,18 +82,18 @@
           <v-table density="comfortable" class="metric-table">
             <thead>
               <tr>
-                <th v-for="dimension in chosenDimensions" :key="dimension"
+                <th v-for="dimension in result.dimensions" :key="dimension"
                     class="text-caption">{{ dimension }}</th>
-                <th v-for="measure in chosenMeasures" :key="measure"
+                <th v-for="measure in result.measures" :key="measure"
                     class="text-caption text-right">{{ measure }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(row, i) in result.rows" :key="i">
-                <td v-for="dimension in chosenDimensions" :key="dimension" class="text-mono">
+                <td v-for="dimension in result.dimensions" :key="dimension" class="text-mono">
                   {{ row.dimensions?.[dimension] ?? '' }}
                 </td>
-                <td v-for="measure in chosenMeasures" :key="measure" class="measure-cell">
+                <td v-for="measure in result.measures" :key="measure" class="measure-cell">
                   <div class="measure">
                     <span class="value tabular">{{
                       renderMeasure(row.measures?.[measure] ?? 0) }}</span>
@@ -116,6 +116,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef } from 'vue'
+import { errorMessage } from '../services/api'
 import {
   METRIC_SERVICE,
   describeMapping,
@@ -139,7 +140,10 @@ const limit = ref(100)
 const describing = ref(false)
 const querying = ref(false)
 const error = ref('')
-const result = shallowRef<MetricsResult | null>(null)
+// The rendered table's columns are the QUERIED members, frozen with the rows:
+// editing the pickers must not grow columns the engine never answered.
+const result = shallowRef<(MetricsResult
+    & { measures: string[]; dimensions: string[] }) | null>(null)
 
 const measureNames = computed(() =>
   mapping.value ? measures(mapping.value).map((m) => m.name) : [])
@@ -155,7 +159,7 @@ onMounted(async () => {
   try {
     profile.value = await findMetricsProfile()
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     probed.value = true
   }
@@ -174,7 +178,7 @@ async function describe() {
     chosenDimensions.value = []
   } catch (e) {
     mapping.value = null
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     describing.value = false
   }
@@ -185,15 +189,20 @@ async function run() {
   querying.value = true
   error.value = ''
   try {
-    result.value = await queryMetrics(profile.value, {
+    const queried = await queryMetrics(profile.value, {
       mappingSubject: subject.value,
       measures: chosenMeasures.value,
       dimensions: chosenDimensions.value,
       limit: limit.value,
     })
+    result.value = {
+      ...queried,
+      measures: [...chosenMeasures.value],
+      dimensions: [...chosenDimensions.value],
+    }
   } catch (e) {
     result.value = null
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     querying.value = false
   }

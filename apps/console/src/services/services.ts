@@ -12,7 +12,7 @@ export interface ReflectedField {
   number?: number
   /** Lower-case protobuf type: 'string', 'int64', 'message', 'enum', ... */
   type: string
-  /** 'singular' or 'repeated' (maps report as repeated). */
+  /** 'singular', 'repeated', or 'map'. */
   cardinality?: string
   /** Fully qualified message/enum type, '' for scalars. */
   typeName?: string
@@ -59,17 +59,88 @@ export interface ServiceInvocation {
 
 const SERVE = '/api/serve/grpc-json/ProtoMoltService'
 
-async function verb<T>(name: string, body: unknown, fetchFn: typeof fetch): Promise<T> {
-  const response = await fetchFn(`${SERVE}/${name}`, {
+/** An error thrown by the serve bridge; gate findings ride along when present. */
+export interface BridgeError extends Error {
+  findings?: unknown[]
+}
+
+/**
+ * Reads a bridge response: JSON body on success, the body's message as a thrown
+ * error otherwise. The status check comes before parsing, so a proxy answering
+ * an outage with HTML surfaces as its HTTP status rather than as a parse error.
+ */
+export async function unwrap<T>(response: Response): Promise<T> {
+  const text = await response.text()
+  let body: Record<string, unknown> | null = null
+  try {
+    body = JSON.parse(text) as Record<string, unknown>
+  } catch {
+    body = null
+  }
+  if (!response.ok) {
+    const message = body?.message ?? body?.error ?? `HTTP ${response.status}`
+    const error = new Error(String(message)) as BridgeError
+    if (Array.isArray(body?.findings)) error.findings = body.findings
+    throw error
+  }
+  if (body === null) {
+    throw new Error(`the server answered ${response.status} with a non-JSON body`)
+  }
+  return body as T
+}
+
+/** Calls one ProtoMoltService verb over the serve bridge. */
+export async function verb<T>(
+  name: string,
+  body: unknown,
+  fetchFn: typeof fetch = fetch,
+): Promise<T> {
+  return unwrap(await fetchFn(`${SERVE}/${name}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-  })
-  const json = (await response.json()) as Record<string, unknown>
-  if (!response.ok) {
-    throw new Error(String(json.message ?? json.error ?? `HTTP ${response.status}`))
+  }))
+}
+
+/**
+ * The registered profile exposing a contract, or null when none does. Profiles
+ * are inspected concurrently (one slow endpoint must not stall the page), and
+ * the first match in registration order wins; a profile whose endpoint refuses
+ * inspection is not the profile today.
+ */
+export async function findProfileByContract(
+  contract: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<string | null> {
+  const summaries = await listServices(fetchFn)
+  const inspections = await Promise.all(summaries.map(async (summary) => {
+    try {
+      return await inspectService(summary.name, fetchFn)
+    } catch {
+      return null
+    }
+  }))
+  for (let i = 0; i < summaries.length; i++) {
+    if ((inspections[i]?.services ?? []).some((s) => s.name === contract)) {
+      return summaries[i].name
+    }
   }
-  return json as T
+  return null
+}
+
+/** Invokes a unary method through ServiceInvoke and answers its first reply. */
+export async function invokeUnary<T>(
+  profile: string,
+  method: string,
+  request: Record<string, unknown>,
+  fetchFn: typeof fetch = fetch,
+): Promise<T> {
+  const result = await invokeMethod(profile, method, request, fetchFn)
+  if (!result.ok) {
+    throw new Error(result.description || result.status
+        || `${method.slice(method.indexOf('/') + 1)} failed`)
+  }
+  return (result.responses?.[0] ?? {}) as T
 }
 
 export async function listServices(fetchFn: typeof fetch = fetch): Promise<ServiceSummary[]> {
@@ -187,6 +258,8 @@ export function requestSkeleton(method: ReflectedMethod): Record<string, unknown
 }
 
 function zeroValue(field: ReflectedField): unknown {
+  // A map is repeated on the wire but an object in proto3 JSON.
+  if (field.cardinality === 'map') return {}
   if (field.cardinality === 'repeated') return []
   switch (field.type) {
     case 'string':

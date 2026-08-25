@@ -57,6 +57,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
+import { errorMessage } from '../services/api'
 import {
   invokeMethod,
   requestSkeleton,
@@ -99,17 +100,20 @@ function key(field: ReflectedField): string {
   return field.jsonName || field.name
 }
 
+function singular(field: ReflectedField): boolean {
+  return field.cardinality !== 'repeated' && field.cardinality !== 'map'
+}
+
 function isBool(field: ReflectedField): boolean {
-  return field.cardinality !== 'repeated' && field.type === 'bool'
+  return singular(field) && field.type === 'bool'
 }
 
 function isScalar(field: ReflectedField): boolean {
-  return field.cardinality !== 'repeated'
-      && field.type !== 'message' && field.type !== 'group'
+  return singular(field) && field.type !== 'message' && field.type !== 'group'
 }
 
 function hint(field: ReflectedField): string {
-  const shape = field.cardinality === 'repeated' ? `repeated ${field.type}` : field.type
+  const shape = singular(field) ? field.type : `${field.cardinality} ${field.type}`
   return field.typeName ? `${shape} · ${field.typeName}` : shape
 }
 
@@ -180,7 +184,7 @@ async function invoke() {
         : (JSON.parse(rawJson.value) as Record<string, unknown>)
     result.value = await invokeMethod(props.profile, props.method.fullName, request)
   } catch (e) {
-    callError.value = (e as Error).message
+    callError.value = errorMessage(e)
   } finally {
     calling.value = false
   }

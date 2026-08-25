@@ -3,7 +3,7 @@
  * node, reached like search: through a registered service profile and the
  * ServiceInvoke verb, found by its contract rather than its name.
  */
-import { inspectService, invokeMethod, listServices } from './services'
+import { findProfileByContract, invokeUnary } from './services'
 
 export const METRIC_SERVICE = 'ai.pipestream.proto.metric.v1.MetricService'
 
@@ -45,17 +45,7 @@ export interface MetricsResult {
 export async function findMetricsProfile(
   fetchFn: typeof fetch = fetch,
 ): Promise<string | null> {
-  for (const summary of await listServices(fetchFn)) {
-    try {
-      const inspection = await inspectService(summary.name, fetchFn)
-      if ((inspection.services ?? []).some((s) => s.name === METRIC_SERVICE)) {
-        return summary.name
-      }
-    } catch {
-      // A profile whose endpoint is down is not the metrics profile today.
-    }
-  }
-  return null
+  return findProfileByContract(METRIC_SERVICE, fetchFn)
 }
 
 export async function describeMapping(
@@ -63,12 +53,8 @@ export async function describeMapping(
   mappingSubject: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<MetricMapping> {
-  const result = await invokeMethod(profile, `${METRIC_SERVICE}/DescribeMapping`,
+  return invokeUnary(profile, `${METRIC_SERVICE}/DescribeMapping`,
       { mappingSubject }, fetchFn)
-  if (!result.ok) {
-    throw new Error(result.description || result.status || 'DescribeMapping failed')
-  }
-  return (result.responses?.[0] ?? {}) as MetricMapping
 }
 
 export async function queryMetrics(
@@ -89,13 +75,8 @@ export async function queryMetrics(
   if (query.dimensions?.length) {
     request.dimensions = query.dimensions.map((name) => ({ name }))
   }
-  const result = await invokeMethod(profile, `${METRIC_SERVICE}/QueryMetrics`,
-      request, fetchFn)
-  if (!result.ok) {
-    throw new Error(result.description || result.status || 'QueryMetrics failed')
-  }
-  const response = (result.responses?.[0] ?? {}) as
-      { rows?: MetricRow[]; physicalPlan?: string }
+  const response = await invokeUnary<{ rows?: MetricRow[]; physicalPlan?: string }>(
+      profile, `${METRIC_SERVICE}/QueryMetrics`, request, fetchFn)
   return { rows: response.rows ?? [], physicalPlan: response.physicalPlan }
 }
 

@@ -4,7 +4,7 @@
  * service: through a registered service profile and the ServiceInvoke verb. This
  * module finds the profile that exposes the search contract and shapes its calls.
  */
-import { inspectService, invokeMethod, listServices } from './services'
+import { findProfileByContract, invokeUnary } from './services'
 
 export const SEARCH_SERVICE = 'ai.pipestream.proto.search.v1.SearchService'
 
@@ -42,34 +42,19 @@ export interface SearchHit {
   stored?: Record<string, StoredValue>
 }
 
-/**
- * The registered profile exposing the search contract, or null when none does.
- * Found by inspecting each profile's reflected services — the profile's name is
- * whatever the operator chose, so the contract is the only reliable marker.
- */
+/** The registered profile exposing the search contract, or null when none does. */
 export async function findSearchProfile(
   fetchFn: typeof fetch = fetch,
 ): Promise<string | null> {
-  for (const summary of await listServices(fetchFn)) {
-    try {
-      const inspection = await inspectService(summary.name, fetchFn)
-      if ((inspection.services ?? []).some((s) => s.name === SEARCH_SERVICE)) {
-        return summary.name
-      }
-    } catch {
-      // A profile whose endpoint is down is not the search profile today.
-    }
-  }
-  return null
+  return findProfileByContract(SEARCH_SERVICE, fetchFn)
 }
 
 export async function listSubjects(
   profile: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<SearchSubject[]> {
-  const result = await invokeMethod(profile, `${SEARCH_SERVICE}/ListSubjects`, {}, fetchFn)
-  if (!result.ok) throw new Error(result.description || result.status || 'ListSubjects failed')
-  const response = (result.responses?.[0] ?? {}) as { subjects?: SearchSubject[] }
+  const response = await invokeUnary<{ subjects?: SearchSubject[] }>(
+      profile, `${SEARCH_SERVICE}/ListSubjects`, {}, fetchFn)
   return response.subjects ?? []
 }
 
@@ -85,9 +70,8 @@ export async function search(
     lane: query.lane,
   }
   if (query.fields?.length) request.fields = query.fields
-  const result = await invokeMethod(profile, `${SEARCH_SERVICE}/Search`, request, fetchFn)
-  if (!result.ok) throw new Error(result.description || result.status || 'Search failed')
-  const response = (result.responses?.[0] ?? {}) as { hits?: SearchHit[] }
+  const response = await invokeUnary<{ hits?: SearchHit[] }>(
+      profile, `${SEARCH_SERVICE}/Search`, request, fetchFn)
   return response.hits ?? []
 }
 

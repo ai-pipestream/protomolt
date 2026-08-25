@@ -7,7 +7,7 @@ type Handler = (url: string, body?: Record<string, unknown>) => unknown
 function bridge(handler: Handler) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
-    return { ok: true, status: 200, json: async () => handler(url, body) }
+    return { ok: true, status: 200, text: async () => JSON.stringify(handler(url, body)) }
   }) as never
 }
 
@@ -39,15 +39,16 @@ describe('finding the search profile', () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined
       if (url.endsWith('/ServiceList')) {
-        return { ok: true, status: 200, json: async () =>
-            ({ services: [{ name: 'down' }, { name: 'search' }] }) }
+        return { ok: true, status: 200, text: async () => JSON.stringify(
+            { services: [{ name: 'down' }, { name: 'search' }] }) }
       }
       calls.push(String(body!.name))
       if (body!.name === 'down') {
-        return { ok: false, status: 502, json: async () => ({ message: 'unreachable' }) }
+        return { ok: false, status: 502, text: async () => JSON.stringify(
+            { message: 'unreachable' }) }
       }
-      return { ok: true, status: 200, json: async () =>
-          ({ services: [{ name: 'ai.pipestream.proto.search.v1.SearchService' }] }) }
+      return { ok: true, status: 200, text: async () => JSON.stringify(
+          { services: [{ name: 'ai.pipestream.proto.search.v1.SearchService' }] }) }
     }) as never
     expect(await findSearchProfile(fetchFn)).toBe('search')
     expect(calls).toEqual(['down', 'search'])

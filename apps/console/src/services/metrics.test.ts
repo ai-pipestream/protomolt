@@ -11,7 +11,7 @@ import {
 function bridge(handler: (url: string, body?: Record<string, unknown>) => unknown) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
-    return { ok: true, status: 200, json: async () => handler(url, body) }
+    return { ok: true, status: 200, text: async () => JSON.stringify(handler(url, body)) }
   }) as never
 }
 

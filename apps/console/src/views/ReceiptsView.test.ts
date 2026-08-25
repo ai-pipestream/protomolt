@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ReceiptsView from './ReceiptsView.vue'
 import * as receipts from '../services/receipts'
+import * as workflows from '../services/workflows'
 import { installDomStubs, routerForTests, vuetifyForTests } from '../componentTestKit'
 
 vi.mock('../services/receipts', async (importOriginal) => {
@@ -15,10 +16,26 @@ vi.mock('../services/receipts', async (importOriginal) => {
   }
 })
 
+vi.mock('../services/workflows', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/workflows')>()
+  return {
+    ...actual,
+    listWorkflows: vi.fn(),
+    getWorkflow: vi.fn(),
+    compileWorkflow: vi.fn(),
+  }
+})
+
 const api = receipts as unknown as {
   exportRecord: ReturnType<typeof vi.fn>
   verifyRecord: ReturnType<typeof vi.fn>
   evaluateRecord: ReturnType<typeof vi.fn>
+}
+
+const workflowApi = workflows as unknown as {
+  listWorkflows: ReturnType<typeof vi.fn>
+  getWorkflow: ReturnType<typeof vi.fn>
+  compileWorkflow: ReturnType<typeof vi.fn>
 }
 
 installDomStubs()
@@ -36,6 +53,12 @@ async function mountView() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  workflowApi.listWorkflows.mockResolvedValue(['index-pipeline'])
+  workflowApi.getWorkflow.mockResolvedValue({
+    schema: { descriptorSetBase64: 'CgA=' },
+    steps: [],
+  })
+  workflowApi.compileWorkflow.mockResolvedValue({ name: 'index-pipeline' })
 })
 
 describe('ReceiptsView', () => {
@@ -68,7 +91,7 @@ describe('ReceiptsView', () => {
     expect(text).toContain('does not claim the inputs were correct')
   })
 
-  it('shows an evaluation with its replayed steps and failures', async () => {
+  it('evaluates against the chosen stored workflow, compiled with its schema', async () => {
     api.evaluateRecord.mockResolvedValue({
       accepted: false,
       policyId: 'default',
@@ -81,9 +104,15 @@ describe('ReceiptsView', () => {
     })
     const wrapper = await mountView()
     await wrapper.find('textarea').setValue('AAAA')
+    // The sole stored workflow was pre-selected on mount.
     await wrapper.findAll('button')
-      .find((b) => b.text().includes('Evaluate against its workflow'))!.trigger('click')
+      .find((b) => b.text() === 'Evaluate')!.trigger('click')
     await flushPromises()
+
+    // The verb's contract wants the compiled workflow and its schema, not nulls.
+    expect(workflowApi.getWorkflow).toHaveBeenCalledWith('index-pipeline')
+    expect(api.evaluateRecord).toHaveBeenCalledWith('AAAA',
+        { name: 'index-pipeline' }, { descriptorSetBase64: 'CgA=' })
     const text = wrapper.text()
     expect(text).toContain('not accepted')
     expect(text).toContain('The recorded steps, replayed')

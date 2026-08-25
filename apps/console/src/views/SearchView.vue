@@ -102,6 +102,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { errorMessage } from '../services/api'
 import {
   SEARCH_SERVICE,
   findSearchProfile,
@@ -142,7 +143,7 @@ onMounted(async () => {
       subject.value = subjects.value[0]?.subject ?? null
     }
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     probed.value = true
   }
@@ -161,7 +162,7 @@ async function run() {
     })
   } catch (e) {
     hits.value = null
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     searching.value = false
   }

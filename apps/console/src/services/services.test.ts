@@ -1,18 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  findProfileByContract,
   invokeMethod,
+  invokeUnary,
   kebab,
   listServices,
   registerService,
   requestSkeleton,
   splitTarget,
+  unwrap,
   verbName,
   type ReflectedMethod,
   type ReflectedService,
 } from './services'
 
 function answering(body: unknown, ok = true) {
-  return vi.fn(async () => ({ ok, status: ok ? 200 : 400, json: async () => body })) as never
+  return vi.fn(async () => ({
+    ok, status: ok ? 200 : 400, text: async () => JSON.stringify(body),
+  })) as never
 }
 
 describe('the workspace client', () => {
@@ -49,6 +54,54 @@ describe('the workspace client', () => {
   it('surfaces the serve error body as the thrown message', async () => {
     const fetchFn = answering({ error: 'unknown-service', message: "no profile 'x'" }, false)
     await expect(listServices(fetchFn)).rejects.toThrow("no profile 'x'")
+  })
+
+  it('answers an outage with its HTTP status, not a parse error', async () => {
+    // A proxy fronting an outage answers HTML; the status is the story.
+    const gateway = {
+      ok: false, status: 502,
+      text: async () => '<html>Bad Gateway</html>',
+    } as unknown as Response
+    await expect(unwrap(gateway)).rejects.toThrow('HTTP 502')
+  })
+
+  it('carries gate findings on the thrown error', async () => {
+    const refused = {
+      ok: false, status: 409,
+      text: async () => JSON.stringify({
+        message: 'not stored', findings: [{ step: '', kind: 'workflow', error: 'no steps' }],
+      }),
+    } as unknown as Response
+    await expect(unwrap(refused)).rejects.toSatisfy((e: Error & { findings?: unknown[] }) =>
+      e.message === 'not stored' && e.findings?.length === 1)
+  })
+
+  it('finds a profile by its contract with the slow endpoint not consulted last', async () => {
+    const inspected: string[] = []
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      if (url.endsWith('/ServiceList')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify(
+            { services: [{ name: 'down' }, { name: 'lake' }] }) }
+      }
+      inspected.push(String(body!.name))
+      if (body!.name === 'down') {
+        return { ok: false, status: 502, text: async () => 'unreachable' }
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify(
+          { services: [{ name: 'x.v1.Wanted' }] }) }
+    }) as never
+    expect(await findProfileByContract('x.v1.Wanted', fetchFn)).toBe('lake')
+    // Both inspections were issued; the failure did not stop the sweep.
+    expect(inspected.sort()).toEqual(['down', 'lake'])
+  })
+
+  it('invokeUnary answers the first reply and throws the call description', async () => {
+    const ok = answering({ ok: true, status: 'OK', responses: [{ subjects: [] }] })
+    expect(await invokeUnary('p', 's.S/List', {}, ok)).toEqual({ subjects: [] })
+    const refused = answering({ ok: false, status: 'INVALID_ARGUMENT',
+      description: 'unknown subject' })
+    await expect(invokeUnary('p', 's.S/List', {}, refused)).rejects.toThrow('unknown subject')
   })
 })
 
@@ -104,10 +157,12 @@ describe('request skeletons', () => {
         { name: 'lane', type: 'enum', typeName: 's.Lane' },
         { name: 'filters', type: 'message', cardinality: 'repeated', typeName: 's.F' },
         { name: 'query', type: 'message', typeName: 's.Q' },
+        // A map is repeated on the wire but an object in proto3 JSON.
+        { name: 'metadata', type: 'message', cardinality: 'map', typeName: 's.M' },
       ],
     }
     expect(requestSkeleton(method)).toEqual({
-      docId: '', k: 0, exact: false, lane: 0, filters: [], query: {},
+      docId: '', k: 0, exact: false, lane: 0, filters: [], query: {}, metadata: {},
     })
   })
 })

@@ -4,6 +4,7 @@
  * signatures and digests hold?) and optionally evaluated against a workflow
  * (does the record show that workflow was actually followed?).
  */
+import { verb } from './services'
 
 export interface WorkRecordCheck {
   id: string
@@ -44,21 +45,6 @@ export interface Evaluation {
   nonClaims: string[]
 }
 
-const SERVE = '/api/serve/grpc-json/ProtoMoltService'
-
-async function verb<T>(name: string, body: unknown, fetchFn: typeof fetch): Promise<T> {
-  const response = await fetchFn(`${SERVE}/${name}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const json = (await response.json()) as Record<string, unknown>
-  if (!response.ok) {
-    throw new Error(String(json.message ?? json.error ?? `HTTP ${response.status}`))
-  }
-  return json as T
-}
-
 export async function exportRecord(
   runId: string,
   fetchFn: typeof fetch = fetch,
@@ -82,11 +68,13 @@ export async function verifyRecord(
 
 export async function evaluateRecord(
   recordBase64: string,
-  workflow: Record<string, unknown> | null,
+  workflow: Record<string, unknown>,
+  schema: Record<string, unknown>,
   fetchFn: typeof fetch = fetch,
 ): Promise<Evaluation> {
-  const body: Record<string, unknown> = { recordBase64 }
-  if (workflow) body.workflow = workflow
+  // The verb requires the workflow and its schema: an evaluation is a claim
+  // about a specific contract, so there is no evaluating without one.
+  const body = { recordBase64, workflow, schema }
   const result = await verb<Record<string, unknown>>('EvaluateWorkRecord', body, fetchFn)
   return {
     accepted: result.accepted === true,

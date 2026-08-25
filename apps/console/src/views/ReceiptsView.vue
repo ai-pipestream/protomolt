@@ -26,16 +26,18 @@
             </v-btn>
             <v-textarea v-model="record" label="Or paste a record (base64)" rows="5"
                         density="compact" class="text-mono" spellcheck="false" />
-            <div class="d-flex ga-2">
-              <v-btn color="primary" size="small" :loading="verifying" :disabled="!record.trim()"
-                     @click="verify">
-                Verify
-              </v-btn>
-              <v-btn size="small" variant="tonal" :loading="evaluating" :disabled="!record.trim()"
-                     @click="evaluate">
-                Evaluate against its workflow
-              </v-btn>
-            </div>
+            <v-btn color="primary" size="small" class="mb-4" :loading="verifying"
+                   :disabled="!record.trim()" @click="verify">
+              Verify
+            </v-btn>
+            <v-select v-model="workflowName" :items="workflowNames"
+                      label="Workflow to evaluate against" density="compact" class="mb-1"
+                      hint="Evaluation replays the record against a stored workflow's contract"
+                      persistent-hint />
+            <v-btn size="small" variant="tonal" :loading="evaluating"
+                   :disabled="!record.trim() || !workflowName" @click="evaluate">
+              Evaluate
+            </v-btn>
             <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mt-2">
               {{ error }}
             </v-alert>
@@ -124,9 +126,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, shallowRef } from 'vue'
+import { computed, onMounted, ref, shallowRef } from 'vue'
 import CheckList from '../components/WorkRecordCheckList.vue'
 import NonClaims from '../components/WorkRecordNonClaims.vue'
+import { errorMessage } from '../services/api'
 import {
   evaluateRecord,
   exportRecord,
@@ -134,10 +137,13 @@ import {
   type Evaluation,
   type Verification,
 } from '../services/receipts'
+import { compileWorkflow, getWorkflow, listWorkflows } from '../services/workflows'
 import { toast } from '../composables/useToast'
 
 const runId = ref('')
 const record = ref('')
+const workflowNames = ref<string[]>([])
+const workflowName = ref<string | null>(null)
 const exporting = ref(false)
 const verifying = ref(false)
 const evaluating = ref(false)
@@ -148,6 +154,15 @@ const evaluation = shallowRef<Evaluation | null>(null)
 const failedReplays = computed(() =>
   (evaluation.value?.replaySteps ?? []).filter((s) => !s.ok && s.detail))
 
+onMounted(async () => {
+  try {
+    workflowNames.value = await listWorkflows()
+    workflowName.value = workflowNames.value[0] ?? null
+  } catch {
+    // No registry, no stored workflows: verification still works on its own.
+  }
+})
+
 async function exportFromRun() {
   exporting.value = true
   error.value = ''
@@ -156,7 +171,7 @@ async function exportFromRun() {
     record.value = exported.recordBase64
     toast.success(exported.recordId ? `Exported ${exported.recordId}` : 'Exported')
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     exporting.value = false
   }
@@ -170,21 +185,30 @@ async function verify() {
     verification.value = await verifyRecord(record.value.trim())
   } catch (e) {
     verification.value = null
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     verifying.value = false
   }
 }
 
 async function evaluate() {
+  if (!workflowName.value) return
   evaluating.value = true
   error.value = ''
   verification.value = null
   try {
-    evaluation.value = await evaluateRecord(record.value.trim(), null)
+    // The verb takes the compiled workflow and its schema: evaluation is a
+    // claim about a specific contract, stated here by a stored definition.
+    const definition = await getWorkflow(workflowName.value)
+    const compiled = await compileWorkflow(definition)
+    const schema = definition.schema as Record<string, unknown> | undefined
+    if (!schema) {
+      throw new Error(`workflow '${workflowName.value}' has no schema to evaluate against`)
+    }
+    evaluation.value = await evaluateRecord(record.value.trim(), compiled, schema)
   } catch (e) {
     evaluation.value = null
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     evaluating.value = false
   }

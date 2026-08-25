@@ -136,6 +136,7 @@ import {
   type ServiceInspection,
   type ServiceSummary,
 } from '../services/services'
+import { errorMessage } from '../services/api'
 import { toast } from '../composables/useToast'
 
 const route = useRoute()
@@ -169,7 +170,7 @@ async function load() {
     services.value = await listServices()
     error.value = ''
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     loaded.value = true
   }
@@ -179,10 +180,14 @@ async function select(name: string) {
   selected.value = name
   inspection.value = null
   try {
-    inspection.value = await inspectService(name)
+    const inspected = await inspectService(name)
+    // A slower inspection must not land under a newer selection.
+    if (selected.value !== name) return
+    inspection.value = inspected
     error.value = ''
   } catch (e) {
-    error.value = (e as Error).message
+    if (selected.value !== name) return
+    error.value = errorMessage(e)
   }
 }
 
@@ -199,7 +204,7 @@ async function register() {
     await load()
     await select(registerName.value)
   } catch (e) {
-    registerError.value = (e as Error).message
+    registerError.value = errorMessage(e)
   } finally {
     registering.value = false
   }
