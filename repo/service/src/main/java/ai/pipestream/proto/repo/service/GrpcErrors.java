@@ -88,4 +88,12 @@ final class GrpcErrors {
     static StatusRuntimeException failedPrecondition(String message) {
         return Status.FAILED_PRECONDITION.withDescription(message).asRuntimeException();
     }
+
+    static StatusRuntimeException aborted(String message) {
+        return Status.ABORTED.withDescription(message).asRuntimeException();
+    }
+
+    static StatusRuntimeException alreadyExists(String message) {
+        return Status.ALREADY_EXISTS.withDescription(message).asRuntimeException();
+    }
 }

@@ -106,6 +106,7 @@ public final class RepoServices implements AutoCloseable {
     private final ManagedChannel remoteChannel;
     private final PartStorage partStorage;
     private final DocumentGrpcService documentService;
+    private final ArchiveOperations archiveOperations;
     private final DriveProvisioner driveProvisioner;
     private final List<BindableService> services;
     private final S3Purger s3Purger;
@@ -191,8 +192,12 @@ public final class RepoServices implements AutoCloseable {
                 blobStore, partStorage, purgeQueue, eventOutbox);
         this.driveProvisioner = new DriveProvisioner(driveLedger, s3Client,
                 config.defaultBucketBase(), config.s3Region());
+        this.archiveOperations = new ArchiveOperations(
+                new ai.pipestream.proto.repo.container.archive.ArchiveLedger(tx),
+                driveLedger, blobStore);
         this.services = List.of(
                 documentService,
+                new ArchiveGrpcService(archiveOperations),
                 new DriveGrpcService(driveLedger, s3Client,
                         config.defaultBucketBase(), config.s3Region()));
         // The lifecycle engine (two-phase delete): stateless workers over the
@@ -215,7 +220,7 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
-     * The wired gRPC services (document + drive), for hosts that register
+     * The wired gRPC services (document + archive + drive), for hosts that register
      * them on their own server builder.
      *
      * @return the service implementations, unmodifiable
@@ -334,8 +339,8 @@ public final class RepoServices implements AutoCloseable {
      * @return the started HTTP server (also closed by {@link #close()})
      */
     public UploadHttpServer startHttp(int port, String apiToken) {
-        UploadHttpServer http =
-                new UploadHttpServer(documentService, driveLedger, blobStore, apiToken);
+        UploadHttpServer http = new UploadHttpServer(documentService, driveLedger,
+                blobStore, apiToken, archiveOperations);
         http.start(port);
         httpServers.add(http);
         return http;
