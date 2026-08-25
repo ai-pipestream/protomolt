@@ -20,14 +20,21 @@ import java.io.IOException;
 public final class ServiceRefreshAction implements ProtoAction {
 
     private final ServiceProfileRepository repository;
+    private final ProfileStored stored;
     private final ChannelFactory channels;
     private final SchemaRegistryStore registry;
 
     public ServiceRefreshAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
                                 ChannelFactory channels) {
+        this(repository, registry, channels, null);
+    }
+
+    ServiceRefreshAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                         ChannelFactory channels, ProfileStored stored) {
         this.repository = repository;
         this.registry = registry;
         this.channels = channels;
+        this.stored = stored;
     }
 
     @Override
@@ -73,6 +80,9 @@ public final class ServiceRefreshAction implements ProtoAction {
                     endpoint.isEmpty() ? null : endpoint,
                     deadline(input),
                     store, registry, channels);
+            if (stored != null) {
+                stored.stored(refreshed);
+            }
             Reply result = Reply.of(responseType())
                     .set("ok", true)
                     .set("changed", !refreshed.getSchemaSource().getDescriptorFingerprint()

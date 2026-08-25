@@ -3,9 +3,12 @@
  * (/api/protomolt/protomolt/workflows), verification and execution through the serve bridge
  * (check-workflow / run-workflow). Pure request/response shaping — the view stays thin.
  */
+import { unwrap, verb } from './services'
 
 export interface WorkflowFinding {
+  /** The step the finding is attributed to, or '' for the workflow itself. */
   step: string
+  /** 'method', 'when', 'rule', 'celRule', 'output', 'workflow', or 'contract'. */
   kind: string
   error: string
 }
@@ -30,28 +33,16 @@ export interface WorkflowRun {
 }
 
 const REGISTRY_WORKFLOWS = '/api/protomolt/protomolt/workflows'
-const SERVE = '/api/serve/grpc-json/ProtoMoltService'
-
-async function json<T>(res: Response): Promise<T> {
-  const body = await res.json()
-  if (!res.ok) {
-    const message = body?.message ?? body?.error ?? `HTTP ${res.status}`
-    const error = new Error(String(message)) as Error & { findings?: WorkflowFinding[] }
-    if (Array.isArray(body?.findings)) error.findings = body.findings
-    throw error
-  }
-  return body as T
-}
 
 export async function listWorkflows(fetchFn: typeof fetch = fetch): Promise<string[]> {
-  return json<string[]>(await fetchFn(REGISTRY_WORKFLOWS))
+  return unwrap<string[]>(await fetchFn(REGISTRY_WORKFLOWS))
 }
 
 export async function getWorkflow(
   name: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<Record<string, unknown>> {
-  return json(await fetchFn(`${REGISTRY_WORKFLOWS}/${encodeURIComponent(name)}`))
+  return unwrap(await fetchFn(`${REGISTRY_WORKFLOWS}/${encodeURIComponent(name)}`))
 }
 
 /** PUT is gated server-side by check-workflow; gate findings ride on the thrown error. */
@@ -60,7 +51,7 @@ export async function putWorkflow(
   definition: unknown,
   fetchFn: typeof fetch = fetch,
 ): Promise<void> {
-  await json(await fetchFn(`${REGISTRY_WORKFLOWS}/${encodeURIComponent(name)}`, {
+  await unwrap(await fetchFn(`${REGISTRY_WORKFLOWS}/${encodeURIComponent(name)}`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(definition),
@@ -71,11 +62,18 @@ export async function checkWorkflow(
   definition: unknown,
   fetchFn: typeof fetch = fetch,
 ): Promise<WorkflowCheck> {
-  return json(await fetchFn(`${SERVE}/CheckWorkflow`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflow: definition }),
-  }))
+  return verb('CheckWorkflow', { workflow: definition }, fetchFn)
+}
+
+/** Compiles an authoring definition into the durable workflow message, as JSON. */
+export async function compileWorkflow(
+  definition: unknown,
+  fetchFn: typeof fetch = fetch,
+): Promise<Record<string, unknown>> {
+  const compiled = await verb<{ workflow?: Record<string, unknown> }>(
+      'CompileWorkflow', { workflow: definition }, fetchFn)
+  if (!compiled.workflow) throw new Error('the compiler answered without a workflow')
+  return compiled.workflow
 }
 
 export async function runWorkflow(
@@ -83,11 +81,7 @@ export async function runWorkflow(
   input: unknown,
   fetchFn: typeof fetch = fetch,
 ): Promise<WorkflowRun> {
-  return json(await fetchFn(`${SERVE}/RunWorkflow`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflowName: name, input }),
-  }))
+  return verb('RunWorkflow', { workflowName: name, input }, fetchFn)
 }
 
 /** A one-line human summary of a definition: input type and the step pipeline. */

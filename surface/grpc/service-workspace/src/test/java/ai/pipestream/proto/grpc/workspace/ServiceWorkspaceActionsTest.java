@@ -15,7 +15,7 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.nio.file.Path;
-import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -233,13 +233,9 @@ class ServiceWorkspaceActionsTest {
      */
     @Test
     void aReflectedServiceBecomesWorkingVerbs() throws Exception {
+        // Registering is all it takes: the workspace binds the reflected verbs itself.
         catalog.execute("service-register", registerInput(false));
-        var profile = repository.find("health-local").orElseThrow();
 
-        List<String> verbs = ReflectedServiceActions.register(catalog, profile, repository,
-                null, (target, tls) -> channel());
-
-        assertThat(verbs).contains("health-local-check");
         assertThat(catalog.names()).contains("health-local-check");
 
         // The published schema is derived from the reflected request message.
@@ -255,6 +251,39 @@ class ServiceWorkspaceActionsTest {
         // And the verb reaches the service.
         ObjectNode answered = catalog.execute("health-local-check", MAPPER.createObjectNode());
         assertThat(answered.path("status").asText()).isEqualTo("SERVING");
+    }
+
+    /**
+     * A host that restarts rebuilds its catalog from storage, so the stored profiles'
+     * verbs come back without anyone re-registering; a profile whose descriptors are
+     * gone is reported by name instead of failing the rest.
+     */
+    @Test
+    void storedProfilesReplayIntoAFreshCatalog() throws Exception {
+        catalog.execute("service-register", registerInput(false));
+
+        ActionCatalog restarted = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository,
+                (target, tls) -> channel());
+        Map<String, String> skipped = ReflectedServiceActions.registerStored(restarted,
+                repository, null, (target, tls) -> channel());
+
+        assertThat(skipped).isEmpty();
+        assertThat(restarted.names()).contains("health-local-check");
+        assertThat(restarted.execute("health-local-check", MAPPER.createObjectNode())
+                .path("status").asText()).isEqualTo("SERVING");
+
+        // A profile pointing at a descriptor artifact that no longer exists is skipped
+        // by name; the healthy profile's verbs still registered.
+        var broken = repository.find("health-local").orElseThrow().toBuilder();
+        broken.setName("broken");
+        broken.getSchemaSourceBuilder().setDescriptorFingerprint("0".repeat(64));
+        repository.save(broken.build());
+        ActionCatalog partial = ActionCatalog.defaults(ActionContext.create());
+        Map<String, String> report = ReflectedServiceActions.registerStored(partial,
+                repository, null, (target, tls) -> channel());
+        assertThat(report).containsOnlyKeys("broken");
+        assertThat(partial.names()).contains("health-local-check");
     }
 
     private ObjectNode registerInput(boolean credentialReference) throws Exception {
