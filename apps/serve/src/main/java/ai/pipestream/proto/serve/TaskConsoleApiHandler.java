@@ -3,6 +3,7 @@ package ai.pipestream.proto.serve;
 import ai.pipestream.proto.actions.Caller;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.ConsoleSessions;
+import ai.pipestream.proto.delegation.CandidateReviewer;
 import ai.pipestream.proto.delegation.DelegationBridge;
 import ai.pipestream.proto.delegation.DelegationReducer;
 import ai.pipestream.proto.delegation.InProcessDelegationCoordinator;
@@ -134,6 +135,10 @@ final class TaskConsoleApiHandler implements HttpHandler {
             sendMessage(exchange, taskId);
             return;
         }
+        if (parts.length == 3 && "review".equals(parts[2]) && "POST".equals(method)) {
+            review(exchange, taskId);
+            return;
+        }
         exchange.sendResponseHeaders(404, -1);
     }
 
@@ -214,6 +219,66 @@ final class TaskConsoleApiHandler implements HttpHandler {
         ObjectNode response = JSON.createObjectNode();
         response.set("message", protoJson(message));
         respondJson(exchange, 201, response);
+    }
+
+    /**
+     * Applies a human review decision to the open candidate. The console session is
+     * the external reviewer the manual review policy leaves candidates pending for:
+     * acceptance and revision both demand the reviewer's words, because a judgement
+     * without a reason is not one the transcript can defend later.
+     */
+    private void review(HttpExchange exchange, String taskId) throws IOException {
+        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+        if (body == null) {
+            exchange.sendResponseHeaders(413, -1);
+            return;
+        }
+        JsonNode parsed;
+        try {
+            parsed = JSON.readTree(body);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("invalid JSON");
+        }
+        if (parsed == null || !parsed.isObject()) {
+            throw new IllegalArgumentException("review body must be a JSON object");
+        }
+        String decision = requiredText(parsed, "decision", 16);
+        CandidateReviewer.ReviewDecision applied = switch (decision) {
+            case "accept" -> CandidateReviewer.ReviewDecision.accept(
+                    requiredText(parsed, "verdict", 4096));
+            case "revise" -> CandidateReviewer.ReviewDecision.revise(
+                    requiredText(parsed, "feedback", 4096), failedChecks(parsed));
+            default -> throw new IllegalArgumentException(
+                    "decision must be 'accept' or 'revise'");
+        };
+        bridge.review(taskId, applied);
+        DelegationReducer.TaskState state = bridge.coordinator().state().tasks().get(taskId);
+        ObjectNode response = JSON.createObjectNode();
+        response.put("decision", decision);
+        response.put("phase", state == null ? ""
+                : state.phase().name().toLowerCase(Locale.ROOT));
+        respondJson(exchange, 200, response);
+    }
+
+    private static List<String> failedChecks(JsonNode parsed) {
+        JsonNode named = parsed.get("failedChecks");
+        if (named == null || named.isNull()) {
+            return List.of();
+        }
+        if (!named.isArray() || named.size() > 64) {
+            throw new IllegalArgumentException(
+                    "failedChecks must be an array of at most 64 check names");
+        }
+        List<String> checks = new java.util.ArrayList<>(named.size());
+        for (JsonNode check : named) {
+            if (!check.isTextual() || check.asText().isBlank()
+                    || check.asText().length() > 128) {
+                throw new IllegalArgumentException(
+                        "each failed check is a non-empty name of at most 128 characters");
+            }
+            checks.add(check.asText());
+        }
+        return List.copyOf(checks);
     }
 
     private Projection projection() {

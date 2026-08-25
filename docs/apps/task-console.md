@@ -61,3 +61,22 @@ chooses a recipient and one of `guidance`, `question`, `answer`, or `note`.
 The coordinator persists the message before it becomes visible to watchers.
 The worker sees it in its next relevant event batch and its response returns
 through the same transcript.
+
+## Judgement, the contract of done, and the transcript
+
+The task detail header shows the offer's acceptance checks as the contract of
+done, each joined with the latest candidate's evidence: passed, failed, or
+unproven. Absence of evidence is a state of its own, never rendered as
+passing.
+
+When a task holds a completion candidate, the console session is the external
+reviewer the manual review policy leaves candidates pending for. Accepting
+demands a verdict and requesting a revision demands feedback, optionally
+naming the checks that failed — both go on the transcript as recorded
+protocol facts (`POST /api/tasks/{id}/review`), because a judgement without a
+reason is not one the transcript can defend later. A review with no open
+candidate is refused.
+
+The transcript exports as a plain-text record: cursor-ordered frames with
+their texts and recorded facts, stating on its face that it is a projection
+of the recorded protocol frames and carries no provider reasoning.

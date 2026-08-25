@@ -2,10 +2,15 @@ package ai.pipestream.proto.serve;
 
 import ai.pipestream.proto.delegation.DelegationBridge;
 import ai.pipestream.proto.delegation.v1.AcceptanceCheck;
+import ai.pipestream.proto.delegation.v1.CheckEvidence;
+import ai.pipestream.proto.delegation.v1.CheckVerdict;
+import ai.pipestream.proto.delegation.v1.CommitReference;
+import ai.pipestream.proto.delegation.v1.CompletionCandidate;
 import ai.pipestream.proto.delegation.v1.TaskSpec;
 import ai.pipestream.proto.delegation.v1.WorkerCapability;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.google.protobuf.util.Timestamps;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -172,6 +177,76 @@ class TaskConsoleHttpTest {
         JsonNode resumed = body(get("/api/tasks/events?taskId=" + taskId
                 + "&after=" + nextCursor + "&timeoutMs=0", cookie));
         assertThat(resumed.path("events")).isEmpty();
+    }
+
+    /**
+     * The console session is the external reviewer the manual policy leaves
+     * candidates pending for: a revision returns the task to its worker with the
+     * reviewer's feedback on the transcript, acceptance closes it with a verdict,
+     * and both demand the reviewer's words.
+     */
+    @Test
+    void aConsoleReviewJudgesTheCandidateOnTheRecord() throws Exception {
+        DelegationBridge bridge = serve.delegationBridge();
+        String reviewed = UUID.randomUUID().toString();
+        bridge.offer("console-worker", reviewed, TaskSpec.newBuilder()
+                        .setObjective("Prove the review lane")
+                        .addRequiredChecks(AcceptanceCheck.newBuilder()
+                                .setName("unit-tests")
+                                .setDescription("focused tests pass"))
+                        .build(),
+                Duration.ofMinutes(5), null);
+        bridge.accept("console-worker", reviewed, 1);
+        bridge.submitCandidate("console-worker", reviewed, candidate(1));
+
+        // A judgement without a reason is refused by name.
+        HttpResponse<String> unreasoned = post("/api/tasks/" + reviewed + "/review",
+                "{\"decision\":\"accept\"}", cookie);
+        assertThat(unreasoned.statusCode()).isEqualTo(400);
+        assertThat(unreasoned.body()).contains("verdict");
+
+        HttpResponse<String> revised = post("/api/tasks/" + reviewed + "/review", """
+                {"decision":"revise","feedback":"tests cover the happy path only",
+                 "failedChecks":["unit-tests"]}
+                """, cookie);
+        assertThat(revised.statusCode()).isEqualTo(200);
+        assertThat(body(revised).path("phase").asText()).isEqualTo("leased");
+
+        // The reviewer's feedback is now a recorded protocol fact.
+        JsonNode detail = body(get("/api/tasks/" + reviewed, cookie));
+        assertThat(detail.path("events").toString())
+                .contains("tests cover the happy path only");
+
+        // With no open candidate there is nothing to judge.
+        HttpResponse<String> early = post("/api/tasks/" + reviewed + "/review",
+                "{\"decision\":\"accept\",\"verdict\":\"fine\"}", cookie);
+        assertThat(early.statusCode()).isEqualTo(409);
+
+        bridge.submitCandidate("console-worker", reviewed, candidate(2));
+        HttpResponse<String> accepted = post("/api/tasks/" + reviewed + "/review", """
+                {"decision":"accept","verdict":"checks green and the diff is scoped"}
+                """, cookie);
+        assertThat(accepted.statusCode()).isEqualTo(200);
+        assertThat(body(accepted).path("phase").asText()).isEqualTo("accepted");
+        assertThat(body(get("/api/tasks/" + reviewed, cookie)).path("events").toString())
+                .contains("checks green and the diff is scoped");
+    }
+
+    private static CompletionCandidate candidate(int revision) {
+        return CompletionCandidate.newBuilder()
+                .setAttempt(1)
+                .setRevision(revision)
+                .setSummary("console review fixture, revision " + revision)
+                .addEvidence(CheckEvidence.newBuilder()
+                        .setCheckName("unit-tests")
+                        .setVerdict(CheckVerdict.CHECK_VERDICT_PASSED)
+                        .setDetail("focused suite green")
+                        .setRanAt(Timestamps.now()))
+                .addCommits(CommitReference.newBuilder()
+                        .setRepository("protomolt")
+                        .setCommit("0123456789abcdef0123456789abcdef01234567")
+                        .setSubject("prove the review lane"))
+                .build();
     }
 
     @Test
