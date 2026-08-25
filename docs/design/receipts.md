@@ -179,10 +179,18 @@ maps to an evidence field, a fingerprint, or a counter that already
 exists. A run that never completed projects as `PARTIAL` with reasons,
 not as a refusal — recording honest incompleteness is the point.
 
-The delegation transcript is the second projector, deferred until the
-first has a conformance corpus. The projector seam is deliberately
-narrow — evidence in, manifest out, pure — so new evidence families
-plug in without touching signing or verification.
+The delegation transcript is the second projector: a terminal task's
+transcript projects under the `delegation-task` subject kind, with the
+task, worker, and offered-spec fingerprint as the subject, the
+lifecycle milestones (offer, acceptance, each candidate with its
+review outcome, the terminal fact) as steps carrying the recorded
+words, the accepted candidate's artifacts by digest, and the
+transcript's own deterministic bytes as a content-addressed artifact.
+An accepted task projects `COMPLETE`; a cancelled, failed, or expired
+one projects `PARTIAL` with reasons; a task still in flight is
+refused. The projector seam is deliberately narrow — evidence in,
+manifest out, pure — so new evidence families plug in without touching
+signing or verification.
 
 ## Signing and key custody
 

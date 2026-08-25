@@ -7,16 +7,23 @@ import ai.pipestream.proto.delegation.CandidateReviewer;
 import ai.pipestream.proto.delegation.DelegationBridge;
 import ai.pipestream.proto.delegation.DelegationReducer;
 import ai.pipestream.proto.delegation.InProcessDelegationCoordinator;
+import ai.pipestream.proto.delegation.DelegationRecordProjector;
+import ai.pipestream.proto.delegation.v1.AcceptanceCheck;
 import ai.pipestream.proto.delegation.v1.DelegateResponse;
+import ai.pipestream.proto.delegation.v1.TaskSpec;
 import ai.pipestream.proto.delegation.v1.TaskMessageKind;
 import ai.pipestream.proto.delegation.v1.TaskOffer;
 import ai.pipestream.proto.delegation.v1.TranscriptEntry;
+import ai.pipestream.proto.receipt.WorkRecord;
+import ai.pipestream.proto.receipt.WorkRecords;
+import ai.pipestream.proto.workflow.RecordSigning;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
+import com.google.protobuf.util.Timestamps;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
@@ -43,10 +50,17 @@ final class TaskConsoleApiHandler implements HttpHandler {
 
     private final DelegationBridge bridge;
     private final ConsoleSessions sessions;
+    private final RecordSigning signing;
 
     TaskConsoleApiHandler(DelegationBridge bridge, ConsoleSessions sessions) {
+        this(bridge, sessions, null);
+    }
+
+    TaskConsoleApiHandler(DelegationBridge bridge, ConsoleSessions sessions,
+                          RecordSigning signing) {
         this.bridge = java.util.Objects.requireNonNull(bridge, "delegation bridge");
         this.sessions = java.util.Objects.requireNonNull(sessions, "task console sessions");
+        this.signing = signing;
     }
 
     @Override
@@ -77,6 +91,8 @@ final class TaskConsoleApiHandler implements HttpHandler {
                     listWorkers(exchange);
                 } else if ("/events".equals(rest) && "GET".equals(method)) {
                     watchEvents(exchange);
+                } else if ("/offer".equals(rest) && "POST".equals(method)) {
+                    offerTask(exchange);
                 } else {
                     taskRoute(exchange, method, rest);
                 }
@@ -137,6 +153,10 @@ final class TaskConsoleApiHandler implements HttpHandler {
         }
         if (parts.length == 3 && "review".equals(parts[2]) && "POST".equals(method)) {
             review(exchange, taskId);
+            return;
+        }
+        if (parts.length == 3 && "record".equals(parts[2]) && "POST".equals(method)) {
+            exportRecord(exchange, taskId);
             return;
         }
         exchange.sendResponseHeaders(404, -1);
@@ -219,6 +239,107 @@ final class TaskConsoleApiHandler implements HttpHandler {
         ObjectNode response = JSON.createObjectNode();
         response.set("message", protoJson(message));
         respondJson(exchange, 201, response);
+    }
+
+    /**
+     * Offers a durable task to a worker: the one coordinator move the browser
+     * could not make. The task identity is generated here, the spec is bounded
+     * the way every console body is, and the offer lands on the transcript
+     * like any other protocol fact.
+     */
+    private void offerTask(HttpExchange exchange) throws IOException {
+        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+        if (body == null) {
+            exchange.sendResponseHeaders(413, -1);
+            return;
+        }
+        JsonNode parsed;
+        try {
+            parsed = JSON.readTree(body);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("invalid JSON");
+        }
+        if (parsed == null || !parsed.isObject()) {
+            throw new IllegalArgumentException("offer body must be a JSON object");
+        }
+        String workerId = requiredText(parsed, "workerId", 128);
+        TaskSpec.Builder spec = TaskSpec.newBuilder()
+                .setObjective(requiredText(parsed, "objective", 4096));
+        JsonNode scopes = parsed.get("allowedScopes");
+        if (scopes != null && !scopes.isNull()) {
+            if (!scopes.isArray() || scopes.size() > 64) {
+                throw new IllegalArgumentException(
+                        "allowedScopes must be an array of at most 64 entries");
+            }
+            for (JsonNode scope : scopes) {
+                if (!scope.isTextual() || scope.asText().isBlank()
+                        || scope.asText().length() > 512) {
+                    throw new IllegalArgumentException(
+                            "each allowed scope is a non-empty path of at most 512 characters");
+                }
+                spec.addAllowedScope(scope.asText());
+            }
+        }
+        JsonNode checks = parsed.get("requiredChecks");
+        if (checks != null && !checks.isNull()) {
+            if (!checks.isArray() || checks.size() > 64) {
+                throw new IllegalArgumentException(
+                        "requiredChecks must be an array of at most 64 checks");
+            }
+            for (JsonNode check : checks) {
+                if (!check.isObject()) {
+                    throw new IllegalArgumentException(
+                            "each required check is an object with 'name' and 'description'");
+                }
+                spec.addRequiredChecks(AcceptanceCheck.newBuilder()
+                        .setName(requiredText(check, "name", 128))
+                        .setDescription(optionalText(check, "description", 2048)));
+            }
+        }
+        long leaseMinutes = boundedLong(parsed.path("leaseMinutes").isMissingNode()
+                        || parsed.path("leaseMinutes").isNull() ? null
+                        : parsed.path("leaseMinutes").asText(),
+                1, 24 * 60, 30, "leaseMinutes");
+        String taskId = UUID.randomUUID().toString();
+        bridge.offer(workerId, taskId, spec.build(),
+                Duration.ofMinutes(leaseMinutes), null);
+        ObjectNode response = JSON.createObjectNode();
+        response.put("taskId", taskId);
+        response.put("workerId", workerId);
+        respondJson(exchange, 201, response);
+    }
+
+    /**
+     * Projects the task's transcript into a signed work record: the receipt a
+     * delegation hands over. The projector refuses a task still in flight, and
+     * an unsigned server refuses by naming what signing needs.
+     */
+    private void exportRecord(HttpExchange exchange, String taskId) throws IOException {
+        if (signing == null) {
+            respondError(exchange, 503, "work-record signing is not configured; set "
+                    + RecordSigning.ENV_KEY_FILE + ", " + RecordSigning.ENV_KEY_ID
+                    + ", and " + RecordSigning.ENV_ISSUER);
+            return;
+        }
+        List<TranscriptEntry> entries = bridge.coordinator().eventsAfter(taskId, 0).stream()
+                .map(InProcessDelegationCoordinator.Event::entry)
+                .toList();
+        WorkRecord manifest;
+        try {
+            manifest = DelegationRecordProjector.project(taskId, entries,
+                    new DelegationRecordProjector.Issuance(
+                            "record-" + taskId, signing.issuer(), signing.signer().keyId(),
+                            Timestamps.fromMillis(System.currentTimeMillis()), ""));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+        byte[] record = signing.signer().sign(manifest).toByteArray();
+        ObjectNode response = JSON.createObjectNode();
+        response.put("recordBase64", java.util.Base64.getEncoder().encodeToString(record));
+        response.put("manifestDigest",
+                WorkRecords.sha256Hex(WorkRecords.canonicalBytes(manifest)));
+        response.put("recordId", "record-" + taskId);
+        respondJson(exchange, 200, response);
     }
 
     /**

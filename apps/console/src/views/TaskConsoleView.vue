@@ -34,9 +34,49 @@
           </div>
         </div>
         <v-spacer />
+        <v-btn color="primary" prepend-icon="mdi-briefcase-plus-outline" class="mr-1"
+               :disabled="!workers.length" @click="offerOpen = true">Offer a task</v-btn>
         <v-btn icon="mdi-refresh" variant="text" aria-label="Refresh tasks" @click="refresh" />
         <v-btn prepend-icon="mdi-logout" variant="outlined" @click="logout">Sign out</v-btn>
       </div>
+
+      <v-dialog v-model="offerOpen" max-width="640">
+        <v-card rounded="lg">
+          <v-card-title>Offer a task</v-card-title>
+          <v-card-text>
+            <v-select v-model="offerWorker" :items="workers.map((worker) => worker.workerId)"
+                      label="Worker" density="compact" class="mb-2" />
+            <v-textarea v-model="offerObjective" label="Objective" rows="2" auto-grow
+                        density="compact" class="mb-2"
+                        hint="What done means, in the worker's terms" persistent-hint />
+            <v-text-field v-model="offerScopes" label="Allowed scopes (comma-separated)"
+                          density="compact" class="mb-2" placeholder="apps/console, docs" />
+            <div class="text-caption font-weight-medium mb-1">Acceptance checks</div>
+            <p class="text-caption text-medium-emphasis mb-2">
+              The contract of done: the worker must prove each one ran before acceptance.
+            </p>
+            <div v-for="(check, i) in offerChecks" :key="i" class="d-flex ga-2 mb-2">
+              <v-text-field v-model="check.name" label="Check name" density="compact"
+                            hide-details style="max-width: 200px" />
+              <v-text-field v-model="check.description" label="What passing means"
+                            density="compact" hide-details />
+              <v-btn icon="mdi-close" variant="text" size="small"
+                     aria-label="Remove check" @click="offerChecks.splice(i, 1)" />
+            </div>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="mb-3"
+                   @click="offerChecks.push({ name: '', description: '' })">Add check</v-btn>
+            <v-text-field v-model.number="offerLease" label="Lease minutes" type="number"
+                          density="compact" style="max-width: 160px" />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="offerOpen = false">Cancel</v-btn>
+            <v-btn color="primary" :loading="offering"
+                   :disabled="!offerWorker || !offerObjective.trim() || !completeChecks.length"
+                   @click="offerTask">Offer</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <v-alert v-if="error" type="error" variant="tonal" closable class="mb-4" @click:close="error = ''">
         {{ error }}
@@ -149,6 +189,14 @@
                 prepend-icon="mdi-download"
                 @click="exportTranscript"
               >Transcript</v-btn>
+              <v-btn
+                v-if="terminalPhase"
+                size="x-small"
+                variant="text"
+                prepend-icon="mdi-file-certificate-outline"
+                :loading="exportingRecord"
+                @click="exportSignedRecord"
+              >Signed record</v-btn>
             </div>
             <v-divider />
 
@@ -322,6 +370,15 @@ const messageKind = ref<TaskMessageKind>('guidance')
 const messageText = ref('')
 const sending = ref(false)
 const messageKinds: TaskMessageKind[] = ['guidance', 'question', 'answer', 'note']
+const offerOpen = ref(false)
+const offerWorker = ref('')
+const offerObjective = ref('')
+const offerScopes = ref('')
+const offerChecks = ref<{ name: string; description: string }[]>(
+  [{ name: '', description: '' }])
+const offerLease = ref(30)
+const offering = ref(false)
+const exportingRecord = ref(false)
 const reviewVerdict = ref('')
 const reviewFeedback = ref('')
 const failedChecks = ref<string[]>([])
@@ -330,6 +387,10 @@ let watchController: AbortController | null = null
 
 const contract = computed(() => checkStatuses(events.value))
 const candidate = computed(() => latestCandidate(events.value))
+const completeChecks = computed(() =>
+  offerChecks.value.filter((check) => check.name.trim()))
+const terminalPhase = computed(() =>
+  ['accepted', 'failed', 'cancelled', 'expired'].includes(selected.value?.phase ?? ''))
 
 onMounted(async () => {
   try {
@@ -450,6 +511,51 @@ async function sendGuidance() {
     error.value = message(failure)
   } finally {
     sending.value = false
+  }
+}
+
+async function offerTask() {
+  if (!offerWorker.value || !offerObjective.value.trim()) return
+  offering.value = true
+  try {
+    const scopes = offerScopes.value.split(',')
+      .map((scope) => scope.trim()).filter(Boolean)
+    const offered = await taskApi.offerTask(offerWorker.value,
+      offerObjective.value.trim(),
+      completeChecks.value.map((check) => ({
+        name: check.name.trim(), description: check.description.trim(),
+      })),
+      scopes, offerLease.value)
+    offerOpen.value = false
+    offerObjective.value = ''
+    offerChecks.value = [{ name: '', description: '' }]
+    await refresh()
+    const created = tasks.value.find((task) => task.taskId === offered.taskId)
+    if (created) await selectTask(created)
+  } catch (failure) {
+    error.value = message(failure)
+  } finally {
+    offering.value = false
+  }
+}
+
+/** Downloads the task's transcript projected into a signed work record. */
+async function exportSignedRecord() {
+  if (!selected.value) return
+  exportingRecord.value = true
+  try {
+    const exported = await taskApi.exportRecord(selected.value.taskId)
+    const bytes = Uint8Array.from(atob(exported.recordBase64), (c) => c.charCodeAt(0))
+    const blob = new Blob([bytes], { type: 'application/octet-stream' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `${exported.recordId}.pb`
+    link.click()
+    URL.revokeObjectURL(link.href)
+  } catch (failure) {
+    error.value = message(failure)
+  } finally {
+    exportingRecord.value = false
   }
 }
 

@@ -40,7 +40,8 @@ public final class WorkRecords {
         return deterministicBytes(manifest);
     }
 
-    static byte[] deterministicBytes(Message message) {
+    /** The message's deterministic serialization: the bytes {@link #fingerprint} hashes. */
+    public static byte[] deterministicBytes(Message message) {
         byte[] bytes = new byte[message.getSerializedSize()];
         CodedOutputStream out = CodedOutputStream.newInstance(bytes);
         out.useDeterministicSerialization();
@@ -51,6 +52,17 @@ public final class WorkRecords {
             throw new IllegalStateException("in-memory serialization failed", e);
         }
         return bytes;
+    }
+
+    /**
+     * SHA-256 of the message's deterministic serialization: the platform's
+     * fingerprint discipline, for identifying a message by its content.
+     */
+    public static String fingerprint(Message message) {
+        if (message == null) {
+            throw new IllegalArgumentException("message must not be null");
+        }
+        return sha256Hex(deterministicBytes(message));
     }
 
     /** SHA-256 of the given bytes as lowercase hex; the manifest digest. */
