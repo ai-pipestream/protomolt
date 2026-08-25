@@ -2,11 +2,12 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.SendTaskMessageRequest;
 import ai.pipestream.proto.delegation.v1.SendTaskMessageResponse;
 import ai.pipestream.proto.delegation.v1.TaskMessage;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /** Sends one non-transitioning structured task message in either direction. */
 final class DelegationMessageAction extends DelegationAction {
@@ -36,12 +37,17 @@ final class DelegationMessageAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return SendTaskMessageResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // The two directions differ in who the recipient may be. Both rules are declared as
         // message-level CEL on the request, so by this point a coordinator message names its
         // worker and a worker message is addressed to the coordinator or to nobody.
-        SendTaskMessageRequest request = DelegationActionJson
-                .parse(input, SendTaskMessageRequest.newBuilder(), name()).build();
+        SendTaskMessageRequest request = CatalogContract.as(
+                input, SendTaskMessageRequest.getDefaultInstance(), name());
         String sender = request.getSender();
         TaskMessage message;
         try {
@@ -57,9 +63,9 @@ final class DelegationMessageAction extends DelegationAction {
         } catch (RuntimeException e) {
             throw failure(sender, e);
         }
-        return DelegationActionJson.render(SendTaskMessageResponse.newBuilder()
+        return SendTaskMessageResponse.newBuilder()
                 .setOk(true)
                 .setMessage(message)
-                .build(), context);
+                .build();
     }
 }

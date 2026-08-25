@@ -1,8 +1,5 @@
 package ai.pipestream.proto.authz.grpc;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
@@ -13,6 +10,10 @@ import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.authz.CallerResolver;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -29,8 +30,8 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * One node, one ledger. A principal budgeted on a scope has that budget enforced across
@@ -175,8 +176,16 @@ class SharedScopeBudgetTest {
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context) {
-            return JsonNodeFactory.instance.objectNode().put("ok", true);
+        public Descriptor responseType() {
+            // Struct accepts any JSON object, so a fixture is not constrained by a
+            // contract it is not testing.
+            return Struct.getDescriptor();
+        }
+
+        @Override
+        public Message execute(Message input, ActionContext context) {
+            return Struct.newBuilder().putFields("ok",
+                        Value.newBuilder().setBoolValue(true).build()).build();
         }
     }
 }

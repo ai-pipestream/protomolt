@@ -11,6 +11,7 @@ import ai.pipestream.proto.search.index.spi.IndexMappingFactory;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /** Renders the search-index artifact (OpenSearch/Solr/Lucene/Qdrant) for a protobuf message type. */
 final class RenderIndexMappingsAction implements ProtoAction {
@@ -40,23 +41,29 @@ final class RenderIndexMappingsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("RenderIndexMappingsResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
-        String engine = Inputs.requireString(input, "engine");
+        Descriptor descriptor = schema.message(
+                SynthesizeShapeAction.named(input, "type"), "/type");
+        String engine = Fields.enumName(input, "engine");
         IndexMapping mapping = IndexMappingFactory.defaults(new CatalogIndexingHintSource())
                 .create(descriptor);
         // The artifact is nested under a named field, alongside the engine it was rendered
         // for, so the response has a declared protobuf contract. Each engine defines its own
         // artifact shape, so the artifact itself stays a structure.
-        ObjectNode result = context.objectMapper().createObjectNode();
-        result.put("engine", engine);
-        result.set("mappings", renderFor(engine, mapping, descriptor, input, context));
-        return result;
+        return Reply.of(responseType())
+                .set("engine", engine)
+                .set("mappings", renderFor(engine, mapping, descriptor, input, context))
+                .build();
     }
 
     private static ObjectNode renderFor(String engine, IndexMapping mapping, Descriptor descriptor,
-                                        ObjectNode input, ActionContext context)
+                                        Message input, ActionContext context)
             throws ActionException {
         // The contract names the engine with an enum and refuses the unset value, so
         // every case here is one this verb renders.
@@ -64,11 +71,10 @@ final class RenderIndexMappingsAction implements ProtoAction {
             case "INDEX_ENGINE_OPENSEARCH" -> {
                 ObjectNode mappings = context.objectMapper()
                         .valueToTree(new OpenSearchMappingGenerator().generate(mapping));
-                ObjectNode sensitivity = Inputs.optionalObject(input, "sensitivity");
-                yield sensitivity == null
-                        ? mappings
-                        : opensearchWithSensitivity(mappings, mapping, descriptor,
-                                sensitivity, context);
+                yield Fields.has(input, "sensitivity")
+                        ? opensearchWithSensitivity(mappings, mapping, descriptor,
+                                Fields.json(input, "sensitivity"), context)
+                        : mappings;
             }
             case "INDEX_ENGINE_SOLR" -> solr(mapping, context);
             case "INDEX_ENGINE_LUCENE" -> lucene(mapping, context);

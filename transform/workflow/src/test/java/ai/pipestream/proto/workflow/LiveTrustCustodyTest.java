@@ -1,10 +1,9 @@
 package ai.pipestream.proto.workflow;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.receipt.KeyState;
 import ai.pipestream.proto.receipt.SignatureAlgorithm;
@@ -14,8 +13,13 @@ import ai.pipestream.proto.receipt.TrustedKey;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
+import com.google.protobuf.util.JsonFormat;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Custody read live rather than frozen at registration: the verifying verbs ask their
@@ -84,7 +88,7 @@ class LiveTrustCustodyTest {
 
     @Test
     void withoutCustodyTheRefusalNamesThePinnedFileVariable() {
-        ObjectNode carryingNoTrust = JsonNodeFactory.instance.objectNode();
+        Message carryingNoTrust = request(JsonNodeFactory.instance.objectNode());
 
         Throwable refusal = org.assertj.core.api.Assertions.catchThrowable(
                 () -> TrustPin.resolve(carryingNoTrust, null));
@@ -104,7 +108,7 @@ class LiveTrustCustodyTest {
                                 .put("issuer", "from.the.request"))));
 
         TrustSnapshot resolved =
-                TrustPin.resolve(carryingTrust, snapshot("from.the.custody"));
+                TrustPin.resolve(request(carryingTrust), snapshot("from.the.custody"));
 
         assertThat(resolved.getIssuers(0).getIssuer()).isEqualTo("from.the.request");
     }
@@ -117,4 +121,20 @@ class LiveTrustCustodyTest {
                 (java.util.function.Supplier<TrustSnapshot>) null);
         assertThat(demandsTrust(catalog.get("verify-work-record"))).isTrue();
     }
+
+    /**
+     * The envelope as the request message the verb reads. Built here rather than through the
+     * catalog because these tests are about where trust comes from, not about the contract.
+     */
+    private static Message request(ObjectNode envelope) {
+        DynamicMessage.Builder builder = DynamicMessage.newBuilder(
+                CatalogContract.request("VerifyWorkRecordRequest"));
+        try {
+            JsonFormat.parser().merge(envelope.toString(), builder);
+        } catch (InvalidProtocolBufferException e) {
+            throw new IllegalArgumentException(e);
+        }
+        return builder.build();
+    }
+
 }

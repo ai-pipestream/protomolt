@@ -6,11 +6,11 @@ import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
+import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class WorkspaceResourcesTest {
 
@@ -71,8 +71,15 @@ class WorkspaceResourcesTest {
             }
 
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context) {
-                return context.objectMapper().createObjectNode();
+            public Descriptor responseType() {
+                // Struct accepts any JSON object, so a fixture is not constrained by a
+                // contract it is not testing.
+                return Struct.getDescriptor();
+            }
+
+            @Override
+            public Message execute(Message input, ActionContext context) {
+                return Struct.getDefaultInstance();
             }
         };
     }

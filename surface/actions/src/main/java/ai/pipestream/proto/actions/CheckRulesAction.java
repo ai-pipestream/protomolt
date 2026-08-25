@@ -11,13 +11,9 @@ import ai.pipestream.proto.shapes.MessageJoiner;
 import ai.pipestream.proto.shapes.MessageScope;
 import ai.pipestream.proto.shapes.RuleChecker;
 import ai.pipestream.proto.shapes.ShapeSynthesizer;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
-
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,28 +55,33 @@ final class CheckRulesAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("CheckRulesResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         List<ShapeSynthesizer.NamedType> named =
                 SynthesizeShapeAction.namedSources(input, context);
-        ObjectNode targetNode = Inputs.optionalObject(input, "target");
-        boolean inPlace = targetNode == null && named.size() == 1;
-        if (targetNode == null && named.size() > 1) {
+        boolean hasTarget = Fields.has(input, "target");
+        boolean inPlace = !hasTarget && named.size() == 1;
+        if (!hasTarget && named.size() > 1) {
             throw Inputs.invalidInput(
                     "Multiple sources need a 'target' output type", "/target");
         }
-        Descriptor target = inPlace
-                ? named.get(0).type()
-                : SchemaResolver.resolveNode(targetNode.get("schema"), "/target/schema", context)
-                        .message(Inputs.optionalString(targetNode, "type"), "/target/type");
+        Descriptor target;
+        if (inPlace) {
+            target = named.get(0).type();
+        } else {
+            Message targetSource = Fields.message(input, "target");
+            target = SchemaResolver.resolveSource(
+                            Fields.message(targetSource, "schema"), "/target/schema", context)
+                    .message(SynthesizeShapeAction.named(targetSource, "type"), "/target/type");
+        }
 
-        ArrayNode rulesNode = Inputs.optionalArray(input, "rules");
-        List<String> rules = rulesNode == null
-                ? List.of() : Inputs.stringElements(rulesNode, "/rules");
-        List<CelMappingRule> celRules =
-                MapMessageAction.parseCelRules(Inputs.optionalArray(input, "celRules"));
-        ArrayNode filtersNode = Inputs.optionalArray(input, "filters");
-        List<String> filters = filtersNode == null
-                ? List.of() : Inputs.stringElements(filtersNode, "/filters");
+        List<String> rules = Fields.strings(input, "rules");
+        List<CelMappingRule> celRules = MapMessageAction.celRules(input);
+        List<String> filters = Fields.strings(input, "filters");
 
         Map<String, Descriptor> sourceTypes = new LinkedHashMap<>();
         named.forEach(source -> sourceTypes.put(source.name(), source.type()));
@@ -89,39 +90,39 @@ final class CheckRulesAction implements ProtoAction {
                 ? checker.checkInPlace(named.get(0).name(), target, rules, celRules, filters)
                 : checker.checkScoped(sourceTypes, target, rules, celRules, filters);
 
-        ObjectNode output = context.objectMapper().createObjectNode();
-        ArrayNode findingsNode = output.putArray("findings");
+        Reply output = Reply.of(responseType());
         for (RuleChecker.Finding finding : findings) {
-            ObjectNode node = findingsNode.addObject();
-            node.put("kind", finding.kind());
-            node.put("index", finding.index());
-            node.put("rule", finding.rule());
-            node.put("error", finding.error());
+            output.append("findings")
+                    .set("kind", finding.kind())
+                    .set("index", finding.index())
+                    .set("rule", finding.rule())
+                    .set("error", finding.error())
+                    .build();
         }
 
         Map<String, DynamicMessage> samples = sampleMessages(input, named, context);
+        boolean dryRunFailed = false;
         if (findings.isEmpty() && samples != null) {
-            dryRun(output, named, samples, target, inPlace, rules, celRules, filters, context);
+            dryRunFailed = dryRun(output, named, samples, target, inPlace,
+                    rules, celRules, filters, context);
         }
-        output.put("ok", findings.isEmpty() && !output.has("dryRunError"));
-        return output;
+        return output.set("ok", findings.isEmpty() && !dryRunFailed).build();
     }
 
     /** Every source's sample message, or null when any is missing (no dry run). */
     private static Map<String, DynamicMessage> sampleMessages(
-            ObjectNode input, List<ShapeSynthesizer.NamedType> named, ActionContext context)
+            Message input, List<ShapeSynthesizer.NamedType> named, ActionContext context)
             throws ActionException {
-        ArrayNode sources = Inputs.optionalArray(input, "sources");
+        List<Message> sources = Fields.list(input, "sources");
         Map<String, DynamicMessage> samples = new LinkedHashMap<>();
         for (int i = 0; i < named.size(); i++) {
-            ObjectNode source = (ObjectNode) sources.get(i);
-            ObjectNode message = Inputs.optionalObject(source, "message");
-            if (message == null) {
+            Message source = sources.get(i);
+            if (!Fields.has(source, "message")) {
                 return null;
             }
             try {
-                samples.put(named.get(i).name(), context.transcoder()
-                        .fromJsonDynamic(message.toString(), named.get(i).type()));
+                samples.put(named.get(i).name(), context.transcoder().fromJsonDynamic(
+                        Fields.json(source, "message").toString(), named.get(i).type()));
             } catch (MalformedProtobufJsonException e) {
                 throw Inputs.invalidInput("Sample message is not valid proto3 JSON for "
                         + named.get(i).type().getFullName(), "/sources/" + i + "/message");
@@ -130,7 +131,8 @@ final class CheckRulesAction implements ProtoAction {
         return samples;
     }
 
-    private static void dryRun(ObjectNode output, List<ShapeSynthesizer.NamedType> named,
+    /** Runs the rules over the samples, reporting a dynamic failure rather than raising it. */
+    private static boolean dryRun(Reply output, List<ShapeSynthesizer.NamedType> named,
                                Map<String, DynamicMessage> samples, Descriptor target,
                                boolean inPlace, List<String> rules,
                                List<CelMappingRule> celRules, List<String> filters,
@@ -157,16 +159,17 @@ final class CheckRulesAction implements ProtoAction {
                 samples.forEach(scope::add);
                 result = new MessageJoiner().join(target, scope.build(), rules, celRules);
             }
-            output.put("type", result.getDescriptorForType().getFullName());
-            output.set("message", ActionJson.messageToJson(result, context));
-            ArrayNode verdicts = output.putArray("filterResults");
+            output.set("type", result.getDescriptorForType().getFullName())
+                    .set("message", context.transcoder().toJson(result));
             for (String filter : filters) {
-                verdicts.add(evaluator.evaluateBooleanOrFail(filter, bindings));
+                output.add("filterResults", evaluator.evaluateBooleanOrFail(filter, bindings));
             }
+            return false;
         } catch (Exception e) {
             // The static pass was clean but the sample tripped something dynamic
             // (a Struct path, a conversion): that is a finding, not a crash.
-            output.put("dryRunError", e.getMessage());
+            output.set("dryRunError", e.getMessage());
+            return true;
         }
     }
 }

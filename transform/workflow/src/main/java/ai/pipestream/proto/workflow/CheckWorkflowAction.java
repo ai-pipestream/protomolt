@@ -3,15 +3,16 @@ package ai.pipestream.proto.workflow;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
 import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
-import java.util.List;
+import ai.pipestream.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The {@code check-workflow} verb: verify a workflow without executing anything — methods
@@ -20,6 +21,9 @@ import com.google.protobuf.Descriptors.Descriptor;
  * lint gate for consoles, CI, and registration.
  */
 public final class CheckWorkflowAction implements ProtoAction {
+
+    /** The leading {@code steps[n]} of a violation path, when it has one. */
+    private static final Pattern STEP_INDEX = Pattern.compile("steps\\[(\\d+)\\]");
 
     @Override
     public String name() {
@@ -46,36 +50,56 @@ public final class CheckWorkflowAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context)
+    public Descriptor responseType() {
+        return CatalogContract.response("CheckWorkflowResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context)
             throws ActionException {
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        ArrayNode findingsNode = result.putArray("findings");
-        JsonNode workflowNode = input.get("workflow");
-        if (!(workflowNode instanceof ObjectNode workflow)) {
-            result.put("ok", false);
-            finding(findingsNode, "", "workflow", "'workflow' object is required");
-            return result;
+        // This verb reports on a workflow rather than refusing one, so nothing about the
+        // definition is an error here: what it cannot read, and what the contract will not
+        // allow, both come back as findings.
+        Message workflow = Fields.message(input, "workflow");
+        Reply result = Reply.of(responseType());
+
+        // The request declares this field inspect-only, so the door left the workflow's own
+        // rules unchecked and they are this verb's to report.
+        ValidationResult declared = CatalogContract.inspect(workflow);
+        for (ValidationResult.Violation violation : declared.violations()) {
+            finding(result, stepOf(violation.path()), "contract",
+                    CatalogContract.finding(violation).path("field").asText()
+                            + " " + violation.message());
         }
+
         CompiledWorkflow definition;
         try {
             definition = WorkflowJson.parse(workflow, context);
         } catch (WorkflowJson.WorkflowParseException e) {
-            result.put("ok", false);
-            finding(findingsNode, e.step, "workflow", e.getMessage());
-            return result;
+            finding(result, e.step, "workflow", e.getMessage());
+            return result.set("ok", false).build();
         }
         List<WorkflowVerifier.Finding> findings = new WorkflowVerifier().verify(definition);
         for (WorkflowVerifier.Finding entry : findings) {
-            finding(findingsNode, entry.step(), entry.kind(), entry.error());
+            finding(result, entry.step(), entry.kind(), entry.error());
         }
-        result.put("ok", findings.isEmpty());
-        return result;
+        return result.set("ok", declared.valid() && findings.isEmpty()).build();
     }
 
-    private static void finding(ArrayNode findings, String step, String kind, String error) {
-        ObjectNode node = findings.addObject();
-        node.put("step", step);
-        node.put("kind", kind);
-        node.put("error", error);
+    /**
+     * The step a violation sits under, read off its path: {@code steps[2].cel_rules[0].target}
+     * reports against step 2. A violation outside any step reports against the workflow.
+     */
+    private static String stepOf(String path) {
+        Matcher index = STEP_INDEX.matcher(path);
+        return index.lookingAt() ? "steps[" + index.group(1) + "]" : "";
+    }
+
+    private static void finding(Reply result, String step, String kind, String error) {
+        result.append("findings")
+                .set("step", step)
+                .set("kind", kind)
+                .set("error", error)
+                .build();
     }
 }

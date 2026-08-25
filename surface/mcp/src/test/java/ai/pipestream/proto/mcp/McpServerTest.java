@@ -2,17 +2,17 @@ package ai.pipestream.proto.mcp;
 
 import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.Optional;
-
 import static org.assertj.core.api.Assertions.assertThat;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
 
 class McpServerTest {
 
@@ -276,8 +276,14 @@ class McpServerTest {
                     }
 
                     @Override
-                    public ObjectNode execute(ObjectNode input,
-                                              ActionContext context) {
+                    public Descriptor responseType() {
+                        // Struct accepts any JSON object, so a fixture is not constrained by a
+                        // contract it is not testing.
+                        return Struct.getDescriptor();
+                    }
+
+                    @Override
+                    public Message execute(Message input, ActionContext context) {
                         throw new IllegalStateException(
                                 "/secret/host/path credential=hunter2");
                     }

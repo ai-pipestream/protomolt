@@ -2,11 +2,10 @@ package ai.pipestream.proto.actions;
 
 import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.meta.SensitivityMasker;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
-
+import com.google.protobuf.Message;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -54,26 +53,31 @@ final class MaskMessageAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("MaskMessageResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
-        Descriptor descriptor = schema.message(Inputs.optionalString(input, "type"), "/type");
-        ObjectNode messageNode = Inputs.requireObject(input, "message");
-        ArrayNode classesNode = Inputs.optionalArray(input, "classes");
-        if (classesNode == null || classesNode.isEmpty()) {
+        Descriptor descriptor = schema.message(named(input, "type"), "/type");
+        // The message is a structure: its shape is the named type, not this contract.
+        ObjectNode messageNode = Fields.json(input, "message");
+        Set<String> classes = new LinkedHashSet<>(Fields.strings(input, "classes"));
+        if (classes.isEmpty()) {
             throw Inputs.invalidInput("'classes' must be a non-empty array", "/classes");
         }
-        Set<String> classes = new LinkedHashSet<>(
-                Inputs.stringElements(classesNode, "/classes"));
         // The contract names the strategy with an enum, so an unknown one is refused
         // before the verb runs and whatever arrives is a value the masker implements.
-        String strategyName = Inputs.optionalString(input, "strategy");
-        SensitivityMasker.Strategy strategy = strategyName == null || strategyName.isBlank()
+        String strategyName = Fields.enumName(input, "strategy");
+        SensitivityMasker.Strategy strategy =
+                strategyName.isEmpty() || strategyName.endsWith("UNSPECIFIED")
                 ? SensitivityMasker.Strategy.REMOVE
                 : SensitivityMasker.Strategy.of(strategyName.startsWith(STRATEGY_PREFIX)
                         ? strategyName.substring(STRATEGY_PREFIX.length()) : strategyName);
         byte[] key = null;
-        String keyText = Inputs.optionalString(input, "key");
-        if (keyText != null) {
+        String keyText = Fields.string(input, "key");
+        if (!keyText.isEmpty()) {
             try {
                 key = java.util.Base64.getDecoder().decode(keyText);
             } catch (IllegalArgumentException e) {
@@ -108,20 +112,19 @@ final class MaskMessageAction implements ProtoAction {
             // that is not one of our envelopes, or one this key cannot open.
             throw Inputs.invalidInput(e.getMessage(), "/message");
         }
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.set("message", ActionJson.messageToJson(result.message(), context));
-        ArrayNode masked = output.putArray("maskedFields");
-        for (String path : result.maskedPaths()) {
-            masked.add(path);
-        }
-        if (!result.unresolvedPaths().isEmpty()) {
-            // Reported only when it happened: these payloads were not masked, and the caller
-            // is the only one who can say whether that is acceptable.
-            ArrayNode unresolved = output.putArray("unresolvedPayloads");
-            for (String path : result.unresolvedPaths()) {
-                unresolved.add(path);
-            }
-        }
-        return output;
+        return Reply.of(responseType())
+                .set("message", context.transcoder().toJson(result.message()))
+                .addAll("maskedFields", result.maskedPaths())
+                // Empty unless it happened: these payloads were not masked, and the caller
+                // is the only one who can say whether that is acceptable.
+                .addAll("unresolvedPayloads", result.unresolvedPaths())
+                .build();
     }
+
+    /** A named type, or null when the caller left the schema's own default to apply. */
+    private static String named(Message input, String field) {
+        String value = Fields.string(input, field);
+        return value.isEmpty() ? null : value;
+    }
+
 }

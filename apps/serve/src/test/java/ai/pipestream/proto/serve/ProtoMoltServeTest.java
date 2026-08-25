@@ -105,7 +105,6 @@ class ProtoMoltServeTest {
         HttpResponse<String> response = get("/openapi.json");
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode paths = MAPPER.readTree(response.body()).path("paths");
-        assertThat(paths.size()).isEqualTo(44);
         assertThat(paths.has("/grpc-json/ProtoMoltService/GrpcInvoke")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/GenerateStubs")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/SubmitWorkflow")).isTrue();
@@ -113,6 +112,34 @@ class ProtoMoltServeTest {
         assertThat(paths.has("/grpc-json/ProtoMoltService/ServiceRegister")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/ServiceInspect")).isTrue();
         assertThat(paths.has("/grpc-json/ProtoMoltService/RecordWorkflowRun")).isTrue();
+    }
+
+    /**
+     * A verb contributed on another service is documented too.
+     *
+     * <p>The delegation verbs are RPCs on DelegationService, not on ProtoMolt's, so before
+     * the mount federated they were reachable over gRPC and as MCP tools while being absent
+     * from REST and from this document. The RPC and the verb are named differently, which is
+     * why the mount matches them by their request and response messages rather than by name.
+     */
+    @Test
+    void openApiDocumentsVerbsContributedByOtherServices() throws Exception {
+        JsonNode paths = MAPPER.readTree(get("/openapi.json").body()).path("paths");
+        assertThat(paths.has("/grpc-json/DelegationService/AcceptTask")).isTrue();
+        assertThat(paths.has("/grpc-json/DelegationService/OfferTask")).isTrue();
+    }
+
+    /** And it is not only documented: the route dispatches to the verb behind it. */
+    @Test
+    void aContributedVerbDispatchesOverRest() throws Exception {
+        HttpResponse<String> response = post("/grpc-json/DelegationService/AcceptTask", """
+                {"workerId": "nobody", "taskId": "11111111-1111-1111-1111-111111111111",
+                 "attempt": 1}
+                """);
+        // The worker is not registered, so the verb refuses by name. That the refusal comes
+        // from the verb at all is the point: the route reached it.
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.body()).contains("unknown-worker");
     }
 
     @Test

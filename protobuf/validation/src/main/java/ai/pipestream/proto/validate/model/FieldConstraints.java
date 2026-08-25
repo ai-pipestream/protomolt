@@ -32,6 +32,7 @@ public record FieldConstraints(
         Optional<AnyConstraints> any,
         Optional<FieldMaskConstraints> fieldMask,
         Optional<String> taxonomy,
+        boolean inspectOnly,
         List<CelConstraint> cel) {
 
     public FieldConstraints {
@@ -73,6 +74,7 @@ public record FieldConstraints(
         private AnyConstraints any;
         private FieldMaskConstraints fieldMask;
         private String taxonomy;
+        private boolean inspectOnly;
         private final List<CelConstraint> cel = new ArrayList<>();
 
         public Builder required(boolean required) {
@@ -82,6 +84,15 @@ public record FieldConstraints(
 
         public Builder ignore(IgnoreMode ignore) {
             this.ignore = Objects.requireNonNull(ignore, "ignore");
+            return this;
+        }
+
+        /**
+         * Marks the field as carrying a document to examine rather than a value to consume:
+         * the walk does not descend into it, though its own rules still apply.
+         */
+        public Builder inspectOnly(boolean inspectOnly) {
+            this.inspectOnly = inspectOnly;
             return this;
         }
 
@@ -172,6 +183,7 @@ public record FieldConstraints(
                     Optional.ofNullable(any),
                     Optional.ofNullable(fieldMask),
                     Optional.ofNullable(taxonomy),
+                    inspectOnly,
                     List.copyOf(cel));
         }
     }

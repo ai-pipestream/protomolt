@@ -1,10 +1,9 @@
 package ai.pipestream.proto.workflow;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.v1.RunEvidence;
 import ai.pipestream.proto.grpc.workflow.v1.RunStatus;
@@ -39,6 +38,8 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WorkRecordActionsTest {
 
@@ -72,8 +73,8 @@ class WorkRecordActionsTest {
     @Test
     void exportSignsARecordThatVerifies() throws Exception {
         ObjectNode input = MAPPER.createObjectNode().put("runId", "run-1");
-        ObjectNode output = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(input, CONTEXT);
+        ObjectNode output = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                input);
 
         assertThat(output.path("recordId").asText()).isEqualTo("record-run-1");
         byte[] record = Base64.getDecoder().decode(output.path("recordBase64").asText());
@@ -98,8 +99,8 @@ class WorkRecordActionsTest {
                 .put("runId", "run-1")
                 .put("recordId", "record-reissue")
                 .put("priorManifestSha256", prior);
-        ObjectNode output = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(input, CONTEXT);
+        ObjectNode output = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                input);
         byte[] record = Base64.getDecoder().decode(output.path("recordBase64").asText());
         WorkRecord manifest = WorkRecord.parseFrom(
                 SignedWorkRecord.parseFrom(record).getManifest());
@@ -110,21 +111,21 @@ class WorkRecordActionsTest {
     @Test
     void exportRefusalsNameTheirCause() {
         ObjectNode input = MAPPER.createObjectNode().put("runId", "run-1");
-        assertThatThrownBy(() -> new ExportWorkRecordAction(null, signing, clock)
-                .execute(input, CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(null, signing, clock),
+                input))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("--workflow-workspace");
-        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, null, clock)
-                .execute(input, CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(runs, null, clock),
+                input))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining(RecordSigning.ENV_KEY_FILE);
-        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-9"), CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-9")))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("run-9");
-        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-1")
-                        .put("priorManifestSha256", "nope"), CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-1")
+                        .put("priorManifestSha256", "nope")))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("priorManifestSha256");
     }
@@ -133,22 +134,22 @@ class WorkRecordActionsTest {
     void exportOfALiveRunRefuses() {
         StubRuns live = new StubRuns(WorkRecordProjectorTest.evidence()
                 .setStatus(RunStatus.RUN_STATUS_RUNNING).build());
-        assertThatThrownBy(() -> new ExportWorkRecordAction(live, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(live, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-1")))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("only terminal run evidence");
     }
 
     @Test
     void verifyReportsChecksAndNonClaims() throws Exception {
-        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode exported = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-1"));
         ObjectNode input = MAPPER.createObjectNode()
                 .put("recordBase64", exported.path("recordBase64").asText());
         input.set("trust", (ObjectNode) MAPPER.readTree(
                 JsonFormat.printer().print(trust())));
 
-        ObjectNode output = new VerifyWorkRecordAction().execute(input, CONTEXT);
+        ObjectNode output = dispatch(new VerifyWorkRecordAction(), input);
         assertThat(output.path("verified").asBoolean()).isTrue();
         assertThat(output.path("manifestDigest").asText())
                 .isEqualTo(exported.path("manifestDigest").asText());
@@ -167,8 +168,8 @@ class WorkRecordActionsTest {
                 .put("recordId", "record-disclosed")
                 .put("discloseOf", source);
         input.putArray("maskClasses").add("internal");
-        ObjectNode output = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(input, CONTEXT);
+        ObjectNode output = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                input);
 
         assertThat(output.path("maskedPaths").toString()).contains("structured");
         byte[] record = Base64.getDecoder().decode(output.path("recordBase64").asText());
@@ -190,33 +191,35 @@ class WorkRecordActionsTest {
     void aDisclosureNamesItsClassesAndSourceTogether() {
         ObjectNode missingSource = MAPPER.createObjectNode().put("runId", "run-1");
         missingSource.putArray("maskClasses").add("internal");
-        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
-                .execute(missingSource, CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                missingSource))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("discloseOf");
 
         ObjectNode missingClasses = MAPPER.createObjectNode()
                 .put("runId", "run-1")
                 .put("discloseOf", WorkRecords.sha256Hex("original".getBytes()));
-        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
-                .execute(missingClasses, CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                missingClasses))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("maskClasses");
 
+        // proto3 delivers an omitted list and an empty one identically, so naming no
+        // classes reads as naming none: the pairing is what is missing.
         ObjectNode emptyClasses = MAPPER.createObjectNode()
                 .put("runId", "run-1")
                 .put("discloseOf", WorkRecords.sha256Hex("original".getBytes()));
         emptyClasses.putArray("maskClasses");
-        assertThatThrownBy(() -> new ExportWorkRecordAction(runs, signing, clock)
-                .execute(emptyClasses, CONTEXT))
+        assertThatThrownBy(() -> dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                emptyClasses))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("non-empty");
+                .hasMessageContaining("maskClasses");
     }
 
     @Test
     void verifyRehashesWhenArtifactBytesAreSupplied() throws Exception {
-        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode exported = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-1"));
         ObjectNode input = MAPPER.createObjectNode()
                 .put("recordBase64", exported.path("recordBase64").asText());
         input.set("trust", (ObjectNode) MAPPER.readTree(
@@ -227,7 +230,7 @@ class WorkRecordActionsTest {
                     Base64.getEncoder().encodeToString(content.getBytes()));
         }
 
-        ObjectNode output = new VerifyWorkRecordAction().execute(input, CONTEXT);
+        ObjectNode output = dispatch(new VerifyWorkRecordAction(), input);
         assertThat(output.path("verified").asBoolean()).isTrue();
         JsonNode last = output.path("checks").get(output.path("checks").size() - 1);
         assertThat(last.path("id").asText())
@@ -238,7 +241,7 @@ class WorkRecordActionsTest {
 
         artifacts.put(WorkRecords.sha256Hex("output".getBytes()),
                 Base64.getEncoder().encodeToString("outpud".getBytes()));
-        ObjectNode refused = new VerifyWorkRecordAction().execute(input, CONTEXT);
+        ObjectNode refused = dispatch(new VerifyWorkRecordAction(), input);
         assertThat(refused.path("verified").asBoolean()).isFalse();
         JsonNode failed = refused.path("checks").get(refused.path("checks").size() - 1);
         assertThat(failed.path("id").asText())
@@ -248,8 +251,8 @@ class WorkRecordActionsTest {
 
     @Test
     void verifyRefusesATamperedRecordByName() throws Exception {
-        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode exported = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-1"));
         byte[] record = Base64.getDecoder()
                 .decode(exported.path("recordBase64").asText());
         record[record.length - 1] ^= 0x01;
@@ -258,7 +261,7 @@ class WorkRecordActionsTest {
         input.set("trust", (ObjectNode) MAPPER.readTree(
                 JsonFormat.printer().print(trust())));
 
-        ObjectNode output = new VerifyWorkRecordAction().execute(input, CONTEXT);
+        ObjectNode output = dispatch(new VerifyWorkRecordAction(), input);
         assertThat(output.path("verified").asBoolean()).isFalse();
         JsonNode last = output.path("checks").get(output.path("checks").size() - 1);
         assertThat(last.path("status").asText()).isEqualTo("FAILED");
@@ -266,12 +269,12 @@ class WorkRecordActionsTest {
 
     @Test
     void aPinnedSnapshotIsTheDefaultAndTheRequestWins() throws Exception {
-        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode exported = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-1"));
         ObjectNode input = MAPPER.createObjectNode()
                 .put("recordBase64", exported.path("recordBase64").asText());
 
-        ObjectNode pinned = new VerifyWorkRecordAction(trust()).execute(input, CONTEXT);
+        ObjectNode pinned = dispatch(new VerifyWorkRecordAction(trust()), input);
         assertThat(pinned.path("verified").asBoolean()).isTrue();
 
         TrustSnapshot stranger = TrustSnapshot.newBuilder()
@@ -280,8 +283,8 @@ class WorkRecordActionsTest {
         ObjectNode withTrust = input.deepCopy();
         withTrust.set("trust", (ObjectNode) MAPPER.readTree(
                 JsonFormat.printer().print(stranger)));
-        ObjectNode refused = new VerifyWorkRecordAction(trust())
-                .execute(withTrust, CONTEXT);
+        ObjectNode refused = dispatch(new VerifyWorkRecordAction(trust()),
+                withTrust);
         assertThat(refused.path("verified").asBoolean())
                 .as("an explicit request snapshot must beat the pin")
                 .isFalse();
@@ -289,11 +292,11 @@ class WorkRecordActionsTest {
 
     @Test
     void withoutAPinTheRequestMustCarryTrust() throws Exception {
-        ObjectNode exported = new ExportWorkRecordAction(runs, signing, clock)
-                .execute(MAPPER.createObjectNode().put("runId", "run-1"), CONTEXT);
+        ObjectNode exported = dispatch(new ExportWorkRecordAction(runs, signing, clock),
+                MAPPER.createObjectNode().put("runId", "run-1"));
         ObjectNode input = MAPPER.createObjectNode()
                 .put("recordBase64", exported.path("recordBase64").asText());
-        assertThatThrownBy(() -> new VerifyWorkRecordAction().execute(input, CONTEXT))
+        assertThatThrownBy(() -> dispatch(new VerifyWorkRecordAction(), input))
                 .hasMessageContaining(TrustPin.ENV_TRUST_SNAPSHOT);
     }
 
@@ -311,19 +314,21 @@ class WorkRecordActionsTest {
     void verifyRefusesBadInputsByPointer() {
         ObjectNode badBase64 = MAPPER.createObjectNode()
                 .put("recordBase64", "!!!");
-        badBase64.set("trust", MAPPER.createObjectNode());
-        assertThatThrownBy(() -> new VerifyWorkRecordAction()
-                .execute(badBase64, CONTEXT))
+        badBase64.set("trust", trustNaming("an.issuer"));
+        assertThatThrownBy(() -> dispatch(new VerifyWorkRecordAction(),
+                badBase64))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("base64");
 
+        // A snapshot naming no issuer is refused by the trust contract itself, before the
+        // verb is reached, so the refusal names the rule rather than the verb's own check.
         ObjectNode emptyTrust = MAPPER.createObjectNode()
                 .put("recordBase64", Base64.getEncoder().encodeToString(new byte[] {1}));
         emptyTrust.set("trust", MAPPER.createObjectNode());
-        assertThatThrownBy(() -> new VerifyWorkRecordAction()
-                .execute(emptyTrust, CONTEXT))
+        assertThatThrownBy(() -> dispatch(new VerifyWorkRecordAction(),
+                emptyTrust))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("trust snapshot is invalid");
+                .hasMessageContaining("trust.issuers");
     }
 
     @Test
@@ -382,4 +387,23 @@ class WorkRecordActionsTest {
             throw new IOException("read-only");
         }
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
+
+    /** A trust snapshot the contract accepts, so a test can reach what it is testing. */
+    private static ObjectNode trustNaming(String issuer) {
+        ObjectNode trust = MAPPER.createObjectNode();
+        trust.putArray("issuers").addObject().put("issuer", issuer);
+        return trust;
+    }
+
 }

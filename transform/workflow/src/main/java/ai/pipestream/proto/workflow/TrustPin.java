@@ -1,9 +1,11 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.receipt.TrustSnapshots;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
@@ -45,17 +47,16 @@ public record TrustPin(TrustSnapshot snapshot) {
     }
 
     /** The snapshot a verifying verb runs against: the request's, else the pin. */
-    static TrustSnapshot resolve(ObjectNode input, TrustSnapshot defaultTrust)
+    static TrustSnapshot resolve(Message input, TrustSnapshot defaultTrust)
             throws ActionException {
-        if (input.has("trust") && !input.get("trust").isNull()) {
-            return (TrustSnapshot) WorkflowActionJson.parse(
-                    WorkflowActionJson.object(input, "trust"), TrustSnapshot.newBuilder(),
-                    "/trust");
+        if (Fields.has(input, "trust")) {
+            return CatalogContract.as(
+                    Fields.message(input, "trust"), TrustSnapshot.getDefaultInstance(), "trust");
         }
         if (defaultTrust != null) {
             return defaultTrust;
         }
-        throw WorkflowActionJson.invalid("the request carries no trust snapshot and the "
+        throw WorkflowRequests.invalid("the request carries no trust snapshot and the "
                 + "server pins none; supply 'trust' or set " + ENV_TRUST_SNAPSHOT, "/trust");
     }
 }

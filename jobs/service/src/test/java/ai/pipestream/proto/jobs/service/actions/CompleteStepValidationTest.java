@@ -1,13 +1,16 @@
 package ai.pipestream.proto.jobs.service.actions;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.workflow.WorkflowRunner;
-import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.jobs.service.ValidatingWorkflows;
+import ai.pipestream.proto.jobs.service.WorkflowRunsConfig;
+import ai.pipestream.proto.jobs.service.store.InMemoryWorkflowRunStore;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunEventRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
-import ai.pipestream.proto.jobs.service.store.InMemoryWorkflowRunStore;
 import ai.pipestream.proto.jobs.service.worker.WorkflowRunWorker;
+import ai.pipestream.proto.workflow.WorkflowRunner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -66,7 +69,7 @@ class CompleteStepValidationTest {
         ObjectNode request = MAPPER.createObjectNode();
         request.set("workflow", workflows.externalReviewWorkflow("in-process"));
         request.putObject("input").put("text", "hi");
-        String jobId = submit.execute(request, context).get("jobId").asText();
+        String jobId = dispatch(submit, request).get("jobId").asText();
         assertThat(worker.workOnce()).isTrue();
         assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
                 .isEqualTo(WorkflowRunRecord.STATUS_WAITING);
@@ -78,9 +81,9 @@ class CompleteStepValidationTest {
         String jobId = parkOnReview();
 
         // "no" trips the declared min_len 3 rule on Review.notes.
-        ObjectNode rejected = completeStep.execute(envelope(
+        ObjectNode rejected = dispatch(completeStep, envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
-                        + " \"response\": {\"notes\": \"no\"}}"), context);
+                        + " \"response\": {\"notes\": \"no\"}}"));
         assertThat(rejected.get("ok").asBoolean()).isFalse();
         assertThat(rejected.get("status").asText()).isEqualTo(WorkflowRunRecord.STATUS_FAILED);
         assertThat(rejected.get("error").asText()).contains("notes");
@@ -102,9 +105,9 @@ class CompleteStepValidationTest {
     void aResponsePassingTheDeclaredRulesResumesTheJob() throws Exception {
         String jobId = parkOnReview();
 
-        ObjectNode accepted = completeStep.execute(envelope(
+        ObjectNode accepted = dispatch(completeStep, envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
-                        + " \"response\": {\"notes\": \"ship it\"}}"), context);
+                        + " \"response\": {\"notes\": \"ship it\"}}"));
         assertThat(accepted.get("ok").asBoolean()).isTrue();
         assertThat(accepted.get("status").asText()).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
 
@@ -114,4 +117,15 @@ class CompleteStepValidationTest {
         assertThat(done.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
         assertThat(MAPPER.readTree(done.result).get("notes").asText()).isEqualTo("ship it");
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

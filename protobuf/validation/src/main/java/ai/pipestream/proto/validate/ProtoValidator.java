@@ -526,9 +526,17 @@ public final class ProtoValidator {
             applyTaxonomy(c, value, path, violations);
             runFieldCel(c, celScalar(field, value), path, violations);
         }
-        if (value instanceof Message nested) {
+        // A field declared inspect-only carries a document the receiver examines rather than
+        // a value it consumes, so the walk stops at it. Its own rules have already run: it can
+        // still be required, and it still had to parse as its declared type.
+        if (value instanceof Message nested && !inspectOnly(constraints)) {
             validateChildren(nested, path, depth, violations);
         }
+    }
+
+    /** Whether any source declares the field inspect-only. */
+    private static boolean inspectOnly(List<FieldConstraints> constraints) {
+        return constraints.stream().anyMatch(FieldConstraints::inspectOnly);
     }
 
     private void validateChildren(
@@ -603,7 +611,7 @@ public final class ProtoValidator {
                     // A taxonomy on a repeated TreePath field binds every element.
                     applyTaxonomy(c, element, elementPath, violations);
                 }
-                if (element instanceof Message nested) {
+                if (element instanceof Message nested && !inspectOnly(constraints)) {
                     validateChildren(nested, elementPath, depth, violations);
                 }
             }
@@ -718,7 +726,7 @@ public final class ProtoValidator {
                 applyFieldConstraints(valueField, valueRules, value, entryPath, violations);
                 runFieldCel(valueRules, celScalar(valueField, value), entryPath, violations);
             }
-            if (!skipEntryValue && value instanceof Message nested) {
+            if (!skipEntryValue && value instanceof Message nested && !inspectOnly(constraints)) {
                 validateChildren(nested, entryPath, depth, violations);
             }
         }

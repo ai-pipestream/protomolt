@@ -1,5 +1,6 @@
 package ai.pipestream.proto.search.service;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -131,7 +132,7 @@ class SearchActionTest {
         ObjectNode in = valid();
         in.putArray("fields").add("title");
 
-        action.execute(in, context);
+        dispatch(in);
 
         assertThat(index.lastSubject).isEqualTo("docs");
         assertThat(index.lastRequest.getMappingSubject()).isEqualTo("docs");
@@ -143,21 +144,20 @@ class SearchActionTest {
 
     @Test
     void everyDeclaredLaneReachesTheIndex() throws Exception {
-        action.execute(input("docs", "q", 1, VECTOR), context);
+        dispatch(input("docs", "q", 1, VECTOR));
         assertThat(index.lastRequest.getLane()).isEqualTo(SearchLane.SEARCH_LANE_VECTOR);
 
-        action.execute(input("docs", "q", 1, HYBRID), context);
+        dispatch(input("docs", "q", 1, HYBRID));
         assertThat(index.lastRequest.getLane()).isEqualTo(SearchLane.SEARCH_LANE_HYBRID);
 
-        action.execute(input("docs", "q", 1, LEXICAL), context);
+        dispatch(input("docs", "q", 1, LEXICAL));
         assertThat(index.lastRequest.getLane()).isEqualTo(SearchLane.SEARCH_LANE_LEXICAL);
     }
 
     /** A lane the enum does not declare cannot be parsed, so it never reaches the index. */
     @Test
     void anUndeclaredLaneIsRefusedByName() {
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 1, "SEARCH_LANE_FUZZY"),
-                context))
+        assertThatThrownBy(() -> dispatch(input("docs", "q", 1, "SEARCH_LANE_FUZZY")))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("SEARCH_LANE_FUZZY");
         assertThat(index.lastRequest).as("refused before the index was touched").isNull();
@@ -166,29 +166,29 @@ class SearchActionTest {
     // --- the same rules the gRPC door enforces ----------------------------------
 
     /**
-     * The gRPC door runs the search proto's declared rules through an interceptor. This
-     * action does not sit behind that interceptor, so if it did not re-run them it would be
-     * the looser of the two doors into the same index.
+     * The gRPC surface runs the search proto's declared rules through an interceptor. The
+     * catalog runs the same rules before dispatch, so neither way into the index is the
+     * looser of the two.
      */
     @Test
     void theDeclaredRulesAreEnforcedHereToo() {
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 0, LEXICAL), context))
+        assertThatThrownBy(() -> dispatch(input("docs", "q", 0, LEXICAL)))
                 .as("k must be positive")
                 .isInstanceOf(ActionException.class);
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 10_001, LEXICAL), context))
+        assertThatThrownBy(() -> dispatch(input("docs", "q", 10_001, LEXICAL)))
                 .as("k is capped, and over-cap is refused rather than clamped")
                 .isInstanceOf(ActionException.class);
-        assertThatThrownBy(() -> action.execute(input("docs", "", 5, LEXICAL), context))
+        assertThatThrownBy(() -> dispatch(input("docs", "", 5, LEXICAL)))
                 .as("the query text is required")
                 .isInstanceOf(ActionException.class);
-        assertThatThrownBy(() -> action.execute(input("", "q", 5, LEXICAL), context))
+        assertThatThrownBy(() -> dispatch(input("", "q", 5, LEXICAL)))
                 .as("the subject is required")
                 .isInstanceOf(ActionException.class);
     }
 
     @Test
     void anOverCapRequestNeverReachesTheIndex() {
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 10_001, LEXICAL), context))
+        assertThatThrownBy(() -> dispatch(input("docs", "q", 10_001, LEXICAL)))
                 .isInstanceOf(ActionException.class);
         assertThat(index.lastRequest).as("refused before the index was touched").isNull();
     }
@@ -199,7 +199,7 @@ class SearchActionTest {
      */
     @Test
     void anAbsentLaneIsRefusedRatherThanChosen() {
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 5, null), context))
+        assertThatThrownBy(() -> dispatch(input("docs", "q", 5, null)))
                 .isInstanceOf(ActionException.class);
         assertThat(index.lastRequest).isNull();
     }
@@ -221,7 +221,7 @@ class SearchActionTest {
                         .build())
                 .build());
 
-        ObjectNode out = action.execute(valid(), context);
+        ObjectNode out = dispatch(valid());
 
         assertThat(out.get("hits")).hasSize(1);
         ObjectNode hit = (ObjectNode) out.get("hits").get(0);
@@ -240,7 +240,7 @@ class SearchActionTest {
 
     @Test
     void noHitsIsAnEmptyListNotAnError() throws Exception {
-        assertThat(action.execute(valid(), context).get("hits")).isEmpty();
+        assertThat(dispatch(valid()).get("hits")).isEmpty();
     }
 
     // --- refusals carry the way forward -----------------------------------------
@@ -254,7 +254,7 @@ class SearchActionTest {
     void anUnknownSubjectComesBackWithTheSubjectsThatDoExist() {
         index.failure = new IllegalArgumentException("no subject 'nope'");
 
-        assertThatThrownBy(() -> action.execute(input("nope", "q", 5, LEXICAL), context))
+        assertThatThrownBy(() -> dispatch(input("nope", "q", 5, LEXICAL)))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.getMessage()).contains("nope");
                     ObjectNode details = e.details().orElseThrow();
@@ -271,7 +271,7 @@ class SearchActionTest {
     void aLaneTheSubjectCannotRunIsItsOwnRefusal() {
         index.failure = new IllegalStateException("subject 'docs' has no chunk lane");
 
-        assertThatThrownBy(() -> action.execute(input("docs", "q", 5, VECTOR), context))
+        assertThatThrownBy(() -> dispatch(input("docs", "q", 5, VECTOR)))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("lane-unavailable");
                     assertThat(e.details().orElseThrow().has("servedSubjects")).isTrue();
@@ -284,4 +284,13 @@ class SearchActionTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("index");
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb. The request
+     * contract is checked there, so calling the verb directly would skip it.
+     */
+    private ObjectNode dispatch(ObjectNode input) throws ActionException {
+        return ActionCatalog.defaults(context).replace(action).execute(action.name(), input);
+    }
+
 }

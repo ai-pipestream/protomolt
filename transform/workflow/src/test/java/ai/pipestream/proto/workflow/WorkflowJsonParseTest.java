@@ -133,8 +133,7 @@ class WorkflowJsonParseTest {
                 .put("targetType", "workflow.test.Embedding")
                 .put("model", "structured-model")
                 .put("maxAttempts", "three");
-        assertThat(failure(nonIntegralAttempts).getMessage())
-                .contains("maxAttempts must be a 32-bit integer");
+        assertThat(failure(nonIntegralAttempts).getMessage()).contains("Not an int32 value");
 
         ObjectNode overflowingAttempts = workflow();
         ObjectNode overflowingStep = firstStep(overflowingAttempts);
@@ -144,8 +143,7 @@ class WorkflowJsonParseTest {
                 .put("targetType", "workflow.test.Embedding")
                 .put("model", "structured-model")
                 .put("maxAttempts", 4_294_967_296L);
-        assertThat(failure(overflowingAttempts).getMessage())
-                .contains("maxAttempts must be a 32-bit integer");
+        assertThat(failure(overflowingAttempts).getMessage()).contains("int32");
     }
 
     @Test
@@ -154,8 +152,7 @@ class WorkflowJsonParseTest {
         workflow.putObject("schema");
         WorkflowJson.WorkflowParseException e = failure(workflow);
         assertThat(e.step).isEmpty();
-        assertThat(e.getMessage()).isEqualTo("Schema must contain exactly one of 'type', "
-                + "'sources', 'descriptorSetBase64' but had 0 (at '/schema')");
+        assertThat(e.getMessage()).contains("exactly one of");
     }
 
     @Test
@@ -178,18 +175,21 @@ class WorkflowJsonParseTest {
         empty.putArray("steps");
         assertThat(failure(empty).getMessage()).isEqualTo("'steps' must be a non-empty array");
 
+        // A definition whose steps are not a list is not a workflow at all, so the read
+        // refuses it before anything can be attributed to a step.
         ObjectNode notAnArray = workflow();
         notAnArray.putObject("steps");
-        assertThat(failure(notAnArray).getMessage()).isEqualTo("'steps' must be a non-empty array");
+        assertThat(failure(notAnArray).getMessage()).contains("steps");
     }
 
+    /** A step that is not an object is not a WorkflowStep, so the read refuses it. */
     @Test
     void aStepThatIsNotAnObjectIsRejected() {
         ObjectNode workflow = workflow();
         workflow.putArray("steps").add("tokenize");
         WorkflowJson.WorkflowParseException e = failure(workflow);
         assertThat(e.step).isEmpty();
-        assertThat(e.getMessage()).isEqualTo("each step must be an object");
+        assertThat(e.getMessage()).contains("Expect message object");
     }
 
     @Test
@@ -254,13 +254,17 @@ class WorkflowJsonParseTest {
         assertThat(e.getMessage()).isEqualTo("Unknown type 'workflow.test.Missing'");
     }
 
+    /**
+     * A CEL rule that is not an object is not a CelRule, so the read refuses the definition
+     * rather than the verb attributing it to a step: there is no step to read.
+     */
     @Test
-    void aCelRuleThatIsNotAnObjectIsAttributedToItsStep() {
+    void aCelRuleThatIsNotAnObjectIsRejected() {
         ObjectNode workflow = workflow();
         firstStep(workflow).putArray("celRules").add("text = input.text");
         WorkflowJson.WorkflowParseException e = failure(workflow);
-        assertThat(e.step).isEqualTo("tokenize");
-        assertThat(e.getMessage()).isEqualTo("each CEL rule must be an object");
+        assertThat(e.step).isEmpty();
+        assertThat(e.getMessage()).contains("Expect message object");
     }
 
     @Test

@@ -1,24 +1,27 @@
 package ai.pipestream.proto.search.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.repo.v1.DocumentMetadata;
 import ai.pipestream.proto.repo.v1.ListDocumentsResponse;
 import ai.pipestream.proto.repo.v1.NodeAddress;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Struct;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Replay pages the listing and rides the submit action: one durable run
@@ -45,19 +48,22 @@ class ReplayActionTest {
 
         @Override
         public Descriptor requestType() {
-            // Struct accepts any JSON object, so a fixture is not constrained by a
-            // contract it is not testing.
-            return Struct.getDescriptor();
+            return CatalogContract.request("SubmitWorkflowRequest");
         }
 
         @Override
-        public ObjectNode execute(ObjectNode input, ActionContext context)
+        public Descriptor responseType() {
+            return CatalogContract.response("SubmitWorkflowResponse");
+        }
+
+        @Override
+        public Message execute(Message input, ActionContext context)
                 throws ActionException {
-            submissions.add(input.deepCopy());
-            ObjectNode result = MAPPER.createObjectNode();
-            result.put("ok", true);
-            result.put("jobId", "job-" + submissions.size());
-            return result;
+            submissions.add(CatalogContract.toEnvelope(input, name()));
+            return Reply.of(responseType())
+                    .set("ok", true)
+                    .set("jobId", "job-" + submissions.size())
+                    .build();
         }
     }
 
@@ -134,7 +140,7 @@ class ReplayActionTest {
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("drive", "intake");
         input.put("accountId", "acct");
-        ObjectNode output = replay.execute(input, ActionContext.create());
+        ObjectNode output = dispatch(replay, input);
 
         assertThat(output.path("submitted").asInt()).isEqualTo(3);
         assertThat(output.path("jobIds")).hasSize(3);
@@ -153,12 +159,11 @@ class ReplayActionTest {
     void everyIdentityIsRequiredByName() {
         ReplayAction replay = replay(
                 request -> ListDocumentsResponse.getDefaultInstance(), new RecordingSubmit());
-        // Violations name the field as the contract declares it. Both that form and its
-        // lowerCamelCase spelling are accepted on the wire, so the refusal quotes the
-        // declared name rather than whichever spelling the caller happened to use.
+        // Violations name the field as it appears in the envelope, so the refusal leads
+        // back to the member the caller wrote rather than to its declared spelling.
         Map<String, String> declaredNames = Map.of(
-                "workflowName", "workflow_name",
-                "mappingSubject", "mapping_subject",
+                "workflowName", "workflowName",
+                "mappingSubject", "mappingSubject",
                 "drive", "drive");
         for (String missing : declaredNames.keySet()) {
             ObjectNode input = MAPPER.createObjectNode();
@@ -166,7 +171,7 @@ class ReplayActionTest {
             input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
             input.put("drive", "intake");
             input.remove(missing);
-            assertThatThrownBy(() -> replay.execute(input, ActionContext.create()))
+            assertThatThrownBy(() -> dispatch(replay, input))
                     .isInstanceOf(ActionException.class)
                     .hasMessageContaining(declaredNames.get(missing));
         }
@@ -181,7 +186,7 @@ class ReplayActionTest {
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("drive", "intake");
-        ObjectNode output = replay.execute(input, ActionContext.create());
+        ObjectNode output = dispatch(replay, input);
         assertThat(output.path("submitted").asInt()).isZero();
         assertThat(submit.submissions).isEmpty();
     }
@@ -190,7 +195,7 @@ class ReplayActionTest {
     void aSubmissionFailureStopsTheReplayAndSurfaces() {
         RecordingSubmit submit = new RecordingSubmit() {
             @Override
-            public ObjectNode execute(ObjectNode input, ActionContext context)
+            public Message execute(Message input, ActionContext context)
                     throws ActionException {
                 if (submissions.size() == 1) {
                     throw new ActionException("submit-refused", "the jobs module refused");
@@ -210,7 +215,7 @@ class ReplayActionTest {
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("drive", "intake");
         // The refusal propagates; the run submitted before it stays submitted.
-        assertThatThrownBy(() -> replay.execute(input, ActionContext.create()))
+        assertThatThrownBy(() -> dispatch(replay, input))
                 .isInstanceOf(ActionException.class)
                 .hasMessageContaining("the jobs module refused");
         assertThat(submit.submissions).hasSize(1);
@@ -234,7 +239,7 @@ class ReplayActionTest {
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("drive", "intake");
-        ObjectNode output = replay.execute(input, ActionContext.create());
+        ObjectNode output = dispatch(replay, input);
         assertThat(output.path("submitted").asInt()).isEqualTo(1);
         assertThat(submit.submissions).hasSize(1);
     }
@@ -250,7 +255,7 @@ class ReplayActionTest {
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("drive", "intake");
-        replay.execute(input, ActionContext.create());
+        dispatch(replay, input);
         assertThat(accountFilters).containsExactly("");
     }
 
@@ -271,7 +276,7 @@ class ReplayActionTest {
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("prune", true);
-        ObjectNode output = action.execute(input, ActionContext.create());
+        ObjectNode output = dispatch(action, input);
 
         assertThat(output.path("submitted").asInt()).isEqualTo(1);
         assertThat(output.path("pruned").asInt()).isEqualTo(1);
@@ -293,7 +298,7 @@ class ReplayActionTest {
             input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
             input.put("prune", true);
             input.put(scope, scope.equals("drive") ? "intake" : "acct");
-            assertThatThrownBy(() -> action.execute(input, ActionContext.create()))
+            assertThatThrownBy(() -> dispatch(action, input))
                     .isInstanceOf(ActionException.class)
                     .hasMessageContaining(scope)
                     .hasMessageContaining("prune");
@@ -301,7 +306,7 @@ class ReplayActionTest {
     }
 
     @Test
-    void withoutPruneNothingIsPrunedAndTheOutputSaysNothingAboutIt() throws Exception {
+    void withoutPruneNothingIsPrunedAndTheOutputReportsNone() throws Exception {
         FakeIndex index = new FakeIndex(RepoDocumentMapping.SUBJECT, "doc-stale");
         ReplayAction action = new ReplayAction(
                 request -> ListDocumentsResponse.getDefaultInstance(),
@@ -310,8 +315,11 @@ class ReplayActionTest {
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("drive", "intake");
-        ObjectNode output = action.execute(input, ActionContext.create());
-        assertThat(output.has("pruned")).isFalse();
+        // The reply carries the shape the response declares, so a replay that reconciled
+        // nothing reports nothing pruned rather than leaving the members out.
+        ObjectNode output = dispatch(action, input);
+        assertThat(output.path("pruned").asInt()).isZero();
+        assertThat(output.path("prunedDocIds")).isEmpty();
         assertThat(index.deleted).isEmpty();
         assertThat(index.ids).containsExactly("doc-stale");
     }
@@ -331,7 +339,7 @@ class ReplayActionTest {
         input.put("drive", "intake");
         input.put("replayId", "policy-change-2026-08");
 
-        replay.execute(input, ActionContext.create());
+        dispatch(replay, input);
         assertThat(first.submissions).hasSize(2);
         List<String> firstIds = first.submissions.stream()
                 .map(envelope -> envelope.path("jobId").asText())
@@ -349,7 +357,7 @@ class ReplayActionTest {
                         .addDocuments(document("doc-2"))
                         .build(),
                 second);
-        replay.execute(input, ActionContext.create());
+        dispatch(replay, input);
         assertThat(second.submissions.stream()
                 .map(envelope -> envelope.path("jobId").asText())
                 .toList())
@@ -368,7 +376,18 @@ class ReplayActionTest {
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
         input.put("drive", "intake");
-        replay.execute(input, ActionContext.create());
+        dispatch(replay, input);
         assertThat(submit.submissions.getFirst().has("jobId")).isFalse();
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

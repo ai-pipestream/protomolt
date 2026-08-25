@@ -1,6 +1,9 @@
 package ai.pipestream.proto.acquire.gather.git;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.eclipse.jgit.api.Git;
@@ -34,7 +37,7 @@ class GatherGitActionTest {
 
         ObjectNode input = MAPPER.createObjectNode();
         input.put("repo", upstream.toUri().toString());
-        ObjectNode result = new GatherGitAction().execute(input, ActionContext.create());
+        ObjectNode result = dispatch(new GatherGitAction(), input);
 
         assertThat(result.path("ok").asBoolean()).as(result.toString()).isTrue();
         assertThat(result.path("files").findValuesAsText(null))
@@ -48,8 +51,19 @@ class GatherGitActionTest {
     void unreachableRepoIsAStructuredFailureNotAnError(@TempDir Path tmp) throws Exception {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("repo", tmp.resolve("does-not-exist").toUri().toString());
-        ObjectNode result = new GatherGitAction().execute(input, ActionContext.create());
+        ObjectNode result = dispatch(new GatherGitAction(), input);
         assertThat(result.path("ok").asBoolean()).isFalse();
         assertThat(result.path("error").asText()).isNotEmpty();
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

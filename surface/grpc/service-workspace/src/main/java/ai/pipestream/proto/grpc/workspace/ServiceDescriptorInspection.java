@@ -1,18 +1,22 @@
 package ai.pipestream.proto.grpc.workspace;
 
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.descriptors.GoogleDescriptorLoader;
 import ai.pipestream.proto.grpc.profile.ServiceProfileRepository;
 import ai.pipestream.proto.grpc.profile.v1.DescriptorArtifact;
 import ai.pipestream.proto.grpc.profile.v1.ServiceProfile;
 import ai.pipestream.proto.registry.SchemaRegistryStore;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 
 import java.io.IOException;
 import java.util.List;
@@ -27,9 +31,35 @@ public final class ServiceDescriptorInspection {
     private ServiceDescriptorInspection() {
     }
 
-    /** Inspects every non-reflection service in a profile's descriptor artifact. */
-    public static ArrayNode services(ServiceProfile profile, ServiceProfileRepository repository,
-                                     SchemaRegistryStore registry, ObjectMapper mapper)
+    /**
+     * The inspection as JSON, for a front that speaks it.
+     *
+     * <p>Rendered from the same messages the verb answers with, so the MCP resource and the
+     * service-inspect reply cannot describe a profile differently.
+     */
+    public static ArrayNode servicesJson(ServiceProfile profile,
+                                         ServiceProfileRepository repository,
+                                         SchemaRegistryStore registry, ObjectMapper mapper)
+            throws IOException {
+        Reply reply = Reply.of(CatalogContract.response("ServiceInspectResponse"));
+        writeServices(reply, "services", profile, repository, registry);
+        try {
+            JsonNode rendered = mapper.readTree(
+                    JsonFormat.printer().print(reply.build()));
+            JsonNode services = rendered.get("services");
+            return services == null ? mapper.createArrayNode() : (ArrayNode) services;
+        } catch (InvalidProtocolBufferException e) {
+            throw new IOException("service inspection does not render as JSON", e);
+        }
+    }
+
+    /**
+     * Inspects every non-reflection service in a profile's descriptor artifact, appending
+     * each to {@code services} on {@code reply}.
+     */
+    public static void writeServices(Reply reply, String field, ServiceProfile profile,
+                                     ServiceProfileRepository repository,
+                                     SchemaRegistryStore registry)
             throws IOException {
         String fingerprint = profile.getSchemaSource().getDescriptorFingerprint();
         DescriptorArtifact artifact = ServiceActionSupport.descriptorArtifact(
@@ -41,65 +71,61 @@ public final class ServiceDescriptorInspection {
         } catch (Exception e) {
             throw new IOException("descriptor artifact '" + fingerprint + "' cannot be linked", e);
         }
-        ArrayNode services = mapper.createArrayNode();
+        int serviceCount = 0;
         int methodCount = 0;
         for (FileDescriptor file : files) {
             for (var service : file.getServices()) {
                 if (service.getFullName().startsWith("grpc.reflection.")) {
                     continue;
                 }
-                if (services.size() == MAX_SERVICES) {
+                if (serviceCount++ == MAX_SERVICES) {
                     throw new IOException("descriptor exceeds the service inspection limit of "
                             + MAX_SERVICES);
                 }
-                ObjectNode serviceNode = services.addObject();
-                serviceNode.put("name", service.getFullName());
-                ArrayNode methods = serviceNode.putArray("methods");
+                Reply serviceReply = reply.append(field).set("name", service.getFullName());
                 for (MethodDescriptor method : service.getMethods()) {
                     if (methodCount++ == MAX_METHODS) {
                         throw new IOException("descriptor exceeds the method inspection limit of "
                                 + MAX_METHODS);
                     }
-                    methods.add(method(method, mapper));
+                    writeMethod(serviceReply.append("methods"), method);
                 }
+                serviceReply.build();
             }
         }
-        return services;
     }
 
-    private static ObjectNode method(MethodDescriptor method, ObjectMapper mapper)
+    private static void writeMethod(Reply reply, MethodDescriptor method) throws IOException {
+        reply.set("name", method.getName())
+                .set("fullName", method.getService().getFullName() + "/" + method.getName())
+                .set("inputType", method.getInputType().getFullName())
+                .set("outputType", method.getOutputType().getFullName())
+                .set("clientStreaming", method.isClientStreaming())
+                .set("serverStreaming", method.isServerStreaming());
+        writeFields(reply, "inputFields", method.getInputType());
+        writeFields(reply, "outputFields", method.getOutputType());
+        reply.build();
+    }
+
+    private static void writeFields(Reply reply, String into, Descriptor descriptor)
             throws IOException {
-        ObjectNode node = mapper.createObjectNode();
-        node.put("name", method.getName());
-        node.put("fullName", method.getService().getFullName() + "/" + method.getName());
-        node.put("inputType", method.getInputType().getFullName());
-        node.put("outputType", method.getOutputType().getFullName());
-        node.put("clientStreaming", method.isClientStreaming());
-        node.put("serverStreaming", method.isServerStreaming());
-        node.set("inputFields", fields(method.getInputType(), mapper));
-        node.set("outputFields", fields(method.getOutputType(), mapper));
-        return node;
-    }
-
-    private static ArrayNode fields(Descriptor descriptor, ObjectMapper mapper) throws IOException {
         if (descriptor.getFields().size() > MAX_FIELDS_PER_MESSAGE) {
             throw new IOException("message '" + descriptor.getFullName()
                     + "' exceeds the field inspection limit of " + MAX_FIELDS_PER_MESSAGE);
         }
-        ArrayNode fields = mapper.createArrayNode();
         for (FieldDescriptor field : descriptor.getFields()) {
-            ObjectNode node = fields.addObject();
-            node.put("name", field.getName());
-            node.put("jsonName", field.getJsonName());
-            node.put("number", field.getNumber());
-            node.put("type", field.getType().name().toLowerCase(java.util.Locale.ROOT));
-            node.put("cardinality", field.isRepeated() ? "repeated" : "singular");
+            Reply node = reply.append(into)
+                    .set("name", field.getName())
+                    .set("jsonName", field.getJsonName())
+                    .set("number", field.getNumber())
+                    .set("type", field.getType().name().toLowerCase(java.util.Locale.ROOT))
+                    .set("cardinality", field.isRepeated() ? "repeated" : "singular");
             if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-                node.put("typeName", field.getMessageType().getFullName());
+                node.set("typeName", field.getMessageType().getFullName());
             } else if (field.getJavaType() == FieldDescriptor.JavaType.ENUM) {
-                node.put("typeName", field.getEnumType().getFullName());
+                node.set("typeName", field.getEnumType().getFullName());
             }
+            node.build();
         }
-        return fields;
     }
 }

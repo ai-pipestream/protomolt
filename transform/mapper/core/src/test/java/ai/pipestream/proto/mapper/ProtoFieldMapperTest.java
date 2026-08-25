@@ -8,14 +8,13 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.DescriptorValidationException;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.function.Executable;
-
+import com.google.protobuf.Message;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import static com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder;
 import static org.junit.jupiter.api.Assertions.*;
 

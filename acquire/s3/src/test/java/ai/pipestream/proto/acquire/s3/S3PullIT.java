@@ -21,6 +21,7 @@ import ai.pipestream.proto.repo.v1.DriveServiceGrpc;
 import ai.pipestream.proto.repo.v1.DriveType;
 import ai.pipestream.proto.repo.v1.GetDocumentByReferenceRequest;
 import ai.pipestream.proto.repo.v1.ListDocumentsRequest;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.grpc.ManagedChannel;
@@ -273,11 +274,13 @@ class S3PullIT {
                 .put("bucket", SOURCE_BUCKET)
                 .put("prefix", "b/")
                 .put("datasourceId", DATASOURCE);
-        ObjectNode output = catalog.execute(S3PullAction.NAME, input);
-        assertThat(output.get("deduplicated").asInt()).isEqualTo(1);
-        assertThat(output.get("submitted").asInt()).isZero();
-        assertThat(output.get("watermark").asText()).isNotBlank();
-        assertThat(output.get("errors")).isEmpty();
+        // The pass result is a PullReport under 'report', which is what the response
+        // message declares — the same document a gRPC caller reads.
+        JsonNode report = catalog.execute(S3PullAction.NAME, input).get("report");
+        assertThat(report.get("deduplicated").asInt()).isEqualTo(1);
+        assertThat(report.get("submitted").asInt()).isZero();
+        assertThat(report.get("watermark").asText()).isNotBlank();
+        assertThat(report.get("errors")).isEmpty();
     }
 
     /** Records intake receipts by doc id so assertions can fetch what was saved. */

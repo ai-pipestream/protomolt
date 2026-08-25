@@ -6,10 +6,10 @@ import ai.pipestream.proto.delegation.v1.ListWorkersRequest;
 import ai.pipestream.proto.delegation.v1.ListWorkersResponse;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
 import ai.pipestream.proto.delegation.v1.WorkerRegistrationSummary;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.List;
 
 /** Lists the coordinator's worker registrations: identity, admission, and capabilities. */
 final class DelegationWorkerListAction extends DelegationAction {
@@ -39,10 +39,12 @@ final class DelegationWorkerListAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        // The verb takes no input, but the envelope is still parsed against the declared
-        // request so a caller that sends members gets told, rather than having them ignored.
-        DelegationActionJson.parse(input, ListWorkersRequest.newBuilder(), name());
+    public Descriptor responseType() {
+        return ListWorkersResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         List<InProcessDelegationCoordinator.WorkerView> workers;
         try {
             workers = bridge.coordinator().workers();
@@ -53,7 +55,7 @@ final class DelegationWorkerListAction extends DelegationAction {
                 .setOk(true)
                 .setTruncated(workers.size() > MAX_WORKERS);
         workers.stream().limit(MAX_WORKERS).forEach(worker -> response.addWorkers(summary(worker)));
-        return DelegationActionJson.render(response.build(), context);
+        return response.build();
     }
 
     private static WorkerRegistrationSummary summary(

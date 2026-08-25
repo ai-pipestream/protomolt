@@ -1,9 +1,11 @@
 package ai.pipestream.proto.workflow;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.SchemaResolver;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.grpc.workflow.ArtifactRepository;
@@ -15,18 +17,18 @@ import ai.pipestream.proto.receipt.TrustSnapshot;
 import ai.pipestream.proto.receipt.Verification;
 import ai.pipestream.proto.receipt.WorkRecord;
 import ai.pipestream.proto.receipt.WorkRecords;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
-import java.util.function.Supplier;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import com.google.protobuf.Descriptors.Descriptor;
+import java.util.function.Supplier;
 
 /**
  * The relying-party evaluation sidecar: a reproducible decision procedure
@@ -124,6 +126,11 @@ final class EvaluateWorkRecordAction implements ProtoAction {
         return CatalogContract.request("EvaluateWorkRecordRequest");
     }
 
+    @Override
+    public Descriptor responseType() {
+        return CatalogContract.response("EvaluateWorkRecordResponse");
+    }
+
     /**
      * Adds trust to the required list when this node has no pinned snapshot.
      *
@@ -143,33 +150,32 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // Availability first: a node without a workspace cannot evaluate any request, so
         // reporting that is more use to the caller than listing fields on a verb that was
         // never going to run.
         if (artifacts == null || runs == null) {
-            throw WorkflowActionJson.unavailable("work-record evaluation",
+            throw WorkflowRequests.unavailable("work-record evaluation",
                     "start protomolt-serve with --workflow-workspace");
         }
         byte[] record;
         try {
             record = Base64.getDecoder()
-                    .decode(WorkflowActionJson.text(input, "recordBase64"));
+                    .decode(WorkflowRequests.text(input, "recordBase64"));
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid("'recordBase64' is not valid base64",
+            throw WorkflowRequests.invalid("'recordBase64' is not valid base64",
                     "/recordBase64");
         }
         TrustSnapshot trust = TrustPin.resolve(input, defaultTrust.get());
-        Workflow workflow = (Workflow) WorkflowActionJson.parse(
-                WorkflowActionJson.object(input, "workflow"), Workflow.newBuilder(),
-                "/workflow");
-        Map<String, byte[]> artifactBytes = WorkflowActionJson.base64Map(input, "artifacts");
+        Workflow workflow = CatalogContract.as(
+                Fields.message(input, "workflow"), Workflow.getDefaultInstance(), name());
+        Map<String, byte[]> artifactBytes = WorkflowRequests.base64Map(input, "artifacts");
 
         Verification verification;
         try {
             verification = RecordVerifier.verify(record, trust, artifactBytes);
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/trust");
+            throw WorkflowRequests.invalid(e.getMessage(), "/trust");
         }
 
         List<Verification.Check> evaluationChecks = new ArrayList<>();
@@ -204,33 +210,29 @@ final class EvaluateWorkRecordAction implements ProtoAction {
         boolean accepted = verification.verified() && evaluationChecks.stream()
                 .noneMatch(check -> check.status() == Verification.Check.Status.FAILED);
 
-        ObjectNode output = context.objectMapper().createObjectNode();
-        output.put("accepted", accepted);
-        if (!verification.manifestDigest().isEmpty()) {
-            output.put("manifestDigest", verification.manifestDigest());
-        }
-        output.put("policyId", POLICY_ID);
-        output.put("policyVersion", POLICY_VERSION);
-        output.put("policySha256", policySha256());
-        output.put("evaluatedAt", clock.instant().toString());
-        ArrayNode checks = output.putArray("checks");
+        Reply output = Reply.of(responseType())
+                .set("accepted", accepted)
+                .set("manifestDigest", verification.manifestDigest())
+                .set("policyId", POLICY_ID)
+                .set("policyVersion", POLICY_VERSION)
+                .set("policySha256", policySha256())
+                .set("evaluatedAt", clock.instant().toString())
+                .addAll("nonClaims", verification.nonClaims());
         for (Verification.Check check : verification.checks()) {
-            render(checks, check);
+            render(output, check);
         }
         for (Verification.Check check : evaluationChecks) {
-            render(checks, check);
+            render(output, check);
         }
-        ArrayNode steps = output.putArray("replaySteps");
         for (WorkflowReplay.StepReplay step : replaySteps) {
-            ObjectNode node = steps.addObject();
-            node.put("stepName", step.stepName());
-            node.put("recordedStatus", step.recordedStatus().name());
-            node.put("ok", step.ok());
-            node.put("detail", step.detail());
+            output.append("replaySteps")
+                    .set("stepName", step.stepName())
+                    .set("recordedStatus", step.recordedStatus().name())
+                    .set("ok", step.ok())
+                    .set("detail", step.detail())
+                    .build();
         }
-        ArrayNode nonClaims = output.putArray("nonClaims");
-        verification.nonClaims().forEach(nonClaims::add);
-        return output;
+        return output.build();
     }
 
     private Optional<RunEvidence> findEvidence(String runId) throws ActionException {
@@ -270,23 +272,24 @@ final class EvaluateWorkRecordAction implements ProtoAction {
     }
 
     private WorkflowReplay.ReplayResult replay(Workflow workflow, RunEvidence evidence,
-                                               ObjectNode input, ActionContext context)
+                                               Message input, ActionContext context)
             throws ActionException {
         try {
             return WorkflowReplay.replay(workflow, evidence,
                     SchemaResolver.resolve(input, "schema", context).files(), artifacts);
         } catch (IllegalArgumentException e) {
-            throw WorkflowActionJson.invalid(e.getMessage(), "/workflow");
+            throw WorkflowRequests.invalid(e.getMessage(), "/workflow");
         } catch (IOException e) {
             throw new ActionException("repository-failed",
                     "Replay failed: " + e.getMessage());
         }
     }
 
-    private static void render(ArrayNode checks, Verification.Check check) {
-        ObjectNode node = checks.addObject();
-        node.put("id", check.id());
-        node.put("status", check.status().name());
-        node.put("detail", check.detail());
+    private static void render(Reply output, Verification.Check check) {
+        output.append("checks")
+                .set("id", check.id())
+                .set("status", check.status().name())
+                .set("detail", check.detail())
+                .build();
     }
 }

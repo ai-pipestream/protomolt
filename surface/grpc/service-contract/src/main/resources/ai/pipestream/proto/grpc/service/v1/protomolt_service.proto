@@ -1714,7 +1714,13 @@ message RunWorkflowResponse {
 message CheckWorkflowRequest {
   // The workflow definition to verify.
   CompiledWorkflow workflow = 1 [
-    (ai.pipestream.proto.validate.v1.field) = {required: true}
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      // The verb's answer is a report on this workflow, so holding the request
+      // to the workflow's own rules would refuse exactly the definitions it
+      // exists to explain. It reads the violations and reports them instead.
+      inspect_only: true
+    }
   ];
 }
 
@@ -2101,6 +2107,9 @@ message SubmitWorkflowResponse {
   // Why submission failed, when ok=false (workflow does not parse or verify,
   // jobs not configured, malformed input).
   string error = 4;
+  // The step the run was refused at, when a definition failed to compile or
+  // validate. Set only when ok=false and the refusal names a step.
+  string failed_step = 5;
 }
 
 // One checkpointed step of a workflow run: the persisted response the workflow
@@ -2144,6 +2153,10 @@ message WorkflowRun {
   string updated_at = 11;
   // RFC 3339; set when the job reached a terminal state.
   string completed_at = 12;
+  // One line on how the run ended, written at the terminal commit point: what
+  // completed, or which gate failed it. Set once the job is COMPLETED, FAILED
+  // or DEAD.
+  string verdict = 13;
 }
 
 // The input of get-job.
@@ -2248,7 +2261,9 @@ message CompleteStepRequest {
   // The step's response, as proto3 JSON of the step's output type. When the
   // step declares 'validate', the response is checked against its declared
   // rules before the workflow resumes — a rejection fails the job as a verdict.
-  google.protobuf.Struct response = 3;
+  google.protobuf.Struct response = 3 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
 }
 
 // The outcome of complete-step.
@@ -2261,6 +2276,9 @@ message CompleteStepResponse {
   // Why completion failed, when ok=false (job not WAITING, step mismatch,
   // response does not parse or failed validation).
   string error = 3;
+  // The step the run is actually parked on, when it is not the one supplied.
+  // Set only when ok=false, and only while the run is still waiting.
+  string outstanding_step = 4;
 }
 
 // The input of infer-schema.

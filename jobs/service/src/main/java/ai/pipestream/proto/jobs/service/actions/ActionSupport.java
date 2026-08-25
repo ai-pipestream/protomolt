@@ -1,6 +1,7 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -8,6 +9,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * The shared plumbing of the workflow-runs verbs: the null-store "unavailable"
@@ -125,6 +127,58 @@ final class ActionSupport {
      *        false for the list-jobs summary
      * @return the JSON document
      */
+    /**
+     * Writes one run into {@code run}, the contract's own shape for it.
+     *
+     * @param full true for get-job (input, checkpoints and result included), false for the
+     *        list-jobs summary
+     */
+    static void writeJob(Reply run, WorkflowRunRecord job, boolean full) {
+        run.set("jobId", job.jobId.toString())
+                .set("workflowName", job.workflowName)
+                .set("status", job.status)
+                .set("attempt", job.attempt)
+                .set("outstandingStep", text(job.outstandingStep));
+        if (full) {
+            run.set("input", parse(job.input));
+            for (JsonNode entry : parse(job.checkpoints == null ? "[]" : job.checkpoints)) {
+                run.append("checkpoints")
+                        .set("name", entry.path("name").asText())
+                        .set("skipped", entry.path("skipped").asBoolean())
+                        .set("response", entry.path("response"))
+                        .build();
+            }
+            if (job.result != null) {
+                run.set("result", parse(job.result));
+            }
+        }
+        run.set("verdict", text(job.verdict))
+                .set("error", text(job.error))
+                .set("createdAt", text(iso(job.createdAt)))
+                .set("updatedAt", text(iso(job.updatedAt)))
+                .set("completedAt", text(iso(job.completedAt)))
+                .build();
+    }
+
+    /**
+     * The job id a request names.
+     *
+     * <p>The message declares it as a uuid, so a malformed one is refused before dispatch;
+     * this parses what the rule already accepted.
+     */
+    static UUID jobId(String text) throws ActionException {
+        try {
+            return UUID.fromString(text.trim());
+        } catch (IllegalArgumentException e) {
+            throw invalidInput("'jobId' must be a uuid; got '" + text + "'");
+        }
+    }
+
+    /** An absent value as the empty string the field already means it by. */
+    private static String text(String value) {
+        return value == null ? "" : value;
+    }
+
     static ObjectNode jobJson(WorkflowRunRecord job, boolean full) {
         ObjectNode node = JsonNodeFactory.instance.objectNode();
         node.put("jobId", job.jobId.toString());

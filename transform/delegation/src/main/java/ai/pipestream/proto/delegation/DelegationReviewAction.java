@@ -2,10 +2,11 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.ReviewCandidateRequest;
 import ai.pipestream.proto.delegation.v1.ReviewCandidateResponse;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /** Applies an external review decision to the open completion candidate. */
 final class DelegationReviewAction extends DelegationAction {
@@ -33,19 +34,24 @@ final class DelegationReviewAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return ReviewCandidateResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // Which fields each decision needs is declared as message-level CEL on the request:
         // an acceptance carries its verdict, a revision request carries its feedback, and
         // failed checks belong only to a revision request.
-        ReviewCandidateRequest request = DelegationActionJson
-                .parse(input, ReviewCandidateRequest.newBuilder(), name()).build();
+        ReviewCandidateRequest request = CatalogContract.as(
+                input, ReviewCandidateRequest.getDefaultInstance(), name());
         CandidateReviewer.ReviewDecision review = switch (request.getDecision()) {
             case REVIEW_DECISION_ACCEPT ->
                     CandidateReviewer.ReviewDecision.accept(request.getVerdict());
             case REVIEW_DECISION_REVISE ->
                     CandidateReviewer.ReviewDecision.revise(request.getFeedback(),
                             request.getFailedChecksList());
-            default -> throw DelegationActionJson.rejected(
+            default -> throw DelegationFailures.rejected(
                     "delegation-review needs a decision the contract defines");
         };
         try {
@@ -53,10 +59,10 @@ final class DelegationReviewAction extends DelegationAction {
         } catch (RuntimeException e) {
             throw failure(e);
         }
-        return DelegationActionJson.render(ReviewCandidateResponse.newBuilder()
+        return ReviewCandidateResponse.newBuilder()
                 .setOk(true)
                 .setTaskId(request.getTaskId())
                 .setDecision(request.getDecision())
-                .build(), context);
+                .build();
     }
 }

@@ -1,6 +1,9 @@
 package ai.pipestream.proto.grpc.invoke;
 
+import ai.pipestream.proto.actions.ActionCatalog;
 import ai.pipestream.proto.actions.ActionContext;
+import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.ProtoAction;
 import ai.pipestream.proto.sources.CompiledProtos;
 import ai.pipestream.proto.sources.ProtoSourceCompiler;
 import ai.pipestream.proto.sources.ProtoSourceSet;
@@ -140,7 +143,7 @@ class ReflectActionTest {
 
     @Test
     void reflectsServicesAndDescriptorSet() throws Exception {
-        ObjectNode result = action.execute(input(reflectiveName), ActionContext.create());
+        ObjectNode result = dispatch(action, input(reflectiveName));
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(servicesOf(result)).contains("reflect.test.PingService");
         assertThat(result.get("descriptorSetBase64").asText()).isNotEmpty();
@@ -150,7 +153,7 @@ class ReflectActionTest {
 
     @Test
     void fallsBackToLegacyReflectionAndResolvesDescriptorSet() throws Exception {
-        ObjectNode result = action.execute(input(legacyReflectiveName), ActionContext.create());
+        ObjectNode result = dispatch(action, input(legacyReflectiveName));
 
         assertThat(result.get("ok").asBoolean()).isTrue();
         assertThat(servicesOf(result)).contains("reflect.test.PingService");
@@ -160,7 +163,7 @@ class ReflectActionTest {
 
     @Test
     void doesNotDowngradeAfterStableReflectionPermissionFailure() throws Exception {
-        ObjectNode result = action.execute(input(deniedStableName), ActionContext.create());
+        ObjectNode result = dispatch(action, input(deniedStableName));
 
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("error").asText()).contains("PERMISSION_DENIED");
@@ -168,7 +171,7 @@ class ReflectActionTest {
 
     @Test
     void reflectedDescriptorSetDrivesTheOtherActions() throws Exception {
-        ObjectNode result = action.execute(input(reflectiveName), ActionContext.create());
+        ObjectNode result = dispatch(action, input(reflectiveName));
         String descriptorSet = result.get("descriptorSetBase64").asText();
 
         // The descriptor set reflected off the wire is a valid schema source for the catalog.
@@ -183,7 +186,7 @@ class ReflectActionTest {
 
     @Test
     void serverWithoutReflectionReturnsOkFalse() throws Exception {
-        ObjectNode result = action.execute(input(bareName), ActionContext.create());
+        ObjectNode result = dispatch(action, input(bareName));
         assertThat(result.get("ok").asBoolean()).isFalse();
         assertThat(result.get("error").asText()).isNotEmpty();
     }
@@ -193,4 +196,15 @@ class ReflectActionTest {
         result.get("services").forEach(n -> names.add(n.asText()));
         return names;
     }
+
+    /**
+     * Dispatches the way every surface does: through a catalog holding the verb, which is
+     * where the request contract is checked before the verb runs.
+     */
+    private static ObjectNode dispatch(ProtoAction verb, ObjectNode input)
+            throws ActionException {
+        return ActionCatalog.defaults(ActionContext.create())
+                .replace(verb).execute(verb.name(), input);
+    }
+
 }

@@ -26,8 +26,9 @@ public record Caller(String name, Set<String> scopes, boolean unrestricted,
      *
      * @param requestsPerMinute requests per minute across every surface that checks the
      *        scope; zero means unlimited
-     * @param maxPayloadBytes largest request payload in bytes on surfaces that know
-     *        their payload size; zero means uncapped
+     * @param maxPayloadBytes largest request in bytes, measured as the encoded size of the
+     *        request message rather than of whatever a front spelled it as; zero means
+     *        uncapped
      */
     public record Budget(int requestsPerMinute, long maxPayloadBytes) {
 

@@ -1,18 +1,18 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
-import java.util.List;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.List;
 
 /**
  * The {@code list-jobs} verb: page workflow runs, newest first, with optional
@@ -70,35 +70,38 @@ public final class ListJobsAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("ListJobsResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // Availability first: a node with no job store cannot serve any request, so
         // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
         // The contract names the status with an enum, so an unknown one is refused
         // before the verb runs; the store's own vocabulary drops the type-name prefix
         // that proto enum values carry.
-        String status = ActionSupport.optionalString(input, "status");
-        if (status != null && status.startsWith(STATUS_PREFIX)) {
-            status = status.substring(STATUS_PREFIX.length());
-        }
-        if (status != null && status.isEmpty()) {
+        String declared = Fields.enumName(input, "status");
+        String status = declared.startsWith(STATUS_PREFIX)
+                ? declared.substring(STATUS_PREFIX.length())
+                : declared;
+        // The unspecified value is the enum's zero, which filters nothing.
+        if (!WorkflowRunRecord.STATUSES.contains(status)) {
             status = null;
         }
-        if (status != null && !WorkflowRunRecord.STATUSES.contains(status)) {
-            throw ActionSupport.invalidInput("'status' must be one of "
-                    + String.join(", ", WorkflowRunRecord.STATUSES.stream().sorted().toList())
-                    + "; got '" + status + "'");
-        }
-        String workflowName = ActionSupport.optionalString(input, "workflowName");
-        int limit = ActionSupport.optionalInt(input, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT);
-        long offset = ActionSupport.optionalOffset(input, "offset");
-        List<WorkflowRunRecord> jobs = store.list(status, workflowName, limit, offset);
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        result.put("ok", true);
-        ArrayNode array = result.putArray("jobs");
+        String workflowName = Fields.string(input, "workflowName");
+        // Zero selects the default, as the message says; anything above the ceiling is
+        // clamped rather than refused, because the ceiling bounds the answer not the ask.
+        int asked = Fields.integer(input, "limit");
+        int limit = asked == 0 ? DEFAULT_LIMIT : Math.min(asked, MAX_LIMIT);
+        List<WorkflowRunRecord> jobs = store.list(
+                status, workflowName.isEmpty() ? null : workflowName,
+                limit, Fields.integer(input, "offset"));
+        Reply result = Reply.of(responseType()).set("ok", true);
         for (WorkflowRunRecord job : jobs) {
-            array.add(ActionSupport.jobJson(job, false));
+            ActionSupport.writeJob(result.append("jobs"), job, false);
         }
-        return result;
+        return result.build();
     }
 }

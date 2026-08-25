@@ -1,28 +1,31 @@
 package ai.pipestream.proto.jobs.service.actions;
 
 import ai.pipestream.proto.actions.ActionContext;
-import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
+import ai.pipestream.proto.actions.Fields;
 import ai.pipestream.proto.actions.ProtoAction;
+import ai.pipestream.proto.actions.Reply;
 import ai.pipestream.proto.actions.Scopes;
-import ai.pipestream.proto.workflow.CompiledWorkflow;
-import ai.pipestream.proto.workflow.WorkflowJson;
+import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.jobs.service.events.WorkflowRunEventFactory;
+import ai.pipestream.proto.jobs.service.store.ParkedCompletion;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunRecord;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStore;
-import ai.pipestream.proto.jobs.service.store.ParkedCompletion;
-import ai.pipestream.proto.http.json.MalformedProtobufJsonException;
 import ai.pipestream.proto.validate.ProtoValidator;
 import ai.pipestream.proto.validate.ValidationResult;
+import ai.pipestream.proto.workflow.CompiledWorkflow;
+import ai.pipestream.proto.workflow.WorkflowJson;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Message;
 
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Optional;
 import java.util.UUID;
-import com.google.protobuf.Descriptors.Descriptor;
 
 /**
  * The {@code complete-step} verb: supply the response for a parked
@@ -74,25 +77,26 @@ public final class CompleteStepAction implements ProtoAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
+    public Descriptor responseType() {
+        return CatalogContract.response("CompleteStepResponse");
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
         // Availability first: a node with no job store cannot serve any request, so
         // saying that is more use than listing fields on a verb that cannot run.
         ActionSupport.requireStore(store);
-        String jobIdText = ActionSupport.requireString(input, "jobId");
-        String stepName = ActionSupport.requireString(input, "stepName");
-        ObjectNode response = ActionSupport.requireObject(input, "response");
-        UUID jobId;
-        try {
-            jobId = UUID.fromString(jobIdText.trim());
-        } catch (IllegalArgumentException e) {
-            throw ActionSupport.invalidInput("'jobId' must be a uuid; got '" + jobIdText + "'");
-        }
+        UUID jobId = ActionSupport.jobId(Fields.string(input, "jobId"));
+        String stepName = Fields.string(input, "stepName");
+        // The step's response is a structure: its shape is the step's own output type,
+        // which this contract does not describe.
+        ObjectNode response = Fields.json(input, "response");
         Optional<WorkflowRunRecord> found = store.get(jobId);
         if (found.isEmpty()) {
-            ObjectNode result = JsonNodeFactory.instance.objectNode();
-            result.put("ok", false);
-            result.put("error", "no workflow run " + jobId);
-            return result;
+            return Reply.of(responseType())
+                    .set("ok", false)
+                    .set("error", "no workflow run " + jobId)
+                    .build();
         }
         WorkflowRunRecord job = found.get();
 
@@ -129,11 +133,11 @@ public final class CompleteStepAction implements ProtoAction {
                         + violations;
                 store.markFailed(jobId, detail,
                         WorkflowRunEventFactory.failed(job, stepName, detail));
-                ObjectNode result = JsonNodeFactory.instance.objectNode();
-                result.put("ok", false);
-                result.put("status", WorkflowRunRecord.STATUS_FAILED);
-                result.put("error", violations);
-                return result;
+                return Reply.of(responseType())
+                        .set("ok", false)
+                        .set("status", WorkflowRunRecord.STATUS_FAILED)
+                        .set("error", violations)
+                        .build();
             }
         }
 
@@ -197,25 +201,20 @@ public final class CompleteStepAction implements ProtoAction {
         return false;
     }
 
-    private static ObjectNode ok(String status) {
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        result.put("ok", true);
-        result.put("status", status);
-        return result;
+    private Message ok(String status) {
+        return Reply.of(responseType()).set("ok", true).set("status", status).build();
     }
 
-    private static ObjectNode wrongState(String status, String outstanding, String stepName,
+    private Message wrongState(String status, String outstanding, String stepName,
             UUID jobId) {
-        ObjectNode result = JsonNodeFactory.instance.objectNode();
-        result.put("ok", false);
-        result.put("status", status);
-        if (outstanding != null) {
-            result.put("outstandingStep", outstanding);
-        }
-        result.put("error", "job " + jobId + " is " + status
-                + (outstanding == null ? "" : ", parked on step '" + outstanding + "'")
-                + "; it is not waiting on step '" + stepName + "'");
-        return result;
+        return Reply.of(responseType())
+                .set("ok", false)
+                .set("status", status)
+                .set("outstandingStep", outstanding == null ? "" : outstanding)
+                .set("error", "job " + jobId + " is " + status
+                        + (outstanding == null ? "" : ", parked on step '" + outstanding + "'")
+                        + "; it is not waiting on step '" + stepName + "'")
+                .build();
     }
 
     private static String violations(ValidationResult result) {

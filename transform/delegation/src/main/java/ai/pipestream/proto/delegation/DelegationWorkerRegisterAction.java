@@ -2,11 +2,12 @@ package ai.pipestream.proto.delegation;
 
 import ai.pipestream.proto.actions.ActionContext;
 import ai.pipestream.proto.actions.ActionException;
+import ai.pipestream.proto.actions.CatalogContract;
 import ai.pipestream.proto.delegation.v1.RegisterWorkerRequest;
 import ai.pipestream.proto.delegation.v1.RegisterWorkerResponse;
 import ai.pipestream.proto.delegation.v1.WorkerHello;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
 
 /**
  * Registers a worker on the delegation bridge: opens a real delegation stream, sends
@@ -40,9 +41,14 @@ final class DelegationWorkerRegisterAction extends DelegationAction {
     }
 
     @Override
-    public ObjectNode execute(ObjectNode input, ActionContext context) throws ActionException {
-        RegisterWorkerRequest request = DelegationActionJson
-                .parse(input, RegisterWorkerRequest.newBuilder(), name()).build();
+    public Descriptor responseType() {
+        return RegisterWorkerResponse.getDescriptor();
+    }
+
+    @Override
+    public Message execute(Message input, ActionContext context) throws ActionException {
+        RegisterWorkerRequest request = CatalogContract.as(
+                input, RegisterWorkerRequest.getDefaultInstance(), name());
         // Omitted provider metadata arrives as the empty string, which is what an unset
         // proto3 string already is, so it copies across unconditionally.
         WorkerHello hello = WorkerHello.newBuilder()
@@ -68,6 +74,6 @@ final class DelegationWorkerRegisterAction extends DelegationAction {
         } else {
             response.setReason(registration.reason());
         }
-        return DelegationActionJson.render(response.build(), context);
+        return response.build();
     }
 }

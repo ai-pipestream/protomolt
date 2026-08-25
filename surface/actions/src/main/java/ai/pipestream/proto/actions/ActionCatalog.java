@@ -3,8 +3,8 @@ package ai.pipestream.proto.actions;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -164,30 +164,58 @@ public final class ActionCatalog {
     }
 
     /**
-     * Dispatches {@code input} to the named action with process authority.
-     *
-     * <p>The envelope is checked against the action's request message first. Calls arriving
-     * over gRPC pass a validating interceptor before they reach a handler; calls arriving as
-     * catalog verbs do not, so without this the same request would be refused on one surface
-     * and accepted on the other.
+     * Dispatches a JSON envelope to the named action with process authority, answering with
+     * the result as JSON.
      */
     public ObjectNode execute(String name, ObjectNode input) throws ActionException {
         return execute(name, input, Caller.operator());
     }
 
     /**
-     * Dispatches {@code input} to the named action as {@code caller}, refusing before
+     * Dispatches a JSON envelope to the named action as {@code caller}, refusing before
      * dispatch when the caller does not hold the action's required scope.
+     *
+     * <p>This is the JSON edge, not a second dispatch path: the envelope is parsed into the
+     * action's request message and the reply is rendered back from its response message, so a
+     * JSON caller reaches the same verb, under the same contract, as a typed one.
      */
     public ObjectNode execute(String name, ObjectNode input, Caller caller)
             throws ActionException {
         // get() takes the catalog monitor only long enough to resolve a stable action reference.
         ProtoAction action = get(name);
+        // Before the envelope is looked at: a caller who may not run the verb learns only
+        // that, not whether the request they sent would have been accepted.
         requireScope(action, caller);
-        requireBudget(action, caller, input);
-        ObjectNode envelope = Inputs.requireEnvelope(input);
-        CatalogContract.check(envelope, action.requestType(), name);
-        return action.execute(envelope, context);
+        Message request = CatalogContract.toRequest(
+                Inputs.requireEnvelope(input), action.requestType(), name);
+        return CatalogContract.toReply(dispatch(action, name, request, caller), name);
+    }
+
+    /** Dispatches a typed request to the named action with process authority. */
+    public Message execute(String name, Message request) throws ActionException {
+        return execute(name, request, Caller.operator());
+    }
+
+    /**
+     * Dispatches a typed request to the named action as {@code caller} — the path every
+     * surface converges on.
+     *
+     * <p>The request is checked against the message's own rules here rather than at each
+     * front. A verb is reachable over gRPC, over the JSON gateway, as a REST method and as an
+     * MCP tool; enforcing the contract at the one point they share is what stops the same
+     * request from being refused on one surface and accepted on another.
+     */
+    public Message execute(String name, Message request, Caller caller) throws ActionException {
+        return dispatch(get(name), name, request, caller);
+    }
+
+    private Message dispatch(ProtoAction action, String name, Message request, Caller caller)
+            throws ActionException {
+        // Idempotent when the JSON edge already refused: the check is by scope, not by call.
+        requireScope(action, caller);
+        requireBudget(action, caller, request);
+        CatalogContract.validate(request, action.requestType(), name);
+        return action.execute(request, context);
     }
 
     /**
@@ -195,28 +223,47 @@ public final class ActionCatalog {
      * incrementally. Unary actions emit their single result, so fronts that stream get one
      * contract for every verb.
      */
-    public void executeStreaming(String name, ObjectNode input, StreamEmitter emitter)
+    public void executeStreaming(String name, Message request, StreamEmitter emitter)
+            throws ActionException {
+        executeStreaming(name, request, Caller.operator(), emitter);
+    }
+
+    /** Dispatches like {@link #executeStreaming}, refusing first when {@code caller} lacks the scope. */
+    public void executeStreaming(String name, Message request, Caller caller,
+            StreamEmitter emitter) throws ActionException {
+        ProtoAction action = get(name);
+        requireScope(action, caller);
+        requireBudget(action, caller, request);
+        CatalogContract.validate(request, action.requestType(), name);
+        if (action instanceof StreamingAction streaming) {
+            streaming.executeStreaming(request, context, emitter);
+        } else {
+            emitter.emit(action.execute(request, context));
+        }
+    }
+
+    /**
+     * Dispatches a JSON envelope like {@link #executeStreaming(String, Message, StreamEmitter)},
+     * rendering each emission back as JSON — the streaming half of the JSON edge.
+     */
+    public void executeStreaming(String name, ObjectNode input, JsonStreamEmitter emitter)
             throws ActionException {
         executeStreaming(name, input, Caller.operator(), emitter);
     }
 
-    /** Dispatches like {@link #executeStreaming}, refusing first when {@code caller} lacks the scope. */
+    /** Dispatches like {@link #executeStreaming(String, ObjectNode, JsonStreamEmitter)}, as {@code caller}. */
     public void executeStreaming(String name, ObjectNode input, Caller caller,
-            StreamEmitter emitter) throws ActionException {
+            JsonStreamEmitter emitter) throws ActionException {
         ProtoAction action = get(name);
         requireScope(action, caller);
-        requireBudget(action, caller, input);
-        ObjectNode envelope = Inputs.requireEnvelope(input);
-        CatalogContract.check(envelope, action.requestType(), name);
-        if (action instanceof StreamingAction streaming) {
-            streaming.executeStreaming(envelope, context, emitter);
-        } else {
-            emitter.emit(action.execute(envelope, context));
-        }
+        Message request = CatalogContract.toRequest(
+                Inputs.requireEnvelope(input), action.requestType(), name);
+        executeStreaming(name, request, caller,
+                message -> emitter.emit(CatalogContract.toReply(message, name)));
     }
 
     /** Spends the caller's budget on the action's scope, refusing when it is exhausted. */
-    private void requireBudget(ProtoAction action, Caller caller, ObjectNode input)
+    private void requireBudget(ProtoAction action, Caller caller, Message request)
             throws ActionException {
         if (caller.unrestricted() || caller.budgets().isEmpty()) {
             return;
@@ -226,8 +273,8 @@ public final class ActionCatalog {
         if (budget == null) {
             return;
         }
-        long payloadBytes = budget.maxPayloadBytes() > 0 && input != null
-                ? input.toString().getBytes(StandardCharsets.UTF_8).length
+        long payloadBytes = budget.maxPayloadBytes() > 0 && request != null
+                ? request.getSerializedSize()
                 : -1;
         Optional<String> refusal = budgets.refuse(caller, scope, payloadBytes);
         if (refusal.isPresent()) {
