@@ -69,5 +69,5 @@ class ConformanceTest {
     }
 
     private static final String CORPUS_DIGEST =
-            "d1e20edb086e833030c2341ee1bca9522d34fedcfdc7d5a2436ffdd05a5e24e2";
+            "5f8840ddf95cf1a9ee440a46411a2d9577b4ecabf00cb840bba7fba425e2afe9";
 }

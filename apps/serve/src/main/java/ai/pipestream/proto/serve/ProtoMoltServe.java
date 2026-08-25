@@ -58,6 +58,7 @@ import ai.pipestream.proto.registry.service.SchemaRegistryServerConfig;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
 import ai.pipestream.proto.server.jdk.JdkProtoRestServer;
 import ai.pipestream.proto.workflow.TrustPin;
+import ai.pipestream.proto.workflow.RecordSigning;
 import ai.pipestream.proto.workflow.WorkflowRepository;
 import ai.pipestream.proto.workflow.WorkflowRunner;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
@@ -1159,7 +1160,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                         .withContext("/api/task-session",
                                 new TaskConsoleSessionHandler(taskSessions))
                         .withContext("/api/tasks",
-                                new TaskConsoleApiHandler(bridge, taskSessions));
+                                new TaskConsoleApiHandler(bridge, taskSessions,
+                                        RecordSigning.fromEnvironment()));
             }
             if (options.apiToken() == null) {
                 http.withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",

@@ -137,17 +137,36 @@ message WorkRecord {
 // The work a record describes. Kinds are a closed vocabulary per manifest
 // version; v1 defines "workflow-run".
 message RecordSubject {
-  // The subject kind; the trust snapshot authorizes issuers per kind.
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "subject.known_kind"
+      message: "the subject kind is one this manifest version defines"
+      expression: "this.kind in ['workflow-run', 'delegation-task']"
+    }
+    cel: {
+      id: "subject.workflow_fields"
+      message: "a workflow-run subject names the workflow, its fingerprint, and the run"
+      expression: "this.kind != 'workflow-run' || (this.workflow_name != '' && this.workflow_fingerprint != '' && this.run_id != '')"
+    }
+    cel: {
+      id: "subject.delegation_fields"
+      message: "a delegation-task subject names the task, its worker, and the spec fingerprint"
+      expression: "this.kind != 'delegation-task' || (this.task_id != '' && this.worker_id != '' && this.spec_sha256 != '')"
+    }
+  };
+
+  // The subject kind; the trust snapshot authorizes issuers per kind, and
+  // each kind requires its own identity fields through the rules above.
   string kind = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
       required: true
       string: {slug: true, max_len: 64}
     }
   ];
-  // The workflow that ran.
+  // The workflow that ran; workflow-run subjects only.
   string workflow_name = 2 [
     (ai.pipestream.proto.validate.v1.field) = {
-      required: true
+      ignore_if_zero: true
       string: {slug: true, max_len: 128}
     }
   ];
@@ -159,18 +178,41 @@ message RecordSubject {
       string: {slug: true, max_len: 128}
     }
   ];
-  // The workflow definition's fingerprint.
+  // The workflow definition's fingerprint; workflow-run subjects only.
   string workflow_fingerprint = 4 [
     (ai.pipestream.proto.validate.v1.field) = {
-      required: true
+      ignore_if_zero: true
       string: {sha256_hex: true}
     }
   ];
-  // The run this record projects.
+  // The run this record projects; workflow-run subjects only.
   string run_id = 5 [
     (ai.pipestream.proto.validate.v1.field) = {
-      required: true
+      ignore_if_zero: true
       string: {slug: true, max_len: 128}
+    }
+  ];
+  // The delegated task this record projects; delegation-task subjects only.
+  string task_id = 6 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {uuid: true}
+    }
+  ];
+  // The worker the task was delegated to; delegation-task subjects only.
+  string worker_id = 7 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {slug: true, max_len: 128}
+    }
+  ];
+  // Fingerprint of the offered TaskSpec's deterministic bytes: the contract
+  // the work was judged against, playing the role the workflow fingerprint
+  // plays for a run. Delegation-task subjects only.
+  string spec_sha256 = 8 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      ignore_if_zero: true
+      string: {sha256_hex: true}
     }
   ];
 }
