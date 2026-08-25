@@ -238,6 +238,11 @@ Tests are testcontainers integration tests (Docker required): PostgreSQL 17
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
+- `ArchiveServiceIT` — the archive end to end: retained versions with
+  entry-local object sharing, whole-save dedupe, all three doors in (unary,
+  client-streaming with and without a declared hash, HTTP POST), exact
+  counters, rendition tombstones, pruning, both versioning policies, and
+  the contract's refusals.
 - `RepoServiceIT` — the gRPC surface end to end: drives (including the
   `provider_config` jsonb round trip), full/partial saves, dedupe,
   delete/purge, the tombstone→enqueue→drain lifecycle, `PutBlob`/`GetBlob`/
@@ -344,6 +349,46 @@ under the old id. Pick it once and keep it.
   idempotent.
 - `DeleteBlob` — delete by `FileStorageReference`; idempotent
   (`deleted=false` when absent).
+
+### gRPC `ArchiveService` (`repo/proto`, `archive/v1`)
+
+The generic document archive on the same engine: account-scoped archives
+bound to a drive, entries with open named **renditions** (opaque bytes with
+a media type and an optional schema-subject pin), attached metadata, and a
+per-archive versioning policy (`NONE` or `RETAINED`). Rendition objects are
+entry-local content-addressed — an unchanged rendition across versions is
+one shared object — so retained history costs only what actually changed,
+and every deletion question stays bounded to one entry's own manifests.
+The design of record is [docs/design/archive.md](../docs/design/archive.md).
+
+- `CreateArchive` / `GetArchive` / `ListArchives` — archive lifecycle.
+- `PutEntry` — metadata plus inline renditions, one new version; verified
+  writes; a root-checksum match dedupes the whole save.
+- `UploadRendition` — **client-streaming** bulk door: a header frame
+  (address, descriptor, required declared size, optional expected SHA-256),
+  then chunks; digest computed while streaming; one new version that
+  re-references every other current rendition.
+- `GetEntry` / `GetEntryManifest` — whole or rendition-filtered reads at
+  any retained version; stored bytes are digest-checked against the
+  manifest, and a missing body fails `FAILED_PRECONDITION` by name.
+- `ListEntries` / `ListVersions` — paginated listings.
+- `DeleteEntry` — every version, every object (exact manifest keys).
+- `DeleteRendition` — bytes gone from every retained version, tombstones
+  (size, hash, named reason) kept as provenance.
+- `PruneVersions` — keep the newest N; only unshared objects delete.
+- `GetArchiveStats` — exact ledger-maintained counters (entries, versions,
+  retained/current bytes, per-rendition breakdown), adjusted in the same
+  transaction as the mutations they describe.
+
+### HTTP `POST /v1/archive:upload`
+
+The archive's zero-dependency door on the same HTTP server as the document
+upload route: the body is one rendition's bytes, identity rides query
+parameters or headers (`account_id`, `archive`, `entry_id`, `rendition`
+defaulting to `original`, `filename`, `Content-Type`, optional
+`X-Content-Sha256`), `Content-Length` is required, and the body streams
+through a digest straight to storage. Success returns a JSON receipt with
+the entry UUID, version, SHA-256, size, object key, and root checksum.
 
 ### HTTP `POST /v1/documents:upload`
 
