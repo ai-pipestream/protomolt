@@ -135,7 +135,7 @@ message WorkRecord {
 }
 
 // The work a record describes. Kinds are a closed vocabulary per manifest
-// version; v1 defines "workflow-run".
+// version; v1 defines "workflow-run" and "delegation-task".
 message RecordSubject {
   option (ai.pipestream.proto.validate.v1.message) = {
     cel: {

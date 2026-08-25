@@ -42,21 +42,35 @@ PROTOMOLT_HTTP_PORT=38080 PROTOMOLT_GRPC_PORT=39090 PROTOMOLT_REGISTRY_PORT=3808
 
 ## MCP over HTTP
 
-The MCP endpoint is stateless streamable HTTP: JSON-RPC posted to `/mcp`, answered as JSON.
-Any MCP client connects with just the URL.
+The MCP endpoint is streamable HTTP: JSON-RPC posted to `/mcp`, answered as JSON.
+An MCP client connects with just the URL and negotiates the rest itself:
 
 ```shell
-# Point Claude at it:
 claude mcp add --transport http protomolt http://localhost:8080/mcp
+```
 
-# Or exercise it directly: initialize, then list the tools:
-curl -s -H 'content-type: application/json' \
+Exercising it by hand takes the real handshake. Every request must accept both
+`application/json` and `text/event-stream` (406 otherwise); `initialize` answers with
+an `Mcp-Session-Id` response header; and every later call carries that session id plus
+a matching `MCP-Protocol-Version` (404 and 400 respectively when they are missing):
+
+```shell
+SESSION=$(curl -sS -D - -o /dev/null \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' \
-  http://localhost:8080/mcp
+  http://localhost:8080/mcp | grep -i '^mcp-session-id:' | cut -d' ' -f2 | tr -d '\r')
 
-curl -s -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-  http://localhost:8080/mcp
+mcp() {
+  curl -sS -H 'content-type: application/json' \
+    -H 'accept: application/json, text/event-stream' \
+    -H "mcp-session-id: $SESSION" \
+    -H 'mcp-protocol-version: 2025-06-18' \
+    -d "$1" http://localhost:8080/mcp
+}
+
+mcp '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 ```
 
 ## The ACP agent (stdio)
