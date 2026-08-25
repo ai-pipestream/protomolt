@@ -64,6 +64,7 @@ built-in action exposed by the standalone and full catalogs.
 ## Applications and operations
 
 - [Command line](apps/cli.md): invoke actions from a shell or interactive console
+- [Console](apps/console.md): schemas, workflows, services, search, metrics, and receipts in a browser
 - [Agent host](apps/agent-host.md): attach resumable Codex and Kimi processes to delegation
 - [Task console](apps/task-console.md): inspect and guide durable multi-agent tasks in a browser
 - [Record verifier](apps/record-verifier.md): zero-dependency offline verification of signed work records
@@ -80,6 +81,7 @@ built-in action exposed by the standalone and full catalogs.
 - [OpenVINO from an AI agent](tutorials/openvino.md)
 - [Python clients without protoc](tutorials/python.md)
 - [Streaming through the ACP agent](tutorials/streaming.md)
+- [Earning a signed receipt from a delegated task](tutorials/delegation-receipt.md)
 
 ## Architecture and records
 

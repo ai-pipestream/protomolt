@@ -54,13 +54,30 @@ curl -fsS -H 'content-type: application/json' \
   || fail "RenderJsonSchema did not return a document"
 
 say "MCP — initialize + tools/list over ${HTTP}/mcp"
-curl -fsS -H 'content-type: application/json' \
+MCP_HEADERS=$(mktemp)
+curl -fsS -D "${MCP_HEADERS}" \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"docker-smoke","version":"0"}}}' \
   "${HTTP}/mcp" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print("  server:", d["result"]["serverInfo"])' \
   || fail "MCP initialize failed"
+MCP_SESSION=$(grep -i '^mcp-session-id:' "${MCP_HEADERS}" | cut -d' ' -f2 | tr -d '\r')
+rm -f "${MCP_HEADERS}"
+[ -n "${MCP_SESSION}" ] || fail "MCP initialize returned no Mcp-Session-Id"
 
 curl -fsS -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "mcp-session-id: ${MCP_SESSION}" \
+  -H 'mcp-protocol-version: 2025-06-18' \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  "${HTTP}/mcp" > /dev/null \
+  || fail "MCP initialized notification failed"
+
+curl -fsS -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "mcp-session-id: ${MCP_SESSION}" \
+  -H 'mcp-protocol-version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
   "${HTTP}/mcp" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); t=d["result"]["tools"]; print("  MCP exposes", len(t), "tools, e.g.:", ", ".join(x["name"] for x in t[:6]))' \
