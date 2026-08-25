@@ -28,7 +28,7 @@ describe('the workspace client', () => {
     await registerService('billing', 'billing-host:9000', true, '', fetchFn)
     const body = JSON.parse((fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1].body)
     expect(body.profile.endpoints).toEqual([
-      { name: 'default', host: 'billing-host', port: 9000, tls: true },
+      { name: 'default', host: 'billing-host', port: 9000, transport: 'TRANSPORT_TLS' },
     ])
   })
 

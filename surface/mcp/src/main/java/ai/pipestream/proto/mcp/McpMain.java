@@ -15,6 +15,7 @@ import ai.pipestream.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.pipestream.proto.grpc.workflow.FileSystemRunEvidenceRepository;
 import ai.pipestream.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.pipestream.proto.grpc.workflow.RunEvidenceRepository;
+import ai.pipestream.proto.grpc.workspace.ReflectedServiceActions;
 import ai.pipestream.proto.grpc.workspace.ServiceWorkspaceActions;
 import ai.pipestream.proto.registry.GitSchemaRegistryStore;
 import ai.pipestream.proto.registry.RegistryWorkflowVersionRepository;
@@ -132,8 +133,12 @@ public final class McpMain {
                 .register(new ReflectAction())
                 .register(new GenerateStubsAction())
                 .register(new GatherGitAction());
-        ServiceWorkspaceActions.register(catalog, serviceProfiles, registry,
-                ai.pipestream.proto.grpc.invoke.ChannelFactory.standard());
+        ai.pipestream.proto.grpc.invoke.ChannelFactory channels =
+                ai.pipestream.proto.grpc.invoke.ChannelFactory.standard();
+        ServiceWorkspaceActions.register(catalog, serviceProfiles, registry, channels);
+        ReflectedServiceActions.registerStored(catalog, serviceProfiles, registry, channels)
+                .forEach((profile, why) -> LOG.warn(
+                        "stored service profile '{}' did not become verbs: {}", profile, why));
         return WorkflowWorkbenchActions.register(catalog, new WorkflowRunner(), artifacts, runs,
                 workflows);
     }

@@ -21,12 +21,19 @@ public final class ServiceRegisterAction implements ProtoAction {
     private final ServiceProfileRepository repository;
     private final ChannelFactory channels;
     private final SchemaRegistryStore registry;
+    private final ProfileStored stored;
 
     public ServiceRegisterAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
                                  ChannelFactory channels) {
+        this(repository, registry, channels, null);
+    }
+
+    ServiceRegisterAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                          ChannelFactory channels, ProfileStored stored) {
         this.repository = repository;
         this.registry = registry;
         this.channels = channels;
+        this.stored = stored;
     }
 
     @Override
@@ -68,6 +75,9 @@ public final class ServiceRegisterAction implements ProtoAction {
                     endpoint.isEmpty() ? null : endpoint,
                     deadline(input),
                     store, registry, channels);
+            if (stored != null) {
+                stored.stored(saved);
+            }
             Reply result = Reply.of(responseType()).set("ok", true).set("profile", saved);
             ServiceActionSupport.writeServices(result, "services", saved, store, registry);
             return result.build();

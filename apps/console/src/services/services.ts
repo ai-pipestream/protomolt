@@ -97,7 +97,13 @@ export async function registerService(
     profile: {
       name,
       description,
-      endpoints: [{ name: 'default', host, port, tls }],
+      endpoints: [{
+        name: 'default',
+        host,
+        port,
+        // The endpoint declares its transport explicitly; unspecified is refused.
+        transport: tls ? 'TRANSPORT_TLS' : 'TRANSPORT_PLAINTEXT',
+      }],
     },
   }, fetchFn)
 }
