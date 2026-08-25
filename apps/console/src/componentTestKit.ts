@@ -49,8 +49,8 @@ export function routerForTests(): Router {
     routes: [
       // Named routes components link to; targets are stubs.
       {
-        path: '/schema-registry/connect',
-        name: 'schema-registry-connect',
+        path: '/services/connect',
+        name: 'services-connect',
         component: { template: '<div />' },
       },
       {
@@ -59,8 +59,13 @@ export function routerForTests(): Router {
         component: { template: '<div />' },
       },
       {
-        path: '/schema-registry/workflows',
-        name: 'schema-registry-workflows',
+        path: '/workflows',
+        name: 'workflows',
+        component: { template: '<div />' },
+      },
+      {
+        path: '/services',
+        name: 'services',
         component: { template: '<div />' },
       },
       { path: '/:pathMatch(.*)*', component: { template: '<div />' } },

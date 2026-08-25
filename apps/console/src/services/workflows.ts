@@ -5,7 +5,9 @@
  */
 
 export interface WorkflowFinding {
+  /** The step the finding is attributed to, or '' for the workflow itself. */
   step: string
+  /** 'method', 'when', 'rule', 'celRule', 'output', 'workflow', or 'contract'. */
   kind: string
   error: string
 }
