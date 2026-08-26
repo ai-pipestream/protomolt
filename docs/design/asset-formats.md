@@ -54,15 +54,25 @@ registry, grouped by kind:
 | Dataset | `ParquetDataset`, `DelimitedTable` (CSV/TSV), `NdjsonDataset`, `AvroDataset` |
 | Semi-structured | `JsonDocument`, `XmlDocument`, `YamlDocument` |
 | Document | `PdfDocument`, `WordDocument`, `SpreadsheetDocument`, `PresentationDocument`, `MarkdownDocument`, `HtmlDocument`, `PlainText` |
-| Media | `RasterImage`, `AudioFile`, `VideoFile` |
-| Origin | `ObjectStoreOrigin` (bucket, key, region, storage class, origin attributes) |
+| Media | `RasterImage` |
+
+Audio and video wait for a consumer: a format joins the registry when
+something in the tree validates or bridges it, not before. The
+object-store origin is deliberately not a format — it is where an asset
+came from, carried on the classification as `ObjectStoreOrigin` (bucket
+and key required, region, storage class, and the provider's attributes),
+strict by the no-assumed-defaults rule.
 
 Each message declares what must be true for the claim to be valid, and the
 rules are strict by design. Illustrative, not exhaustive:
 
 - `TarArchive.filename` matches the tar name grammar and nothing else:
-  `.tar`, `.tar.gz`, `.tgz` (a `oneof`-style pattern rule; a `.zip` name
-  can never validate as a tar claim).
+  `.tar`, `.tar.gz`, `.tgz` — a `.zip` name can never validate as a tar
+  claim. Filename presence splits by role: a producer's DECLARATION must
+  carry the filename (the claim is about a named file — a door rule,
+  refused by name), while characterization's IDENTIFIED fact may omit it,
+  because bytes can prove a format without endorsing a name that
+  contradicts it.
 - `DelimitedTable` requires a declared delimiter and header presence — a
   CSV whose parsing rules are unstated is not a classified CSV.
 - `ObjectStoreOrigin` requires its origin attributes (bucket, key) —
@@ -148,6 +158,13 @@ This resolves record-versus-refuse without a policy knob:
 - A declaration that **passes its rules but contradicts the bytes**
   lands as `CONFLICTED` — recorded, flagged, and excluded from bridging.
   The mess is representable and named, which is what an archive owes it.
+  Contradiction is judged through a compatibility relation, not naive
+  inequality: identification often concludes a *generalization* of the
+  truth (delimited tables read as plain text, OOXML documents read as
+  ZIP, a compressed tar reads as gzip), and a claim standing inside its
+  generalization is not in conflict — the claim stands as `DECLARED`
+  with the evidence kept. Only a conclusion that rules the claim out
+  conflicts.
 - **No declaration** lands as `UNCLASSIFIED` until characterization runs,
   and as `IDENTIFIED` after. Nothing is ever assumed.
 
@@ -241,11 +258,15 @@ the routing rule *characterized format → applicable bridges*.
   `ArchiveStats` gains per-state counts.
 
 **Characterization** (`asset/characterize`): one seam —
-`Characterizer.identify(bytes prefix, filename, media type) →
-(FormatFact, evidence)` — implemented pure-JDK (magic-byte table,
-extension grammars compiled from the same rules the protos declare,
-cheap per-format probes). The parse coordinator's sniffing migrates onto
-this seam so detection has one home.
+`Characterizer.identify(bytes prefix, filename) → (FormatFact, evidence)`
+— implemented pure-JDK: the shared media-type sniffer (the parse
+coordinator routes on the same table, so routing and characterization
+can never disagree), format grammars compiled from the very expressions
+the contract annotates (a descriptor-parity test refuses drift), and
+cheap probes. A format whose claim needs producer-stated parameters — a
+delimited table's delimiter and header presence — is never identified,
+only declared: concluding nothing is the honest verdict, and the
+evidence still records what was seen.
 
 **Search and metrics**: classification state, format kind, and content
 class join the mapping subjects as facetable fields — the catalog view
@@ -284,15 +305,18 @@ rather than a parallel metadata system.
    `schema`/`dataset`, then `text`/`ocr-text` with quality scoring.
 5. Search/metric facets over the new fields.
 
-## Open questions for review
+## Decisions of record
 
-- **Registry breadth at v1**: the table above is a proposal; formats with
-  no consumer in the tree could start smaller (drop `AudioFile` /
-  `VideoFile` until something bridges them?).
-- **Entry vs rendition classification**: this design classifies the
-  entry from its primary rendition and profiles renditions individually.
-  An entry whose renditions span formats (a tar member extracted beside
-  the tar) is the case to pressure-test.
-- **Conflict resolution ergonomics**: `CONFLICTED` entries need a
-  console surface (re-declare, accept the identification, or leave
-  flagged) — scoped here as a follow-on, not part of the first train.
+- **Registry breadth**: v1 ships the formats above and no more; audio
+  and video join when something in the tree consumes them.
+- **Entry vs rendition classification**: the entry classifies from its
+  **primary rendition** — `original` when the entry has one, its first
+  rendition otherwise — and renditions profile individually. A save
+  characterizes the primary only when its bytes are in hand (the save
+  carries them, or the streaming door captured the prefix in flight);
+  `ClassifyEntry` re-reads the stored bytes on demand. A declaration
+  once made is never silently withdrawn: later saves without a fresh
+  declaration re-resolve against the standing claim.
+- **Conflict resolution ergonomics**: the console surface for
+  `CONFLICTED` entries (re-declare, accept the identification, leave
+  flagged) is a follow-on, alongside the bridge trains.

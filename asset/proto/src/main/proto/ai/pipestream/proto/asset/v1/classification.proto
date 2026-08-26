@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package ai.pipestream.proto.asset.v1;
+
+import "ai/pipestream/proto/asset/v1/format.proto";
+import "ai/pipestream/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.pipestream.proto.asset.v1";
+
+// ============================================================================
+// CLASSIFICATION — what an asset is, as a stored state machine.
+//
+// An optional type claim reproduces the absent-versus-default trap at the
+// model level: "no claim" and "nobody looked" become indistinguishable.
+// Instead every asset carries a classification whose state is a stored,
+// queryable fact. Nothing is assumed: an invalid declaration never lands
+// (the format's own rules refuse it at the door), a byte-contradicted
+// declaration lands as a named conflict, and "we don't know yet" is a
+// first-class work item, never a silent default.
+// ============================================================================
+
+// The classification lifecycle.
+enum ClassificationState {
+  // Unset; never a stored state.
+  CLASSIFICATION_STATE_UNSPECIFIED = 0;
+  // Stored, no format known. A first-class work item — listable,
+  // countable, filterable — never a silent default.
+  CLASSIFICATION_STATE_UNCLASSIFIED = 1;
+  // The producer declared the format and the declaration validated
+  // against the format's rules at the door. A stored DECLARED
+  // classification is always rule-consistent, because an invalid
+  // declaration never gets in.
+  CLASSIFICATION_STATE_DECLARED = 2;
+  // Characterization identified the format from the bytes, with the
+  // evidence recorded. Nothing was declared; nothing was invented.
+  CLASSIFICATION_STATE_IDENTIFIED = 3;
+  // Declared AND independently identified, and the two agree — the
+  // strongest state, and the precondition trust-sensitive consumers can
+  // demand.
+  CLASSIFICATION_STATE_VERIFIED = 4;
+  // Declared and identified, and they disagree. Stored loudly, never
+  // resolved silently: the conflict is the fact. Bridging refuses
+  // conflicted assets; the console shows them as work.
+  CLASSIFICATION_STATE_CONFLICTED = 5;
+}
+
+// One thing the identifier saw: evidence, not narrative. A stored
+// IDENTIFIED or CONFLICTED classification lists what led to its verdict.
+message CharacterizationEvidence {
+  // The signal kind: "magic-bytes", "extension", "probe".
+  string signal = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 100}
+    }
+  ];
+  // What the signal observed (e.g. "ustar magic at offset 257",
+  // "name matches the tar grammar").
+  string observation = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 500}
+    }
+  ];
+}
+
+// Who classified an asset — the asset layer's own attribution shape, kept
+// leaf-local so the contract depends on nothing above it. Stamped at
+// write time and never invented: unknown stays blank.
+message Attribution {
+  // The producing module or tool.
+  string module = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    }
+  ];
+  // The acting principal, when one is known.
+  string actor = 2 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    }
+  ];
+}
+
+// One asset's classification: the state, the facts on each side of it,
+// and the evidence. The per-state shape is enforced by the message rules
+// below — a stored classification can never claim a state its fields do
+// not support.
+message Classification {
+  option (ai.pipestream.proto.validate.v1.message) = {
+    cel: {
+      id: "classification.state_known"
+      message: "the classification state must be a defined, non-unspecified state"
+      expression: "int(this.state) >= 1 && int(this.state) <= 5"
+    }
+    cel: {
+      id: "classification.declared_when_claimed"
+      message: "DECLARED, VERIFIED and CONFLICTED carry the declaration; UNCLASSIFIED and IDENTIFIED do not"
+      expression: "(int(this.state) in [2, 4, 5]) == has(this.declared)"
+    }
+    cel: {
+      id: "classification.identified_when_concluded"
+      message: "IDENTIFIED, VERIFIED and CONFLICTED carry the identification; UNCLASSIFIED and DECLARED do not"
+      expression: "(int(this.state) in [3, 4, 5]) == has(this.identified)"
+    }
+  };
+
+  // The lifecycle state.
+  ClassificationState state = 1;
+  // The producer's declaration, when one was made (DECLARED, VERIFIED,
+  // CONFLICTED).
+  FormatFact declared = 2;
+  // Characterization's conclusion, when one exists (IDENTIFIED, VERIFIED,
+  // CONFLICTED). Under VERIFIED the two facts name the same format;
+  // under CONFLICTED they do not, and both are kept.
+  FormatFact identified = 3;
+  // What the identifier saw.
+  repeated CharacterizationEvidence evidence = 4 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      repeated: {max_items: 32}
+    }
+  ];
+  // Who declared or requested classification. Unknown stays blank.
+  Attribution classified_by = 5;
+  // Where the asset came from, when it arrived from object storage.
+  ObjectStoreOrigin origin = 6;
+  // When the classification last changed.
+  google.protobuf.Timestamp classified_at = 7;
+}

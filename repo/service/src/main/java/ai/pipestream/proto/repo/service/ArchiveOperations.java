@@ -1,7 +1,15 @@
 package ai.pipestream.proto.repo.service;
 
+import ai.pipestream.proto.asset.characterize.Characterizer;
+import ai.pipestream.proto.asset.v1.Classification;
+import ai.pipestream.proto.asset.v1.ClassificationState;
+import ai.pipestream.proto.asset.v1.FormatFact;
+import ai.pipestream.proto.asset.v1.ObjectStoreOrigin;
 import ai.pipestream.proto.repo.archive.v1.Archive;
 import ai.pipestream.proto.repo.archive.v1.ArchiveStats;
+import ai.pipestream.proto.repo.archive.v1.ClassificationStateCount;
+import ai.pipestream.proto.repo.archive.v1.ClassifyEntryRequest;
+import ai.pipestream.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.pipestream.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.pipestream.proto.repo.archive.v1.CreateArchiveResponse;
 import ai.pipestream.proto.repo.archive.v1.DeleteEntryRequest;
@@ -210,6 +218,11 @@ final class ArchiveOperations {
                     .setObjectCount(rendition.objectCount)
                     .setTotalBytes(rendition.totalBytes));
         }
+        ledger.countByClassificationState(request.getAccountId(), request.getArchive())
+                .forEach((state, count) -> stats.addClassificationStates(
+                        ClassificationStateCount.newBuilder()
+                                .setState(ArchiveClassifications.stateOf(state))
+                                .setCount(count)));
         return GetArchiveStatsResponse.newBuilder().setStats(stats).build();
     }
 
@@ -237,6 +250,10 @@ final class ArchiveOperations {
             }
         }
 
+        FormatFact declared = ArchiveClassifications.declared(
+                request.hasDeclared(), request.getDeclared());
+        ObjectStoreOrigin origin = ArchiveClassifications.origin(
+                request.hasOrigin(), request.getOrigin());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         DriveRecord drive = driveOrThrow(archive);
         UUID entryUuid = ArchiveIds.entryUuid(address);
@@ -269,6 +286,8 @@ final class ArchiveOperations {
 
             ArchiveEntryRecord entry = entryRow(existing.orElse(null), address, entryUuid,
                     request, now);
+            applyClassification(entry, declared, origin,
+                    primaryPrefix(slots, request), entry.filename, request.getWrittenBy());
             if (current != null && root.equals(retained.stream()
                     .filter(v -> v.version == base).findFirst().orElseThrow().rootChecksum)) {
                 // Identical content: no bytes move, no version lands; the
@@ -336,12 +355,14 @@ final class ArchiveOperations {
                               WriteAttribution writtenBy, InputStream body)
             throws IOException {
         return uploadStream(rawAddress, rawDescriptor, declaredSize, declaredSha, writtenBy,
-                null, body);
+                null, null, null, body);
     }
 
     UploadResult uploadStream(EntryAddress rawAddress, RenditionDescriptor rawDescriptor,
                               long declaredSize, String declaredSha,
-                              WriteAttribution writtenBy, String filename, InputStream body)
+                              WriteAttribution writtenBy, String filename,
+                              FormatFact rawDeclaredFormat, ObjectStoreOrigin rawOrigin,
+                              InputStream body)
             throws IOException {
         EntryAddress address = ArchiveRequests.address(true, rawAddress);
         RenditionDescriptor descriptor = ArchiveRequests.rendition(true, rawDescriptor);
@@ -350,6 +371,10 @@ final class ArchiveOperations {
         }
         String expectedSha = declaredSha == null ? "" : declaredSha.trim().toLowerCase();
         ArchiveRequests.sha256(expectedSha, "expected_sha256");
+        FormatFact declaredFormat = ArchiveClassifications.declared(
+                rawDeclaredFormat != null, rawDeclaredFormat);
+        ObjectStoreOrigin origin = ArchiveClassifications.origin(
+                rawOrigin != null, rawOrigin);
 
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         DriveRecord drive = driveOrThrow(archive);
@@ -361,6 +386,8 @@ final class ArchiveOperations {
         // stage under the entry and settle onto the final key by server-side
         // copy once the digest completes.
         MessageDigest digest = ArchiveManifests.sha256();
+        PrefixCapture capture = new PrefixCapture(body, Characterizer.PREFIX_BYTES);
+        body = capture;
         String sha256;
         String objectKey;
         if (!expectedSha.isEmpty()) {
@@ -452,6 +479,16 @@ final class ArchiveOperations {
             });
             if (filename != null && !filename.isBlank()) {
                 entry.filename = filename;
+            }
+            // Classification recomputes when this upload carries the entry's
+            // primary rendition (the manifest's "original", or its first
+            // rendition when no "original" exists).
+            String primary = slots.containsKey(new Slot("original", ""))
+                    ? "original" : slots.firstKey().name();
+            if (descriptor.getName().equals(primary)) {
+                applyClassification(entry, declaredFormat, origin, capture.prefix(),
+                        filename != null && !filename.isBlank() ? filename : entry.filename,
+                        writtenBy);
             }
             entry.currentVersion = newVersion;
             entry.updatedAt = now;
@@ -545,8 +582,13 @@ final class ArchiveOperations {
         archiveOrThrow(request.getAccountId(), request.getArchive());
         int limit = ArchiveRequests.page(request.getLimit());
         long offset = ArchiveRequests.offset(request.getContinuationToken());
+        String stateFilter = request.getClassificationState()
+                == ClassificationState.CLASSIFICATION_STATE_UNSPECIFIED
+                ? null
+                : ArchiveClassifications.stateName(Classification.newBuilder()
+                        .setState(request.getClassificationState()).build());
         List<ArchiveEntryRecord> page = ledger.listEntries(request.getAccountId(),
-                request.getArchive(), limit, offset);
+                request.getArchive(), stateFilter, limit, offset);
         ListEntriesResponse.Builder response = ListEntriesResponse.newBuilder()
                 .setTotalCount(ledger.countEntries(request.getAccountId(), request.getArchive()));
         page.forEach(entry -> response.addEntries(toProto(entry)));
@@ -704,6 +746,144 @@ final class ArchiveOperations {
                 .setVersionsRemoved(removeCount)
                 .setObjectsDeleted(gone.size())
                 .build();
+    }
+
+    ClassifyEntryResponse classifyEntry(ClassifyEntryRequest request) {
+        EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
+        FormatFact declared = ArchiveClassifications.declared(
+                request.hasDeclared(), request.getDeclared());
+        ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
+        DriveRecord drive = driveOrThrow(archive);
+        ArchiveEntryRecord entry = entryOrThrow(address);
+        Classification stored = ArchiveClassifications.fromJson(entry.classification);
+        if (declared == null && stored != null && stored.hasDeclared()) {
+            // Absent declaration withdraws nothing: the standing claim is
+            // re-resolved against a fresh read of the bytes.
+            declared = stored.getDeclared();
+        }
+        ObjectStoreOrigin origin = stored != null && stored.hasOrigin()
+                ? stored.getOrigin() : null;
+
+        // Characterize the current version's primary rendition from the
+        // store. A primary whose bytes are gone characterizes nothing —
+        // the resolution then rests on the declaration alone.
+        byte[] prefix = null;
+        ArchiveVersionRecord version = versionOrThrow(entry, 0);
+        VersionManifest manifest = ArchiveManifests.fromJson(version.manifest);
+        RenditionManifestEntry primary = primaryOf(manifest);
+        if (primary != null
+                && primary.getState() == RenditionState.RENDITION_STATE_PRESENT) {
+            byte[] bytes = blobStore.get(drive.bucket, primary.getObjectKey()).data();
+            prefix = bytes.length <= Characterizer.PREFIX_BYTES
+                    ? bytes : java.util.Arrays.copyOf(bytes, Characterizer.PREFIX_BYTES);
+        }
+        applyClassification(entry, declared, origin, prefix, entry.filename,
+                request.hasClassifiedBy() ? request.getClassifiedBy() : null);
+        ledger.mergeEntry(entry);
+        return ClassifyEntryResponse.newBuilder()
+                .setClassification(ArchiveClassifications.fromJson(entry.classification))
+                .build();
+    }
+
+    /** The manifest's primary rendition: "original", else its first. */
+    private static RenditionManifestEntry primaryOf(VersionManifest manifest) {
+        RenditionManifestEntry first = null;
+        for (RenditionManifestEntry item : manifest.getRenditionsList()) {
+            if (item.getRendition().getName().equals("original")) {
+                return item;
+            }
+            if (first == null) {
+                first = item;
+            }
+        }
+        return first;
+    }
+
+    /**
+     * The primary rendition's byte prefix when THIS save carries it; null
+     * when the primary's bytes are not in the request (identification is
+     * then skipped rather than invented — ClassifyEntry re-reads from the
+     * store on demand).
+     */
+    private static byte[] primaryPrefix(TreeMap<Slot, RenditionManifestEntry> slots,
+                                        PutEntryRequest request) {
+        String primary = slots.containsKey(new Slot("original", ""))
+                ? "original"
+                : slots.isEmpty() ? null : slots.firstKey().name();
+        if (primary == null) {
+            return null;
+        }
+        for (RenditionContent content : request.getRenditionsList()) {
+            if (content.getRendition().getName().equals(primary)
+                    && !content.getData().isEmpty()) {
+                byte[] data = content.getData().toByteArray();
+                return data.length <= Characterizer.PREFIX_BYTES
+                        ? data : java.util.Arrays.copyOf(data, Characterizer.PREFIX_BYTES);
+            }
+        }
+        return null;
+    }
+
+    /** Resolves and stamps the entry's classification columns. */
+    private static void applyClassification(ArchiveEntryRecord entry, FormatFact declared,
+                                            ObjectStoreOrigin origin, byte[] prefix,
+                                            String filename, WriteAttribution writtenBy) {
+        Classification stored = ArchiveClassifications.fromJson(entry.classification);
+        if (declared == null && stored != null && stored.hasDeclared()) {
+            // A save without a fresh declaration does not withdraw the
+            // standing claim.
+            declared = stored.getDeclared();
+        }
+        if (origin == null && stored != null && stored.hasOrigin()) {
+            origin = stored.getOrigin();
+        }
+        if (declared == null && prefix == null && stored != null) {
+            // Nothing new to resolve against; the stored classification
+            // stands.
+            return;
+        }
+        Classification classification = ArchiveClassifications.classify(
+                declared, origin, prefix, filename, writtenBy);
+        entry.classification = ArchiveClassifications.toJson(classification);
+        entry.classificationState = ArchiveClassifications.stateName(classification);
+    }
+
+    /**
+     * A stream wrapper capturing the first bytes as they pass — the
+     * characterization prefix, read without a second trip to the store.
+     */
+    private static final class PrefixCapture extends java.io.FilterInputStream {
+        private final byte[] head;
+        private int captured;
+
+        PrefixCapture(InputStream in, int prefixBytes) {
+            super(in);
+            this.head = new byte[prefixBytes];
+        }
+
+        byte[] prefix() {
+            return java.util.Arrays.copyOf(head, captured);
+        }
+
+        @Override
+        public int read() throws java.io.IOException {
+            int b = super.read();
+            if (b >= 0 && captured < head.length) {
+                head[captured++] = (byte) b;
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws java.io.IOException {
+            int n = super.read(buffer, offset, length);
+            if (n > 0 && captured < head.length) {
+                int take = Math.min(n, head.length - captured);
+                System.arraycopy(buffer, offset, head, captured, take);
+                captured += take;
+            }
+            return n;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -955,6 +1135,10 @@ final class ArchiveOperations {
         }
         if (record.sourceModifiedAt != null) {
             info.setSourceModifiedAt(Timestamps.fromMillis(record.sourceModifiedAt.toEpochMilli()));
+        }
+        Classification classification = ArchiveClassifications.fromJson(record.classification);
+        if (classification != null) {
+            info.setClassification(classification);
         }
         info.putAllMetadata(jsonToMap(record.metadata));
         return info.build();

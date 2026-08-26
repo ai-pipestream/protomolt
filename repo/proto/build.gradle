@@ -13,6 +13,8 @@ dependencies {
     // The purge-command contract dogfoods the house validate.v1 rules (the
     // protomolt serde enforces them on write).
     api project(':protomolt-protobuf-validation')
+    // The archive stores asset classifications and content profiles.
+    api project(':protomolt-asset-proto')
     // SearchMetadata.body declares the screened sensitivity class.
     api project(':protomolt-protobuf-metadata')
 

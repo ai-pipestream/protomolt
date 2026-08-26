@@ -486,7 +486,7 @@ public final class UploadHttpServer implements AutoCloseable {
         ArchiveOperations.UploadResult result = archiveOperations.uploadStream(address,
                 descriptor, contentLength,
                 declaredSha == null ? "" : declaredSha,
-                null, filename, exchange.getRequestBody());
+                null, filename, null, null, exchange.getRequestBody());
         return MAPPER.createObjectNode()
                 .put("entry_uuid", result.entryUuid())
                 .put("version", result.version())
