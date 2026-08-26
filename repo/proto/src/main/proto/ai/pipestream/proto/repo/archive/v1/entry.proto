@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ai.pipestream.proto.repo.archive.v1;
 
+import "ai/pipestream/proto/asset/v1/classification.proto";
+import "ai/pipestream/proto/asset/v1/content.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -160,6 +162,9 @@ message RenditionManifestEntry {
   // Provenance of the write that produced these bytes. Re-referenced
   // renditions keep the stamp of the write that produced them.
   WriteAttribution written_by = 8;
+  // What this rendition's content is, when a profile was measured
+  // (typically on derived renditions; OCR text always carries one).
+  ai.pipestream.proto.asset.v1.ContentProfile content_profile = 9;
 }
 
 // The machine-readable map of one immutable stored state: which renditions
@@ -240,6 +245,10 @@ message EntryInfo {
   google.protobuf.Timestamp created_at = 9;
   // When the entry last changed.
   google.protobuf.Timestamp updated_at = 10;
+  // What the entry is: the classification state machine's stored fact,
+  // resolved from the primary rendition. Never a silent default —
+  // "unclassified" and "conflicted" are first-class stored states.
+  ai.pipestream.proto.asset.v1.Classification classification = 11;
   // Extensible key-value labels (extension-metadata map — repository
   // field-99 convention).
   map<string, string> metadata = 99;

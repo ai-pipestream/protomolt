@@ -1,0 +1,5 @@
+description = 'Format identification: the one detection seam every consumer of "what is this file" calls — media-type sniffing, format grammars compiled from the contract, and the declared-versus-identified compatibility relation'
+
+dependencies {
+    api project(':protomolt-asset-proto')
+}

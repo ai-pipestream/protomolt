@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.pipestream.proto.repo.archive.v1;
 
+import "ai/pipestream/proto/asset/v1/classification.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -100,4 +101,14 @@ message ArchiveStats {
   int64 current_bytes = 6;
   // Per-rendition-name breakdown of the retained objects.
   repeated RenditionStats renditions = 7;
+  // How the archive's entries classify, one exact count per state.
+  repeated ClassificationStateCount classification_states = 8;
+}
+
+// One classification state's exact entry count.
+message ClassificationStateCount {
+  // The state the count describes.
+  ai.pipestream.proto.asset.v1.ClassificationState state = 1;
+  // Number of live entries in that state.
+  int64 count = 2;
 }

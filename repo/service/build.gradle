@@ -24,6 +24,9 @@ dependencies {
     // The archive request validators mirror the contract's validate.v1
     // annotations onto the house format parsers.
     implementation project(':protomolt-formats')
+    // Classification: the asset family's identification seam and state
+    // machine behind the archive's doors.
+    implementation project(':protomolt-asset-characterize')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess

@@ -65,6 +65,19 @@ public class ArchiveEntryRecord {
     @Column(name = "metadata")
     public String metadata;
 
+    /** The stored Classification as protobuf-JSON; null = never classified. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "classification")
+    public String classification;
+
+    /**
+     * The classification state's own column (UNCLASSIFIED, DECLARED,
+     * IDENTIFIED, VERIFIED, CONFLICTED), so filters and the exact per-state
+     * counts are one indexed aggregate.
+     */
+    @Column(name = "classification_state", nullable = false)
+    public String classificationState = "UNCLASSIFIED";
+
     /** When the entry was first created. */
     @Column(name = "created_at", nullable = false)
     public Instant createdAt;

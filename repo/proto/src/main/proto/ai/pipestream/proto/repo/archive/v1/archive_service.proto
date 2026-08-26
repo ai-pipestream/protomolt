@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ai.pipestream.proto.repo.archive.v1;
 
+import "ai/pipestream/proto/asset/v1/classification.proto";
+import "ai/pipestream/proto/asset/v1/format.proto";
 import "ai/pipestream/proto/repo/archive/v1/archive.proto";
 import "ai/pipestream/proto/repo/archive/v1/entry.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
@@ -152,6 +154,15 @@ message PutEntryRequest {
   ];
   // The source's own last-modified instant, when the source reports one.
   google.protobuf.Timestamp source_modified_at = 9;
+  // The producer's format declaration for the entry's primary rendition.
+  // Validated at the door against the format's own rules, and a
+  // declaration must carry the format's filename — the claim is about a
+  // named file. Absent = no claim; the entry classifies from the bytes
+  // alone (IDENTIFIED or UNCLASSIFIED, never assumed).
+  ai.pipestream.proto.asset.v1.FormatFact declared = 10;
+  // Where the asset came from, when it arrived from object storage.
+  // Validated strictly: an origin without its coordinates is refused.
+  ai.pipestream.proto.asset.v1.ObjectStoreOrigin origin = 11;
   // Extensible key-value labels; replaces the entry's map when non-empty.
   map<string, string> metadata = 99;
 }
@@ -207,6 +218,11 @@ message UploadRenditionHeader {
   ];
   // Provenance of this write. Unknown stays blank.
   WriteAttribution written_by = 5;
+  // The producer's format declaration, when this upload carries the
+  // entry's primary rendition. Same door rules as PutEntry's.
+  ai.pipestream.proto.asset.v1.FormatFact declared = 6;
+  // Where the asset came from, when it arrived from object storage.
+  ai.pipestream.proto.asset.v1.ObjectStoreOrigin origin = 7;
 }
 
 // One frame of an UploadRendition stream: the header first, then chunks.
@@ -297,6 +313,9 @@ message GetEntryManifestResponse {
 
 // Request to list an archive's entries.
 message ListEntriesRequest {
+  // Optional classification-state filter: only entries in this state.
+  // Unspecified = no filter.
+  ai.pipestream.proto.asset.v1.ClassificationState classification_state = 5;
   // Owning account.
   string account_id = 1 [
     (ai.pipestream.proto.validate.v1.field) = {
@@ -363,6 +382,28 @@ message ListVersionsResponse {
   repeated VersionManifest versions = 1;
   // Token to fetch the next page; empty when the listing is exhausted.
   string next_continuation_token = 2;
+}
+
+// Request to classify one entry: declare (or re-declare) the format, and
+// have characterization read the primary rendition's bytes. The result is
+// the state machine's resolution — a declaration that fails its format's
+// rules is refused at this door exactly as at the save doors.
+message ClassifyEntryRequest {
+  // The entry's logical identity.
+  EntryAddress address = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {required: true}
+  ];
+  // The declaration to record; absent = withdraw nothing, characterize
+  // only.
+  ai.pipestream.proto.asset.v1.FormatFact declared = 2;
+  // Who is classifying. Unknown stays blank.
+  WriteAttribution classified_by = 3;
+}
+
+// Response carrying the resolved classification.
+message ClassifyEntryResponse {
+  // The entry's classification after this call.
+  ai.pipestream.proto.asset.v1.Classification classification = 1;
 }
 
 // Request to delete one entry: every retained version, every object.
@@ -514,4 +555,8 @@ service ArchiveService {
 
   // Read one archive's exact usage counters.
   rpc GetArchiveStats(GetArchiveStatsRequest) returns (GetArchiveStatsResponse);
+
+  // Declare an entry's format and/or re-run characterization; returns the
+  // state machine's resolution.
+  rpc ClassifyEntry(ClassifyEntryRequest) returns (ClassifyEntryResponse);
 }

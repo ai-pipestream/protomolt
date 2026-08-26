@@ -3,6 +3,9 @@ description = 'The parsing coordinator runtime: magic-byte content sniffing, CEL
 dependencies {
     api project(':protomolt-composer')
     implementation project(':protomolt-parse-document')
+    // Content detection lives on the asset family's one seam; routing and
+    // characterization consult the same table.
+    implementation project(':protomolt-asset-characterize')
     implementation project(':protomolt-registry')
     api project(':protomolt-parse-proto')
 
