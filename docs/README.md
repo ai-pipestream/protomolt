@@ -92,6 +92,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Metric mappings](design/metric-mapping.md): governed aggregate queries on a mapping subject (Cube comparison, option dialect, `query-metrics`)
 - [Signed work records](design/receipts.md): portable, signed, offline-verifiable receipts projected from existing evidence
 - [The archive](design/archive.md): entries with named renditions, retained versions via entry-local content addressing, and three upload doors
+- [Asset formats and characterization](design/asset-formats.md): typed formats with strict rules, classification as a state machine, content classes, and format bridging
 - [Authorization scopes](design/authorization-scopes.md): named principals, a closed scope vocabulary, and per-operation refusals
 - [Intake and parsing](design/intake-and-parsing.md): platform ingestion architecture
 - [Document platform](design/document-platform.md): repository and account service architecture
