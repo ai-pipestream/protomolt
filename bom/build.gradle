@@ -122,6 +122,8 @@ def supportedModules = [
         'protomolt-http-json',
         'protomolt-http-rest',
         'protomolt-http-openapi',
+        'protomolt-asset-proto',
+        'protomolt-asset-characterize',
         'protomolt-repo-proto',
         'protomolt-repo-container',
         'protomolt-repo-service',

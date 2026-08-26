@@ -1,0 +1,19 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The asset contract: typed formats with strict validation rules, the classification state machine, and content profiles'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    // Format messages carry their invariants as validate.v1 rules — the
+    // annotation IS the claim's contract.
+    api project(':protomolt-protobuf-validation')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+}

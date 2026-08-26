@@ -1,7 +1,8 @@
 package ai.pipestream.proto.parse.service;
 
 import ai.pipestream.proto.parse.plugin.v1.ParseOptions;
-import ai.pipestream.proto.parse.service.ContentTypeSniffer.Sniff;
+import ai.pipestream.proto.asset.characterize.ContentTypeSniffer;
+import ai.pipestream.proto.asset.characterize.ContentTypeSniffer.Sniff;
 import ai.pipestream.proto.parse.service.ParserClient.ParseOutcome;
 import ai.pipestream.proto.parse.service.RoutingRules.RoutingContext;
 import ai.pipestream.proto.parse.v1.ParseCoordinatorServiceGrpc;

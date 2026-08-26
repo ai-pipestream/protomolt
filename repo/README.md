@@ -238,6 +238,10 @@ Tests are testcontainers integration tests (Docker required): PostgreSQL 17
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
+- `ArchiveClassificationIT` — the classification state machine behind the
+  doors: verification and conflict from real bytes, grammar refusals
+  naming the rule, HTTP-door identification, after-the-fact
+  `ClassifyEntry`, exact per-state counts.
 - `ArchiveServiceIT` — the archive end to end: retained versions with
   entry-local object sharing, whole-save dedupe, all three doors in (unary,
   client-streaming with and without a declared hash, HTTP POST), exact
@@ -378,7 +382,21 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
 - `PruneVersions` — keep the newest N; only unshared objects delete.
 - `GetArchiveStats` — exact ledger-maintained counters (entries, versions,
   retained/current bytes, per-rendition breakdown), adjusted in the same
-  transaction as the mutations they describe.
+  transaction as the mutations they describe, plus exact per-state
+  classification counts.
+- `ClassifyEntry` — declare (or re-declare) the entry's format and have
+  characterization re-read the primary rendition's bytes; returns the
+  state machine's resolution.
+
+Entries carry an asset **classification** — the state machine from
+[docs/design/asset-formats.md](../docs/design/asset-formats.md):
+`UNCLASSIFIED`, `DECLARED`, `IDENTIFIED`, `VERIFIED`, or `CONFLICTED`,
+never a silent default. The save doors accept a declared `FormatFact`
+(validated against the format's own rules — a `.zip` name can never claim
+tar — and a declaration must name its file) and an `ObjectStoreOrigin`
+(coordinates required); characterization reads the primary rendition's
+bytes through the asset family's one detection seam, and listings filter
+by state.
 
 ### HTTP `POST /v1/archive:upload`
 

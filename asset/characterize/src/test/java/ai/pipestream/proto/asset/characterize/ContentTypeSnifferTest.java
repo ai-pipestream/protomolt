@@ -1,8 +1,8 @@
-package ai.pipestream.proto.parse.service;
+package ai.pipestream.proto.asset.characterize;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import ai.pipestream.proto.parse.service.ContentTypeSniffer.Sniff;
+import ai.pipestream.proto.asset.characterize.ContentTypeSniffer.Sniff;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 

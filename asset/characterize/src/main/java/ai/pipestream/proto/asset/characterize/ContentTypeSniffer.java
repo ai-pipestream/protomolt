@@ -1,4 +1,4 @@
-package ai.pipestream.proto.parse.service;
+package ai.pipestream.proto.asset.characterize;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -6,14 +6,18 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Magic-byte content detection — the routing source of truth.
+ * Magic-byte content detection — the platform's one source of "what media
+ * type are these bytes". Parse routing and asset characterization both
+ * call this table, so they can never disagree about what a signature
+ * means.
  *
- * <p>The sniffer looks at the first bytes of a blob and answers with the MIME
- * type routing should use. It is deliberately small and table-driven:
- * exhaustive format coverage is a parser's job, not the router's — the goal
- * here is an HONEST answer. When the bytes are inconclusive the sniffer says
- * so ({@code sniffed=false}) instead of guessing, and the caller falls back
- * to the declared type and finally {@code application/octet-stream}.
+ * <p>The sniffer looks at the first bytes of a blob and answers with the
+ * MIME type to route on. It is deliberately small and table-driven:
+ * exhaustive format coverage is a parser's job, not the router's — the
+ * goal here is an HONEST answer. When the bytes are inconclusive the
+ * sniffer says so ({@code sniffed=false}) instead of guessing, and the
+ * caller falls back to the declared type and finally
+ * {@code application/octet-stream}.
  *
  * <p>ZIP containers dispatch on the filename extension (docx/xlsx/pptx/epub
  * are all ZIP at byte level); everything else is pure magic.
@@ -53,7 +57,9 @@ public final class ContentTypeSniffer {
             new Magic(0, new byte[] {'M', 'M', 0, '*'}, "image/tiff"),
             new Magic("ID3", "audio/mpeg"),
             new Magic(4, "ftyp".getBytes(StandardCharsets.ISO_8859_1), "video/mp4"),
-            new Magic(0, new byte[] {0x1F, (byte) 0x8B}, "application/gzip"));
+            new Magic(0, new byte[] {0x1F, (byte) 0x8B}, "application/gzip"),
+            new Magic("PAR1", "application/vnd.apache.parquet"),
+            new Magic(0, new byte[] {'O', 'b', 'j', 0x01}, "application/avro"));
 
     /** ZIP-container extension dispatch (lowercase extension → MIME type). */
     private static final Map<String, String> ZIP_EXTENSIONS = Map.of(
@@ -62,13 +68,18 @@ public final class ContentTypeSniffer {
             "pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             "epub", "application/epub+zip");
 
+    /** POSIX tar: "ustar" at offset 257 (both the POSIX and GNU stamps). */
+    private static final int TAR_MAGIC_OFFSET = 257;
+    private static final byte[] TAR_MAGIC = "ustar".getBytes(StandardCharsets.ISO_8859_1);
+
     private ContentTypeSniffer() {
     }
 
     /**
      * Sniffs the content type from the first bytes of a blob.
      *
-     * @param head the first bytes of the blob (512 are plenty); may be empty
+     * @param head the first bytes of the blob (512 are plenty; tar detection
+     *        wants at least 262); may be empty
      * @param filename the original filename, used only to disambiguate ZIP
      *        containers; may be blank
      * @return the verdict — {@code sniffed=false} with
@@ -80,6 +91,9 @@ public final class ContentTypeSniffer {
         }
         if (startsWith(head, 0, new byte[] {'P', 'K', 0x03, 0x04})) {
             return new Sniff(ZIP_EXTENSIONS.getOrDefault(extensionOf(filename), "application/zip"), true);
+        }
+        if (startsWith(head, TAR_MAGIC_OFFSET, TAR_MAGIC)) {
+            return new Sniff("application/x-tar", true);
         }
         for (Magic magic : MAGICS) {
             if (startsWith(head, magic.offset(), magic.prefix())) {

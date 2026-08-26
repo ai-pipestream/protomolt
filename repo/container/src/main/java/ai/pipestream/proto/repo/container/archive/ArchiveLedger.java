@@ -174,25 +174,61 @@ public final class ArchiveLedger {
     }
 
     /**
-     * One page of an archive's entries, ordered by entry id.
+     * One page of an archive's entries, ordered by entry id, optionally
+     * filtered to one classification state.
      *
      * @param accountId owning account
      * @param archive the archive
+     * @param classificationState the state to filter to, or null for all
      * @param limit page size
      * @param offset zero-based row offset
      * @return the page
      */
     public List<ArchiveEntryRecord> listEntries(String accountId, String archive,
+                                                String classificationState,
                                                 int limit, long offset) {
-        return tx.readOnly(em -> em.createQuery(
-                        "SELECT e FROM ArchiveEntryRecord e WHERE e.accountId = :account"
-                                + " AND e.archive = :archive ORDER BY e.entryId",
-                        ArchiveEntryRecord.class)
-                .setParameter("account", accountId)
-                .setParameter("archive", archive)
-                .setFirstResult((int) offset)
-                .setMaxResults(limit)
-                .getResultList());
+        String where = "e.accountId = :account AND e.archive = :archive"
+                + (classificationState != null
+                        ? " AND e.classificationState = :state" : "");
+        return tx.readOnly(em -> {
+            var query = em.createQuery(
+                            "SELECT e FROM ArchiveEntryRecord e WHERE " + where
+                                    + " ORDER BY e.entryId", ArchiveEntryRecord.class)
+                    .setParameter("account", accountId)
+                    .setParameter("archive", archive);
+            if (classificationState != null) {
+                query.setParameter("state", classificationState);
+            }
+            return query.setFirstResult((int) offset)
+                    .setMaxResults(limit)
+                    .getResultList();
+        });
+    }
+
+    /**
+     * The exact per-state entry counts of one archive: one indexed
+     * aggregate over the state column.
+     *
+     * @param accountId owning account
+     * @param archive the archive
+     * @return classification state name → live entry count
+     */
+    public Map<String, Long> countByClassificationState(String accountId, String archive) {
+        return tx.readOnly(em -> {
+            Map<String, Long> counts = new java.util.LinkedHashMap<>();
+            for (Object[] row : em.createQuery(
+                            "SELECT e.classificationState, COUNT(e)"
+                                    + " FROM ArchiveEntryRecord e"
+                                    + " WHERE e.accountId = :account AND e.archive = :archive"
+                                    + " GROUP BY e.classificationState"
+                                    + " ORDER BY e.classificationState", Object[].class)
+                    .setParameter("account", accountId)
+                    .setParameter("archive", archive)
+                    .getResultList()) {
+                counts.put((String) row[0], (Long) row[1]);
+            }
+            return counts;
+        });
     }
 
     /**

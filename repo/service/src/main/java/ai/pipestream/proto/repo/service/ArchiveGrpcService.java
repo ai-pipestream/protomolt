@@ -1,6 +1,8 @@
 package ai.pipestream.proto.repo.service;
 
 import ai.pipestream.proto.repo.archive.v1.ArchiveServiceGrpc;
+import ai.pipestream.proto.repo.archive.v1.ClassifyEntryRequest;
+import ai.pipestream.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.pipestream.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.pipestream.proto.repo.archive.v1.CreateArchiveResponse;
 import ai.pipestream.proto.repo.archive.v1.DeleteEntryRequest;
@@ -130,6 +132,12 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
     }
 
     @Override
+    public void classifyEntry(ClassifyEntryRequest request,
+                              StreamObserver<ClassifyEntryResponse> observer) {
+        GrpcErrors.run(observer, () -> operations.classifyEntry(request));
+    }
+
+    @Override
     public StreamObserver<UploadRenditionRequest> uploadRendition(
             StreamObserver<UploadRenditionResponse> observer) {
         return new StreamObserver<>() {
@@ -157,6 +165,9 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
                                         header.getRendition(), header.getSizeBytes(),
                                         header.getExpectedSha256(),
                                         header.hasWrittenBy() ? header.getWrittenBy() : null,
+                                        null,
+                                        header.hasDeclared() ? header.getDeclared() : null,
+                                        header.hasOrigin() ? header.getOrigin() : null,
                                         chunks);
                             } catch (IOException e) {
                                 throw new java.io.UncheckedIOException(e);
