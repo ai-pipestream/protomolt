@@ -121,7 +121,7 @@ Everything operational derives from the manifest's exact key list, never
 from prefix listing: deletion deletes the manifest's keys, reconciliation
 diffs the bucket against the union of manifest keys, and a reader holding a
 manifest knows byte-for-byte what a version contains before fetching
-anything. Prefix sweeps are unsafe by doctrine — prefixes nest.
+anything. Prefix sweeps are never safe — prefixes nest.
 
 ## Three doors, all built
 
@@ -220,7 +220,7 @@ deletion under load.
 
 ## Rules of the house
 
-Carried as doctrine, stated once here:
+The archive's standing rules, stated once here:
 
 1. **Deterministic identity everywhere.** Name-based UUIDs over logical
    coordinates; never random ids in storage paths or partition keys.
