@@ -1,8 +1,20 @@
 package ai.pipestream.proto.platform;
 
+import ai.pipestream.proto.acquire.jdbc.JdbcPullModule;
+import ai.pipestream.proto.acquire.s3.S3PullModule;
 import ai.pipestream.proto.composer.Channels;
+import ai.pipestream.proto.intake.service.IntakeModule;
+import ai.pipestream.proto.jobs.service.JobsModule;
 import ai.pipestream.proto.jobs.service.store.WorkflowRunStoreConfig;
+import ai.pipestream.proto.metric.lucene.MetricServiceModule;
+import ai.pipestream.proto.parse.playground.PlaygroundModule;
+import ai.pipestream.proto.parse.service.ParseModule;
+import ai.pipestream.proto.parse.text.TextParserModule;
+import ai.pipestream.proto.registry.service.RegistryModule;
 import ai.pipestream.proto.repo.service.RepoServiceConfig;
+import ai.pipestream.proto.repo.service.RepoServiceModule;
+import ai.pipestream.proto.search.console.SearchConsoleModule;
+import ai.pipestream.proto.search.service.SearchServiceModule;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -70,14 +82,27 @@ public record DocumentPlatformConfig(
 
     /** The full one-container preset, in canonical mount order. */
     public static final List<String> DEFAULT_ROLES = List.of(
-            "repo", "parse-text", "registry", "parse", "jobs", "intake",
-            "playground", "search", "metric", "search-console");
+            RepoServiceModule.ROLE, TextParserModule.ROLE, RegistryModule.ROLE,
+            ParseModule.ROLE, JobsModule.ROLE, IntakeModule.ROLE,
+            PlaygroundModule.ROLE, SearchServiceModule.ROLE,
+            MetricServiceModule.ROLE, SearchConsoleModule.ROLE);
 
-    /** Every role the platform binary can mount. */
+    /**
+     * Every role this binary can mount, each named by the module that
+     * mounts it rather than by a string repeated here. Modules take their
+     * configuration through their constructors, so the platform wires them
+     * explicitly instead of through {@link java.util.ServiceLoader}, and
+     * this set is the only place the roster is written down. Naming each
+     * module's own constant is what keeps the two from drifting: a role
+     * renamed on its module stops compiling here instead of failing an
+     * operator's boot with a spelling nothing mounts.
+     */
     public static final Set<String> KNOWN_ROLES = Set.of(
-            "repo", "parse-text", "registry", "parse", "jobs", "intake",
-            "playground", "search", "metric", "search-console",
-            "acquire-s3", "acquire-jdbc");
+            RepoServiceModule.ROLE, TextParserModule.ROLE, RegistryModule.ROLE,
+            ParseModule.ROLE, JobsModule.ROLE, IntakeModule.ROLE,
+            PlaygroundModule.ROLE, SearchServiceModule.ROLE,
+            MetricServiceModule.ROLE, SearchConsoleModule.ROLE,
+            S3PullModule.ROLE, JdbcPullModule.ROLE);
 
     /**
      * Role spellings {@link #ENV_ROLES} accepts as aliases, mapped to the
