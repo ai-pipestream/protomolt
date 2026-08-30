@@ -4,6 +4,7 @@ import ai.pipestream.proto.mesh.cluster.v1.CapacityAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
+import ai.pipestream.proto.mesh.cluster.v1.DirectoryCheckpoint;
 import ai.pipestream.proto.mesh.cluster.v1.NodeAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.NodePresence;
 import ai.pipestream.proto.mesh.cluster.v1.ProcessorAdvertisement;
@@ -31,12 +32,28 @@ import java.util.function.Function;
  */
 public final class PersistentClusterDirectory {
 
+    /**
+     * How many events may accumulate beyond the last checkpoint before the log is folded.
+     * Every mutation rewrites the whole retained log, so this is also the bound on the work
+     * one heartbeat costs. Left unbounded, a directory that emits an event per heartbeat
+     * makes each heartbeat more expensive than the last and eventually reaches the events
+     * cap, after which no mutation can be persisted at all.
+     */
+    public static final int DEFAULT_RETAINED_EVENTS = 256;
+
     private final ClusterDescriptor cluster;
     private final Clock clock;
     private final ClusterEventRepository events;
+    private final int retainedEvents;
 
     /** Serializes mutations, including their durable round trip. Never taken by a reader. */
     private final Object writeLock = new Object();
+
+    /**
+     * The checkpoint the retained events replay onto, or null while the log still holds its
+     * complete history. Written only under {@link #writeLock}, alongside {@link #current}.
+     */
+    private volatile DirectoryCheckpoint checkpoint;
 
     /**
      * The installed directory. Written only under {@link #writeLock}, and only with a
@@ -45,15 +62,43 @@ public final class PersistentClusterDirectory {
      */
     private volatile ClusterDirectory current;
 
-    /** Loads and replays any stored log for {@code cluster}. */
+    /** Loads and replays any stored directory for {@code cluster}. */
     public PersistentClusterDirectory(ClusterDescriptor cluster, Clock clock,
                                       ClusterEventRepository events) {
+        this(cluster, clock, events, DEFAULT_RETAINED_EVENTS);
+    }
+
+    /**
+     * Loads and replays any stored directory, folding the log once more than
+     * {@code retainedEvents} events accumulate beyond the last checkpoint.
+     *
+     * @param retainedEvents how many events may accumulate before the log is folded; at
+     *     least one
+     */
+    public PersistentClusterDirectory(ClusterDescriptor cluster, Clock clock,
+                                      ClusterEventRepository events, int retainedEvents) {
         ClusterValidation.validate(cluster);
+        if (retainedEvents < 1) {
+            throw new IllegalArgumentException("retainedEvents must be at least one");
+        }
         this.cluster = cluster;
         this.clock = Objects.requireNonNull(clock, "clock");
         this.events = Objects.requireNonNull(events, "events");
-        this.current = ClusterDirectory.replay(cluster,
-                events.load(cluster).orElseGet(List::of), clock);
+        this.retainedEvents = retainedEvents;
+        ClusterEventRepository.StoredDirectory stored = events.load(cluster).orElseGet(
+                () -> ClusterEventRepository.StoredDirectory.of(List.of()));
+        // The checkpoint has to be retained, not merely replayed. A mutation rebuilds its
+        // candidate from this field plus the retained events, so dropping it here would
+        // rebuild the next candidate from the tail alone and quietly discard every node the
+        // fold accounts for.
+        this.checkpoint = stored.compacted() ? stored.checkpoint() : null;
+        this.current = restore(stored);
+    }
+
+    private ClusterDirectory restore(ClusterEventRepository.StoredDirectory stored) {
+        return stored.compacted()
+                ? ClusterDirectory.restore(cluster, stored.checkpoint(), stored.events(), clock)
+                : ClusterDirectory.replay(cluster, stored.events(), clock);
     }
 
     /** Registers or refreshes one node after the resulting event log is durable. */
@@ -125,19 +170,44 @@ public final class PersistentClusterDirectory {
         return current.processorCapacity(nodeId, processorId);
     }
 
-    /** Returns the complete durable event log. */
+    /**
+     * Returns the durable events retained beyond the last checkpoint. Before the first fold
+     * this is the directory's complete history; afterwards the events before
+     * {@link #checkpoint()} are folded into it rather than kept.
+     */
     public List<ClusterEvent> eventLog() {
         return current.events();
     }
 
+    /** The checkpoint the retained events replay onto, empty while none has been folded. */
+    public Optional<DirectoryCheckpoint> checkpoint() {
+        return Optional.ofNullable(checkpoint);
+    }
+
     private <T> T mutate(Function<ClusterDirectory, T> operation) {
         synchronized (writeLock) {
-            ClusterDirectory candidate = ClusterDirectory.replay(
-                    cluster, current.events(), clock);
+            ClusterDirectory candidate = restore(new ClusterEventRepository.StoredDirectory(
+                    checkpoint, current.events()));
             int priorSize = candidate.events().size();
             T result = operation.apply(candidate);
-            if (candidate.events().size() != priorSize) {
-                events.save(cluster, candidate.events());
+            if (candidate.events().size() == priorSize) {
+                return result;
+            }
+            if (candidate.events().size() > retainedEvents) {
+                // Fold first, then install the directory restored from the fold rather than
+                // the candidate. The two hold the same state, but only the restored one has
+                // the retained log the checkpoint was written with, so the next mutation
+                // cannot replay events the checkpoint already accounts for.
+                DirectoryCheckpoint folded = candidate.checkpoint();
+                ClusterDirectory compacted =
+                        ClusterDirectory.restore(cluster, folded, List.of(), clock);
+                events.save(cluster,
+                        new ClusterEventRepository.StoredDirectory(folded, List.of()));
+                checkpoint = folded;
+                current = compacted;
+            } else {
+                events.save(cluster, new ClusterEventRepository.StoredDirectory(
+                        checkpoint, candidate.events()));
                 current = candidate;
             }
             return result;

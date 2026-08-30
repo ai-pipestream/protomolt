@@ -146,8 +146,24 @@ public final class ClusterValidation {
 
     /** Validates one complete, gap-free event log in sequence and timestamp order. */
     public static void validateEventLog(List<ClusterEvent> events) {
+        validateEventLog(events, 1);
+    }
+
+    /**
+     * Validates a log that begins at {@code firstSeq}. A complete log begins at one; a log
+     * retained beside a checkpoint begins at the event after the sequence the checkpoint
+     * folded in. The sequence must still be gap-free and the timestamps must not move
+     * backward, so a compacted log is checked exactly as strictly as a complete one.
+     *
+     * @param events the events to validate, in order
+     * @param firstSeq the sequence the first event must carry; at least one
+     * @throws IllegalArgumentException when the log is null, out of sequence, or moves
+     *     backward in time
+     */
+    public static void validateEventLog(List<ClusterEvent> events, long firstSeq) {
         require(events != null, "events must not be null");
-        long expectedSeq = 1;
+        require(firstSeq >= 1, "firstSeq must be at least one");
+        long expectedSeq = firstSeq;
         Instant previous = null;
         for (ClusterEvent event : events) {
             validate(event);

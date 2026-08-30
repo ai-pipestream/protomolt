@@ -100,7 +100,7 @@ public final class RepositoryServiceClusterEventRepository
     }
 
     @Override
-    public Optional<List<ClusterEvent>> load(ClusterDescriptor cluster) {
+    public Optional<StoredDirectory> load(ClusterDescriptor cluster) {
         ClusterValidation.validate(cluster);
         GetBlobResponse response;
         try {
@@ -136,6 +136,9 @@ public final class RepositoryServiceClusterEventRepository
         } catch (InvalidProtocolBufferException e) {
             throw corrupt("decrypted cluster event log is not valid protobuf", e);
         }
+        StoredDirectory directory = eventLog.hasCheckpoint()
+                ? new StoredDirectory(eventLog.getCheckpoint(), eventLog.getEventsList())
+                : StoredDirectory.of(eventLog.getEventsList());
         try {
             ValidationResult.validate(eventLog).throwIfInvalid();
             if (!cluster.getClusterId().equals(eventLog.getClusterId())
@@ -145,25 +148,30 @@ public final class RepositoryServiceClusterEventRepository
             if (envelope.getRecordCount() != eventLog.getEventsCount()) {
                 throw new IllegalArgumentException("event count does not match");
             }
-            ClusterValidation.validateEventLog(eventLog.getEventsList());
+            // A log written before compaction existed carries no checkpoint and begins at
+            // one, which is exactly what an uncompacted StoredDirectory reports.
+            ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
         } catch (RuntimeException e) {
             throw corrupt("stored cluster event log failed validation", e);
         }
-        return Optional.of(List.copyOf(eventLog.getEventsList()));
+        return Optional.of(directory);
     }
 
     @Override
-    public void save(ClusterDescriptor cluster, List<ClusterEvent> events) {
+    public void save(ClusterDescriptor cluster, StoredDirectory directory) {
         ClusterValidation.validate(cluster);
-        ClusterValidation.validateEventLog(events);
-        ClusterEventLog eventLog = ClusterEventLog.newBuilder()
+        ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
+        ClusterEventLog.Builder builder = ClusterEventLog.newBuilder()
                 .setClusterId(cluster.getClusterId())
                 .setClusterFingerprint(cluster.getFingerprint())
-                .addAllEvents(events)
-                .build();
+                .addAllEvents(directory.events());
+        if (directory.compacted()) {
+            builder.setCheckpoint(directory.checkpoint());
+        }
+        ClusterEventLog eventLog = builder.build();
         ValidationResult.validate(eventLog).throwIfInvalid();
         EncryptedRepositoryState envelope = codec.encrypt(eventLog.toByteArray(),
-                CONTENT_TYPE, events.size(), keyReference, storageContext());
+                CONTENT_TYPE, directory.events().size(), keyReference, storageContext());
         byte[] stored = envelope.toByteArray();
         PutBlobResponse response;
         try {
