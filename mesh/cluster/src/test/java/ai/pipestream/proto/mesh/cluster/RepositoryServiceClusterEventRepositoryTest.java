@@ -1,6 +1,7 @@
 package ai.pipestream.proto.mesh.cluster;
 
 import ai.pipestream.proto.delegation.EncryptedRepositoryStateCodec;
+import ai.pipestream.proto.delegation.RepositoryStateKeyResolver;
 import ai.pipestream.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.pipestream.proto.repo.v1.DocumentServiceGrpc;
 import ai.pipestream.proto.repo.v1.FileStorageReference;
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.spec.SecretKeySpec;
+
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -96,23 +99,63 @@ class RepositoryServiceClusterEventRepositoryTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void aRepositoryThatNeverAnswersFailsLoudlyInsteadOfStalling() {
+        ClusterDirectory source = new ClusterDirectory(ClusterFixtures.cluster(),
+                new ClusterFixtures.MutableClock(ClusterFixtures.T0));
+        source.register(ClusterFixtures.node("node-1"));
+        service.stall = true;
+        RepositoryServiceClusterEventRepository repository =
+                repository(Duration.ofMillis(250));
+
+        assertThatThrownBy(() -> repository.save(ClusterFixtures.cluster(), source.events()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("within the deadline")
+                .hasMessageContaining("refuses to report membership it cannot persist");
+        assertThatThrownBy(() -> repository.load(ClusterFixtures.cluster()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("within the deadline");
+    }
+
+    @Test
+    void aTimeoutMustBePositive() {
+        assertThatThrownBy(() -> repository(Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("timeout must be positive");
+    }
+
     private RepositoryServiceClusterEventRepository repository() {
         return new RepositoryServiceClusterEventRepository(
                 DocumentServiceGrpc.newBlockingStub(channel), "protomolt",
+                "cluster/cluster-a/events.pb.enc", "env:PROTOMOLT_STATE_KEY", keys());
+    }
+
+    private RepositoryServiceClusterEventRepository repository(Duration timeout) {
+        return new RepositoryServiceClusterEventRepository(
+                DocumentServiceGrpc.newBlockingStub(channel), "protomolt",
                 "cluster/cluster-a/events.pb.enc", "env:PROTOMOLT_STATE_KEY",
-                ignored -> new SecretKeySpec(
-                        "0123456789abcdef0123456789abcdef"
-                                .getBytes(java.nio.charset.StandardCharsets.US_ASCII), "AES"));
+                new EncryptedRepositoryStateCodec(keys()), timeout);
+    }
+
+    private static RepositoryStateKeyResolver keys() {
+        return ignored -> new SecretKeySpec(
+                "0123456789abcdef0123456789abcdef"
+                        .getBytes(java.nio.charset.StandardCharsets.US_ASCII), "AES");
     }
 
     private static final class FakeDocumentService
             extends DocumentServiceGrpc.DocumentServiceImplBase {
         private ByteString stored;
         private PutBlobRequest lastPut;
+        /** Accepts the call and never answers it, the way a wedged repository behaves. */
+        private boolean stall;
 
         @Override
         public void putBlob(PutBlobRequest request,
                             StreamObserver<PutBlobResponse> observer) {
+            if (stall) {
+                return;
+            }
             lastPut = request;
             stored = request.getData();
             observer.onNext(PutBlobResponse.newBuilder()
@@ -128,6 +171,9 @@ class RepositoryServiceClusterEventRepositoryTest {
         @Override
         public void getBlob(GetBlobRequest request,
                             StreamObserver<GetBlobResponse> observer) {
+            if (stall) {
+                return;
+            }
             if (stored == null) {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;

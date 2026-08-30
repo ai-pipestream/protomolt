@@ -2,10 +2,15 @@ package ai.pipestream.proto.mesh.cluster;
 
 import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
+import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -64,6 +69,37 @@ class PersistentClusterDirectoryTest {
         assertThat(events.saves).isEqualTo(1);
     }
 
+    @Test
+    void readsDoNotWaitForAnInFlightDurableWrite() throws Exception {
+        BlockingRepository events = new BlockingRepository();
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), new ClusterFixtures.MutableClock(ClusterFixtures.T0),
+                events);
+
+        Thread writer = new Thread(() -> directory.register(ClusterFixtures.node("node-1")),
+                "blocked-directory-write");
+        writer.start();
+        assertThat(events.entered.await(5, TimeUnit.SECONDS))
+                .as("the repository write should have started").isTrue();
+
+        // The reader runs on its own thread so that a directory which serializes reads
+        // behind writes fails this test on the timeout instead of hanging the suite.
+        ExecutorService reader = Executors.newSingleThreadExecutor();
+        try {
+            ClusterSnapshot duringWrite =
+                    reader.submit(directory::snapshot).get(5, TimeUnit.SECONDS);
+            assertThat(duringWrite.getNodesList()).isEmpty();
+            assertThat(duringWrite.getSnapshotSeq()).isZero();
+        } finally {
+            reader.shutdownNow();
+            events.release.countDown();
+            writer.join(TimeUnit.SECONDS.toMillis(5));
+        }
+
+        assertThat(directory.node("node-1")).isPresent();
+        assertThat(directory.snapshot().getSnapshotSeq()).isEqualTo(1);
+    }
+
     private static class CountingRepository implements ClusterEventRepository {
         private List<ClusterEvent> current = List.of();
         private int saves;
@@ -77,6 +113,24 @@ class PersistentClusterDirectoryTest {
         public void save(ClusterDescriptor cluster, List<ClusterEvent> events) {
             saves++;
             current = List.copyOf(events);
+        }
+    }
+
+    /** Holds one save open so a reader can be observed while a commit is in flight. */
+    private static final class BlockingRepository extends CountingRepository {
+        private final CountDownLatch entered = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Override
+        public void save(ClusterDescriptor cluster, List<ClusterEvent> events) {
+            entered.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while persisting", e);
+            }
+            super.save(cluster, events);
         }
     }
 
