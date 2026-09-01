@@ -41,7 +41,10 @@ env:
   SERVE_IMAGE_REPO: ghcr.io/ai-pipestream/protomolt-serve
   REPO_SERVICE_IMAGE_REPO: ghcr.io/ai-pipestream/protomolt-repo-service
   COORDINATOR_CONTAINER: protomolt-coordinator
-  COORDINATOR_HEALTH_URL: http://nas:19902/health
+  # The TLS surface, not http://nas:19902: the short name resolves only over
+  # IPv6 here, which a runner container may not have, while this name resolves
+  # to the NAS over IPv4. It also proves Traefik and serve are both back up.
+  COORDINATOR_HEALTH_URL: https://protomolt.rokkon.com/health
 
 jobs:
   deploy:
