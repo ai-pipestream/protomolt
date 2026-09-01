@@ -4,10 +4,41 @@
 endpoint. Portainer is the sole lifecycle owner. Inference stays on the GPU
 hosts and is not duplicated here.
 
-The serve and repo-service images default to the `edge` tag published by the
-Docker Publish workflow. Updating the coordinator is an explicit pin: after a
-new image has been built from `main` and verified, set
-`PROTOMOLT_SERVE_IMAGE` (or `PROTOMOLT_REPO_SERVICE_IMAGE`) to
+## Deploying a release
+
+A release tag deploys this stack. `.forgejo/workflows/deploy-nas.yml` runs on
+`v*`, pins `PROTOMOLT_SERVE_IMAGE` and `PROTOMOLT_REPO_SERVICE_IMAGE` to the
+released semver, and redeploys stack 20 from the `compose.yml` the tag names.
+It refuses to touch the stack until both images are published, waits for the
+coordinator to report `UP`, and then asks the Docker endpoint whether the
+container is really running the released image. Nothing about it is hand-run.
+
+The tag does not arrive on its own. Axion cuts tags on GitHub, because the
+Maven Central, GPG, and GHCR credentials live there, and this repository is
+**not** a mirror in either direction: Forgejo reports `mirror: false` and has no
+push mirrors, so a tag pushed to GitHub never appears here. Portainer answers on
+a private address, so the deploy equally cannot run from a GitHub-hosted runner.
+Releasing is therefore two steps:
+
+1. Dispatch **Release and Publish** on GitHub with the version bump. Axion tags
+   `v<semver>`, and Maven Central and GHCR publish from that verified commit.
+2. From the LAN, push that tag to Forgejo: `git push origin v<semver>`.
+
+The second push is what deploys. `deploy-nas.yml` also takes a
+`workflow_dispatch` with a version, which is how to redeploy or roll back to an
+already-released version without cutting a new tag.
+
+The lane needs a `PORTAINER_TOKEN` Forgejo secret; it fails immediately and by
+name when that is missing rather than half-deploying.
+
+Secrets are not in git. The workflow reads the stack's existing variables back
+from Portainer and rewrites only the two image pins, so the tokens, keys, and
+passwords below stay exactly as Portainer holds them.
+
+### Pinning by digest instead
+
+The images otherwise default to the `edge` tag. To pin a specific unreleased
+build, set `PROTOMOLT_SERVE_IMAGE` (or `PROTOMOLT_REPO_SERVICE_IMAGE`) to
 `ghcr.io/ai-pipestream/protomolt-serve:edge@sha256:<digest>` in the Portainer
 stack variables and redeploy. To refresh `edge` itself, dispatch the Docker
 Publish workflow against `main`.
