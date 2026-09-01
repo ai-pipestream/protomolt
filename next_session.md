@@ -46,14 +46,17 @@ reads. Nothing else is owed. Then:
    `v*` tag in either forge, axion's first release is `v0.1.0`.
 3. From the LAN, `git push origin v0.1.0`. That push is the deploy.
 
-**The propagation question is settled, so do not re-derive it.** Axion cuts tags
-on GitHub. Forgejo is not a mirror in either direction — the API reports
-`mirror: false` with no push mirrors — so a tag pushed to GitHub never appears
-on Forgejo. A probe tag confirmed this directly. The deploy cannot simply move
-to GitHub either: Portainer and Forgejo both answer on `192.168.1.211`, a
-private address a GitHub-hosted runner cannot reach, and the only GitHub
-self-hosted runner is nano1, an ARM64 Jetson. Forgejo's `nas-1` and `nas-2`
-runners are on the NAS, which is why the deploy lives there and why one manual
+**Do not work the propagation question again.** Axion cuts tags on GitHub, and a
+tag pushed there does not show up on Forgejo. A test tag was checked on both
+forges at 60-second intervals for 12 minutes: GitHub had it in all 13 samples,
+Forgejo in zero. The configuration explains that, and rules out a slow sync
+later. Forgejo reports `mirror: false` with no push mirror, no webhook exists on
+either side, and no GitHub workflow mentions `rokkon.com`.
+
+The deploy cannot move to GitHub either. Portainer and Forgejo both answer on
+`192.168.1.211`, which no GitHub-hosted runner can connect to, and the only
+GitHub self-hosted runner is nano1, an ARM64 Jetson. Forgejo's `nas-1` and
+`nas-2` runners are on the NAS, so the lane belongs there, and one manual
 `git push origin v<semver>` is the bridge.
 
 ## Traps, each of which cost time last session
