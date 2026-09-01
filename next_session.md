@@ -39,9 +39,12 @@ whether the container is really running the released image.
 Before the first release, add the `PORTAINER_TOKEN` Forgejo secret the lane
 reads. Nothing else is owed. Then:
 
-1. Dispatch **Release and Publish** on GitHub with the `patch` bump. With no
+1. Confirm GitHub `main` already has `deploy-nas.yml`. Axion tags the GitHub
+   commit, and Forgejo runs the workflow file found in the tagged tree, so a tag
+   cut before the sync arrives would deploy no stack at all.
+2. Dispatch **Release and Publish** on GitHub with the `patch` bump. With no
    `v*` tag in either forge, axion's first release is `v0.1.0`.
-2. From the LAN, `git push origin v0.1.0`. That push is the deploy.
+3. From the LAN, `git push origin v0.1.0`. That push is the deploy.
 
 **The propagation question is settled, so do not re-derive it.** Axion cuts tags
 on GitHub. Forgejo is not a mirror in either direction — the API reports
