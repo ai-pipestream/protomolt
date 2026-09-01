@@ -193,6 +193,11 @@ class GrpcSourceTaskTest {
             public OffsetStorageReader offsetStorageReader() {
                 return reader;
             }
+
+            @Override
+            public org.apache.kafka.common.metrics.PluginMetrics pluginMetrics() {
+                return null;
+            }
         };
     }
 

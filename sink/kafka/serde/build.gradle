@@ -9,11 +9,11 @@ repositories {
     maven { url = 'https://packages.confluent.io/maven/' }
 }
 
-// Confluent's serde artifacts pull their forked kafka-clients (8.0.6-ccs); the interop tests
+// Confluent's serde artifacts pull their forked kafka-clients (the -ccs fork); the interop tests
 // must run against the kafka-clients this project ships.
 configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClasspath'] }
         .configureEach {
-            resolutionStrategy.force 'org.apache.kafka:kafka-clients:3.9.2'
+            resolutionStrategy.force "org.apache.kafka:kafka-clients:${libs.versions.kafka.get()}"
         }
 
 dependencies {
