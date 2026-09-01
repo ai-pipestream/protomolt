@@ -36,9 +36,8 @@ spring = "7.0.9"
 spring-boot = "4.1.1"
 vertx = "5.1.6"
 netty = "4.2.17.Final"
-# Micronaut 4.x is the JDK 21-compatible line. 5.x publishes Gradle module metadata
-# declaring org.gradle.jvm.version=25, so against this project's options.release=21 it
-micronaut = "4.10.26"
+# Micronaut 5.x needs a JVM 25 runtime, which the JDK 25 baseline now supplies.
+micronaut = "5.1.13"
 protobuf-gradle = "0.10.0"
 wire = "6.4.7"
 jgit = "7.7.1.202607240634-r"

@@ -115,10 +115,11 @@ subprojects {
             }
         }
 
-        // Library baseline is JDK 21: compile against the 21 API and emit 21 bytecode,
-        // while the toolchain above lets contributors build and test on newer JDKs.
+        // Library baseline is JDK 25: compile against the 25 API and emit 25 bytecode.
+        // Set before the first release, while no published artifact constrains it; raising
+        // it after v0.1.0 would break every consumer already on the older line.
         tasks.withType(JavaCompile).configureEach {
-            options.release = 21
+            options.release = 25
         }
 
         tasks.withType(Test).configureEach {
@@ -126,8 +127,9 @@ subprojects {
             maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
         }
 
-        // -PtestJdk=21 runs every test JVM on that Java version, proving the declared
-        // runtime baseline actually works - compiling with --release 21 alone does not.
+        // -PtestJdk=NN runs every test JVM on that Java version, proving a runtime
+        // baseline actually works - compiling with --release alone does not. Kept for
+        // checking against JDKs newer than the baseline.
         if (findProperty('testJdk')) {
             tasks.withType(Test).configureEach {
                 javaLauncher = javaToolchains.launcherFor {

@@ -3,7 +3,7 @@
 # a thin JRE layer over the launcher.
 #
 #   docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 
 COPY build/install/protomolt-serve /opt/protomolt-serve
 
