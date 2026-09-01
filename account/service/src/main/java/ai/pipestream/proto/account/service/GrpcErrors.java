@@ -56,11 +56,9 @@ final class GrpcErrors {
         if (t instanceof StatusRuntimeException || t instanceof StatusException) {
             return t;
         }
-        Status status;
-        if (t instanceof IllegalArgumentException) {
-            status = Status.INVALID_ARGUMENT;
-        } else if (t instanceof AccountStoreException store) {
-            status = switch (store.kind()) {
+        Status status = switch (t) {
+            case IllegalArgumentException _ -> Status.INVALID_ARGUMENT;
+            case AccountStoreException store -> switch (store.kind()) {
                 case NOT_FOUND -> Status.NOT_FOUND;
                 case CONFLICT -> Status.ALREADY_EXISTS;
                 case NONE -> {
@@ -68,10 +66,11 @@ final class GrpcErrors {
                     yield Status.INTERNAL;
                 }
             };
-        } else {
-            LOG.error("Unhandled handler failure", t);
-            status = Status.INTERNAL;
-        }
+            default -> {
+                LOG.error("Unhandled handler failure", t);
+                yield Status.INTERNAL;
+            }
+        };
         String message = t.getMessage();
         if (message != null && !message.isBlank()) {
             status = status.withDescription(message);

@@ -316,8 +316,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         McpServer.Session evicted = null;
         synchronized (sessionLock) {
             if (sessions.size() >= MAX_SESSIONS) {
-                Map.Entry<String, McpServer.Session> eldest = sessions.entrySet().iterator().next();
-                evicted = sessions.remove(eldest.getKey());
+                // Access-ordered, so the first entry is the least-recently-used session.
+                evicted = sessions.pollFirstEntry().getValue();
             }
             sessions.put(id, session);
         }

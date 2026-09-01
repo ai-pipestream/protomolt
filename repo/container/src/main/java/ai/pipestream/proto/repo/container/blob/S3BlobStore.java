@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import java.io.InputStream;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.stream.Gatherers;
 
 /**
  * {@link BlobStore} over an AWS SDK v2 synchronous {@link S3Client} (S3-compatible stores:
@@ -21,6 +22,9 @@ import java.util.HexFormat;
  * Every call blocks the (virtual) calling thread for the full S3 round trip.
  */
 public final class S3BlobStore implements BlobStore {
+
+    /** S3's DeleteObjects accepts at most 1000 keys per request. */
+    private static final int DELETE_BATCH = 1000;
 
     private final S3Client client;
 
@@ -65,13 +69,13 @@ public final class S3BlobStore implements BlobStore {
 
     @Override
     public BatchDeleteResult deleteAll(String bucket, java.util.List<String> keys) {
-        java.util.List<String> clean = keys.stream()
+        java.util.List<java.util.List<String>> batches = keys.stream()
                 .filter(k -> k != null && !k.isBlank())
                 .distinct()
+                .gather(Gatherers.windowFixed(DELETE_BATCH))
                 .toList();
         java.util.Map<String, String> failed = new java.util.HashMap<>();
-        for (int from = 0; from < clean.size(); from += 1000) {
-            java.util.List<String> chunk = clean.subList(from, Math.min(from + 1000, clean.size()));
+        for (java.util.List<String> chunk : batches) {
             var response = client.deleteObjects(
                     software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.builder()
                             .bucket(bucket)

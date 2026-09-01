@@ -65,7 +65,7 @@ public final class DynamicPipelineTransport implements PipelineTransport {
         CallOptions options = CallOptions.DEFAULT.withDeadlineAfter(
                 deadlineMillis, TimeUnit.MILLISECONDS);
         if (!method.isClientStreaming()) {
-            return DynamicGrpcCalls.call(channel, method, requests.get(0), options,
+            return DynamicGrpcCalls.call(channel, method, requests.getFirst(), options,
                     headers, maxResponses);
         }
         if (!method.isServerStreaming()) {

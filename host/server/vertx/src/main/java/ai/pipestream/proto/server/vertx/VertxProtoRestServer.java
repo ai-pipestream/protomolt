@@ -6,6 +6,7 @@ import ai.pipestream.proto.http.rest.ProtoRestGateway;
 import ai.pipestream.proto.server.ProtoRestHttpSupport;
 import ai.pipestream.proto.server.ProtoRestServerHost;
 import ai.pipestream.proto.server.ProtoToolsServerConfig;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpMethod;
@@ -21,6 +22,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,6 +33,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>Quarkus 3.x still rides Vert.x 4 — use {@code servers/quarkus} (JAX-RS adapter)
  * there. This module targets Vert.x 5 directly.
+ *
+ * <p>Gateway invocations run on a virtual-thread-per-task executor so slow backends never stall
+ * the event loop; health and OpenAPI stay on the loop. This matches the JDK and Netty hosts —
+ * the three differ only in HTTP plumbing, never in where a backend call blocks.
  */
 public final class VertxProtoRestServer implements ProtoRestServerHost {
 
@@ -44,6 +51,7 @@ public final class VertxProtoRestServer implements ProtoRestServerHost {
     private final ProtoOpenApiGenerator openApiGenerator;
     private final AtomicBoolean starting = new AtomicBoolean();
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
+    private final ExecutorService invokerPool = Executors.newVirtualThreadPerTaskExecutor();
     private volatile String cachedOpenApiJson;
 
     public VertxProtoRestServer(ProtoToolsServerConfig config, ProtoRestGateway gateway) {
@@ -204,9 +212,20 @@ public final class VertxProtoRestServer implements ProtoRestServerHost {
             return;
         }
 
-        vertx.executeBlocking(() -> gateway.invoke(verb, service, method, body, headers, query), false)
-                .onSuccess(json -> ctx.response().putHeader("content-type", "application/json").end(json))
-                .onFailure(err -> respondError(ctx, err));
+        // executeBlocking would put this on Vert.x's fixed worker pool, which exists only to keep
+        // blocking work off the event loop — exactly what a virtual thread does without a ceiling
+        // on how many backend calls may be in flight. Responses go back through runOnContext so
+        // the RoutingContext is still only ever touched from its own event loop.
+        Context context = vertx.getOrCreateContext();
+        invokerPool.execute(() -> {
+            try {
+                String json = gateway.invoke(verb, service, method, body, headers, query);
+                context.runOnContext(v ->
+                        ctx.response().putHeader("content-type", "application/json").end(json));
+            } catch (Throwable err) {
+                context.runOnContext(v -> respondError(ctx, err));
+            }
+        });
     }
 
     private static void respondError(RoutingContext ctx, Throwable err) {
@@ -252,6 +271,7 @@ public final class VertxProtoRestServer implements ProtoRestServerHost {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        invokerPool.shutdown();
         starting.set(false);
     }
 }

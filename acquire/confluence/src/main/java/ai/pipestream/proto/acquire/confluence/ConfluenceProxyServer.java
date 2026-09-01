@@ -4,12 +4,13 @@ import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
-import io.grpc.protobuf.services.ProtoReflectionService;
-import io.grpc.services.HealthStatusManager;
+import io.grpc.protobuf.services.HealthStatusManager;
+import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -86,27 +87,23 @@ public final class ConfluenceProxyServer {
             sinks.add(repo);
             closables.add(repo);
         }
-        boolean parquetEnabled = false;
-        java.util.Optional<ParquetChangeSink> parquet = ParquetChangeSink.fromEnvironment();
-        if (parquet.isPresent()) {
-            sinks.add(parquet.get());
-            closables.add(parquet.get());
-            parquetEnabled = true;
-        }
-        boolean projectedParquetEnabled = false;
-        java.util.Optional<ProjectedParquetChangeSink> projectedParquet =
+        Optional<ParquetChangeSink> parquet = ParquetChangeSink.fromEnvironment();
+        parquet.ifPresent(sink -> {
+            sinks.add(sink);
+            closables.add(sink);
+        });
+        Optional<ProjectedParquetChangeSink> projectedParquet =
                 ProjectedParquetChangeSink.fromEnvironment();
-        if (projectedParquet.isPresent()) {
-            sinks.add(projectedParquet.get());
-            closables.add(projectedParquet.get());
-            projectedParquetEnabled = true;
-        }
+        projectedParquet.ifPresent(sink -> {
+            sinks.add(sink);
+            closables.add(sink);
+        });
         ChangeSink downstream = sinks.isEmpty() ? null
-                : sinks.size() == 1 ? sinks.get(0) : new CompositeChangeSink(sinks);
+                : sinks.size() == 1 ? sinks.getFirst() : new CompositeChangeSink(sinks);
         LOG.log(System.Logger.Level.INFO,
                 "confluence-proxy sinks active: kafka={0} repo={1} parquet={2} projected-parquet={3}",
-                config.kafkaEnabled(), config.repoEnabled(), parquetEnabled,
-                projectedParquetEnabled);
+                config.kafkaEnabled(), config.repoEnabled(), parquet.isPresent(),
+                projectedParquet.isPresent());
         ConfluenceGrpcService service = new ConfluenceGrpcService(config,
                 new ConfluenceClient(config),
                 parseLong(System.getenv(ENV_ATTACHMENT_MAX_BYTES),
@@ -156,7 +153,7 @@ public final class ConfluenceProxyServer {
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .addService(service)
                 .addService(health.getHealthService())
-                .addService(ProtoReflectionService.newInstance())
+                .addService(ProtoReflectionServiceV1.newInstance())
                 .build().start();
         health.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
         return server;

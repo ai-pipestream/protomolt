@@ -215,18 +215,23 @@ public final class WorkflowRunWorker implements AutoCloseable {
                         store.saveCheckpoint(job.jobId, checkpointsJson(accumulated),
                                 WorkflowRunEventFactory.stepCheckpoint(job, checkpoint.name()));
                     });
-            if (segment instanceof WorkflowRunner.Segment.Completed completed) {
-                String resultJson = context.transcoder().toJson(completed.result().output());
-                String verdict = completed.result().steps().size() + " steps, output "
-                        + completed.result().output().getDescriptorForType().getFullName();
-                store.markCompleted(job.jobId, resultJson, verdict,
-                        WorkflowRunEventFactory.completed(job, verdict));
-                LOG.info("workflow run {} completed: {}", job.jobId, verdict);
-            } else {
-                WorkflowRunner.Segment.Parked parked = (WorkflowRunner.Segment.Parked) segment;
-                store.markWaiting(job.jobId, parked.step(), checkpointsJson(accumulated),
-                        WorkflowRunEventFactory.waiting(job, parked.step()));
-                LOG.info("workflow run {} parked on external step '{}'", job.jobId, parked.step());
+            // Segment is sealed: the switch is exhaustive, so a third outcome
+            // would fail the compile rather than fall through to a cast.
+            switch (segment) {
+                case WorkflowRunner.Segment.Completed completed -> {
+                    String resultJson = context.transcoder().toJson(completed.result().output());
+                    String verdict = completed.result().steps().size() + " steps, output "
+                            + completed.result().output().getDescriptorForType().getFullName();
+                    store.markCompleted(job.jobId, resultJson, verdict,
+                            WorkflowRunEventFactory.completed(job, verdict));
+                    LOG.info("workflow run {} completed: {}", job.jobId, verdict);
+                }
+                case WorkflowRunner.Segment.Parked parked -> {
+                    store.markWaiting(job.jobId, parked.step(), checkpointsJson(accumulated),
+                            WorkflowRunEventFactory.waiting(job, parked.step()));
+                    LOG.info("workflow run {} parked on external step '{}'",
+                            job.jobId, parked.step());
+                }
             }
         } catch (WorkflowRunner.WorkflowExecutionException e) {
             handleFailure(job, e);
@@ -269,7 +274,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
                 detail.append("; [").append(finding.kind()).append("] ")
                         .append(finding.step()).append(": ").append(finding.error());
             }
-            fail(job, findings.get(0).step(), detail.toString());
+            fail(job, findings.getFirst().step(), detail.toString());
             return null;
         }
         return definition;

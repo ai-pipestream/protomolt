@@ -100,9 +100,9 @@ public final class IcebergRollupSink implements RollupSink {
                         NameMappingParser.toJson(MappingUtil.create(replace.table().schema())))
                 .set(PROPERTY_SOURCE, sourceSubject)
                 .set(PROPERTY_DIMENSIONS, String.join(",", dimensions))
-                .set(PROPERTY_MEASURES, measures.stream()
+                .set(PROPERTY_MEASURES, String.join(",", measures.stream()
                         .map(column -> column.member() + ":" + column.sourceAggregate().name())
-                        .collect(java.util.stream.Collectors.joining(",")))
+                        .toList()))
                 .commit();
         if (!rows.isEmpty()) {
             List<DynamicMessage> messages = new ArrayList<>(rows.size());

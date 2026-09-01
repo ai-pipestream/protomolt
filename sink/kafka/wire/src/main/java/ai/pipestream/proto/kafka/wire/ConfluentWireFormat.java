@@ -46,7 +46,7 @@ public final class ConfluentWireFormat {
         out.write((schemaId >>> 16) & 0xFF);
         out.write((schemaId >>> 8) & 0xFF);
         out.write(schemaId & 0xFF);
-        if (messageIndex.size() == 1 && messageIndex.get(0) == 0) {
+        if (messageIndex.size() == 1 && messageIndex.getFirst() == 0) {
             out.write(0);
         } else {
             writeVarint(messageIndex.size(), out);

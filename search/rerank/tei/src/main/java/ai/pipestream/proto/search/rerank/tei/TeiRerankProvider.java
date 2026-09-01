@@ -9,7 +9,7 @@ import tei.v1.Tei.Rank;
 import tei.v1.Tei.RerankRequest;
 import tei.v1.Tei.RerankResponse;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -138,11 +138,7 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
                         + " of " + texts.size());
             }
         }
-        List<Double> aligned = new ArrayList<>(texts.size());
-        for (double score : scores) {
-            aligned.add(score);
-        }
-        return aligned;
+        return Arrays.stream(scores).boxed().toList();
     }
 
     /**

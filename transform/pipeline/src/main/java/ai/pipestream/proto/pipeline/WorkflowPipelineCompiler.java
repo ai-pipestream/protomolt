@@ -115,7 +115,7 @@ public final class WorkflowPipelineCompiler {
                     // rejects it. Preserve those bindings so later findings describe the
                     // same invalid dataflow instead of pretending it was consumed.
                     if (streamSources.size() == 1) {
-                        scope.remove(streamSources.get(0));
+                        scope.remove(streamSources.getFirst());
                     }
                 }
             }

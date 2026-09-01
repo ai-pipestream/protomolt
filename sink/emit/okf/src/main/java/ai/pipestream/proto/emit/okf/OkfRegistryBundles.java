@@ -99,8 +99,8 @@ public final class OkfRegistryBundles {
         }
 
         doc.append("\n# Versions\n\n| Version | Global id | Content hash |\n|---|---|---|\n");
-        for (int i = versions.size() - 1; i >= 0; i--) {
-            StoredSchema version = store.version(subject, versions.get(i)).orElse(null);
+        for (int number : versions.reversed()) {
+            StoredSchema version = store.version(subject, number).orElse(null);
             if (version == null) {
                 continue;
             }

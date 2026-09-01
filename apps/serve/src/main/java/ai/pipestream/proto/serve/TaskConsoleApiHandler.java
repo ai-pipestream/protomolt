@@ -422,7 +422,7 @@ final class TaskConsoleApiHandler implements HttpHandler {
                 }
             }
         }
-        return new Projection(reduced, reduced.tasks(), offers, lastCursors, cursor);
+        return new Projection(reduced, offers, lastCursors, cursor);
     }
 
     private static ObjectNode taskJson(DelegationReducer.TaskState state, OfferView offer,
@@ -562,9 +562,13 @@ final class TaskConsoleApiHandler implements HttpHandler {
     }
 
     private record Projection(DelegationReducer.Result reduced,
-                              Map<String, DelegationReducer.TaskState> states,
                               Map<String, OfferView> offers,
                               Map<String, Long> lastCursors,
                               long cursor) {
+
+        /** Derived, not stored: the task states are the reduction's own, always. */
+        Map<String, DelegationReducer.TaskState> states() {
+            return reduced.tasks();
+        }
     }
 }

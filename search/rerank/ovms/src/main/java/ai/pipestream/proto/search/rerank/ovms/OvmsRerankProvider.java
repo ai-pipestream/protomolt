@@ -12,7 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -187,11 +187,7 @@ public final class OvmsRerankProvider implements RerankProvider {
                         + i + " of " + texts);
             }
         }
-        List<Double> aligned = new ArrayList<>(texts);
-        for (double score : scores) {
-            aligned.add(score);
-        }
-        return aligned;
+        return Arrays.stream(scores).boxed().toList();
     }
 
     /**

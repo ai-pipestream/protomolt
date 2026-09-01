@@ -4,7 +4,6 @@ import ai.pipestream.proto.repo.v1.DocumentPart;
 import com.google.protobuf.Descriptors;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -153,8 +152,7 @@ public final class PartLayout {
         /** Builds the immutable layout, validating all field references. */
         public PartLayout build() {
             return new PartLayout(messageType, identityField,
-                    Collections.unmodifiableList(new ArrayList<>(partFields)),
-                    Collections.unmodifiableList(new ArrayList<>(chunkedFields)));
+                    List.copyOf(partFields), List.copyOf(chunkedFields));
         }
 
         private static Descriptors.FieldDescriptor requireField(Descriptors.Descriptor type, String name) {

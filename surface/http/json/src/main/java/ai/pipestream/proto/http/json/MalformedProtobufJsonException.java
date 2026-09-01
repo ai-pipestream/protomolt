@@ -3,7 +3,7 @@ package ai.pipestream.proto.http.json;
 /**
  * Thrown when inbound JSON cannot be merged into the target protobuf message.
  */
-public class MalformedProtobufJsonException extends ProtobufJsonException {
+public final class MalformedProtobufJsonException extends ProtobufJsonException {
     private final String json;
 
     public MalformedProtobufJsonException(String message, String json) {

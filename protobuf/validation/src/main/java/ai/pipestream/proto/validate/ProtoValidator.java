@@ -44,6 +44,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -294,15 +295,15 @@ public final class ProtoValidator {
     private CompiledRules compileRules(Descriptor descriptor) {
         Map<FieldDescriptor, List<FieldConstraints>> fields = new java.util.LinkedHashMap<>();
         for (FieldDescriptor field : descriptor.getFields()) {
-            List<FieldConstraints> collected = new ArrayList<>(sources.size());
-            for (ValidationRuleSource source : sources) {
-                source.fieldConstraints(field).ifPresent(collected::add);
-            }
+            List<FieldConstraints> collected = sources.stream()
+                    .map(source -> source.fieldConstraints(field))
+                    .flatMap(Optional::stream)
+                    .toList();
             for (FieldConstraints constraints : collected) {
                 compileFieldConstraints(constraints);
                 checkTaxonomy(field, constraints);
             }
-            fields.put(field, List.copyOf(collected));
+            fields.put(field, collected);
         }
         List<MessageConstraints> messages = new ArrayList<>();
         Set<String> oneofMembers = new HashSet<>();
@@ -632,17 +633,12 @@ public final class ProtoValidator {
             return;
         }
         FieldDescriptor segments = treePath.getDescriptorForType().findFieldByName("segments");
-        int count = treePath.getRepeatedFieldCount(segments);
-        if (count == 0) {
+        @SuppressWarnings("unchecked")
+        List<String> segmentValues = (List<String>) treePath.getField(segments);
+        if (segmentValues.isEmpty()) {
             return;
         }
-        StringBuilder rendered = new StringBuilder();
-        for (int i = 0; i < count; i++) {
-            if (i > 0) {
-                rendered.append('/');
-            }
-            rendered.append((String) treePath.getRepeatedField(segments, i));
-        }
+        String rendered = String.join("/", segmentValues);
         TaxonomyCatalog.Mounted mounted = taxonomies.taxonomy(name).orElse(null);
         if (mounted == null) {
             violations.add(violation(path, "taxonomy.unmounted",
@@ -650,7 +646,7 @@ public final class ProtoValidator {
                             + " cannot be checked"));
             return;
         }
-        if (!mounted.nodes().contains(rendered.toString())) {
+        if (!mounted.nodes().contains(rendered)) {
             violations.add(violation(path, "taxonomy.member",
                     "\"" + rendered + "\" is not a node of taxonomy \"" + name
                             + "\" at version " + mounted.version()));
@@ -663,13 +659,13 @@ public final class ProtoValidator {
      * (returned as null) can never be a duplicate.
      */
     private static Object uniqueKey(Object element) {
-        if (element instanceof Double d) {
-            return Double.isNaN(d) ? null : (d == 0.0d ? Double.valueOf(0.0d) : d);
-        }
-        if (element instanceof Float f) {
-            return Float.isNaN(f) ? null : (f == 0.0f ? Float.valueOf(0.0f) : f);
-        }
-        return element;
+        return switch (element) {
+            // A pattern switch throws on a null selector; the chain this replaced returned it.
+            case null -> null;
+            case Double d -> Double.isNaN(d) ? null : (d == 0.0d ? Double.valueOf(0.0d) : d);
+            case Float f -> Float.isNaN(f) ? null : (f == 0.0f ? Float.valueOf(0.0f) : f);
+            default -> element;
+        };
     }
 
     private void validateMap(
@@ -753,27 +749,26 @@ public final class ProtoValidator {
                     .ifPresent(e -> applyEnum(e, (EnumValueDescriptor) value, path, violations));
             case MESSAGE -> {
                 String type = field.getMessageType().getFullName();
-                if (TIMESTAMP_TYPE.equals(type)) {
-                    constraints.timestamp().ifPresent(t ->
+                switch (type) {
+                    case TIMESTAMP_TYPE -> constraints.timestamp().ifPresent(t ->
                             applyTimestamp(t, toInstant((Message) value), path, violations));
-                } else if (DURATION_TYPE.equals(type)) {
-                    constraints.duration().ifPresent(d ->
+                    case DURATION_TYPE -> constraints.duration().ifPresent(d ->
                             applyDuration(d, toJavaDuration((Message) value), path, violations));
-                } else if ("google.protobuf.Any".equals(type)) {
-                    constraints.any().ifPresent(a -> applyAny(a, (Message) value, path, violations));
-                } else if ("google.protobuf.FieldMask".equals(type)) {
-                    constraints.fieldMask().ifPresent(fm ->
+                    case "google.protobuf.Any" -> constraints.any()
+                            .ifPresent(a -> applyAny(a, (Message) value, path, violations));
+                    case "google.protobuf.FieldMask" -> constraints.fieldMask().ifPresent(fm ->
                             applyFieldMask(fm, (Message) value, path, violations));
-                } else {
-                    // Well-known wrapper types (Int32Value, StringValue, …) apply their scalar rules
-                    // to the wrapped value; the field is present (message presence) so this only runs
-                    // when the wrapper is set.
-                    FieldDescriptor.JavaType wrapped = WRAPPER_TYPES.get(type);
-                    if (wrapped != null) {
-                        Message wrapper = (Message) value;
-                        Object inner = wrapper.getField(
-                                wrapper.getDescriptorForType().findFieldByNumber(1));
-                        applyScalar(constraints, wrapped, inner, path, violations);
+                    default -> {
+                        // Well-known wrapper types (Int32Value, StringValue, …) apply their scalar
+                        // rules to the wrapped value; the field is present (message presence) so
+                        // this only runs when the wrapper is set.
+                        FieldDescriptor.JavaType wrapped = WRAPPER_TYPES.get(type);
+                        if (wrapped != null) {
+                            Message wrapper = (Message) value;
+                            Object inner = wrapper.getField(
+                                    wrapper.getDescriptorForType().findFieldByNumber(1));
+                            applyScalar(constraints, wrapped, inner, path, violations);
+                        }
                     }
                 }
             }
@@ -1496,17 +1491,17 @@ public final class ProtoValidator {
     private static Object celMessage(Message value) {
         Descriptor descriptor = value.getDescriptorForType();
         String type = descriptor.getFullName();
-        if (TIMESTAMP_TYPE.equals(type)) {
-            return toInstant(value);
-        }
-        if (DURATION_TYPE.equals(type)) {
-            return toJavaDuration(value);
-        }
-        if (WRAPPER_TYPES.containsKey(type)) {
-            FieldDescriptor inner = descriptor.findFieldByNumber(1);
-            return celScalar(inner, value.getField(inner));
-        }
-        return value;
+        return switch (type) {
+            case TIMESTAMP_TYPE -> toInstant(value);
+            case DURATION_TYPE -> toJavaDuration(value);
+            default -> {
+                if (WRAPPER_TYPES.containsKey(type)) {
+                    FieldDescriptor inner = descriptor.findFieldByNumber(1);
+                    yield celScalar(inner, value.getField(inner));
+                }
+                yield value;
+            }
+        };
     }
 
     /** Whether an element (repeated item, map key/value) is skipped by its own ignore mode. */

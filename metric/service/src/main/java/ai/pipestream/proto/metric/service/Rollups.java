@@ -71,8 +71,8 @@ final class Rollups {
                             + " dimensions or filter the subject", List.of());
         }
 
-        List<String> dimensionColumns = new ArrayList<>(
-                request.getDimensionsList().stream().map(MemberRef::getName).toList());
+        List<String> dimensionColumns =
+                request.getDimensionsList().stream().map(MemberRef::getName).toList();
         List<MetricRow> rows = answer.getRowsList();
         String enrichedFrom = "";
         long unenriched = 0;

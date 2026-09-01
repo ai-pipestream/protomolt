@@ -83,23 +83,19 @@ public final class IcebergSinkTask extends SinkTask {
                     + ", offset " + record.kafkaOffset() + ")");
         }
         try {
-            switch (config.valueFormat()) {
-                case PROTOBUF -> {
-                    return DynamicMessage.parseFrom(descriptor, asBytes(value));
-                }
-                case CONFLUENT -> {
-                    return DynamicMessage.parseFrom(descriptor,
-                            ConfluentWireFormat.payload(asBytes(value)));
-                }
-                default -> {
+            return switch (config.valueFormat()) {
+                case PROTOBUF -> DynamicMessage.parseFrom(descriptor, asBytes(value));
+                case CONFLUENT -> DynamicMessage.parseFrom(descriptor,
+                        ConfluentWireFormat.payload(asBytes(value)));
+                case JSON -> {
                     String json = value instanceof byte[] bytes
                             ? new String(bytes, StandardCharsets.UTF_8)
                             : value.toString();
                     DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
                     JsonFormat.parser().ignoringUnknownFields().merge(json, builder);
-                    return builder.build();
+                    yield builder.build();
                 }
-            }
+            };
         } catch (DataException e) {
             throw e;
         } catch (Exception e) {

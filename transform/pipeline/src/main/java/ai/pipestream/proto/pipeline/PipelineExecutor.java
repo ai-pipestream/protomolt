@@ -117,7 +117,7 @@ public final class PipelineExecutor {
             if (cardinality != EdgeCardinality.EDGE_CARDINALITY_ONE) {
                 throw new IllegalStateException("pipeline result is a stream");
             }
-            return messages.get(0);
+            return messages.getFirst();
         }
     }
 
@@ -132,7 +132,7 @@ public final class PipelineExecutor {
         }
 
         DynamicMessage one() {
-            return values.get(0);
+            return values.getFirst();
         }
     }
 
@@ -237,12 +237,12 @@ public final class PipelineExecutor {
         List<DynamicMessage> produced = mapEdge(call.getEdge(), scope, registry,
                 step.getName());
         if (call.hasFanOut()) {
-            Binding result = runFanOutGrpc(step, produced.get(0), method,
+            Binding result = runFanOutGrpc(step, produced.getFirst(), method,
                     dependencies.get(step.getDependency()), registry,
                     stepDeadlineNanos, streamLimit, branches);
             scope.put(step.getName(), result);
             outcomes.add(new StepOutcome(step.getName(), false,
-                    fanOutItems(produced.get(0), call.getFanOut()).size(), 1));
+                    fanOutItems(produced.getFirst(), call.getFanOut()).size(), 1));
             return result;
         }
 
@@ -270,7 +270,7 @@ public final class PipelineExecutor {
         consumeRequestStream(call, method, scope);
         Binding binding = method.isServerStreaming()
                 ? many(method.getOutputType(), responses)
-                : one(responses.get(0));
+                : one(responses.getFirst());
         scope.put(step.getName(), binding);
         outcomes.add(new StepOutcome(step.getName(), false, requests.size(),
                 responses.size()));
@@ -297,11 +297,11 @@ public final class PipelineExecutor {
                 step.getName());
         if (!structured.hasFanOut()) {
             DynamicMessage grounding = deliver(produced, structured.getEdge(), registry,
-                    step.getName()).get(0);
+                    step.getName()).getFirst();
             return one(generate(step.getName(), structured, target, grounding,
                     stepDeadlineNanos));
         }
-        return runFanOutStructured(step, produced.get(0), target, registry, streamLimit,
+        return runFanOutStructured(step, produced.getFirst(), target, registry, streamLimit,
                 stepDeadlineNanos, branches);
     }
 
@@ -364,9 +364,9 @@ public final class PipelineExecutor {
                     }
                     verifyResponseCount(step.getName(), method, responses, streamLimit);
                     if (step.getGrpcCall().getValidateResponse()) {
-                        validate(responses.get(0), step.getName(), "branch response");
+                        validate(responses.getFirst(), step.getName(), "branch response");
                     }
-                    return responses.get(0);
+                    return responses.getFirst();
                 }, deadlineNanos, branches);
         return one(collect(fanOut, outputs, registry));
     }

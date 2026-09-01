@@ -1,6 +1,6 @@
 package ai.pipestream.proto.http.rest;
 
-public class ProtoRestInvocationException extends ProtoRestException {
+public final class ProtoRestInvocationException extends ProtoRestException {
     public ProtoRestInvocationException(String message) {
         super(message);
     }

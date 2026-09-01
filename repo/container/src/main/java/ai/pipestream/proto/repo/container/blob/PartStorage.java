@@ -382,7 +382,7 @@ public class PartStorage {
     private static <T> List<T> joinAll(List<Callable<T>> tasks, String what) {
         if (tasks.size() == 1) {
             try {
-                return List.of(tasks.get(0).call());
+                return List.of(tasks.getFirst().call());
             } catch (Exception e) {
                 throw asRuntime(e, what);
             }

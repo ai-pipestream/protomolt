@@ -11,7 +11,6 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * A streamlined utility for dynamically mapping fields between Protocol Buffer messages.
@@ -719,7 +718,7 @@ public class ProtoFieldMapperImpl implements ProtoFieldMapper {
                 case BOOL_VALUE -> value.getBoolValue();
                 case STRUCT_VALUE -> value.getStructValue();
                 case LIST_VALUE ->
-                        value.getListValue().getValuesList().stream().map(this::unwrapValue).collect(Collectors.toList());
+                        value.getListValue().getValuesList().stream().map(this::unwrapValue).toList();
                 default -> null;
             };
         }
