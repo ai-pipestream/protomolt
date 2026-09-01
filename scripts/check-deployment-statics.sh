@@ -77,6 +77,9 @@ PYEOF
 say "nano1 deployment statics"
 deploy/nano1/check-deployment-statics.sh
 
+say "portainer jobs-init: creates the jobs database only when it is missing"
+deploy/portainer/test/jobs-init-test.sh
+
 say "compose semantics: secrets use required stack variables, never literals"
 python3 - <<'PYEOF'
 import re, sys

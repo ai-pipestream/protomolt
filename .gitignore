@@ -22,3 +22,7 @@ gradle-app.setting
 
 # Local secrets for the Krick agent-host stack (never commit tokens)
 deploy/krick/.env
+
+# Python bytecode caches (scripts/ has stdlib-only utilities and their unittest files)
+__pycache__/
+*.pyc

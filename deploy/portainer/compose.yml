@@ -47,6 +47,15 @@ services:
       - ${PROTOMOLT_MESH_CREATED_AT:-2026-08-14T00:00:00Z}
       - --demo
     environment:
+      # Durable workflow runs: the job row in Postgres is the truth. The
+      # credentials ride the environment rather than the command line, which
+      # docker inspect shows in full. No broker here, so the worker drains
+      # the store directly; --jobs-kafka is what adds propagation later. The
+      # database itself is created by jobs-init below, on every deploy, so
+      # the stack is correct on a fresh volume and on the one in service.
+      PROTOMOLT_JOBS_JDBC: jdbc:postgresql://repo-postgres:5432/${PROTOMOLT_JOBS_DB_NAME:-jobs}
+      PROTOMOLT_JOBS_USER: ${PROTOMOLT_REPO_DB_USER:-documents}
+      PROTOMOLT_JOBS_PASSWORD: ${PROTOMOLT_REPO_DB_PASSWORD:?set PROTOMOLT_REPO_DB_PASSWORD in Portainer}
       PROTOMOLT_API_TOKEN: ${PROTOMOLT_API_TOKEN:?set PROTOMOLT_API_TOKEN in Portainer}
       PROTOMOLT_TASK_CONSOLE_TOKEN: ${PROTOMOLT_TASK_CONSOLE_TOKEN:?set PROTOMOLT_TASK_CONSOLE_TOKEN in Portainer}
       PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS: ${PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS:-43200}
@@ -55,6 +64,8 @@ services:
       serve-init:
         condition: service_completed_successfully
       repo-init:
+        condition: service_completed_successfully
+      jobs-init:
         condition: service_completed_successfully
     volumes:
       - protomolt-data:/data
@@ -186,6 +197,42 @@ services:
         grpcurl -plaintext \
           -d "{\"name\": \"$${DELEGATION_DRIVE}\", \"account_id\": \"protomolt\", \"drive_type\": \"DRIVE_TYPE_CUSTOM\", \"bucket\": \"protomolt\"}" \
           repo-service:9090 ai.pipestream.proto.repo.v1.DriveService/CreateDrive
+    restart: "no"
+
+  jobs-init:
+    # Ensures the workflow-runs database exists beside the repo-service ledger
+    # in the one PostgreSQL instance; separate databases keep the two Flyway
+    # histories apart. This runs psql on every deploy rather than relying on
+    # docker-entrypoint-initdb.d, which PostgreSQL executes only against an
+    # empty data directory: on the NAS the volume already existed, so an
+    # initdb.d script created nothing and the coordinator was pointed at a
+    # database that was not there. Same image as repo-postgres so the psql
+    # client matches the server. The role password rides PGPASSWORD, never
+    # argv. Covered by test/jobs-init-test.sh, which runs this exact script
+    # with a fake psql and is part of scripts/check-deployment-statics.sh.
+    image: postgres:17.11-alpine
+    depends_on:
+      repo-postgres:
+        condition: service_healthy
+    environment:
+      PGUSER: ${PROTOMOLT_REPO_DB_USER:-documents}
+      PGPASSWORD: ${PROTOMOLT_REPO_DB_PASSWORD:?set PROTOMOLT_REPO_DB_PASSWORD in Portainer}
+      JOBS_DB: ${PROTOMOLT_JOBS_DB_NAME:-jobs}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$${JOBS_DB}" in
+          *[!a-z0-9_]*|"") echo "PROTOMOLT_JOBS_DB_NAME must be a plain lowercase identifier, got '$${JOBS_DB}'" >&2; exit 1 ;;
+        esac
+        exists="$$(psql -v ON_ERROR_STOP=1 -h repo-postgres -U "$${PGUSER}" -d postgres -tAc \
+          "SELECT 1 FROM pg_database WHERE datname = '$${JOBS_DB}'")"
+        if [ "$${exists}" = "1" ]; then
+          echo "jobs database '$${JOBS_DB}' already exists"
+          exit 0
+        fi
+        psql -v ON_ERROR_STOP=1 -h repo-postgres -U "$${PGUSER}" -d postgres \
+          -c "CREATE DATABASE \"$${JOBS_DB}\" OWNER \"$${PGUSER}\""
+        echo "created jobs database '$${JOBS_DB}' owned by $${PGUSER}"
     restart: "no"
 
   keycloak:
