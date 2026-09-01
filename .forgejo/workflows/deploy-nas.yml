@@ -70,14 +70,20 @@ jobs:
             exit 1
           fi
 
+      # The tag name and the dispatch input ride the environment rather than being
+      # interpolated into the script, so a crafted ref cannot become shell.
       - name: Resolve the version being deployed
         id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
-            version='${{ inputs.version }}'
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            version="$INPUT_VERSION"
           else
-            ref='${{ github.ref_name }}'
+            ref="$REF_NAME"
             # Strip the axion tag prefix by parameter expansion, not a pattern match.
             version="${ref#v}"
             if [ "$version" = "$ref" ]; then
