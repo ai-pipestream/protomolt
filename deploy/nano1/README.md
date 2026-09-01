@@ -133,6 +133,33 @@ ARM64 advertisement uses the `arm64-build-capability` capability. It
 describes a healthy build host; the bounded task API in planned work will add
 remote execution without exposing Nano1's Docker socket.
 
+### The `nano1-tei` service profile is a prerequisite
+
+The publisher reads the advertised schema fingerprint from a registered service
+profile named `nano1-tei`, and drops the processor when that lookup fails. The
+profile lives in the coordinator's registry, not on Nano1, so it does not
+survive the coordinator's volumes being recreated and nothing on Nano1 restores
+it. Losing it does not stop the publisher: the ARM64 builder keeps renewing and
+the node stays live, so the mesh looks healthy while the GPU is simply absent
+from it. Register it once against a running TEI:
+
+```shell
+mesh: service-register {
+  "endpoint": "grpc",
+  "profile": {
+    "name": "nano1-tei",
+    "endpoints": [{"name": "grpc", "host": "<nano1 tailnet ip>",
+                   "port": 8083, "transport": "TRANSPORT_PLAINTEXT"}],
+    "schemaSource": {"kind": "SOURCE_KIND_REFLECTION"}
+  }
+}
+```
+
+Confirm it took with `service-list`, which must name `nano1-tei`, and then with
+the publisher's own log, where `notRenewed` must be empty and `renewed` must
+name both processors. An empty `service-list` after a coordinator rebuild is
+the signal that this step is owed again.
+
 Place `PROTOMOLT_MCP_TOKEN` in a root-readable or runner-readable environment
 file outside the repository, then run the publisher as the existing
 `protomolt-runner` account:
