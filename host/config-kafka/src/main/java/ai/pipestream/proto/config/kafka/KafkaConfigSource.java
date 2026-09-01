@@ -145,16 +145,15 @@ public final class KafkaConfigSource implements ConfigSource {
     @Override
     public synchronized Optional<Fetched> fetch(String subject) {
         drainToEnd();
-        Slot slot = latest.get(subject);
-        if (slot == null) {
-            return Optional.empty();
-        }
-        if (slot instanceof Poisoned poisoned) {
-            throw new IllegalStateException("config record for '" + subject + "' at "
-                    + poisoned.version() + " refused by the serde: " + poisoned.reason());
-        }
-        Valid valid = (Valid) slot;
-        return Optional.of(new Fetched(valid.version(), valid.payload()));
+        // Exhaustive over the sealed Slot, so a third variant has to be answered here rather
+        // than reaching the reader through an unchecked cast.
+        return switch (latest.get(subject)) {
+            case null -> Optional.empty();
+            case Valid valid -> Optional.of(new Fetched(valid.version(), valid.payload()));
+            case Poisoned poisoned -> throw new IllegalStateException("config record for '"
+                    + subject + "' at " + poisoned.version() + " refused by the serde: "
+                    + poisoned.reason());
+        };
     }
 
     /** Reads every record up to the end offsets observed at entry. */
