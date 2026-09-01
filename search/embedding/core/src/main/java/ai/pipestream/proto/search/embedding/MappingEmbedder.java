@@ -156,7 +156,7 @@ public final class MappingEmbedder {
                     + detail + "; name the fields explicitly with"
                     + " embed(document, textFieldName, vectorFieldName)");
         }
-        return matches.get(0);
+        return matches.getFirst();
     }
 
     private IndexMapping.IndexedField named(IndexFieldKind kind, String fieldName) {

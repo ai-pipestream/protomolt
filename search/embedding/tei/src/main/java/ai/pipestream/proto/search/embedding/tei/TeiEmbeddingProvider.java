@@ -172,10 +172,12 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
      * it; that wait is bounded by the per-call 30 second deadline.
      *
      * <p>A structured-concurrency scope would express this fork-join directly, but
-     * {@code java.util.concurrent.StructuredTaskScope} is a preview API in JDK 21 and the
-     * module compiles to the Java 21 baseline without preview, so the scope is spelled out
-     * with a virtual-thread executor and futures instead: one fork per text, unordered
-     * completion, input-order collection, cancellation of the uncollected on failure.
+     * {@code java.util.concurrent.StructuredTaskScope} is still a preview API on the JDK 25
+     * baseline this module compiles to (JEP 505, its fifth preview) and the build enables no
+     * preview features, so the scope is spelled out with a virtual-thread executor and
+     * futures instead: one fork per text, unordered completion, input-order collection,
+     * cancellation of the uncollected on failure. This is the shape to replace the day the
+     * API is final.
      *
      * @throws IllegalStateException when any embed call fails or the calling thread is
      *         interrupted while waiting

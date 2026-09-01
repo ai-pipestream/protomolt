@@ -181,7 +181,7 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
     @Override
     public float[] embed(String text) {
         Objects.requireNonNull(text, "text");
-        return embedAll(List.of(text)).get(0);
+        return embedAll(List.of(text)).getFirst();
     }
 
     /**
@@ -286,32 +286,35 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
     private static float[] floats(ModelInferResponse response, int index,
             ModelInferResponse.InferOutputTensor output, int expected) {
         String name = output.getName();
-        if (output.getContents().getFp32ContentsCount() > 0) {
-            if (output.getContents().getFp32ContentsCount() != expected) {
+        InferTensorContents contents = output.getContents();
+        if (contents.getFp32ContentsCount() > 0) {
+            if (contents.getFp32ContentsCount() != expected) {
                 throw new IllegalStateException("OVMS output tensor '" + name + "' carries "
-                        + output.getContents().getFp32ContentsCount()
+                        + contents.getFp32ContentsCount()
                         + " fp32 values, expected " + expected);
             }
             float[] flat = new float[expected];
             for (int i = 0; i < expected; i++) {
-                flat[i] = output.getContents().getFp32Contents(i);
+                flat[i] = contents.getFp32Contents(i);
             }
             return flat;
         }
         // KServe servers commonly answer with raw contents: the flattened little-endian F32
-        // payload of the tensor at the same index as 'outputs'.
+        // payload of the tensor at the same index as 'outputs'. Read it through the
+        // ByteString's own buffer rather than toByteArray(): a batch's tensor is
+        // texts * dim * 4 bytes and the copy buys nothing, and the bulk FloatBuffer get
+        // lands the whole vector in one intrinsified move instead of a getFloat() per
+        // component.
         if (index < response.getRawOutputContentsCount()) {
-            byte[] raw = response.getRawOutputContents(index).toByteArray();
-            if (raw.length != expected * Float.BYTES) {
+            ByteBuffer buffer = response.getRawOutputContents(index).asReadOnlyByteBuffer()
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            if (buffer.remaining() != expected * Float.BYTES) {
                 throw new IllegalStateException("OVMS output tensor '" + name
-                        + "' carries " + raw.length + " raw bytes, expected "
+                        + "' carries " + buffer.remaining() + " raw bytes, expected "
                         + expected * Float.BYTES);
             }
-            ByteBuffer buffer = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
             float[] flat = new float[expected];
-            for (int i = 0; i < expected; i++) {
-                flat[i] = buffer.getFloat();
-            }
+            buffer.asFloatBuffer().get(flat);
             return flat;
         }
         throw new IllegalStateException("OVMS output tensor '" + name

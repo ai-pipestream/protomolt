@@ -249,9 +249,9 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
             }
         }
         if (!semantic.isEmpty()) {
-            return Optional.of(semantic.get(0));
+            return Optional.of(semantic.getFirst());
         }
-        return all.size() == 1 ? Optional.of(all.get(0)) : Optional.empty();
+        return all.size() == 1 ? Optional.of(all.getFirst()) : Optional.empty();
     }
 
     /** Declared vector_dims, when any, are enforced on every embedding. */
