@@ -394,35 +394,34 @@ public final class MessageProjection {
     }
 
     private Object resolve(Rule rule, Message source, Descriptor sourceType) {
-        if (rule == null) {
-            return null;
-        }
-        if (rule instanceof PathRule pathRule) {
-            for (String path : pathRule.paths()) {
-                Object value = tryGet(source, path);
-                if (value != null) {
-                    return value;
+        // Rule is sealed: the switch is exhaustive, so a new rule kind fails
+        // the compile here instead of surfacing as an unknown-kind throw.
+        return switch (rule) {
+            case null -> null;
+            case PathRule pathRule -> {
+                for (String path : pathRule.paths()) {
+                    Object value = tryGet(source, path);
+                    if (value != null) {
+                        yield value;
+                    }
+                }
+                yield null;
+            }
+            case CelRule celRule -> {
+                try {
+                    yield evaluatorFor(sourceType)
+                            .evaluateValue(celRule.expression(), Map.of("source", source));
+                } catch (CelCompilationException e) {
+                    // Does not compile against this source type: absent, per the join semantics.
+                    yield null;
+                } catch (CelEvaluationException e) {
+                    throw new ProjectionException("CEL failed for projection field "
+                            + celRule.field().getFullName() + " on source "
+                            + sourceType.getFullName() + ": " + celRule.expression(), e);
                 }
             }
-            return null;
-        }
-        if (rule instanceof CelRule celRule) {
-            try {
-                return evaluatorFor(sourceType)
-                        .evaluateValue(celRule.expression(), Map.of("source", source));
-            } catch (CelCompilationException e) {
-                // Does not compile against this source type: absent, per the join semantics.
-                return null;
-            } catch (CelEvaluationException e) {
-                throw new ProjectionException("CEL failed for projection field "
-                        + celRule.field().getFullName() + " on source " + sourceType.getFullName()
-                        + ": " + celRule.expression(), e);
-            }
-        }
-        if (rule instanceof LiteralRule literalRule) {
-            return typeConverter.fromValue(literalRule.literal());
-        }
-        throw new IllegalStateException("Unknown rule kind: " + rule.getClass());
+            case LiteralRule literalRule -> typeConverter.fromValue(literalRule.literal());
+        };
     }
 
     private Object tryGet(Message source, String path) {

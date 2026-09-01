@@ -181,7 +181,7 @@ class JdbcWorkflowRunStoreIT {
                 return;
             }
             Optional<WorkflowRunRecord> job;
-            while ((job = store.claim("worker-" + Thread.currentThread().getId(),
+            while ((job = store.claim("worker-" + Thread.currentThread().threadId(),
                     Duration.ofMinutes(1))).isPresent()) {
                 claimed.add(job.get().jobId);
             }

@@ -224,16 +224,21 @@ public final class ConfluentSchemaPublisher implements SchemaPublisher, AutoClos
             // references cannot match anything the registry holds.
             boolean subjectMissing = false;
             if (!pendingReference) {
-                LookupResult lookup = lookupSchema(subject, candidate);
-                if (lookup instanceof FoundSchema found) {
-                    versions.put(path, found.version());
-                    return new FileOutcome(path, subject, Action.UNCHANGED, "version " + found.version());
+                // LookupResult is sealed: the switch is exhaustive, so the
+                // remaining case needs no cast and a fourth outcome would not
+                // compile.
+                switch (lookupSchema(subject, candidate)) {
+                    case FoundSchema(int version) -> {
+                        versions.put(path, version);
+                        return new FileOutcome(path, subject, Action.UNCHANGED,
+                                "version " + version);
+                    }
+                    case InvalidSchema(String message) -> {
+                        failedPaths.add(path);
+                        return new FileOutcome(path, subject, Action.FAILED, message);
+                    }
+                    case SchemaNotFound(boolean missing) -> subjectMissing = missing;
                 }
-                if (lookup instanceof InvalidSchema invalid) {
-                    failedPaths.add(path);
-                    return new FileOutcome(path, subject, Action.FAILED, invalid.message());
-                }
-                subjectMissing = ((SchemaNotFound) lookup).subjectMissing();
             }
 
             if (options.dryRun()) {

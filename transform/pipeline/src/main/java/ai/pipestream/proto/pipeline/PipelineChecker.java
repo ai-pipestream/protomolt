@@ -296,7 +296,7 @@ public final class PipelineChecker {
         // projection fail even though the explicit cardinality transition completed.
         if (method.isClientStreaming() && streamSources.size() == 1
                 && !call.hasFanOut()) {
-            scope.remove(streamSources.get(0));
+            scope.remove(streamSources.getFirst());
         }
         bind(step.getName(), scope, call,
                 call.hasFanOut()

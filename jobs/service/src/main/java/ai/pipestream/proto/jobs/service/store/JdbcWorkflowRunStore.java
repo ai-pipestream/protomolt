@@ -33,15 +33,19 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private static final String JOB_COLUMNS =
-            "job_id, workflow_name, workflow_definition, input, input_ref, status, attempt,"
-                    + " max_attempts, run_after, outstanding_step, checkpoints, result,"
-                    + " result_ref, verdict, error, lease_owner, lease_until, created_at,"
-                    + " updated_at, completed_at";
+    // Both column lists end with a line break (the closing delimiter sits on its
+    // own line) so every splice below joins onto the next clause cleanly.
+    private static final String JOB_COLUMNS = """
+            job_id, workflow_name, workflow_definition, input, input_ref, status, attempt,
+            max_attempts, run_after, outstanding_step, checkpoints, result,
+            result_ref, verdict, error, lease_owner, lease_until, created_at,
+            updated_at, completed_at
+            """;
 
-    private static final String EVENT_COLUMNS =
-            "event_id, event_type, payload, kafka_key, attempts, status, created_at,"
-                    + " published_at, last_error";
+    private static final String EVENT_COLUMNS = """
+            event_id, event_type, payload, kafka_key, attempts, status, created_at,
+            published_at, last_error
+            """;
 
     private final WorkflowRunDatabase database;
 
@@ -55,13 +59,14 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     @Override
     public InsertOutcome insert(WorkflowRunRecord job, WorkflowRunEventRecord event) {
         return database.inTransaction(c -> {
-            String sql = "INSERT INTO workflow_run (job_id, workflow_name, workflow_definition, input,"
-                    + " input_ref, status, attempt, max_attempts, run_after,"
-                    + " outstanding_step, checkpoints, result, result_ref, verdict, error,"
-                    + " lease_owner, lease_until, completed_at)"
-                    + " VALUES (?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb,"
-                    + " ?::jsonb, ?, ?, ?, ?, ?, ?)"
-                    + " ON CONFLICT (job_id) DO NOTHING";
+            String sql = """
+                    INSERT INTO workflow_run (job_id, workflow_name, workflow_definition, input,
+                                              input_ref, status, attempt, max_attempts, run_after,
+                                              outstanding_step, checkpoints, result, result_ref,
+                                              verdict, error, lease_owner, lease_until, completed_at)
+                    VALUES (?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb,
+                            ?::jsonb, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (job_id) DO NOTHING""";
             int inserted;
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setObject(1, job.jobId);
@@ -156,12 +161,14 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             // One statement: the sub-select finds the oldest eligible QUEUED
             // job and locks it (SKIP LOCKED — concurrent workers never claim
             // the same row), the update flips it RUNNING under that lock.
-            String sql = "UPDATE workflow_run SET status = 'RUNNING', lease_owner = ?,"
-                    + " lease_until = ?, attempt = attempt + 1, updated_at = now()"
-                    + " WHERE job_id = (SELECT job_id FROM workflow_run"
-                    + " WHERE status = 'QUEUED' AND run_after <= now()"
-                    + " ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)"
-                    + " RETURNING " + JOB_COLUMNS;
+            String sql = """
+                    UPDATE workflow_run SET status = 'RUNNING', lease_owner = ?,
+                           lease_until = ?, attempt = attempt + 1, updated_at = now()
+                     WHERE job_id = (SELECT job_id FROM workflow_run
+                                      WHERE status = 'QUEUED' AND run_after <= now()
+                                      ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+                    RETURNING
+                    """ + JOB_COLUMNS;
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setString(1, workerId);
                 ps.setObject(2, Instant.now().plus(leaseDuration).atOffset(ZoneOffset.UTC));
@@ -177,10 +184,11 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     @Override
     public int requeueExpiredLeases() {
         return database.inTransaction(c -> {
-            String sql = "UPDATE workflow_run SET status = 'QUEUED', lease_owner = NULL,"
-                    + " lease_until = NULL, updated_at = now()"
-                    + " WHERE status = 'RUNNING' AND lease_until IS NOT NULL"
-                    + " AND lease_until < now()";
+            String sql = """
+                    UPDATE workflow_run SET status = 'QUEUED', lease_owner = NULL,
+                           lease_until = NULL, updated_at = now()
+                     WHERE status = 'RUNNING' AND lease_until IS NOT NULL
+                       AND lease_until < now()""";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 return ps.executeUpdate();
             } catch (SQLException e) {
@@ -193,8 +201,9 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     public void saveCheckpoint(UUID jobId, String checkpointsJson,
             WorkflowRunEventRecord stepEvent) {
         database.inTransaction(c -> {
-            update(c, "UPDATE workflow_run SET checkpoints = ?::jsonb, updated_at = now()"
-                    + " WHERE job_id = ?", ps -> {
+            update(c, """
+                    UPDATE workflow_run SET checkpoints = ?::jsonb, updated_at = now()
+                     WHERE job_id = ?""", ps -> {
                 ps.setObject(1, checkpointsJson, Types.OTHER);
                 ps.setObject(2, jobId);
             }, jobId);
@@ -207,9 +216,11 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     public void markWaiting(UUID jobId, String stepName, String checkpointsJson,
             WorkflowRunEventRecord event) {
         database.inTransaction(c -> {
-            update(c, "UPDATE workflow_run SET status = 'WAITING', outstanding_step = ?,"
-                    + " checkpoints = ?::jsonb, lease_owner = NULL, lease_until = NULL,"
-                    + " updated_at = now() WHERE job_id = ?", ps -> {
+            update(c, """
+                    UPDATE workflow_run SET status = 'WAITING', outstanding_step = ?,
+                           checkpoints = ?::jsonb, lease_owner = NULL, lease_until = NULL,
+                           updated_at = now()
+                     WHERE job_id = ?""", ps -> {
                 ps.setString(1, stepName);
                 ps.setObject(2, checkpointsJson, Types.OTHER);
                 ps.setObject(3, jobId);
@@ -223,10 +234,11 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     public void markCompleted(UUID jobId, String resultJson, String verdict,
             WorkflowRunEventRecord event) {
         database.inTransaction(c -> {
-            update(c, "UPDATE workflow_run SET status = 'COMPLETED', result = ?::jsonb,"
-                    + " verdict = ?, lease_owner = NULL, lease_until = NULL,"
-                    + " outstanding_step = NULL, completed_at = now(), updated_at = now()"
-                    + " WHERE job_id = ?", ps -> {
+            update(c, """
+                    UPDATE workflow_run SET status = 'COMPLETED', result = ?::jsonb,
+                           verdict = ?, lease_owner = NULL, lease_until = NULL,
+                           outstanding_step = NULL, completed_at = now(), updated_at = now()
+                     WHERE job_id = ?""", ps -> {
                 ps.setObject(1, resultJson, Types.OTHER);
                 ps.setString(2, verdict);
                 ps.setObject(3, jobId);
@@ -250,11 +262,14 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     private void markTerminal(String status, UUID jobId, String error,
             WorkflowRunEventRecord event) {
         database.inTransaction(c -> {
-            update(c, "UPDATE workflow_run SET status = '" + status + "', error = ?,"
-                    + " lease_owner = NULL, lease_until = NULL, outstanding_step = NULL,"
-                    + " completed_at = now(), updated_at = now() WHERE job_id = ?", ps -> {
-                ps.setString(1, error);
-                ps.setObject(2, jobId);
+            update(c, """
+                    UPDATE workflow_run SET status = ?, error = ?,
+                           lease_owner = NULL, lease_until = NULL, outstanding_step = NULL,
+                           completed_at = now(), updated_at = now()
+                     WHERE job_id = ?""", ps -> {
+                ps.setString(1, status);
+                ps.setString(2, error);
+                ps.setObject(3, jobId);
             }, jobId);
             enqueue(c, event);
             return null;
@@ -264,9 +279,10 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     @Override
     public void requeue(UUID jobId, Duration delay) {
         database.inTransaction(c -> {
-            update(c, "UPDATE workflow_run SET status = 'QUEUED', run_after = ?,"
-                    + " lease_owner = NULL, lease_until = NULL, updated_at = now()"
-                    + " WHERE job_id = ?", ps -> {
+            update(c, """
+                    UPDATE workflow_run SET status = 'QUEUED', run_after = ?,
+                           lease_owner = NULL, lease_until = NULL, updated_at = now()
+                     WHERE job_id = ?""", ps -> {
                 ps.setObject(1, Instant.now().plus(delay).atOffset(ZoneOffset.UTC));
                 ps.setObject(2, jobId);
             }, jobId);
@@ -278,8 +294,9 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     public ParkedCompletion completeParkedStep(UUID jobId, String stepName,
             String checkpointEntryJson, WorkflowRunEventRecord stepEvent) {
         return database.inTransaction(c -> {
-            String select = "SELECT status, outstanding_step, checkpoints FROM workflow_run"
-                    + " WHERE job_id = ? FOR UPDATE";
+            String select = """
+                    SELECT status, outstanding_step, checkpoints FROM workflow_run
+                     WHERE job_id = ? FOR UPDATE""";
             String status;
             String outstanding;
             ArrayNode checkpoints;
@@ -313,9 +330,10 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 throw WorkflowRunStoreException.wrap("checkpoint entry is not valid JSON", e);
             }
             checkpoints.add(entry);
-            update(c, "UPDATE workflow_run SET status = 'QUEUED', outstanding_step = NULL,"
-                    + " checkpoints = ?::jsonb, run_after = now(), updated_at = now()"
-                    + " WHERE job_id = ?", ps -> {
+            update(c, """
+                    UPDATE workflow_run SET status = 'QUEUED', outstanding_step = NULL,
+                           checkpoints = ?::jsonb, run_after = now(), updated_at = now()
+                     WHERE job_id = ?""", ps -> {
                 ps.setObject(1, checkpoints.toString(), Types.OTHER);
                 ps.setObject(2, jobId);
             }, jobId);
@@ -331,9 +349,10 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             // by chance. The locks release when this method's transaction
             // commits — claimed rows stay PENDING and re-claimable until
             // settled (at-least-once claiming, not exclusive ownership).
-            String sql = "SELECT " + EVENT_COLUMNS + " FROM workflow_run_events_outbox"
-                    + " WHERE status = 'PENDING' ORDER BY created_at ASC, event_id ASC"
-                    + " LIMIT ? FOR UPDATE SKIP LOCKED";
+            String sql = "SELECT " + EVENT_COLUMNS + """
+                    FROM workflow_run_events_outbox
+                    WHERE status = 'PENDING' ORDER BY created_at ASC, event_id ASC
+                    LIMIT ? FOR UPDATE SKIP LOCKED""";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setInt(1, limit);
                 List<WorkflowRunEventRecord> claimed = new ArrayList<>();
@@ -352,8 +371,10 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     @Override
     public boolean markEventPublished(UUID eventId) {
         return database.inTransaction(c -> {
-            String sql = "UPDATE workflow_run_events_outbox SET status = 'PUBLISHED',"
-                    + " published_at = ? WHERE event_id = ? AND status = 'PENDING'";
+            String sql = """
+                    UPDATE workflow_run_events_outbox SET status = 'PUBLISHED',
+                           published_at = ?
+                     WHERE event_id = ? AND status = 'PENDING'""";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setObject(1, Instant.now().atOffset(ZoneOffset.UTC));
                 ps.setObject(2, eventId);
@@ -368,8 +389,9 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     public Optional<WorkflowRunEventRecord> markEventFailed(WorkflowRunEventRecord event,
             String error) {
         return database.inTransaction(c -> {
-            String select = "SELECT " + EVENT_COLUMNS + " FROM workflow_run_events_outbox"
-                    + " WHERE event_id = ? FOR UPDATE";
+            String select = "SELECT " + EVENT_COLUMNS + """
+                    FROM workflow_run_events_outbox
+                    WHERE event_id = ? FOR UPDATE""";
             try (PreparedStatement ps = c.prepareStatement(select)) {
                 ps.setObject(1, event.eventId);
                 WorkflowRunEventRecord managed;
@@ -385,9 +407,10 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 if (managed.attempts >= WorkflowRunEventRecord.MAX_ATTEMPTS) {
                     managed.status = WorkflowRunEventRecord.STATUS_FAILED;
                 }
-                try (PreparedStatement update = c.prepareStatement(
-                        "UPDATE workflow_run_events_outbox SET attempts = ?, status = ?,"
-                                + " last_error = ? WHERE event_id = ?")) {
+                try (PreparedStatement update = c.prepareStatement("""
+                        UPDATE workflow_run_events_outbox SET attempts = ?, status = ?,
+                               last_error = ?
+                         WHERE event_id = ?""")) {
                     update.setInt(1, managed.attempts);
                     update.setString(2, managed.status);
                     if (managed.lastError == null) {
@@ -413,9 +436,10 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
      * @param event the event to outbox
      */
     private static void enqueue(Connection c, WorkflowRunEventRecord event) {
-        String sql = "INSERT INTO workflow_run_events_outbox (event_id, event_type, payload,"
-                + " kafka_key, attempts, status, created_at)"
-                + " VALUES (?, ?, ?, ?, 0, 'PENDING', ?)";
+        String sql = """
+                INSERT INTO workflow_run_events_outbox (event_id, event_type, payload,
+                                                        kafka_key, attempts, status, created_at)
+                VALUES (?, ?, ?, ?, 0, 'PENDING', ?)""";
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, event.eventId);
             ps.setString(2, event.eventType);

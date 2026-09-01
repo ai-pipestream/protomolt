@@ -35,7 +35,7 @@ abstract class DelegationAction implements ProtoAction {
 
     /** The resumption cursor for a returned run: the last event's, or 0 when empty. */
     static long resumeCursor(List<InProcessDelegationCoordinator.Event> events) {
-        return events.isEmpty() ? 0 : events.get(events.size() - 1).cursor();
+        return events.isEmpty() ? 0 : events.getLast().cursor();
     }
 
     /** Maps bridge and coordinator failures onto the stable delegation error codes. */

@@ -93,7 +93,7 @@ public final class WorkflowRunSubmitter {
         }
         List<WorkflowVerifier.Finding> findings = new WorkflowVerifier().verify(definition);
         if (!findings.isEmpty()) {
-            WorkflowVerifier.Finding first = findings.get(0);
+            WorkflowVerifier.Finding first = findings.getFirst();
             return fail(first.step(), "workflow does not verify (" + findings.size() + " finding"
                     + (findings.size() == 1 ? "" : "s") + "); first: [" + first.kind() + "] "
                     + first.error());

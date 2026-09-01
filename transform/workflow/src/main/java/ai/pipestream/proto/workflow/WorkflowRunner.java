@@ -284,15 +284,17 @@ public final class WorkflowRunner {
     /** Runs a workflow while reporting the exact request and response fixtures per step. */
     public Result run(CompiledWorkflow workflow, DynamicMessage input, ExecutionObserver observer)
             throws WorkflowExecutionException {
-        Segment segment = runSegment(workflow, input, List.of(), checkpoint -> { }, observer);
-        if (segment instanceof Segment.Completed completed) {
-            return completed.result();
-        }
-        Segment.Parked parked = (Segment.Parked) segment;
-        throw new WorkflowExecutionException(parked.step(), FailureKind.EXTERNAL, null,
-                "step declares completion='external'; synchronous run-workflow cannot park "
-                        + "- submit the workflow as a job (submit-workflow) so complete-step "
-                        + "can supply the response", null);
+        // Segment is sealed: the switch is exhaustive, so parking is refused by
+        // name rather than by a cast on the fall-through.
+        return switch (runSegment(workflow, input, List.of(), checkpoint -> { }, observer)) {
+            case Segment.Completed(Result result, List<Checkpoint> _) -> result;
+            case Segment.Parked(String step, List<Checkpoint> _) ->
+                    throw new WorkflowExecutionException(step, FailureKind.EXTERNAL, null,
+                            "step declares completion='external'; synchronous run-workflow "
+                                    + "cannot park - submit the workflow as a job "
+                                    + "(submit-workflow) so complete-step can supply the "
+                                    + "response", null);
+        };
     }
 
     /**
@@ -452,7 +454,7 @@ public final class WorkflowRunner {
                 try {
                     response = DynamicGrpcCalls.call(channel, step.method(), request,
                             CallOptions.DEFAULT.withDeadlineAfter(callMs, TimeUnit.MILLISECONDS),
-                            new Metadata(), 1).get(0);
+                            new Metadata(), 1).getFirst();
                 } catch (StatusRuntimeException e) {
                     throw new WorkflowExecutionException(step.name(), FailureKind.GRPC,
                             e.getStatus().getCode(),
@@ -969,7 +971,7 @@ public final class WorkflowRunner {
         try {
             return DynamicGrpcCalls.call(channel, step.method(), request,
                     CallOptions.DEFAULT.withDeadlineAfter(callMs, TimeUnit.MILLISECONDS),
-                    new Metadata(), 1).get(0);
+                    new Metadata(), 1).getFirst();
         } catch (StatusRuntimeException e) {
             throw new WorkflowExecutionException(step.name(), FailureKind.GRPC,
                     e.getStatus().getCode(),

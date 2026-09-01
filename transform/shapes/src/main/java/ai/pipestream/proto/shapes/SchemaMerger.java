@@ -114,7 +114,7 @@ public final class SchemaMerger {
         sources.forEach(source -> unionRules.put(source.name(), new ArrayList<>()));
         for (Map.Entry<String, List<Origin>> planned : plan.entrySet()) {
             String finalName = planned.getKey();
-            FieldDescriptor typedBy = planned.getValue().get(0).field();
+            FieldDescriptor typedBy = planned.getValue().getFirst().field();
             fields.add(new ShapeSynthesizer.NamedField(finalName, typedBy));
             boolean first = true;
             for (Origin origin : planned.getValue()) {
@@ -181,7 +181,7 @@ public final class SchemaMerger {
     }
 
     private static ClashKind classify(List<Origin> origins) {
-        FieldDescriptor first = origins.get(0).field();
+        FieldDescriptor first = origins.getFirst().field();
         boolean sameType = origins.stream().allMatch(origin ->
                 typeKey(origin.field()).equals(typeKey(first)));
         if (!sameType) {
@@ -251,7 +251,7 @@ public final class SchemaMerger {
         String name = field.getName();
         List<Origin> origins = byName.get(name);
         if (origins.size() == 1) {
-            reserve(plan, name, List.of(origins.get(0)));
+            reserve(plan, name, List.of(origins.getFirst()));
             return;
         }
         Resolution resolution = resolutions.get(name);
