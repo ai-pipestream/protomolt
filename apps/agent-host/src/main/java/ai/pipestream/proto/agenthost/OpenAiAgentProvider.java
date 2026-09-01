@@ -112,7 +112,7 @@ final class OpenAiAgentProvider implements AgentProvider {
         history.add(user);
         history.add(message("assistant", content));
         while (history.size() > MAX_HISTORY_MESSAGES) {
-            history.remove(0);
+            history.removeFirst();
         }
         return content.trim();
     }

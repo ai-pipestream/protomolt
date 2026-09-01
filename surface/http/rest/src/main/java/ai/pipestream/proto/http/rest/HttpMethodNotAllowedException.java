@@ -7,7 +7,7 @@ import java.util.List;
  * Maps to {@code 405 Method Not Allowed}; hosts should emit an {@code Allow}
  * header listing {@link #allowedMethods()}.
  */
-public class HttpMethodNotAllowedException extends ProtoRestException {
+public final class HttpMethodNotAllowedException extends ProtoRestException {
 
     private final List<String> allowedMethods;
 

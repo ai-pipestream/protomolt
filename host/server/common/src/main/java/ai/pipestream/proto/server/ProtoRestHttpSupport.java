@@ -116,29 +116,18 @@ public final class ProtoRestHttpSupport {
     }
 
     public static int statusFor(Throwable err) {
-        Throwable cause = unwrap(err);
-        if (cause instanceof UnauthorizedProtoRestException) {
-            return 401;
-        }
-        if (cause instanceof ForbiddenProtoRestException) {
-            return 403;
-        }
-        if (cause instanceof ServiceNotFoundException || cause instanceof MethodNotFoundException) {
-            return 404;
-        }
-        if (cause instanceof HttpMethodNotAllowedException) {
-            return 405;
-        }
-        if (cause instanceof RequestTooLargeException) {
-            return 413;
-        }
-        if (cause instanceof MalformedProtobufJsonException || cause instanceof MalformedRequestException) {
-            return 400;
-        }
-        // Everything else is a server fault: a plain ProtobufJsonException means the server
-        // failed to serialize its own response, and a plain ProtoRestException is an
-        // invocation failure. Neither is client-repairable.
-        return 500;
+        // Everything unnamed here is a server fault: a plain ProtobufJsonException means the
+        // server failed to serialize its own response, and a plain ProtoRestException is an
+        // invocation failure. Neither is client-repairable, and neither is a null throwable.
+        return switch (unwrap(err)) {
+            case UnauthorizedProtoRestException _ -> 401;
+            case ForbiddenProtoRestException _ -> 403;
+            case ServiceNotFoundException _, MethodNotFoundException _ -> 404;
+            case HttpMethodNotAllowedException _ -> 405;
+            case RequestTooLargeException _ -> 413;
+            case MalformedProtobufJsonException _, MalformedRequestException _ -> 400;
+            case null, default -> 500;
+        };
     }
 
     /**

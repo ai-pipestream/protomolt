@@ -145,16 +145,15 @@ public final class CompleteStepAction implements ProtoAction {
         entry.put("name", stepName);
         entry.put("skipped", false);
         entry.set("response", response);
-        ParkedCompletion completion = store.completeParkedStep(jobId, stepName,
-                entry.toString(), WorkflowRunEventFactory.stepCheckpoint(job, stepName));
-        if (completion instanceof ParkedCompletion.Completed) {
-            return ok(WorkflowRunRecord.STATUS_QUEUED);
-        }
-        if (completion instanceof ParkedCompletion.AlreadyDone alreadyDone) {
-            return ok(alreadyDone.currentStatus());
-        }
-        ParkedCompletion.WrongState wrong = (ParkedCompletion.WrongState) completion;
-        return wrongState(wrong.currentStatus(), wrong.outstandingStep(), stepName, jobId);
+        // ParkedCompletion is sealed: the switch is exhaustive, so the last
+        // verdict needs no cast and a new one would not compile.
+        return switch (store.completeParkedStep(jobId, stepName, entry.toString(),
+                WorkflowRunEventFactory.stepCheckpoint(job, stepName))) {
+            case ParkedCompletion.Completed _ -> ok(WorkflowRunRecord.STATUS_QUEUED);
+            case ParkedCompletion.AlreadyDone(String currentStatus) -> ok(currentStatus);
+            case ParkedCompletion.WrongState(String currentStatus, String outstandingStep) ->
+                    wrongState(currentStatus, outstandingStep, stepName, jobId);
+        };
     }
 
     /** The step's definition from the job's snapshotted workflow. */

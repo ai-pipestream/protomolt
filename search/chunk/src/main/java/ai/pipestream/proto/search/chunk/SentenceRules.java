@@ -92,7 +92,19 @@ final class SentenceRules {
 
     /** Tokens in {@code [start, end)}: maximal non-whitespace runs. */
     static int countTokens(String text, int start, int end) {
-        return tokenSpans(text, start, end).size();
+        // Counted in place rather than through tokenSpans: segment() calls this once per
+        // sentence over the whole document, and the spans it would build are discarded.
+        int tokens = 0;
+        boolean inToken = false;
+        for (int i = start; i < end; i++) {
+            if (Character.isWhitespace(text.charAt(i))) {
+                inToken = false;
+            } else if (!inToken) {
+                inToken = true;
+                tokens++;
+            }
+        }
+        return tokens;
     }
 
     /** Token spans in {@code [start, end)}: maximal non-whitespace runs. */

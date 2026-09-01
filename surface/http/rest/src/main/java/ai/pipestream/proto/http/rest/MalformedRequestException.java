@@ -5,7 +5,7 @@ package ai.pipestream.proto.http.rest;
  * gateway (for example malformed percent-encoding in the query string).
  * Maps to {@code 400 Bad Request}.
  */
-public class MalformedRequestException extends ProtoRestException {
+public final class MalformedRequestException extends ProtoRestException {
 
     public MalformedRequestException(String message) {
         super(message);

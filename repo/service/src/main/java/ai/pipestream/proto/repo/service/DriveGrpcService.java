@@ -121,7 +121,7 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
                 response.addDrives(toProto(record));
             }
             if (page.size() == limit && !page.isEmpty()) {
-                response.setNextContinuationToken(page.get(page.size() - 1).name);
+                response.setNextContinuationToken(page.getLast().name);
             }
             return response.build();
         });

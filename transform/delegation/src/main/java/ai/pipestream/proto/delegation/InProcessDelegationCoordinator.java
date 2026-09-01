@@ -609,26 +609,33 @@ public final class InProcessDelegationCoordinator
 
     private void applyReview(TaskRuntime task, ReviewDecision decision) {
         Session session = requireAdmittedSession(task.workerId);
-        if (decision instanceof ReviewDecision.Accept accepted) {
-            CompletionAccepted payload = CompletionAccepted.newBuilder()
-                    .setAttempt(task.attempt)
-                    .setRevision(task.candidate.getRevision())
-                    .setVerdict(accepted.verdict())
-                    .build();
-            emit(session, task.taskId, task.attempt,
-                    DelegateResponse.newBuilder().setAccepted(payload));
-            task.phase = DelegationReducer.Phase.ACCEPTED;
-            task.leaseGeneration++;
-        } else if (decision instanceof ReviewDecision.Revise revise) {
-            RevisionRequested payload = RevisionRequested.newBuilder()
-                    .setAttempt(task.attempt)
-                    .setRevision(task.candidate.getRevision())
-                    .setFeedback(revise.feedback())
-                    .addAllFailedChecks(revise.failedChecks())
-                    .build();
-            emit(session, task.taskId, task.attempt,
-                    DelegateResponse.newBuilder().setRevisionRequested(payload));
-            task.phase = DelegationReducer.Phase.LEASED;
+        switch (decision) {
+            case ReviewDecision.Accept(String verdict) -> {
+                CompletionAccepted payload = CompletionAccepted.newBuilder()
+                        .setAttempt(task.attempt)
+                        .setRevision(task.candidate.getRevision())
+                        .setVerdict(verdict)
+                        .build();
+                emit(session, task.taskId, task.attempt,
+                        DelegateResponse.newBuilder().setAccepted(payload));
+                task.phase = DelegationReducer.Phase.ACCEPTED;
+                task.leaseGeneration++;
+            }
+            case ReviewDecision.Revise(String feedback, List<String> failedChecks) -> {
+                RevisionRequested payload = RevisionRequested.newBuilder()
+                        .setAttempt(task.attempt)
+                        .setRevision(task.candidate.getRevision())
+                        .setFeedback(feedback)
+                        .addAllFailedChecks(failedChecks)
+                        .build();
+                emit(session, task.taskId, task.attempt,
+                        DelegateResponse.newBuilder().setRevisionRequested(payload));
+                task.phase = DelegationReducer.Phase.LEASED;
+            }
+            // The candidate stays open for an explicit review action; the
+            // lifecycle does not move.
+            case ReviewDecision.Pending _ -> {
+            }
         }
     }
 

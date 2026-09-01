@@ -59,17 +59,15 @@ final class GrpcErrors {
         if (t instanceof StatusRuntimeException || t instanceof StatusException) {
             return t;
         }
-        Status status;
-        if (t instanceof IllegalArgumentException) {
-            status = Status.INVALID_ARGUMENT;
-        } else if (t instanceof BlobStore.BlobNotFoundException) {
-            status = Status.NOT_FOUND;
-        } else if (t instanceof PartStorage.PartObjectMissingException) {
-            status = Status.FAILED_PRECONDITION;
-        } else {
-            LOG.error("Unhandled handler failure", t);
-            status = Status.INTERNAL;
-        }
+        Status status = switch (t) {
+            case IllegalArgumentException _ -> Status.INVALID_ARGUMENT;
+            case BlobStore.BlobNotFoundException _ -> Status.NOT_FOUND;
+            case PartStorage.PartObjectMissingException _ -> Status.FAILED_PRECONDITION;
+            default -> {
+                LOG.error("Unhandled handler failure", t);
+                yield Status.INTERNAL;
+            }
+        };
         String message = t.getMessage();
         if (message != null && !message.isBlank()) {
             status = status.withDescription(message);

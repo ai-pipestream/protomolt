@@ -649,7 +649,7 @@ public final class ProtoLuceneMapper implements SearchEngineIndexer {
     private static boolean isMapEntryList(Object value) {
         return value instanceof List<?> values
                 && !values.isEmpty()
-                && values.get(0) instanceof Message message
+                && values.getFirst() instanceof Message message
                 && message.getDescriptorForType().getOptions().getMapEntry();
     }
 

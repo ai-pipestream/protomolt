@@ -65,8 +65,12 @@ final class OpenNlpSentenceRules {
             }
             int tokenStart = i;
             i += Character.charCount(codePoint);
-            while (i < end && !StringUtil.isUnicodeWhitespace(text.codePointAt(i))) {
-                i += Character.charCount(text.codePointAt(i));
+            while (i < end) {
+                int next = text.codePointAt(i);
+                if (StringUtil.isUnicodeWhitespace(next)) {
+                    break;
+                }
+                i += Character.charCount(next);
             }
             spans.add(new BoundaryRules.TokenSpan(tokenStart, i));
         }

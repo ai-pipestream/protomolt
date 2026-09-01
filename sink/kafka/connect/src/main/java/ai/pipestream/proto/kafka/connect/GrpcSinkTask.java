@@ -118,23 +118,19 @@ public final class GrpcSinkTask extends SinkTask {
                     + ", offset " + record.kafkaOffset() + ")");
         }
         try {
-            switch (config.valueFormat()) {
-                case PROTOBUF -> {
-                    return DynamicMessage.parseFrom(method.getInputType(), asBytes(value));
-                }
-                case CONFLUENT -> {
-                    return DynamicMessage.parseFrom(method.getInputType(),
-                            ConfluentWireFormat.payload(asBytes(value)));
-                }
-                default -> {
+            return switch (config.valueFormat()) {
+                case PROTOBUF -> DynamicMessage.parseFrom(method.getInputType(), asBytes(value));
+                case CONFLUENT -> DynamicMessage.parseFrom(method.getInputType(),
+                        ConfluentWireFormat.payload(asBytes(value)));
+                case JSON -> {
                     String json = value instanceof byte[] bytes
                             ? new String(bytes, StandardCharsets.UTF_8)
                             : value.toString();
                     DynamicMessage.Builder builder = DynamicMessage.newBuilder(method.getInputType());
                     JsonFormat.parser().ignoringUnknownFields().merge(json, builder);
-                    return builder.build();
+                    yield builder.build();
                 }
-            }
+            };
         } catch (DataException e) {
             throw e;
         } catch (Exception e) {

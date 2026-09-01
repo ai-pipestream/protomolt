@@ -286,7 +286,7 @@ public final class ShapeSynthesizer {
         boolean oneof = !type.getOneofs().isEmpty();
         if (oneof) {
             out.append(indent).append("  oneof ")
-                    .append(type.getOneofs().get(0).getName()).append(" {\n");
+                    .append(type.getOneofs().getFirst().getName()).append(" {\n");
         }
         String fieldIndent = indent + (oneof ? "    " : "  ");
         for (FieldDescriptor field : type.getFields()) {

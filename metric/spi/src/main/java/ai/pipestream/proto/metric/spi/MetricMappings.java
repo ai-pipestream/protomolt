@@ -338,11 +338,11 @@ public final class MetricMappings {
             case STRING, ENUM -> FieldKind.KEYWORD;
             case BOOLEAN -> FieldKind.BOOLEAN;
             case INT, LONG, FLOAT, DOUBLE -> FieldKind.NUMERIC;
-            case MESSAGE -> TIMESTAMP_TYPE.equals(field.getMessageType().getFullName())
-                    ? FieldKind.DATE
-                    : TREE_PATH_TYPE.equals(field.getMessageType().getFullName())
-                            ? FieldKind.TREE_PATH
-                            : null;
+            case MESSAGE -> switch (field.getMessageType().getFullName()) {
+                case TIMESTAMP_TYPE -> FieldKind.DATE;
+                case TREE_PATH_TYPE -> FieldKind.TREE_PATH;
+                default -> null;
+            };
             case BYTE_STRING -> null;
         };
     }
@@ -475,13 +475,13 @@ public final class MetricMappings {
         return switch (expr.getKind()) {
             case CALL -> switch (expr.call().function()) {
                 case "_&&_" -> expr.call().args().size() == 2
-                        && translate(expr.call().args().get(0), member, descriptor, prefix,
+                        && translate(expr.call().args().getFirst(), member, descriptor, prefix,
                                 filters)
-                        && translate(expr.call().args().get(1), member, descriptor, prefix,
+                        && translate(expr.call().args().getLast(), member, descriptor, prefix,
                                 filters);
                 case "_==_" -> translateEquals(expr, member, descriptor, prefix, filters);
                 case "!_" -> expr.call().args().size() == 1
-                        && translateBare(expr.call().args().get(0), member, descriptor,
+                        && translateBare(expr.call().args().getFirst(), member, descriptor,
                                 prefix, "false", filters);
                 default -> false;
             };
@@ -496,8 +496,8 @@ public final class MetricMappings {
         if (call.call().args().size() != 2) {
             return false;
         }
-        CelExpr left = call.call().args().get(0);
-        CelExpr right = call.call().args().get(1);
+        CelExpr left = call.call().args().getFirst();
+        CelExpr right = call.call().args().getLast();
         CelExpr selected = left.getKind() == CelExpr.ExprKind.Kind.SELECT ? left : right;
         CelExpr constant = selected == left ? right : left;
         if (selected.getKind() != CelExpr.ExprKind.Kind.SELECT

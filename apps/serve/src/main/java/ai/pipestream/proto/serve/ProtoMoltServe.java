@@ -1067,7 +1067,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                 }
             }
             CallerResolver callers = resolvers.isEmpty() ? null
-                    : resolvers.size() == 1 ? resolvers.get(0)
+                    : resolvers.size() == 1 ? resolvers.getFirst()
                             : CallerResolver.chain(resolvers);
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
@@ -1295,12 +1295,10 @@ public final class ProtoMoltServe implements AutoCloseable {
         TrustSnapshotMounts mounts = TrustSnapshotMounts.follow(config);
         refreshQuietly(config, "the boot pull");
         if (lane.refreshSeconds() > 0) {
+            // Stays a single platform thread: the delay schedule is the backpressure, and
+            // serialising refreshes is what keeps two config pulls from overlapping.
             ScheduledExecutorService refresher = Executors.newSingleThreadScheduledExecutor(
-                    runnable -> {
-                        Thread thread = new Thread(runnable, "serve-config-refresh");
-                        thread.setDaemon(true);
-                        return thread;
-                    });
+                    Thread.ofPlatform().name("serve-config-refresh").daemon().factory());
             refresher.scheduleWithFixedDelay(
                     () -> refreshQuietly(config, "a config refresh"),
                     lane.refreshSeconds(), lane.refreshSeconds(), TimeUnit.SECONDS);

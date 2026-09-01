@@ -134,7 +134,7 @@ public final class SentencePackedChunker {
                     if (nextTokens + candidate.tokens() > spec.overlapTokens()) {
                         break;
                     }
-                    next.add(0, candidate);
+                    next.addFirst(candidate);
                     nextTokens += candidate.tokens();
                 }
                 current = next;

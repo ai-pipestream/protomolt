@@ -126,14 +126,15 @@ final class SerdeMapper {
         Message.Builder builder = message.toBuilder();
         CelProtoMapper cel = null;
         for (Step step : steps) {
-            if (step instanceof Step.Text text) {
-                fieldMapper.mapInPlace(builder, List.of(text.rule()));
-            } else if (step instanceof Step.Cel rule) {
-                if (cel == null) {
-                    cel = celMapperFor(message.getDescriptorForType());
+            switch (step) {
+                case Step.Text text -> fieldMapper.mapInPlace(builder, List.of(text.rule()));
+                case Step.Cel rule -> {
+                    if (cel == null) {
+                        cel = celMapperFor(message.getDescriptorForType());
+                    }
+                    cel.map(builder, List.of(new CelMappingRule(
+                            rule.filter(), rule.selector(), rule.target())));
                 }
-                cel.map(builder, List.of(new CelMappingRule(
-                        rule.filter(), rule.selector(), rule.target())));
             }
         }
         return builder.build();
