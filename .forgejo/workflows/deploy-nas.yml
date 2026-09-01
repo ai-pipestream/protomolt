@@ -1,0 +1,209 @@
+# Deploys the coordinator stack to the NAS Portainer endpoint when a release tag
+# appears. This is the lane that replaces the hand-run script: the tag is the only
+# trigger, and the tree the tag names is what gets applied.
+#
+# Why this lives on Forgejo and the tag does not arrive on its own
+# ---------------------------------------------------------------
+# Tags are cut by axion in .github/workflows/release-and-publish.yml, because the
+# Maven Central, GPG, and GHCR credentials live on GitHub. Forgejo is master and
+# is NOT a mirror in either direction (the repository reports mirror: false and
+# has no push mirrors), so a release tag never reaches this forge by itself.
+# Someone pushes it here from the LAN once the release is green:
+#
+#     git push origin v0.1.0
+#
+# That push is what fires this workflow. Portainer answers on a private address
+# (192.168.1.211), so this lane must run on a Forgejo LAN runner -- nas-1, nas-2,
+# and krick-host all carry ubuntu-latest. A GitHub-hosted runner cannot reach
+# Portainer at all, which is why the deploy cannot simply follow the release.
+#
+# Every failure here is loud. The stack is not touched until the images being
+# deployed are known to exist, and the run fails if the coordinator does not come
+# back up on exactly the image this tag asked for.
+name: Deploy NAS Coordinator
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Re-deploy or roll back to an already-released version without cutting a tag.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released semver without the v prefix, e.g. 0.1.0'
+        required: true
+        type: string
+
+env:
+  PORTAINER_URL: https://portainer.rokkon.com
+  PORTAINER_STACK_ID: '20'
+  PORTAINER_ENDPOINT_ID: '3'
+  SERVE_IMAGE_REPO: ghcr.io/ai-pipestream/protomolt-serve
+  REPO_SERVICE_IMAGE_REPO: ghcr.io/ai-pipestream/protomolt-repo-service
+  COORDINATOR_CONTAINER: protomolt-coordinator
+  # The TLS surface, not http://nas:19902: the short name resolves only over
+  # IPv6 here, which a runner container may not have, while this name resolves
+  # to the NAS over IPv4. It also proves Traefik and serve are both back up.
+  COORDINATOR_HEALTH_URL: https://protomolt.rokkon.com/health
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tools and the token this lane needs
+        env:
+          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=''
+          for tool in curl python3 git; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner is missing:$missing"
+            exit 1
+          fi
+          if [ -z "${PORTAINER_TOKEN:-}" ]; then
+            echo "::error::PORTAINER_TOKEN is not set. Add it as a Forgejo secret; without it this lane cannot reach Portainer."
+            exit 1
+          fi
+
+      # The tag name and the dispatch input ride the environment rather than being
+      # interpolated into the script, so a crafted ref cannot become shell.
+      - name: Resolve the version being deployed
+        id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            version="$INPUT_VERSION"
+          else
+            ref="$REF_NAME"
+            # Strip the axion tag prefix by parameter expansion, not a pattern match.
+            version="${ref#v}"
+            if [ "$version" = "$ref" ]; then
+              echo "::error::tag $ref does not carry the v prefix axion cuts; refusing to guess a version"
+              exit 1
+            fi
+          fi
+          if [ -z "$version" ]; then
+            echo "::error::resolved an empty version; refusing to deploy"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Deploying version $version"
+
+      # Portainer is not asked to pull anything until both images are known to be
+      # published. A missing image would otherwise leave the stack half-updated.
+      - name: Confirm both images exist in GHCR
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          for repo in "$SERVE_IMAGE_REPO" "$REPO_SERVICE_IMAGE_REPO"; do
+            path="${repo#ghcr.io/}"
+            token=$(curl -fsS -m 30 \
+              "https://ghcr.io/token?scope=repository:${path}:pull&service=ghcr.io" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
+              -H "Authorization: Bearer $token" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json' \
+              "https://ghcr.io/v2/${path}/manifests/${VERSION}")
+            if [ "$code" != '200' ]; then
+              echo "::error::${repo}:${VERSION} is not published (HTTP $code). Did release-and-publish finish for this tag?"
+              exit 1
+            fi
+            echo "ok ${repo}:${VERSION}"
+          done
+
+      # The stack file comes from the tagged tree, so the deployed stack and the
+      # release commit cannot drift apart. Every other stack variable is read back
+      # from Portainer and preserved: the secrets live there and are not in git.
+      - name: Redeploy stack 20 on the released images
+        env:
+          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl -fsS -m 60 -H "X-API-Key: $PORTAINER_TOKEN" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID" > current-stack.json
+          python3 - <<'PY' > update-body.json
+          import json, os, sys
+
+          stack = json.load(open('current-stack.json'))
+          version = os.environ['VERSION']
+          pins = {
+              'PROTOMOLT_SERVE_IMAGE': f"{os.environ['SERVE_IMAGE_REPO']}:{version}",
+              'PROTOMOLT_REPO_SERVICE_IMAGE': f"{os.environ['REPO_SERVICE_IMAGE_REPO']}:{version}",
+          }
+
+          env = [dict(entry) for entry in (stack.get('Env') or [])]
+          seen = set()
+          for entry in env:
+              if entry['name'] in pins:
+                  entry['value'] = pins[entry['name']]
+                  seen.add(entry['name'])
+          for name, value in pins.items():
+              if name not in seen:
+                  env.append({'name': name, 'value': value})
+
+          json.dump({
+              'stackFileContent': open('deploy/portainer/compose.yml').read(),
+              'env': env,
+              'prune': False,
+              'pullImage': True,
+          }, sys.stdout)
+          PY
+          curl -fsS -m 600 -X PUT \
+            -H "X-API-Key: $PORTAINER_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data @update-body.json \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$PORTAINER_ENDPOINT_ID" \
+            > /dev/null
+          echo "Portainer accepted the redeploy"
+
+      - name: Wait for the coordinator to report healthy
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl -fsS -m 10 "$COORDINATOR_HEALTH_URL" 2>/dev/null | grep -q '"status":"UP"'; then
+              echo "coordinator healthy after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::coordinator did not report UP within 5 minutes of the redeploy"
+          exit 1
+
+      # Portainer accepting the update is not evidence that the new image is what
+      # is running. Ask the Docker endpoint what the container actually is.
+      - name: Confirm the running image is the released one
+        env:
+          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl -fsS -m 60 -H "X-API-Key: $PORTAINER_TOKEN" \
+            --get --data-urlencode 'filters={"name":["'"$COORDINATOR_CONTAINER"'"]}' \
+            "$PORTAINER_URL/api/endpoints/$PORTAINER_ENDPOINT_ID/docker/containers/json" \
+            > containers.json
+          python3 - <<'PY'
+          import json, os, sys
+
+          want = f"{os.environ['SERVE_IMAGE_REPO']}:{os.environ['VERSION']}"
+          name = os.environ['COORDINATOR_CONTAINER']
+          containers = json.load(open('containers.json'))
+          for container in containers:
+              if any(n.lstrip('/') == name for n in container.get('Names', [])):
+                  running = container.get('Image', '')
+                  if running == want:
+                      print(f'{name} is running {running}')
+                      sys.exit(0)
+                  sys.exit(f'::error::{name} is running {running!r}, expected {want!r}')
+          sys.exit(f'::error::no container named {name} on the endpoint after redeploy')
+          PY

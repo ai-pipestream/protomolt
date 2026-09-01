@@ -7,8 +7,9 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The repository is mirrored: mirror syncs do not necessarily emit push events,
-  # so the lane can always be started by hand or through the API.
+  # Forgejo is master and nothing mirrors into it (mirror: false, no push
+  # mirrors), so commits arrive here by direct push. The manual trigger stays
+  # because a lane this expensive is worth being able to start by hand.
   workflow_dispatch:
 
 jobs:
