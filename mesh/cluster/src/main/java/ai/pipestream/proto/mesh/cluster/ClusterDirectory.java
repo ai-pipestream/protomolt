@@ -5,6 +5,8 @@ import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEventType;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
+import ai.pipestream.proto.mesh.cluster.v1.DirectoryCheckpoint;
+import ai.pipestream.proto.mesh.cluster.v1.FencingPosition;
 import ai.pipestream.proto.mesh.cluster.v1.NodeAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.NodePresence;
 import ai.pipestream.proto.mesh.cluster.v1.NodeRecord;
@@ -117,6 +119,93 @@ public final class ClusterDirectory {
             directory.eventSeq = event.getSeq();
         }
         return directory;
+    }
+
+    /**
+     * Restores a directory from a checkpoint and the events recorded after it. The
+     * checkpoint stands in for every event up to its {@code snapshot_seq}, so the tail must
+     * begin at the next sequence and is validated against that position rather than against
+     * one. Restoring from {@link #checkpoint()} and the events after it produces exactly the
+     * directory the complete log would have produced, fencing tombstones included.
+     *
+     * @param cluster the cluster identity the checkpoint and tail belong to
+     * @param checkpoint the folded directory state
+     * @param tail the events recorded after the checkpoint, gap-free and in order
+     * @param clock the clock for future liveness judgments and emitted events
+     * @return the restored directory
+     * @throws IllegalArgumentException when the checkpoint names another cluster, or the tail
+     *     is invalid or does not continue from the checkpoint
+     */
+    public static ClusterDirectory restore(ClusterDescriptor cluster,
+            DirectoryCheckpoint checkpoint, List<ClusterEvent> tail, Clock clock) {
+        Objects.requireNonNull(checkpoint, "checkpoint");
+        ClusterSnapshot state = checkpoint.getState();
+        require(state.getCluster().equals(cluster),
+                "checkpoint describes a different cluster identity than the directory");
+        require(state.getFingerprint().equals(ClusterValidation.snapshotFingerprint(
+                        state.toBuilder().clearFingerprint().build())),
+                "checkpoint state fingerprint does not commit to the checkpoint state");
+
+        ClusterDirectory directory = new ClusterDirectory(cluster, clock);
+        for (NodeRecord record : state.getNodesList()) {
+            String nodeId = record.getAdvertisement().getNodeId();
+            directory.nodes.put(nodeId, record.getAdvertisement());
+            directory.presence.put(nodeId, record.getPresence());
+            if (record.hasCapacity()) {
+                directory.nodeCapacity.put(nodeId, record.getCapacity());
+            }
+        }
+        for (ProcessorAdvertisement processor : state.getProcessorsList()) {
+            directory.processors.put(processor.getProcessorId(), processor);
+        }
+        for (CapacityAdvertisement capacity : state.getCapacitiesList()) {
+            directory.processorCapacity.put(
+                    capacityKey(capacity.getNodeId(), capacity.getProcessorId()), capacity);
+        }
+        for (FencingPosition position : checkpoint.getNodePositionsList()) {
+            directory.nodePositions.put(position.getId(),
+                    new Position(position.getEpoch(), position.getSeq()));
+        }
+        for (FencingPosition position : checkpoint.getProcessorPositionsList()) {
+            directory.processorPositions.put(position.getId(),
+                    new Position(position.getEpoch(), position.getSeq()));
+        }
+        directory.eventSeq = state.getSnapshotSeq();
+
+        ClusterValidation.validateEventLog(tail, state.getSnapshotSeq() + 1);
+        for (ClusterEvent event : tail) {
+            directory.applyReplay(event);
+            directory.events.add(event);
+            directory.eventSeq = event.getSeq();
+        }
+        return directory;
+    }
+
+    /**
+     * Folds the directory into a checkpoint that can replace every event up to the current
+     * sequence. Beyond the snapshot it carries the fencing tombstones, which the snapshot
+     * cannot express because a tombstone outlives the identity it fences: dropping the
+     * events without them would let a delayed frame from a superseded incarnation be
+     * admitted after a restart.
+     *
+     * @return the folded directory state at the current event sequence
+     */
+    public DirectoryCheckpoint checkpoint() {
+        DirectoryCheckpoint.Builder builder = DirectoryCheckpoint.newBuilder()
+                .setState(snapshot());
+        nodePositions.forEach((id, position) ->
+                builder.addNodePositions(fencingPosition(id, position)));
+        processorPositions.forEach((id, position) ->
+                builder.addProcessorPositions(fencingPosition(id, position)));
+        return builder.build();
+    }
+
+    private static FencingPosition fencingPosition(String id, Position position) {
+        return FencingPosition.newBuilder()
+                .setId(id)
+                .setEpoch(position.epoch())
+                .setSeq(position.seq())
+                .build();
     }
 
     /**

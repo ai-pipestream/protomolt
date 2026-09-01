@@ -9,14 +9,42 @@ that log.
 `PersistentClusterDirectory` adds a durable boundary without moving hot
 lookups out of memory. For every mutation it:
 
-1. replays the current event log into a candidate directory;
+1. replays the retained event log into a candidate directory;
 2. applies and validates the mutation;
-3. saves the complete candidate log; and
+3. saves the candidate log; and
 4. installs the candidate as the live projection only after the save succeeds.
 
 A repository failure therefore leaves membership, event sequence, fencing
 tombstones, and capacity unchanged. Reconstructing the facade loads and
-replays the stored log before serving queries.
+replays the stored directory before serving queries.
+
+Reads take no lock. An installed projection is replaced, never mutated, so a
+reader works from one volatile read of the current directory and never waits
+behind a mutation's repository round trip. Sharing a lock between the two
+starves reads: a monitor makes no fairness promise, and on a cluster where a
+node heartbeats steadily the write path is almost always holding it. A read can
+observe the state from just before a concurrent commit, which is inherent to
+any snapshot of a live directory and is what `snapshot_seq` reports.
+
+## Compaction
+
+A heartbeat is a mutation, so a live cluster appends an event every few seconds
+per node. Kept whole, that log grows without bound, every mutation rewrites all
+of it, and the 100,000-event cap eventually refuses each mutation permanently.
+
+`DirectoryCheckpoint` folds the prefix away. It carries the `ClusterSnapshot` at
+a sequence plus the fencing tombstones, which the snapshot alone cannot express
+because a tombstone outlives the identity it fences: dropping the events without
+them would let a delayed frame from a superseded incarnation be admitted after a
+restart. Restoring from a checkpoint and the events after it produces exactly
+the directory the whole log would have produced.
+
+Once more than `DEFAULT_RETAINED_EVENTS` events accumulate past the last
+checkpoint, the next mutation folds and stores a checkpoint with an empty tail.
+Sequences stay monotonic and are never reused, so a client watching
+`snapshot_seq` for change is unaffected. A log stored before compaction existed
+carries no checkpoint and replays from sequence one, so an existing directory
+upgrades by folding on its next mutation rather than by migration.
 
 ## The wire contract
 
@@ -37,10 +65,14 @@ did not take effect, without the caller having to infer it from a failure.
 
 ## Storage adapters
 
-`ClusterEventRepository` is the persistence interface.
+`ClusterEventRepository` is the persistence interface, and its
+`StoredDirectory` is what one cluster's durable state consists of: the retained
+events and, once folded, the checkpoint they replay onto.
 `InMemoryClusterEventRepository` supports tests and process-local use.
-`RepositoryServiceClusterEventRepository` stores the event log through the
-repository service raw blob API.
+`RepositoryServiceClusterEventRepository` stores that through the repository
+service raw blob API, under a per-call deadline. Blob RPCs with no deadline
+turn an unreachable repository service into an unbounded, silent stall, so both
+calls bound the wait and name the cause when it expires.
 
 The remote adapter encrypts the log locally with AES-256-GCM. The encryption
 tag authenticates the plaintext media type, key reference, repository drive,

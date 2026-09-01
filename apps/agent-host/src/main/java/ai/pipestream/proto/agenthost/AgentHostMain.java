@@ -38,7 +38,7 @@ public final class AgentHostMain {
                 options.endpoint(), options.tokenEnvironment());
         AgentHost.Config config = new AgentHost.Config(options.role(), options.identity(),
                 options.model(), options.workspace(), options.pollTimeout(),
-                options.maxEvents());
+                options.maxEvents(), options.resetOnTranscriptLoss());
         try (AgentHost host = new AgentHost(config, mcp, provider, store, state)) {
             host.connect();
             if (options.bootstrap() != null) {
@@ -85,7 +85,7 @@ public final class AgentHostMain {
                    String model, Path workspace, Path state, String tokenEnvironment,
                    Path bootstrap, Duration pollTimeout, Duration turnTimeout,
                    int maxEvents, AcpClient.PermissionPolicy permissionPolicy,
-                   URI providerEndpoint, boolean once) {
+                   URI providerEndpoint, boolean once, boolean resetOnTranscriptLoss) {
 
         static Options parse(String[] args) {
             String endpoint = environment("PROTOMOLT_AGENT_MCP_ENDPOINT");
@@ -104,6 +104,7 @@ public final class AgentHostMain {
             AcpClient.PermissionPolicy permissionPolicy =
                     AcpClient.PermissionPolicy.ALLOW_SINGLE;
             boolean once = false;
+            boolean resetOnTranscriptLoss = false;
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--endpoint" -> endpoint = value(args, ++i);
@@ -125,6 +126,7 @@ public final class AgentHostMain {
                     case "--acp-permissions" -> permissionPolicy = permissionPolicy(
                             value(args, ++i));
                     case "--once" -> once = true;
+                    case "--reset-on-transcript-loss" -> resetOnTranscriptLoss = true;
                     default -> throw new IllegalArgumentException(
                             "unknown option: " + args[i]);
                 }
@@ -181,7 +183,7 @@ public final class AgentHostMain {
                     Path.of(state).toAbsolutePath().normalize(), tokenEnvironment,
                     bootstrapPath, Duration.ofSeconds(pollSeconds),
                     Duration.ofMinutes(turnMinutes), maxEvents, permissionPolicy,
-                    providerEndpointUri, once);
+                    providerEndpointUri, once, resetOnTranscriptLoss);
         }
 
         static String usage() {
@@ -191,7 +193,7 @@ public final class AgentHostMain {
                     + "[--model <name>] [--provider-endpoint <http://host:port/v1>] "
                     + "[--token-env <ENV_NAME>] "
                     + "[--bootstrap <objective-file>] [--acp-permissions "
-                    + "<allow-single|reject>]";
+                    + "<allow-single|reject>] [--reset-on-transcript-loss]";
         }
 
         private static String value(String[] args, int index) {

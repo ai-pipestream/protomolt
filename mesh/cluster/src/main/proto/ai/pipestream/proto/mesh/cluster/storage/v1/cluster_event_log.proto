@@ -33,9 +33,19 @@ message ClusterEventLog {
     },
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // Directory events in strictly increasing sequence order beginning at one.
+  // Directory events in strictly increasing sequence order. A log with no
+  // checkpoint begins at one; a compacted log begins at the event after the
+  // checkpoint's snapshot_seq.
   repeated ai.pipestream.proto.mesh.cluster.v1.ClusterEvent events = 3 [
     (ai.pipestream.proto.validate.v1.field).repeated.max_items = 100000,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The directory state the retained events replay onto. Absent in a log that
+  // has never been compacted, where the events are the complete history from
+  // sequence one. Present once the log is folded, which is what keeps a
+  // directory that emits an event per heartbeat from growing without bound and
+  // from eventually refusing every mutation at the events cap.
+  ai.pipestream.proto.mesh.cluster.v1.DirectoryCheckpoint checkpoint = 4 [
     (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
   ];
 }
