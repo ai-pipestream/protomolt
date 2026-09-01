@@ -153,6 +153,66 @@ class PersistentClusterDirectoryTest {
     }
 
     @Test
+    void aRenewingNodeCostsNothingDurableAndStaysLive() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1").build());
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1)
+                .setProcessorId("proc-1").build());
+        int savesAfterSetup = events.saves;
+        List<ClusterEvent> logAfterSetup = directory.eventLog();
+
+        // What a publisher actually does: the same identity, over and over, with a moved
+        // lease window. Nothing about the cluster changes, so nothing should be recorded.
+        for (int cycle = 2; cycle <= 200; cycle++) {
+            java.time.Instant at = ClusterFixtures.T0.plusSeconds(30L * cycle);
+            directory.register(ClusterFixtures.nodeBuilder("node-1", 1, cycle)
+                    .setAdvertisedAt(ClusterFixtures.ts(at)).build());
+            directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1")
+                    .setSeq(cycle)
+                    .setAdvertisedAt(ClusterFixtures.ts(at))
+                    .setLeaseExpiresAt(ClusterFixtures.ts(at.plusSeconds(90))).build());
+            directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", cycle)
+                    .setProcessorId("proc-1")
+                    .setObservedAt(ClusterFixtures.ts(at)).build());
+        }
+
+        assertThat(events.saves).isEqualTo(savesAfterSetup);
+        assertThat(directory.eventLog()).isEqualTo(logAfterSetup);
+        assertThat(directory.checkpoint()).isEmpty();
+
+        // The renewals still count. The original windows closed thousands of seconds ago;
+        // only the carried-over refreshes keep this identity alive, so a sweep here proves
+        // the soft state survived every rebuild in the loop above. The clock stops short of
+        // the last renewal's own expiry, which is the node presence at T0 + 6000 + ttl.
+        clock.advance(java.time.Duration.ofSeconds(30L * 200 - 10));
+        assertThat(directory.sweep()).isEmpty();
+        assertThat(directory.processor("proc-1")).isPresent();
+    }
+
+    @Test
+    void aSubstantiveChangeStillCostsADurableWrite() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 64);
+        directory.register(ClusterFixtures.node("node-1"));
+        int savesAfterRegistration = events.saves;
+
+        // A capability is identity, not a lease window. The refresh test must not be a
+        // licence to drop real changes on the floor.
+        directory.register(ClusterFixtures.nodeBuilder("node-1", 1, 2)
+                .addCapabilities("gpu").build());
+
+        assertThat(events.saves).isGreaterThan(savesAfterRegistration);
+        assertThat(directory.node("node-1").orElseThrow().getCapabilitiesList())
+                .contains("gpu");
+    }
+
+    @Test
     void aDurableChangeKeepsPresenceThatOnlyMemoryKnows() {
         CountingRepository events = new CountingRepository();
         ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);

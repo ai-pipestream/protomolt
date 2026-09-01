@@ -242,10 +242,16 @@ public final class PersistentClusterDirectory {
             // captured, because heartbeats emit nothing. Carrying the live records over is
             // what stops an unrelated mutation from rolling liveness back and sweeping nodes
             // that are heartbeating normally.
-            candidate.adoptPresence(current);
+            candidate.adoptSoftState(current);
             int priorSize = candidate.events().size();
             T result = operation.apply(candidate);
             if (candidate.events().size() == priorSize) {
+                // Nothing durable happened, but the operation may still have refreshed a
+                // lease or presence, which lives only in memory. Installing the candidate is
+                // how that survives; returning here would discard it and let the next sweep
+                // take an identity that is renewing normally. There is nothing to persist,
+                // so the repository is not touched.
+                current = candidate;
                 return result;
             }
             if (candidate.events().size() > retainedEvents) {

@@ -235,6 +235,14 @@ def publish_once(client: McpClient, state: PublisherState,
         except Exception as error:  # one failed processor must not suppress the others
             failures[name] = str(error)
 
+    # A processor can be withheld for two unrelated reasons, and they need opposite
+    # responses. A failed gate means the hardware or model is not ready, which is
+    # transient and self-correcting. A missing service profile means nobody
+    # registered one, which is an operator's job and never fixes itself. The profile
+    # lives in the coordinator's registry rather than on this host, so recreating the
+    # coordinator's volumes silently removes it. Reporting both as one failure is how
+    # a GPU stays absent from the mesh for days while the node looks healthy.
+    misconfigured: dict[str, str] = {}
     tei_schema_fingerprint = ""
     if "nano1-tei" in healthy:
         try:
@@ -246,7 +254,10 @@ def publish_once(client: McpClient, state: PublisherState,
                 raise RuntimeError("registered TEI schema fingerprint is invalid")
         except Exception as error:
             healthy.pop("nano1-tei")
-            failures["nano1-tei"] = str(error)
+            misconfigured["nano1-tei"] = (
+                "the TEI gate passed but its service profile is unusable, so the "
+                "processor is withheld until an operator registers it: " + str(error)
+            )
 
     node_seq = state.next("nodeSeq")
     heartbeat_seq = state.next("heartbeatSeq")
@@ -328,6 +339,7 @@ def publish_once(client: McpClient, state: PublisherState,
     client.call("mesh-sweep", {})
     snapshot = client.call("mesh-snapshot", {})
     return {"renewed": renewed, "notRenewed": failures,
+            "misconfigured": misconfigured,
             "snapshot": snapshot.get("snapshot", {})}
 
 

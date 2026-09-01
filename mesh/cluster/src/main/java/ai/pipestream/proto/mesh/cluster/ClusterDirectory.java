@@ -248,12 +248,16 @@ public final class ClusterDirectory {
             }
             nodeCapacity.remove(nodeId);
         }
+        boolean refresh = !newEpoch && refreshOnly(existing, advertisement);
         nodes.put(nodeId, advertisement);
         nodePositions.put(nodeId, new Position(advertisement.getEpoch(),
                 advertisement.getSeq()));
         presence.put(nodeId, newEpoch
                 ? initialPresence(advertisement)
                 : mergePresence(presence.get(nodeId), advertisement));
+        if (refresh) {
+            return ApplyOutcome.UPDATED;
+        }
         emit(ClusterEventType.CLUSTER_EVENT_TYPE_NODE_REGISTERED, nodeId, "",
                 b -> b.setNode(advertisement));
         return ApplyOutcome.UPDATED;
@@ -345,9 +349,13 @@ public final class ClusterDirectory {
                 || existing.getLeaseEpoch() != advertisement.getLeaseEpoch()) {
             processorCapacity.remove(capacityKey(existing.getNodeId(), processorId));
         }
+        boolean refresh = refreshOnly(existing, advertisement);
         processors.put(processorId, advertisement);
         processorPositions.put(processorId, new Position(advertisement.getLeaseEpoch(),
                 advertisement.getSeq()));
+        if (refresh) {
+            return ApplyOutcome.UPDATED;
+        }
         emit(ClusterEventType.CLUSTER_EVENT_TYPE_PROCESSOR_REGISTERED,
                 advertisement.getNodeId(), processorId, b -> b.setProcessor(advertisement));
         return ApplyOutcome.UPDATED;
@@ -401,7 +409,11 @@ public final class ClusterDirectory {
         requireFresher(snapshot.getSourceEpoch(), snapshot.getSeq(),
                 existing.getSourceEpoch(), existing.getSeq(),
                 "capacity for node '" + nodeId + "'");
+        boolean refresh = refreshOnly(existing, snapshot);
         map.put(key, snapshot);
+        if (refresh) {
+            return ApplyOutcome.UPDATED;
+        }
         emit(ClusterEventType.CLUSTER_EVENT_TYPE_CAPACITY_UPDATED, nodeId,
                 snapshot.getProcessorId(), b -> b.setCapacity(snapshot));
         return ApplyOutcome.UPDATED;
@@ -556,6 +568,40 @@ public final class ClusterDirectory {
     }
 
     /**
+     * True when a fresh advertisement differs from the registered one only in the fields a
+     * lease refresh moves. The test copies those fields across and asks for equality, so any
+     * field added later is treated as identity by default: a genuine change stays durable
+     * unless someone deliberately classifies it as a refresh.
+     */
+    private static boolean refreshOnly(NodeAdvertisement existing, NodeAdvertisement fresh) {
+        return existing.toBuilder()
+                .setAdvertisedAt(fresh.getAdvertisedAt())
+                .setTtl(fresh.getTtl())
+                .setSeq(fresh.getSeq())
+                .build()
+                .equals(fresh);
+    }
+
+    private static boolean refreshOnly(ProcessorAdvertisement existing,
+                                       ProcessorAdvertisement fresh) {
+        return existing.toBuilder()
+                .setAdvertisedAt(fresh.getAdvertisedAt())
+                .setLeaseExpiresAt(fresh.getLeaseExpiresAt())
+                .setSeq(fresh.getSeq())
+                .build()
+                .equals(fresh);
+    }
+
+    private static boolean refreshOnly(CapacityAdvertisement existing,
+                                       CapacityAdvertisement fresh) {
+        return existing.toBuilder()
+                .setObservedAt(fresh.getObservedAt())
+                .setSeq(fresh.getSeq())
+                .build()
+                .equals(fresh);
+    }
+
+    /**
      * Copies the directory, sharing nothing a later mutation could reach. Every value held
      * is an immutable message or record, so copying the maps is a true copy. This is how a
      * presence update produces a directory to install without replaying the event log: an
@@ -578,20 +624,21 @@ public final class ClusterDirectory {
     }
 
     /**
-     * Carries live presence onto a directory rebuilt from the durable record. Presence emits
-     * no events, so a replayed directory knows only what registration armed and what the
-     * last fold captured; without this, every durable mutation would silently roll the
-     * cluster's liveness back to that and sweep nodes that are heartbeating fine.
+     * Carries live soft state onto a directory rebuilt from the durable record. Presence
+     * emits no events at all, and a lease refresh emits none either, so a replayed directory
+     * knows only what the last durable change recorded. Without this, every durable mutation
+     * would roll liveness and lease windows back to that and sweep identities that are
+     * renewing normally.
      *
-     * <p>A record is adopted only when the rebuilt directory still registers the node at the
-     * same epoch. That is the same fence heartbeats pass, applied at the same place: presence
-     * belonging to an incarnation the durable record has superseded, or to a node it no
-     * longer carries, is dropped rather than carried forward. A rebuilt record that somehow
-     * sits ahead of the live one wins, because the durable record is the older authority.
+     * <p>A record is carried only when the rebuilt directory still holds the same identity at
+     * the same epoch, and only when the live record differs from the rebuilt one by nothing
+     * more than a refresh. That is the same fence the apply paths use, applied at the same
+     * place: anything the durable record has superseded, or that differs in substance, is
+     * left alone and the durable record wins.
      *
-     * @param source the installed directory whose presence to carry forward
+     * @param source the installed directory whose soft state to carry forward
      */
-    void adoptPresence(ClusterDirectory source) {
+    void adoptSoftState(ClusterDirectory source) {
         source.presence.forEach((nodeId, record) -> {
             NodeAdvertisement node = nodes.get(nodeId);
             if (node == null || record.getNodeEpoch() != node.getEpoch()) {
@@ -601,6 +648,39 @@ public final class ClusterDirectory {
             if (rebuilt == null || record.getHeartbeatSeq() >= rebuilt.getHeartbeatSeq()) {
                 presence.put(nodeId, record);
             }
+        });
+        source.nodes.forEach((nodeId, live) -> {
+            NodeAdvertisement rebuilt = nodes.get(nodeId);
+            if (rebuilt == null || live.getEpoch() != rebuilt.getEpoch()
+                    || live.getSeq() < rebuilt.getSeq() || !refreshOnly(rebuilt, live)) {
+                return;
+            }
+            nodes.put(nodeId, live);
+            nodePositions.put(nodeId, new Position(live.getEpoch(), live.getSeq()));
+        });
+        source.processors.forEach((processorId, live) -> {
+            ProcessorAdvertisement rebuilt = processors.get(processorId);
+            if (rebuilt == null || live.getLeaseEpoch() != rebuilt.getLeaseEpoch()
+                    || live.getSeq() < rebuilt.getSeq() || !refreshOnly(rebuilt, live)) {
+                return;
+            }
+            processors.put(processorId, live);
+            processorPositions.put(processorId,
+                    new Position(live.getLeaseEpoch(), live.getSeq()));
+        });
+        adoptCapacity(source.nodeCapacity, nodeCapacity);
+        adoptCapacity(source.processorCapacity, processorCapacity);
+    }
+
+    private static void adoptCapacity(Map<String, CapacityAdvertisement> source,
+                                      Map<String, CapacityAdvertisement> target) {
+        source.forEach((key, live) -> {
+            CapacityAdvertisement rebuilt = target.get(key);
+            if (rebuilt == null || live.getSourceEpoch() != rebuilt.getSourceEpoch()
+                    || live.getSeq() < rebuilt.getSeq() || !refreshOnly(rebuilt, live)) {
+                return;
+            }
+            target.put(key, live);
         });
     }
 
