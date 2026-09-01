@@ -52,7 +52,7 @@ class PlatformRoleNodeIT {
     static final String API_KEY = "platform-role-node-key";
 
     @Container
-    static final PostgreSQLContainer REPO_DB = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer REPO_DB = new PostgreSQLContainer("postgres:18-alpine");
 
     @Container
     static final LocalStackContainer LOCALSTACK =

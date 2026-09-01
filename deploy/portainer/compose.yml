@@ -140,7 +140,7 @@ services:
     restart: "no"
 
   repo-postgres:
-    image: postgres:17.11-alpine
+    image: postgres:18.6-alpine
     container_name: protomolt-repo-postgres
     environment:
       POSTGRES_USER: ${PROTOMOLT_REPO_DB_USER:-documents}
@@ -210,7 +210,7 @@ services:
     # client matches the server. The role password rides PGPASSWORD, never
     # argv. Covered by test/jobs-init-test.sh, which runs this exact script
     # with a fake psql and is part of scripts/check-deployment-statics.sh.
-    image: postgres:17.11-alpine
+    image: postgres:18.6-alpine
     depends_on:
       repo-postgres:
         condition: service_healthy

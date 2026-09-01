@@ -50,10 +50,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SolrLiveIntegrationTest {
 
-    // The module has no no-arg constructor and no default tag; solr:9 matches the version
+    // The module has no no-arg constructor and no default tag; solr:10 matches the version
     // the compose lane pins (DenseVectorField and the knn parser need the 9.x line).
     @Container
-    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:9"))
+    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:10"))
             .withCollection("protomolt");
 
     private static final ObjectMapper JSON = new ObjectMapper();
