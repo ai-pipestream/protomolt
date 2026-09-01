@@ -8,6 +8,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -131,6 +134,87 @@ class AgentHostAcceptanceTest {
             assertThat(worker.state().cursor()).isZero();
             assertThat(worker.state().pending()).isNull();
         }
+    }
+
+    @Test
+    void acceptingWithoutSubmittingSaysSoInsteadOfGoingQuiet() throws Exception {
+        // The failure this reproduces was found in production: a worker accepted a task,
+        // returned nothing else, and both sides then waited. The coordinator waited for a
+        // candidate; the worker waited for a coordinator frame that only the coordinator
+        // could send. It logged nothing at all for ten minutes, and the only visible trace
+        // was the lease expiring with no reason attached.
+        Path workspace = Files.createDirectory(temporary.resolve("unfinished-workspace"));
+        Path workerState = temporary.resolve("unfinished-state/kimi.json");
+        PrintStream originalErr = System.err;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0));
+             AgentHost worker = host(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     AgentRole.WORKER, WORKER, "kimi", workerState, workspace,
+                     new AcceptThenProgressProvider("kimi-unfinished"));
+             McpHttpClient coordinator = new McpHttpClient(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     () -> null)) {
+            worker.connect();
+            ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+            spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+            coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                    .put("workerId", WORKER).put("taskId", TASK)
+                    .put("leaseSeconds", 300).set("spec", spec));
+
+            System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            try {
+                worker.pollOnce();
+            } finally {
+                System.setErr(originalErr);
+            }
+        }
+
+        String reported = captured.toString(StandardCharsets.UTF_8);
+        // Naming the task and the commands is the whole point: the operator has to be able
+        // to tell this apart from a worker that is still thinking.
+        assertThat(reported).contains(TASK);
+        assertThat(reported).contains("submitted no candidate");
+        assertThat(reported).contains("delegation-accept");
+        assertThat(reported).contains("lease will expire unworked");
+    }
+
+    @Test
+    void aTurnThatFinishesItsWorkReportsNothing() throws Exception {
+        // The guard above is only useful if it stays quiet on a healthy turn. A warning that
+        // fires on every exchange is one nobody reads, which is how the original silence
+        // would come back wearing a different hat.
+        Path workspace = Files.createDirectory(temporary.resolve("finished-workspace"));
+        Path workerState = temporary.resolve("finished-state/kimi.json");
+        PrintStream originalErr = System.err;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0));
+             AgentHost worker = host(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     AgentRole.WORKER, WORKER, "kimi", workerState, workspace,
+                     new AcceptAndSubmitProvider());
+             McpHttpClient coordinator = new McpHttpClient(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     () -> null)) {
+            worker.connect();
+            ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+            spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+            coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                    .put("workerId", WORKER).put("taskId", TASK)
+                    .put("leaseSeconds", 300).set("spec", spec));
+
+            System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            try {
+                worker.pollOnce();
+            } finally {
+                System.setErr(originalErr);
+            }
+        }
+
+        assertThat(captured.toString(StandardCharsets.UTF_8))
+                .doesNotContain("submitted no candidate");
     }
 
     @Test
@@ -699,6 +783,54 @@ class AgentHostAcceptanceTest {
             } catch (Exception e) {
                 throw new AgentHostException(
                         "guidance-then-ack provider could not read packet", e);
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /** Accepts and submits a candidate in one turn, which is what a healthy worker does. */
+    private static final class AcceptAndSubmitProvider implements AgentProvider {
+        @Override
+        public String name() {
+            return "kimi";
+        }
+
+        @Override
+        public String sessionId() {
+            return "kimi-finished";
+        }
+
+        @Override
+        public String prompt(String value) {
+            try {
+                ObjectNode packet = (ObjectNode) MAPPER.readTree(
+                        value.substring(value.lastIndexOf("Packet:\n") + 8));
+                StringBuilder cursors = new StringBuilder();
+                for (JsonNode event : packet.path("events")) {
+                    if (cursors.length() > 0) {
+                        cursors.append(',');
+                    }
+                    cursors.append(event.path("cursor").asLong());
+                }
+                return "{\"handledEventCursors\":[" + cursors + "],\"commands\":["
+                        + "{\"tool\":\"delegation-accept\",\"arguments\":{"
+                        + "\"taskId\":\"" + TASK + "\",\"attempt\":1}},"
+                        + "{\"tool\":\"delegation-candidate\",\"arguments\":{"
+                        + "\"taskId\":\"" + TASK + "\",\"candidate\":{"
+                        + "\"attempt\":1,\"revision\":1,\"summary\":\"done\","
+                        + "\"evidence\":[{\"checkName\":\"unit-tests\","
+                        + "\"verdict\":\"CHECK_VERDICT_PASSED\","
+                        + "\"ranAt\":\"2026-09-01T00:00:00Z\","
+                        + "\"detail\":\"the suite passed\"}],"
+                        + "\"commits\":[{\"repository\":\"example/repo\","
+                        + "\"commit\":\"" + "a".repeat(40) + "\","
+                        + "\"subject\":\"the change\"}]}}}]}";
+            } catch (Exception e) {
+                throw new AgentHostException(
+                        "accept-and-submit provider could not read packet", e);
             }
         }
 
