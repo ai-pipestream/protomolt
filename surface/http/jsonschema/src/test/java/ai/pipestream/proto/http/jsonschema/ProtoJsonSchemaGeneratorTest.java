@@ -1,18 +1,17 @@
 package ai.pipestream.proto.http.jsonschema;
 
 import ai.pipestream.proto.http.jsonschema.testdata.Account;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Struct;
 import com.google.protobuf.util.JsonFormat;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersion;
-import com.networknt.schema.ValidationMessage;
+import com.networknt.schema.Error;
+import com.networknt.schema.InputFormat;
+import com.networknt.schema.Schema;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SpecificationVersion;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -166,13 +165,12 @@ class ProtoJsonSchemaGeneratorTest {
     }
 
     /** Validates the canonical JsonFormat printing of {@code account} against the schema. */
-    private static Set<ValidationMessage> validate(Account account) throws Exception {
-        ObjectMapper json = new ObjectMapper();
+    private static List<Error> validate(Account account) throws Exception {
         String schemaJson = ProtoJsonSchemaGenerator.create().generateJson(Account.getDescriptor());
-        JsonSchema jsonSchema = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012)
-                .getSchema(json.readTree(schemaJson));
+        Schema schema = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12)
+                .getSchema(schemaJson);
         String document = JsonFormat.printer().print(account);
-        return jsonSchema.validate(json.readTree(document));
+        return schema.validate(document, InputFormat.JSON);
     }
 
     @Test
