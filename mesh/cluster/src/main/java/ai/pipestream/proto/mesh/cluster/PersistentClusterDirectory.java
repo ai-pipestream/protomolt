@@ -204,6 +204,13 @@ public final class PersistentClusterDirectory {
      * repository. The candidate is copied rather than replayed: there is nothing to persist,
      * so there is nothing to rebuild from, and copying keeps the rule that an installed
      * directory is never mutated, which is what lets readers run without a lock.
+     *
+     * <p>This still takes {@link #writeLock}, so a heartbeat can wait behind one durable
+     * mutation and its repository round trip. That is bounded by the repository deadline and
+     * is strictly better than what it replaced, where the heartbeat was itself that round
+     * trip. Serializing here is what keeps the carry-over in {@link #mutate} exact: a
+     * heartbeat cannot land between a rebuild reading live presence and the install that
+     * replaces it, so none is ever silently dropped.
      */
     private ClusterDirectory.ApplyOutcome soften(
             Function<ClusterDirectory, ClusterDirectory.ApplyOutcome> operation) {
