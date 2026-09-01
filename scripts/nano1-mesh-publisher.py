@@ -370,6 +370,10 @@ def main() -> int:
             print(json.dumps({
                 "renewed": result["renewed"],
                 "notRenewed": result["notRenewed"],
+                # Printed even when empty. This is the field an operator has to see,
+                # and a key that appears only on failure is a key nobody knows to look
+                # for. Separating it from notRenewed is pointless if it never prints.
+                "misconfigured": result["misconfigured"],
                 "snapshotSeq": result["snapshot"].get("snapshotSeq"),
                 "snapshotFingerprint": result["snapshot"].get("fingerprint"),
             }, sort_keys=True), flush=True)
