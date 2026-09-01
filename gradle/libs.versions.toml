@@ -38,10 +38,11 @@ spring = "7.0.9"
 spring-boot = "4.1.1"
 vertx = "5.1.6"
 netty = "4.2.17.Final"
-# Micronaut 4.x is the JDK 21-compatible line (5.x requires JVM 25+)
+# Micronaut 4.x is the JDK 21-compatible line. 5.x publishes Gradle module metadata
+# declaring org.gradle.jvm.version=25, so against this project's options.release=21 it
 micronaut = "4.10.26"
 protobuf-gradle = "0.10.0"
-wire = "5.5.1"
+wire = "6.4.7"
 jgit = "7.7.1.202607240634-r"
 parquet = "1.18.0"
 hadoop = "3.5.0"
@@ -57,7 +58,7 @@ hibernate = "7.4.7.Final"
 hikari = "7.1.0"
 flyway = "13.4.0"
 postgresql = "42.7.13"
-jedis = "7.5.3"
+jedis = "8.0.1"
 
 [libraries]
 grpc-api = { module = "io.grpc:grpc-api", version.ref = "grpc" }

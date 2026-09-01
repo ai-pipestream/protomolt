@@ -68,7 +68,7 @@ class S3PullIT {
     static final String SOURCE_BUCKET = "pull-source";
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     @Container
     static final LocalStackContainer LOCALSTACK =

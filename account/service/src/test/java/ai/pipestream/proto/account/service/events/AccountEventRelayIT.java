@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AccountEventRelayIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     static AccountDatabase database;
     static JdbcAccountEventOutbox outbox;

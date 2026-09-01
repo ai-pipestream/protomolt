@@ -56,7 +56,7 @@ class PlatformSnapshotIT {
     static final String SNAPSHOT_BUCKET = "search-snapshots";
 
     @Container
-    static final PostgreSQLContainer REPO_DB = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer REPO_DB = new PostgreSQLContainer("postgres:18-alpine");
 
     @Container
     static final LocalStackContainer LOCALSTACK =
