@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -201,7 +202,51 @@ final class AgentHost implements AutoCloseable {
                 targetCursor, relevantCursors, turn.commands(), 0, false));
         states.save(state);
         executePending();
+        reportUnfinishedWork(turn);
         return true;
+    }
+
+    /**
+     * Reports work this turn took on without finishing. A worker turn runs only when the
+     * coordinator sends a frame, and its own frames are filtered out, so a turn that accepts
+     * a task and submits no candidate for it leaves the task where nothing can move it: the
+     * coordinator waits for the worker and the worker waits for an event that will not
+     * arrive unless the coordinator sends one for another reason. Left unreported that is a
+     * task which simply stops, indistinguishable from one still being worked on, until the
+     * lease expires minutes later with no explanation.
+     *
+     * <p>This is a report, not a refusal. Accepting now and finishing on a later frame is
+     * legitimate when the coordinator has more to say, so the host cannot know the task is
+     * doomed and does not pretend to. It states what the model returned and what follows
+     * from it, which is the part nobody could see before.
+     */
+    private void reportUnfinishedWork(AgentTurn turn) {
+        if (config.role() != AgentRole.WORKER) {
+            return;
+        }
+        Set<String> accepted = new LinkedHashSet<>();
+        Set<String> submitted = new HashSet<>();
+        List<String> tools = new ArrayList<>();
+        for (AgentTurn.Command command : turn.commands()) {
+            tools.add(command.tool());
+            String taskId = command.arguments().path("taskId").asText("");
+            if (taskId.isEmpty()) {
+                continue;
+            }
+            if (ACCEPT_TOOL.equals(command.tool())) {
+                accepted.add(taskId);
+            } else if (CANDIDATE_TOOL.equals(command.tool())) {
+                submitted.add(taskId);
+            }
+        }
+        accepted.removeAll(submitted);
+        for (String taskId : accepted) {
+            System.err.println("agent-host: accepted task " + taskId
+                    + " and submitted no candidate for it. This turn returned ["
+                    + String.join(", ", tools) + "]. A worker turn runs only on a"
+                    + " coordinator frame, so unless the coordinator sends another one this"
+                    + " task will not progress and its lease will expire unworked.");
+        }
     }
 
     /** Runs until closed, keeping long waits and model turns on one virtual thread. */
@@ -406,6 +451,11 @@ final class AgentHost implements AutoCloseable {
                 + "task's completion candidate. Use "
                 + "exactly these field names and no others.";
     }
+
+    /** The worker command that takes on a task. */
+    private static final String ACCEPT_TOOL = "delegation-accept";
+    /** The worker command that submits finished work for review. */
+    private static final String CANDIDATE_TOOL = "delegation-candidate";
 
     private boolean isRelevant(JsonNode event) {
         if (config.role() == AgentRole.WORKER

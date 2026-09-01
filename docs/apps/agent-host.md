@@ -157,4 +157,32 @@ command. There is still a narrow ambiguity if a remote mutation succeeds and
 the machine fails before its local command position is saved. Caller-supplied
 idempotency keys on MCP mutation tools are needed to close that final gap.
 
+## A turn that accepts without submitting
+
+A worker turn runs only when the coordinator sends a frame, and the host filters
+out the worker's own frames. So a turn that accepts a task and submits no
+candidate for it leaves that task where nothing can move it: the coordinator is
+waiting for the worker, and the worker is waiting for an event that will not
+arrive unless the coordinator sends one for some other reason. The task sits
+until its lease expires, which can be many minutes later and carries no
+explanation.
+
+The host reports that as it happens, naming the task and the commands the turn
+actually returned:
+
+```
+agent-host: accepted task <id> and submitted no candidate for it. This turn
+returned [delegation-accept]. A worker turn runs only on a coordinator frame, so
+unless the coordinator sends another one this task will not progress and its
+lease will expire unworked.
+```
+
+It is a report rather than a refusal. Accepting now and finishing on a later
+frame is legitimate when the coordinator has more to say, so the host does not
+pretend to know the task is doomed. What it removes is the case where a stalled
+task and a task still being worked on look identical from outside.
+
+A model that reliably returns only an accept is not a host fault, and this
+message is how you tell that apart from a slow one.
+
 Use `--once` to connect, perform one poll, and exit for deployment smoke tests.
