@@ -156,9 +156,12 @@ mesh: service-register {
 ```
 
 Confirm it took with `service-list`, which must name `nano1-tei`, and then with
-the publisher's own log, where `notRenewed` must be empty and `renewed` must
-name both processors. An empty `service-list` after a coordinator rebuild is
-the signal that this step is owed again.
+the publisher's own log, where `misconfigured` must be empty and `renewed` must
+name both processors. A missing or unusable profile is reported under
+`misconfigured`, not `notRenewed`: `notRenewed` holds failed hardware gates,
+which fix themselves, and stays empty while the GPU is withheld for want of a
+profile. An empty `service-list` after a coordinator rebuild is the signal that
+this step is owed again.
 
 Place `PROTOMOLT_MCP_TOKEN` in a root-readable or runner-readable environment
 file outside the repository, then run the publisher as the existing

@@ -50,7 +50,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # The stack file is read from this checkout, and the lane promises it comes from
+      # the tagged tree. On a tag push that is the default ref. On a dispatch the default
+      # would be the branch the workflow file lives on, so a rollback to 0.1.0 would
+      # apply main's compose to 0.1.0's images; name the tag explicitly instead.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/v{0}', inputs.version) || github.ref }}
 
       - name: Check the tools and the token this lane needs
         env:
