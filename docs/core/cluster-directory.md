@@ -26,7 +26,7 @@ node heartbeats steadily the write path was almost always holding it. A read can
 observe the state from just before a concurrent commit, which is inherent to
 any snapshot of a live directory and is what `snapshot_seq` reports.
 
-## Presence is soft state
+## Renewal is soft state
 
 A heartbeat restates a fact the node regenerates every few seconds and that
 expires on its own. Persisting it buys nothing a restart could not rebuild by
@@ -49,12 +49,31 @@ which is usually expired, so nodes are swept and re-register. That is the
 recovery the fleet already performed whenever a restart outran a TTL, now on a
 predictable trigger rather than an accidental one.
 
+The same reasoning covers a lease renewal. A publisher re-sends its node,
+processor, and capacity records every few seconds with nothing changed but the
+timestamps and the sequence, and each of those was a durable event, which is
+where the log's growth actually came from once heartbeats stopped writing. An
+advertisement that differs from the registered one by nothing more than its
+refresh fields now updates the lease window without recording anything. The
+test for that copies the refresh fields across and asks for equality, so a
+field added later counts as identity by default and a genuine change stays
+durable unless someone deliberately reclassifies it.
+
+Two consequences follow the same shape as presence. A refreshed lease that was
+never recorded does not survive a restart, so the identity is swept and
+re-advertised, which is the recovery the fleet already performs. And the fencing
+position advances only in memory, so after a restart a delayed frame carrying a
+sequence between the last durable one and the live one can be admitted. That
+frame is by construction identical except for its refresh fields, so admitting
+it sets a slightly older lease window that the next renewal corrects.
+
 Because a durable mutation rebuilds its candidate by replaying the log, and the
-log has never seen a heartbeat, the live presence records are carried onto that
-candidate explicitly. Without it every unrelated mutation would roll liveness
+log has never seen a heartbeat or a renewal, the live records are carried onto
+that candidate explicitly. Without it every unrelated mutation would roll liveness
 back to what registration armed and sweep nodes that are heartbeating normally.
-A record is carried only when the rebuilt directory still registers the node at
-the same epoch, which is the same fence applied at the same place.
+A record is carried only when the rebuilt directory still holds the same identity
+at the same epoch and the live record differs by nothing more than a refresh,
+which is the same fence applied at the same place.
 
 ## Compaction
 
