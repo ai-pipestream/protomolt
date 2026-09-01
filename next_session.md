@@ -9,7 +9,7 @@ Delete an entry once it is done. An empty page means the handoff is clean.
 
 ## Where the tree and the fleet stand
 
-`main` is `dcb8582a` on both remotes. Forgejo is master; GitHub receives
+`main` is `b6850989` on both remotes. Forgejo is master; GitHub receives
 `sync/forgejo-main` pull requests and its `main` is protected by five required
 checks (`build (21)`, `build (25)`, `conformance`, `console`, `integration`).
 
@@ -19,45 +19,39 @@ checks (`build (21)`, `build (25)`, `conformance`, `console`, `integration`).
 | nano1 | mesh publisher, TEI | main, script `cc421cff` |
 | krick-1 | kimi and glimmer agent hosts | `dcb8582a` |
 
-The coordinator is one release behind the tree: `c0e3d23d` predates #205 and
-#206. Neither is server-side, so nothing is owed there until the next deploy.
+The coordinator still runs `c0e3d23d`, which now predates #205, #206, #207 and
+the sync merge. None of it is server-side, so nothing is owed there until the
+first tag deploy, which is what will move the pin off `edge` digests entirely.
 
 ## Start here
 
-### 1. Merge the open GitHub sync
+### Cut v0.1.0 and let the tag deploy
 
-Pull request #275 mirrors #205 and #206. It is a fast-forward and runs the same
-five checks that passed four times last session. Merge it, then fast-forward
-Forgejo `main` to the GitHub merge commit so the two match exactly, which is the
-established shape of every earlier sync.
+Everything this needs is in place and verified; what is left is the release
+itself, which is deliberately not automated because it publishes to Maven
+Central and that cannot be taken back.
 
-### 2. Make a tag deploy, so a script does not
+`.forgejo/workflows/deploy-nas.yml` runs on `v*` on a Forgejo LAN runner. It
+refuses to touch the stack until both images are published, redeploys stack 20
+from the tagged `compose.yml`, waits for `UP`, and then asks the Docker endpoint
+whether the container is really running the released image.
 
-This is the highest-leverage item and the one that repeatedly costs time. Three
-deploys last session all went through a hand-run script in a scratch directory,
-two of which needed a human because automation could not run them. Before that,
-the image pin sat two weeks stale because publishing only happens on manual
-dispatch. One cause, three symptoms.
+Before the first release, add the `PORTAINER_TOKEN` Forgejo secret the lane
+reads. Nothing else is owed. Then:
 
-The work: make publishing tag-only, add `.forgejo/workflows/deploy-nas.yml` on
-`v*`, and cut `v0.1.0`. `.github/workflows/docker-publish.yml` is already closer
-than it looks, carrying only `workflow_dispatch` and `workflow_call`; the `edge`
-branch trigger is gone.
+1. Dispatch **Release and Publish** on GitHub with the `patch` bump. With no
+   `v*` tag in either forge, axion's first release is `v0.1.0`.
+2. From the LAN, `git push origin v0.1.0`. That push is the deploy.
 
-**Settle this before writing the workflow.** Axion cuts tags on GitHub while
-Forgejo is master. If tags do not propagate to Forgejo, a `v*` workflow there
-never fires and the whole thing looks broken for a reason that has nothing to do
-with the workflow. Check propagation first.
-
-### 3. Retire the DJL stack still running on nano1
-
-`fabe0bfb` deleted the DJL/TensorRT stack from the tree on 2026-08-21. The
-container never stopped: `protomolt-djl-jetson` has been up for over two weeks,
-holding unified memory on an Orin that TEI now shares. Stop it, remove it, and
-confirm `nano1-tei` still renews afterwards.
-
-This is five minutes and it closes the loop on the outage below, since that dead
-processor is what made the mesh look populated while the GPU was absent from it.
+**The propagation question is settled, so do not re-derive it.** Axion cuts tags
+on GitHub. Forgejo is not a mirror in either direction — the API reports
+`mirror: false` with no push mirrors — so a tag pushed to GitHub never appears
+on Forgejo. A probe tag confirmed this directly. The deploy cannot simply move
+to GitHub either: Portainer and Forgejo both answer on `192.168.1.211`, a
+private address a GitHub-hosted runner cannot reach, and the only GitHub
+self-hosted runner is nano1, an ARM64 Jetson. Forgejo's `nas-1` and `nas-2`
+runners are on the NAS, which is why the deploy lives there and why one manual
+`git push origin v<semver>` is the bridge.
 
 ## Traps, each of which cost time last session
 
@@ -68,9 +62,10 @@ coordinator rebuild means the registration is owed again. See
 [deploy/nano1/README.md](deploy/nano1/README.md) for the exact call.
 
 **nano1 runs a hand-installed publisher.** `/opt/protomolt-mesh/scripts/` is a
-copy, not a checkout, so the tree moving does not move it. It was seventeen days
-stale and advertising a processor whose stack had been deleted. Compare
-`sha256sum` against the repo before believing anything about that host.
+copy, not a checkout, so the tree moving does not move it. It is currently in
+sync — the host and repo both hash `cc421cff` — but it was seventeen days stale
+once and will drift again. Compare `sha256sum` against the repo before believing
+anything about that host.
 
 **krick-1 needs its environment spelled out.** A `BatchMode` ssh has no
 `JAVA_HOME`; the JDK is at `/home/krickert/.sdkman/candidates/java/current`. The
