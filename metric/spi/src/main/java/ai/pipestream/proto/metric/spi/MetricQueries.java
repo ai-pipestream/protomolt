@@ -208,12 +208,13 @@ public final class MetricQueries {
         for (String name : engineMeasureNames) {
             MetricMember member = mapping.members().get(name);
             if (!capabilities.aggregates().contains(member.aggregate())) {
+                List<String> legal =
+                        capabilities.aggregates().stream().map(Enum::name).sorted().toList();
                 throw new MetricRefusal(MetricRefusal.UNSUPPORTED_AGGREGATE,
                         "aggregate " + member.aggregate() + " of measure '" + name
                                 + "' is not supported by the " + backend + " executor; supported: "
-                                + capabilities.aggregates().stream().map(Enum::name).sorted()
-                                        .toList(),
-                        capabilities.aggregates().stream().map(Enum::name).sorted().toList());
+                                + legal,
+                        legal);
             }
             if (!member.rowFilters().isEmpty() && !capabilities.measureRowFilters()) {
                 throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,

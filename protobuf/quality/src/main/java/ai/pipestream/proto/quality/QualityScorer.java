@@ -111,16 +111,15 @@ public final class QualityScorer {
 
     /** Numbers coerce to double, bools to 1/0, everything else is a failed measurement. */
     private static Double asScore(Object result) {
-        double value;
-        if (result instanceof Boolean b) {
-            value = b ? 1 : 0;
-        } else if (result instanceof UnsignedLong u) {
-            value = u.doubleValue();
-        } else if (result instanceof Number n) {
-            value = n.doubleValue();
-        } else {
-            return null;
-        }
+        // UnsignedLong must precede Number: it extends Number, and only its own
+        // doubleValue() reads the bits unsigned. A null or non-numeric result rides
+        // out on NaN, which the check below already turns into a failed measurement.
+        double value = switch (result) {
+            case Boolean b -> b ? 1 : 0;
+            case UnsignedLong u -> u.doubleValue();
+            case Number n -> n.doubleValue();
+            case null, default -> Double.NaN;
+        };
         if (Double.isNaN(value)) {
             return null;
         }

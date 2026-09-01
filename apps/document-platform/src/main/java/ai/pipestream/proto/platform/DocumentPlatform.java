@@ -197,7 +197,7 @@ public final class DocumentPlatform implements AutoCloseable {
             LOG.info("JDBC caller store mounted");
         }
         this.callerResolver = resolverChain.isEmpty() ? null
-                : resolverChain.size() == 1 ? resolverChain.get(0)
+                : resolverChain.size() == 1 ? resolverChain.getFirst()
                         : CallerResolver.chain(resolverChain);
         Composer.Builder composer = Composer.emptyBuilder()
                 .environment(config.environment())
@@ -522,12 +522,11 @@ public final class DocumentPlatform implements AutoCloseable {
                 // truth from the first plan, ahead of the environment's
                 // boot rules.
                 distributedConfig.refresh();
+                // Stays a single platform thread: the delay schedule is the backpressure,
+                // and serialising refreshes keeps two config pulls from overlapping.
                 this.configRefresher = java.util.concurrent.Executors
-                        .newSingleThreadScheduledExecutor(runnable -> {
-                            Thread thread = new Thread(runnable, "platform-config-refresh");
-                            thread.setDaemon(true);
-                            return thread;
-                        });
+                        .newSingleThreadScheduledExecutor(Thread.ofPlatform()
+                                .name("platform-config-refresh").daemon().factory());
                 configRefresher.scheduleWithFixedDelay(distributedConfig::refresh,
                         configRefreshSeconds, configRefreshSeconds,
                         java.util.concurrent.TimeUnit.SECONDS);

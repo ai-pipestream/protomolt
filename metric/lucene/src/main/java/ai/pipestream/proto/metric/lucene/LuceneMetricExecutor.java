@@ -429,41 +429,45 @@ public final class LuceneMetricExecutor implements MetricExecutor {
                 throws IOException {
             this.measure = measure;
             this.budget = budget;
-            if (measure.aggregate() == Aggregate.AGGREGATE_COUNT) {
-                this.values = null;
-                this.distinctTerms = null;
-                this.floatEncoded = false;
-                this.doubleEncoded = false;
-            } else if (measure.aggregate() == Aggregate.AGGREGATE_COUNT_DISTINCT) {
-                // Distinct runs over keyword terms or raw numeric values.
-                // Raw is enough for numerics: the sortable encodings are
-                // bijective, so cardinality is identical undecoded.
-                requireDocValues(leafReader, measure.fieldName(),
-                        DocValuesType.SORTED_SET, DocValuesType.SORTED,
-                        DocValuesType.SORTED_NUMERIC, DocValuesType.NUMERIC);
-                var info = leafReader.getFieldInfos().fieldInfo(measure.fieldName());
-                boolean keyword = info != null
-                        && (info.getDocValuesType() == DocValuesType.SORTED_SET
-                                || info.getDocValuesType() == DocValuesType.SORTED);
-                this.distinctTerms = keyword
-                        ? DocValues.getSortedSet(leafReader, measure.fieldName())
-                        : null;
-                this.values = keyword || info == null
-                        ? null
-                        : DocValues.getSortedNumeric(leafReader, measure.fieldName());
-                this.floatEncoded = false;
-                this.doubleEncoded = false;
-            } else {
-                requireDocValues(leafReader, measure.fieldName(),
-                        DocValuesType.SORTED_NUMERIC, DocValuesType.NUMERIC);
-                this.values = DocValues.getSortedNumeric(leafReader, measure.fieldName());
-                this.distinctTerms = null;
-                ResolvedFieldHint hint = hints.get(measure.fieldName());
-                String kind = hint == null ? "" : hint.type().name();
-                // The mapper writes FLOAT and DOUBLE facetable doc values in
-                // their sortable encoding; raw ints and dates stay raw.
-                this.floatEncoded = kind.endsWith("FLOAT");
-                this.doubleEncoded = kind.endsWith("DOUBLE");
+            switch (measure.aggregate()) {
+                case AGGREGATE_COUNT -> {
+                    this.values = null;
+                    this.distinctTerms = null;
+                    this.floatEncoded = false;
+                    this.doubleEncoded = false;
+                }
+                case AGGREGATE_COUNT_DISTINCT -> {
+                    // Distinct runs over keyword terms or raw numeric values.
+                    // Raw is enough for numerics: the sortable encodings are
+                    // bijective, so cardinality is identical undecoded.
+                    requireDocValues(leafReader, measure.fieldName(),
+                            DocValuesType.SORTED_SET, DocValuesType.SORTED,
+                            DocValuesType.SORTED_NUMERIC, DocValuesType.NUMERIC);
+                    var info = leafReader.getFieldInfos().fieldInfo(measure.fieldName());
+                    boolean keyword = info != null
+                            && (info.getDocValuesType() == DocValuesType.SORTED_SET
+                                    || info.getDocValuesType() == DocValuesType.SORTED);
+                    this.distinctTerms = keyword
+                            ? DocValues.getSortedSet(leafReader, measure.fieldName())
+                            : null;
+                    this.values = keyword || info == null
+                            ? null
+                            : DocValues.getSortedNumeric(leafReader, measure.fieldName());
+                    this.floatEncoded = false;
+                    this.doubleEncoded = false;
+                }
+                default -> {
+                    requireDocValues(leafReader, measure.fieldName(),
+                            DocValuesType.SORTED_NUMERIC, DocValuesType.NUMERIC);
+                    this.values = DocValues.getSortedNumeric(leafReader, measure.fieldName());
+                    this.distinctTerms = null;
+                    ResolvedFieldHint hint = hints.get(measure.fieldName());
+                    String kind = hint == null ? "" : hint.type().name();
+                    // The mapper writes FLOAT and DOUBLE facetable doc values in
+                    // their sortable encoding; raw ints and dates stay raw.
+                    this.floatEncoded = kind.endsWith("FLOAT");
+                    this.doubleEncoded = kind.endsWith("DOUBLE");
+                }
             }
             for (EqualsFilter filter : measure.rowFilters()) {
                 rowFilters.add(new RowFilterCursor(leafReader, filter));

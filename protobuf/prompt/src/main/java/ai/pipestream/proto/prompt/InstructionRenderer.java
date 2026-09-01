@@ -125,7 +125,7 @@ final class InstructionRenderer {
             out.append("   Requirements: none beyond the type.\n");
         } else {
             if (required) {
-                requirements.add(0, "must be present and non-empty");
+                requirements.addFirst("must be present and non-empty");
             }
             appendBullets(out, "   Requirements:", requirements, "   ");
         }
