@@ -129,6 +129,14 @@ public final class ClusterActions {
         }
     }
 
+    /**
+     * Extends a node's liveness. Presence is soft state, so this verb writes nothing durable
+     * and its reply carries the {@code snapshot_seq} the directory already stood at: an
+     * accepted heartbeat does not advance the sequence, because no event was recorded.
+     * {@code outcome} is what reports whether the heartbeat landed. A caller that watches
+     * {@code snapshot_seq} is watching for durable membership change, which is what it now
+     * means and is what a heartbeat by definition is not.
+     */
     private static final class Heartbeat extends ClusterAction {
         Heartbeat(PersistentClusterDirectory directory) {
             super(directory);

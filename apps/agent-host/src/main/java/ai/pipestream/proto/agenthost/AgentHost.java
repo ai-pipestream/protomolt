@@ -27,8 +27,14 @@ final class AgentHost implements AutoCloseable {
             "accept", "reject", "progress", "checkpoint", "blocked", "failed",
             "cancelled", "completion", "taskMessage");
 
+    /**
+     * @param resetOnTranscriptLoss whether a coordinator that no longer knows this worker
+     *     may be rejoined by discarding the local transcript position. Off by default:
+     *     resuming against a transcript that is gone would invent continuity. On, it is the
+     *     operator stating that the loss is real, which is what a rebuilt coordinator means.
+     */
     record Config(AgentRole role, String identity, String model, Path workspace,
-                  Duration pollTimeout, int maxEvents) {
+                  Duration pollTimeout, int maxEvents, boolean resetOnTranscriptLoss) {
         Config {
             if (role == null || identity == null
                     || !identity.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -38,6 +44,12 @@ final class AgentHost implements AutoCloseable {
                     || maxEvents < 1 || maxEvents > 256) {
                 throw new IllegalArgumentException("invalid agent host configuration");
             }
+        }
+
+        /** A configuration that refuses to rejoin across transcript loss. */
+        Config(AgentRole role, String identity, String model, Path workspace,
+               Duration pollTimeout, int maxEvents) {
+            this(role, identity, model, workspace, pollTimeout, maxEvents, false);
         }
     }
 
@@ -77,8 +89,21 @@ final class AgentHost implements AutoCloseable {
             return;
         }
         if (existing == null && state.cursor() > 0) {
-            throw new AgentHostException("coordinator no longer knows worker '"
-                    + config.identity() + "'; refusing to guess across transcript loss");
+            if (!config.resetOnTranscriptLoss()) {
+                throw new AgentHostException("coordinator no longer knows worker '"
+                        + config.identity() + "'; refusing to guess across transcript loss."
+                        + " Rerun with --reset-on-transcript-loss to rejoin from the start,"
+                        + " which discards this worker's recorded position");
+            }
+            // Say exactly what is being dropped. A rejoin that reports nothing looks the
+            // same as one that never lost anything, and the difference is a whole
+            // transcript.
+            System.err.println("agent-host: coordinator no longer knows worker '"
+                    + config.identity() + "'; rejoining from the start and discarding the"
+                    + " recorded position at cursor " + state.cursor()
+                    + (state.pending() == null ? "" : " and one partly executed batch"));
+            state = state.withoutTranscriptPosition();
+            states.save(state);
         }
         ObjectNode arguments = MAPPER.createObjectNode();
         arguments.put("workerId", config.identity());

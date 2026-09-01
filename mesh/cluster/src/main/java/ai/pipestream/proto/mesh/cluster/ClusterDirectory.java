@@ -5,6 +5,8 @@ import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEventType;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
+import ai.pipestream.proto.mesh.cluster.v1.DirectoryCheckpoint;
+import ai.pipestream.proto.mesh.cluster.v1.FencingPosition;
 import ai.pipestream.proto.mesh.cluster.v1.NodeAdvertisement;
 import ai.pipestream.proto.mesh.cluster.v1.NodePresence;
 import ai.pipestream.proto.mesh.cluster.v1.NodeRecord;
@@ -120,6 +122,93 @@ public final class ClusterDirectory {
     }
 
     /**
+     * Restores a directory from a checkpoint and the events recorded after it. The
+     * checkpoint stands in for every event up to its {@code snapshot_seq}, so the tail must
+     * begin at the next sequence and is validated against that position rather than against
+     * one. Restoring from {@link #checkpoint()} and the events after it produces exactly the
+     * directory the complete log would have produced, fencing tombstones included.
+     *
+     * @param cluster the cluster identity the checkpoint and tail belong to
+     * @param checkpoint the folded directory state
+     * @param tail the events recorded after the checkpoint, gap-free and in order
+     * @param clock the clock for future liveness judgments and emitted events
+     * @return the restored directory
+     * @throws IllegalArgumentException when the checkpoint names another cluster, or the tail
+     *     is invalid or does not continue from the checkpoint
+     */
+    public static ClusterDirectory restore(ClusterDescriptor cluster,
+            DirectoryCheckpoint checkpoint, List<ClusterEvent> tail, Clock clock) {
+        Objects.requireNonNull(checkpoint, "checkpoint");
+        ClusterSnapshot state = checkpoint.getState();
+        require(state.getCluster().equals(cluster),
+                "checkpoint describes a different cluster identity than the directory");
+        require(state.getFingerprint().equals(ClusterValidation.snapshotFingerprint(
+                        state.toBuilder().clearFingerprint().build())),
+                "checkpoint state fingerprint does not commit to the checkpoint state");
+
+        ClusterDirectory directory = new ClusterDirectory(cluster, clock);
+        for (NodeRecord record : state.getNodesList()) {
+            String nodeId = record.getAdvertisement().getNodeId();
+            directory.nodes.put(nodeId, record.getAdvertisement());
+            directory.presence.put(nodeId, record.getPresence());
+            if (record.hasCapacity()) {
+                directory.nodeCapacity.put(nodeId, record.getCapacity());
+            }
+        }
+        for (ProcessorAdvertisement processor : state.getProcessorsList()) {
+            directory.processors.put(processor.getProcessorId(), processor);
+        }
+        for (CapacityAdvertisement capacity : state.getCapacitiesList()) {
+            directory.processorCapacity.put(
+                    capacityKey(capacity.getNodeId(), capacity.getProcessorId()), capacity);
+        }
+        for (FencingPosition position : checkpoint.getNodePositionsList()) {
+            directory.nodePositions.put(position.getId(),
+                    new Position(position.getEpoch(), position.getSeq()));
+        }
+        for (FencingPosition position : checkpoint.getProcessorPositionsList()) {
+            directory.processorPositions.put(position.getId(),
+                    new Position(position.getEpoch(), position.getSeq()));
+        }
+        directory.eventSeq = state.getSnapshotSeq();
+
+        ClusterValidation.validateEventLog(tail, state.getSnapshotSeq() + 1);
+        for (ClusterEvent event : tail) {
+            directory.applyReplay(event);
+            directory.events.add(event);
+            directory.eventSeq = event.getSeq();
+        }
+        return directory;
+    }
+
+    /**
+     * Folds the directory into a checkpoint that can replace every event up to the current
+     * sequence. Beyond the snapshot it carries the fencing tombstones, which the snapshot
+     * cannot express because a tombstone outlives the identity it fences: dropping the
+     * events without them would let a delayed frame from a superseded incarnation be
+     * admitted after a restart.
+     *
+     * @return the folded directory state at the current event sequence
+     */
+    public DirectoryCheckpoint checkpoint() {
+        DirectoryCheckpoint.Builder builder = DirectoryCheckpoint.newBuilder()
+                .setState(snapshot());
+        nodePositions.forEach((id, position) ->
+                builder.addNodePositions(fencingPosition(id, position)));
+        processorPositions.forEach((id, position) ->
+                builder.addProcessorPositions(fencingPosition(id, position)));
+        return builder.build();
+    }
+
+    private static FencingPosition fencingPosition(String id, Position position) {
+        return FencingPosition.newBuilder()
+                .setId(id)
+                .setEpoch(position.epoch())
+                .setSeq(position.seq())
+                .build();
+    }
+
+    /**
      * Registers or refreshes a node advertisement. Registration arms the node's presence from
      * the advertisement's TTL window. Re-applying the identical advertisement is a no-op; a
      * changed advertisement requires a strictly newer (epoch, seq) pair.
@@ -174,6 +263,15 @@ public final class ClusterDirectory {
      * Applies a heartbeat presence record for a registered node. The identical record is a
      * no-op; a changed record requires a strictly higher heartbeat sequence.
      *
+     * <p><b>Presence is soft state and emits no event.</b> A heartbeat restates a fact the
+     * node regenerates every few seconds and that expires on its own, so persisting it buys
+     * nothing a restart could not rebuild by waiting. What it costs is the whole durable
+     * write path on the cluster's most frequent call. The registration epoch is what fences
+     * presence, and that stays durable: this method refuses any record whose
+     * {@code node_epoch} disagrees with the registered advertisement, so a delayed frame
+     * from a superseded incarnation cannot extend a node's life whether or not the heartbeat
+     * that established the current epoch is still in the log.
+     *
      * @param record the presence record to apply
      * @return what the apply did
      * @throws IllegalArgumentException when the record fails validation, names another cluster
@@ -198,8 +296,6 @@ public final class ClusterDirectory {
                 existing.getNodeEpoch(), existing.getHeartbeatSeq(),
                 "presence for node '" + nodeId + "'");
         presence.put(nodeId, record);
-        emit(ClusterEventType.CLUSTER_EVENT_TYPE_PRESENCE_UPDATED, nodeId, "",
-                b -> b.setPresence(record));
         return ApplyOutcome.UPDATED;
     }
 
@@ -457,6 +553,55 @@ public final class ClusterDirectory {
     /** Returns the event log in emission order. */
     public List<ClusterEvent> events() {
         return List.copyOf(events);
+    }
+
+    /**
+     * Copies the directory, sharing nothing a later mutation could reach. Every value held
+     * is an immutable message or record, so copying the maps is a true copy. This is how a
+     * presence update produces a directory to install without replaying the event log: an
+     * installed directory is never mutated, and soft state must not break that.
+     *
+     * @return an independent directory holding the same state at the same sequence
+     */
+    ClusterDirectory copy() {
+        ClusterDirectory copy = new ClusterDirectory(cluster, clock);
+        copy.nodes.putAll(nodes);
+        copy.nodePositions.putAll(nodePositions);
+        copy.presence.putAll(presence);
+        copy.nodeCapacity.putAll(nodeCapacity);
+        copy.processors.putAll(processors);
+        copy.processorPositions.putAll(processorPositions);
+        copy.processorCapacity.putAll(processorCapacity);
+        copy.events.addAll(events);
+        copy.eventSeq = eventSeq;
+        return copy;
+    }
+
+    /**
+     * Carries live presence onto a directory rebuilt from the durable record. Presence emits
+     * no events, so a replayed directory knows only what registration armed and what the
+     * last fold captured; without this, every durable mutation would silently roll the
+     * cluster's liveness back to that and sweep nodes that are heartbeating fine.
+     *
+     * <p>A record is adopted only when the rebuilt directory still registers the node at the
+     * same epoch. That is the same fence heartbeats pass, applied at the same place: presence
+     * belonging to an incarnation the durable record has superseded, or to a node it no
+     * longer carries, is dropped rather than carried forward. A rebuilt record that somehow
+     * sits ahead of the live one wins, because the durable record is the older authority.
+     *
+     * @param source the installed directory whose presence to carry forward
+     */
+    void adoptPresence(ClusterDirectory source) {
+        source.presence.forEach((nodeId, record) -> {
+            NodeAdvertisement node = nodes.get(nodeId);
+            if (node == null || record.getNodeEpoch() != node.getEpoch()) {
+                return;
+            }
+            NodePresence rebuilt = presence.get(nodeId);
+            if (rebuilt == null || record.getHeartbeatSeq() >= rebuilt.getHeartbeatSeq()) {
+                presence.put(nodeId, record);
+            }
+        });
     }
 
     private void removeProcessor(String processorId, ProcessorAdvertisement advertisement,

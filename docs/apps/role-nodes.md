@@ -19,8 +19,9 @@ in-process holds across the wire: intake authenticates, saves land in the
 repository, the search service indexes and serves — wherever each role
 happens to run.
 
-The roles the platform binary knows
-(`DocumentPlatformConfig.KNOWN_ROLES`):
+The roles the platform binary knows (`DocumentPlatformConfig.KNOWN_ROLES`,
+written as each mounting module's own `ROLE` constant so the roster and the
+modules cannot drift apart):
 
 | Role | Serves | Notes |
 | --- | --- | --- |

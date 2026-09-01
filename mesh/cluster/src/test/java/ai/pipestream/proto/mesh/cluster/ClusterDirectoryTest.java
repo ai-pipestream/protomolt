@@ -175,7 +175,54 @@ class ClusterDirectoryTest {
         directory.heartbeat(beat);
 
         assertThat(directory.heartbeat(beat)).isEqualTo(ApplyOutcome.UNCHANGED);
-        assertThat(directory.events()).hasSize(2);
+        // Registration alone. Presence is soft state, so neither the accepted heartbeat nor
+        // the repeated one leaves anything in the log.
+        assertThat(directory.events()).hasSize(1);
+    }
+
+    @Test
+    void aLogWrittenBeforePresenceWentSoftStillReplays() {
+        // Nothing emits a presence event any more, so this log cannot be produced by the
+        // code under test. Every directory stored before the change is full of them, and
+        // replaying one is the only thing standing between an upgrade and a coordinator that
+        // refuses its own history, so the event has to be built by hand to keep the path
+        // covered rather than merely present.
+        directory.register(ClusterFixtures.node("node-1"));
+        ClusterEvent registration = directory.events().get(0);
+        NodePresence beat = ClusterFixtures.presenceBuilder("node-1", 5)
+                .setState(PresenceState.PRESENCE_STATE_SUSPECT)
+                .build();
+        ClusterEvent legacyPresence = ClusterEvent.newBuilder()
+                .setSeq(registration.getSeq() + 1)
+                .setOccurredAt(registration.getOccurredAt())
+                .setType(ClusterEventType.CLUSTER_EVENT_TYPE_PRESENCE_UPDATED)
+                .setNodeId("node-1")
+                .setPresence(beat)
+                .build();
+
+        ClusterDirectory restored = ClusterDirectory.replay(ClusterFixtures.cluster(),
+                List.of(registration, legacyPresence), clock);
+
+        assertThat(restored.presence("node-1").orElseThrow().getState())
+                .isEqualTo(PresenceState.PRESENCE_STATE_SUSPECT);
+        assertThat(restored.presence("node-1").orElseThrow().getHeartbeatSeq()).isEqualTo(5);
+        // The stored sequence is preserved, so a fold of this log accounts for the presence
+        // events it drops rather than renumbering around them.
+        assertThat(restored.snapshot().getSnapshotSeq()).isEqualTo(legacyPresence.getSeq());
+    }
+
+    @Test
+    void aHeartbeatEmitsNoEvent() {
+        directory.register(ClusterFixtures.node("node-1"));
+        int afterRegistration = directory.events().size();
+
+        for (int beat = 2; beat <= 20; beat++) {
+            assertThat(directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", beat)
+                    .build())).isEqualTo(ApplyOutcome.UPDATED);
+        }
+
+        assertThat(directory.events()).hasSize(afterRegistration);
+        assertThat(directory.presence("node-1").orElseThrow().getHeartbeatSeq()).isEqualTo(20);
     }
 
     @Test
@@ -557,7 +604,7 @@ class ClusterDirectoryTest {
     }
 
     @Test
-    void replayRestoresActivePresenceAndCapacity() {
+    void replayRestoresCapacityAndArmsPresenceFromRegistration() {
         directory.register(ClusterFixtures.node("node-1"));
         directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1").build());
         directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", 2)
@@ -571,11 +618,16 @@ class ClusterDirectoryTest {
         ClusterDirectory restored = ClusterDirectory.replay(
                 ClusterFixtures.cluster(), directory.events(), clock);
 
-        assertThat(restored.snapshot().toByteArray()).isEqualTo(directory.snapshot().toByteArray());
-        assertThat(restored.presence("node-1").orElseThrow().getState())
-                .isEqualTo(PresenceState.PRESENCE_STATE_SUSPECT);
+        // Durable state comes back exactly. Presence does not, and must not: the heartbeat
+        // that made this node SUSPECT was never written, so replay arms presence from the
+        // registration instead. A node whose state matters restates it within one TTL, and
+        // one that does not is swept, which is the behaviour a restart already relied on.
         assertThat(restored.nodeCapacity("node-1")).isPresent();
         assertThat(restored.processorCapacity("node-1", "proc-1")).isPresent();
+        assertThat(directory.presence("node-1").orElseThrow().getState())
+                .isEqualTo(PresenceState.PRESENCE_STATE_SUSPECT);
+        assertThat(restored.presence("node-1").orElseThrow().getState())
+                .isEqualTo(PresenceState.PRESENCE_STATE_ACTIVE);
     }
 
     private ClusterSnapshot populatedSnapshot() {

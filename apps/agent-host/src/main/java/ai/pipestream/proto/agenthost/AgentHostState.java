@@ -62,4 +62,14 @@ record AgentHostState(String identity, AgentRole role, String provider, String w
         return new AgentHostState(identity, role, provider, workspace, nextCursor,
                 providerSessionId, bootstrapped, pending);
     }
+
+    /**
+     * Drops everything that indexes into a coordinator transcript: the cursor, any partly
+     * executed batch, and the record of having bootstrapped. The provider session is kept,
+     * because it belongs to the agent rather than to the coordinator that forgot it.
+     */
+    AgentHostState withoutTranscriptPosition() {
+        return new AgentHostState(identity, role, provider, workspace, 0,
+                providerSessionId, false, null);
+    }
 }

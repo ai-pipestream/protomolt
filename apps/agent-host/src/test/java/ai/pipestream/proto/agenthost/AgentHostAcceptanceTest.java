@@ -335,12 +335,73 @@ class AgentHostAcceptanceTest {
                 .put("workerId", WORKER).put("taskId", TASK).put("attempt", 1));
     }
 
+    @Test
+    void aRebuiltCoordinatorIsRejoinedOnlyWhenTranscriptLossIsDeclared() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("rebuilt-workspace"));
+        Path workerState = temporary.resolve("rebuilt-state/kimi.json");
+
+        // A coordinator this worker has consumed events from, so its cursor is a real
+        // position in a real transcript.
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0))) {
+            URI endpoint = URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp");
+            try (AgentHost worker = host(endpoint, AgentRole.WORKER, WORKER, "kimi",
+                    workerState, workspace, new CapturingProvider());
+                 McpHttpClient coordinator = new McpHttpClient(endpoint, () -> null)) {
+                worker.connect();
+                ObjectNode spec = MAPPER.createObjectNode().put("objective", "inspect contract");
+                spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+                coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                        .put("workerId", WORKER).put("taskId", TASK)
+                        .put("leaseSeconds", 300).set("spec", spec));
+                assertThat(worker.pollOnce()).isTrue();
+                assertThat(worker.state().cursor()).isPositive();
+            }
+        }
+
+        // A second coordinator with none of that history, which is what a redeploy over
+        // empty volumes leaves behind.
+        try (ProtoMoltServe rebuilt = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0))) {
+            URI endpoint = URI.create("http://127.0.0.1:" + rebuilt.httpPort() + "/mcp");
+            try (AgentHost refusing = host(endpoint, AgentRole.WORKER, WORKER, "kimi",
+                    workerState, workspace, new CapturingProvider())) {
+                assertThatThrownBy(refusing::connect)
+                        .isInstanceOf(AgentHostException.class)
+                        .hasMessageContaining("no longer knows worker")
+                        .hasMessageContaining("--reset-on-transcript-loss");
+                assertThat(refusing.state().cursor())
+                        .as("a refusal must not quietly move the position").isPositive();
+            }
+
+            try (AgentHost rejoining = host(endpoint, AgentRole.WORKER, WORKER, "kimi",
+                    workerState, workspace, new CapturingProvider(), true);
+                 McpHttpClient coordinator = new McpHttpClient(endpoint, () -> null)) {
+                rejoining.connect();
+
+                assertThat(rejoining.state().cursor()).isZero();
+                assertThat(rejoining.state().pending()).isNull();
+                assertThat(coordinator.callTool("delegation-worker-list",
+                        MAPPER.createObjectNode()).path("workers"))
+                        .anySatisfy(worker -> assertThat(worker.path("workerId").asText())
+                                .isEqualTo(WORKER));
+            }
+        }
+    }
+
     private AgentHost host(URI endpoint, AgentRole role, String identity, String providerName,
                            Path statePath, Path workspace, AgentProvider provider) {
+        return host(endpoint, role, identity, providerName, statePath, workspace, provider,
+                false);
+    }
+
+    private AgentHost host(URI endpoint, AgentRole role, String identity, String providerName,
+                           Path statePath, Path workspace, AgentProvider provider,
+                           boolean resetOnTranscriptLoss) {
         AgentHostStateStore store = new AgentHostStateStore(statePath);
         AgentHostState state = store.loadOrCreate(identity, role, providerName, workspace);
         return new AgentHost(new AgentHost.Config(role, identity, null,
-                workspace.toAbsolutePath(), Duration.ofMillis(100), 64),
+                workspace.toAbsolutePath(), Duration.ofMillis(100), 64, resetOnTranscriptLoss),
                 new McpHttpClient(endpoint, () -> null), provider, store, state);
     }
 

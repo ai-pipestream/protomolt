@@ -1,11 +1,17 @@
 package ai.pipestream.proto.mesh.cluster;
 
+import ai.pipestream.proto.mesh.cluster.ClusterEventRepository.StoredDirectory;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
+import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -64,19 +70,185 @@ class PersistentClusterDirectoryTest {
         assertThat(events.saves).isEqualTo(1);
     }
 
+    @Test
+    void readsDoNotWaitForAnInFlightDurableWrite() throws Exception {
+        BlockingRepository events = new BlockingRepository();
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), new ClusterFixtures.MutableClock(ClusterFixtures.T0),
+                events);
+
+        Thread writer = new Thread(() -> directory.register(ClusterFixtures.node("node-1")),
+                "blocked-directory-write");
+        writer.start();
+        assertThat(events.entered.await(5, TimeUnit.SECONDS))
+                .as("the repository write should have started").isTrue();
+
+        // The reader runs on its own thread so that a directory which serializes reads
+        // behind writes fails this test on the timeout instead of hanging the suite.
+        ExecutorService reader = Executors.newSingleThreadExecutor();
+        try {
+            ClusterSnapshot duringWrite =
+                    reader.submit(directory::snapshot).get(5, TimeUnit.SECONDS);
+            assertThat(duringWrite.getNodesList()).isEmpty();
+            assertThat(duringWrite.getSnapshotSeq()).isZero();
+        } finally {
+            reader.shutdownNow();
+            events.release.countDown();
+            writer.join(TimeUnit.SECONDS.toMillis(5));
+        }
+
+        assertThat(directory.node("node-1")).isPresent();
+        assertThat(directory.snapshot().getSnapshotSeq()).isEqualTo(1);
+    }
+
+    @Test
+    void durableChangesFoldTheLogInsteadOfGrowingItWithoutBound() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.node("node-1"));
+
+        for (int update = 1; update <= 40; update++) {
+            directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", update)
+                    .setInFlight(update % 16)
+                    .build());
+            assertThat(directory.eventLog())
+                    .as("retained events after capacity update %d", update)
+                    .hasSizeLessThanOrEqualTo(4);
+        }
+
+        assertThat(directory.checkpoint()).isPresent();
+        assertThat(directory.snapshot().getSnapshotSeq()).isEqualTo(41);
+
+        // A directory restored from what was stored is the directory that stored it: the
+        // fold is only sound if the events it dropped left nothing behind.
+        PersistentClusterDirectory restored = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        assertThat(restored.snapshot()).isEqualTo(directory.snapshot());
+        assertThat(restored.eventLog()).isEqualTo(directory.eventLog());
+    }
+
+    @Test
+    void aHeartbeatCostsNoDurableWriteAndLeavesTheLogAlone() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.node("node-1"));
+        int savesAfterRegistration = events.saves;
+        List<ClusterEvent> logAfterRegistration = directory.eventLog();
+
+        for (int heartbeat = 2; heartbeat <= 500; heartbeat++) {
+            directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", heartbeat).build());
+        }
+
+        // This is the whole point of the change: the cluster's most frequent call is off the
+        // durable write path. Five hundred heartbeats, not one repository round trip, and a
+        // log that never moved, so nothing here can ever reach a fold or a storage wall.
+        assertThat(events.saves).isEqualTo(savesAfterRegistration);
+        assertThat(directory.eventLog()).isEqualTo(logAfterRegistration);
+        assertThat(directory.checkpoint()).isEmpty();
+        assertThat(directory.presence("node-1").orElseThrow().getHeartbeatSeq()).isEqualTo(500);
+    }
+
+    @Test
+    void aDurableChangeKeepsPresenceThatOnlyMemoryKnows() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", 9)
+                .setTtl(com.google.protobuf.Duration.newBuilder().setSeconds(600))
+                .setExpiresAt(ClusterFixtures.ts(ClusterFixtures.T0.plusSeconds(600)))
+                .build());
+
+        // An unrelated durable mutation rebuilds its candidate from the log, which has never
+        // seen a heartbeat. Without carrying live presence across that rebuild the node's
+        // liveness silently reverts to whatever registration armed, and the next sweep takes
+        // a node that is heartbeating perfectly well.
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1).build());
+
+        assertThat(directory.presence("node-1").orElseThrow().getHeartbeatSeq()).isEqualTo(9);
+        assertThat(directory.presence("node-1").orElseThrow().getExpiresAt())
+                .isEqualTo(ClusterFixtures.ts(ClusterFixtures.T0.plusSeconds(600)));
+
+        clock.advance(java.time.Duration.ofSeconds(120));
+        assertThat(directory.sweep()).isEmpty();
+        assertThat(directory.node("node-1")).isPresent();
+    }
+
+    @Test
+    void aSupersededIncarnationCannotHeartbeatEvenThoughNoHeartbeatIsDurable() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.nodeBuilder("node-1", 7, 1).build());
+        directory.register(ClusterFixtures.nodeBuilder("node-1", 9, 2).build());
+
+        // Presence emits nothing, so the fence cannot live in the heartbeat history. It lives
+        // in the registered epoch, which is durable, and that is what refuses the old frame.
+        assertThatThrownBy(() -> directory.heartbeat(
+                ClusterFixtures.presenceBuilder("node-1", 400).setNodeEpoch(7).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("node_epoch");
+    }
+
+    @Test
+    void aFoldedDirectoryStillFencesASupersededIncarnation() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 1);
+        directory.register(ClusterFixtures.nodeBuilder("node-1", 7, 2).build());
+        directory.register(ClusterFixtures.nodeBuilder("node-1", 9, 1).build());
+
+        assertThat(directory.checkpoint()).isPresent();
+        PersistentClusterDirectory restored = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 1);
+
+        // The events that established epoch 9 are folded away, so only the checkpoint's
+        // fencing tombstone can still refuse the superseded epoch.
+        assertThatThrownBy(() -> restored.register(
+                ClusterFixtures.nodeBuilder("node-1", 7, 3).build()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private static class CountingRepository implements ClusterEventRepository {
-        private List<ClusterEvent> current = List.of();
+        private StoredDirectory current = StoredDirectory.of(List.of());
         private int saves;
 
         @Override
-        public Optional<List<ClusterEvent>> load(ClusterDescriptor cluster) {
-            return current.isEmpty() ? Optional.empty() : Optional.of(current);
+        public Optional<StoredDirectory> load(ClusterDescriptor cluster) {
+            return current.events().isEmpty() && !current.compacted()
+                    ? Optional.empty()
+                    : Optional.of(current);
         }
 
         @Override
-        public void save(ClusterDescriptor cluster, List<ClusterEvent> events) {
+        public void save(ClusterDescriptor cluster, StoredDirectory directory) {
             saves++;
-            current = List.copyOf(events);
+            current = directory;
+        }
+    }
+
+    /** Holds one save open so a reader can be observed while a commit is in flight. */
+    private static final class BlockingRepository extends CountingRepository {
+        private final CountDownLatch entered = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Override
+        public void save(ClusterDescriptor cluster, StoredDirectory directory) {
+            entered.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while persisting", e);
+            }
+            super.save(cluster, directory);
         }
     }
 
@@ -84,11 +256,11 @@ class PersistentClusterDirectoryTest {
         private boolean fail;
 
         @Override
-        public void save(ClusterDescriptor cluster, List<ClusterEvent> events) {
+        public void save(ClusterDescriptor cluster, StoredDirectory directory) {
             if (fail) {
                 throw new IllegalStateException("repository unavailable");
             }
-            super.save(cluster, events);
+            super.save(cluster, directory);
         }
     }
 }

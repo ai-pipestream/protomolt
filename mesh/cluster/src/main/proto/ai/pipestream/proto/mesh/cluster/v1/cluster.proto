@@ -600,6 +600,67 @@ enum PresenceState {
   PRESENCE_STATE_DRAINING = 4;
 }
 
+// The highest position accepted for one identity, retained after the identity
+// itself is gone so a delayed frame from a superseded incarnation cannot be
+// admitted. Replaying an event log rebuilds these; a compacted log carries them
+// explicitly, because compaction is what drops the events they were derived
+// from.
+message FencingPosition {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Highest accepted (epoch, seq) for one node or processor identity, retained as a fencing tombstone."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The node id or processor id this position fences.
+  string id = 1 [
+    (ai.pipestream.proto.validate.v1.field) = {
+      required: true
+      string: {path_safe_name: true, max_len: 128}
+    },
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The highest accepted fencing epoch for the identity.
+  int64 epoch = 2 [
+    (ai.pipestream.proto.validate.v1.field).int64.gte = 0,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The highest accepted sequence within that epoch.
+  int64 seq = 3 [
+    (ai.pipestream.proto.validate.v1.field).int64.gte = 0,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// A directory folded into state, so the events that produced it need not be
+// retained. A checkpoint plus the events after it replays to exactly the
+// directory the full log would have produced, which is what lets a log that
+// grows one event per heartbeat stay bounded.
+message DirectoryCheckpoint {
+  option (ai.pipestream.proto.meta.v1.message) = {
+    description: "Folded directory state plus fencing tombstones, replacing every event up to its snapshot_seq."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The folded directory. Its snapshot_seq is the sequence of the last event
+  // folded in, and the events retained beside it continue from the next one.
+  ClusterSnapshot state = 1 [
+    (ai.pipestream.proto.validate.v1.field).required = true,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Node fencing tombstones, ordered by id, including nodes no longer present.
+  repeated FencingPosition node_positions = 2 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 65536,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Processor fencing tombstones, ordered by id, including expired processors.
+  repeated FencingPosition processor_positions = 3 [
+    (ai.pipestream.proto.validate.v1.field).repeated.max_items = 65536,
+    (ai.pipestream.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
 // One node's entry in a cluster snapshot: advertisement, presence, and the
 // node-wide capacity snapshot when one was published.
 message NodeRecord {

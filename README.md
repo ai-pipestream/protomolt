@@ -694,7 +694,9 @@ at boot listing the known set. Absent roles are reached over
 
 `DEFAULT_ROLES` is the full one-container preset, in canonical mount order:
 `repo, parse-text, registry, parse, jobs, intake, playground, search, metric,
-search-console`. `KNOWN_ROLES` adds `acquire-s3` and `acquire-jdbc`.
+search-console`. `KNOWN_ROLES` adds `acquire-s3` and `acquire-jdbc`. Both sets
+name each mounting module's own `ROLE` constant rather than repeating the
+strings, so a renamed role renames them with it.
 
 | Role | Mounted by | Port | Surface |
 |---|---|---|---|
