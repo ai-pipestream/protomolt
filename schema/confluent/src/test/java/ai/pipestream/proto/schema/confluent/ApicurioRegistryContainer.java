@@ -14,7 +14,7 @@ import org.testcontainers.utility.DockerImageName;
  */
 final class ApicurioRegistryContainer extends GenericContainer<ApicurioRegistryContainer> {
 
-    static final String IMAGE = "apicurio/apicurio-registry:3.3.0";
+    static final String IMAGE = "apicurio/apicurio-registry:3.3.2";
 
     private static final int REGISTRY_PORT = 8080; // inside the container
 

@@ -13,7 +13,7 @@
 name: protomolt-it
 services:
   apicurio:
-    image: apicurio/apicurio-registry:3.3.0
+    image: apicurio/apicurio-registry:3.3.2
     ports:
       - "18780:8080"
     environment:

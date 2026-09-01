@@ -12,11 +12,6 @@
       "allowedVersions": "/^26\\.05-py3$/"
     },
     {
-      "description": "Apicurio Registry 3.3.1 fails the integration stack health gate. Keep the known-good 3.3.0 image until a replacement passes the full registry suite.",
-      "matchPackageNames": ["apicurio/apicurio-registry"],
-      "allowedVersions": "/^3\\.3\\.0$/"
-    },
-    {
       "description": "Non-major updates arrive as one pull request rather than one per dependency. Five were open at once in 2026-08, most of them a single line, and each one costs a full suite run. Majors stay ungrouped so each can be judged alone.",
       "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
       "groupName": "non-major dependencies",
