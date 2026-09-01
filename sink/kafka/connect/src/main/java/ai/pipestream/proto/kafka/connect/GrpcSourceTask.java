@@ -181,11 +181,7 @@ public final class GrpcSourceTask extends SourceTask {
                     lastToken == null ? "" : " from " + lastToken);
             dropStream();
         }
-        List<SourceRecord> records = new ArrayList<>(messages.size());
-        for (DynamicMessage message : messages) {
-            records.add(toRecord(message));
-        }
-        return records;
+        return messages.stream().map(this::toRecord).toList();
     }
 
     private SourceRecord toRecord(DynamicMessage message) {
@@ -243,22 +239,14 @@ public final class GrpcSourceTask extends SourceTask {
     }
 
     private static String tokenString(Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof String text) {
-            return text;
-        }
-        if (value instanceof ByteString bytes) {
-            return Base64.getEncoder().encodeToString(bytes.toByteArray());
-        }
-        if (value instanceof CelByteString bytes) {
-            return Base64.getEncoder().encodeToString(bytes.toByteArray());
-        }
-        if (value instanceof byte[] bytes) {
-            return Base64.getEncoder().encodeToString(bytes);
-        }
-        return String.valueOf(value);
+        return switch (value) {
+            case null -> null;
+            case String text -> text;
+            case ByteString bytes -> Base64.getEncoder().encodeToString(bytes.toByteArray());
+            case CelByteString bytes -> Base64.getEncoder().encodeToString(bytes.toByteArray());
+            case byte[] bytes -> Base64.getEncoder().encodeToString(bytes);
+            default -> String.valueOf(value);
+        };
     }
 
     private DynamicMessage subscribeRequest() {

@@ -371,18 +371,12 @@ public final class ConfluenceCrawler {
     }
 
     private static void rethrow(Throwable t) throws IOException, InterruptedException {
-        if (t instanceof IOException e) {
-            throw e;
+        switch (t) {
+            case IOException e -> throw e;
+            case UncheckedIOException e -> throw e.getCause();
+            case InterruptedException e -> throw e;
+            case RuntimeException e -> throw e;
+            default -> throw new IOException("crawl task failed", t);
         }
-        if (t instanceof UncheckedIOException e) {
-            throw e.getCause();
-        }
-        if (t instanceof InterruptedException e) {
-            throw e;
-        }
-        if (t instanceof RuntimeException e) {
-            throw e;
-        }
-        throw new IOException("crawl task failed", t);
     }
 }

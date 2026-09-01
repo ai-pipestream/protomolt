@@ -182,14 +182,14 @@ public final class OpenSearchSinkTask extends SinkTask {
      * would even silently collapse every id-less record into one document.
      */
     private static String scalarId(Object id, String path) {
-        if (id instanceof String || id instanceof Number || id instanceof Boolean) {
-            return String.valueOf(id);
-        }
-        if (id instanceof Descriptors.EnumValueDescriptor enumValue) {
-            return enumValue.getName();
-        }
-        throw new DataException("document.id.path '" + path + "' must resolve to a scalar "
-                + "leaf, but resolved to " + id.getClass().getName());
+        return switch (id) {
+            case String text -> text;
+            case Number number -> String.valueOf(number);
+            case Boolean flag -> String.valueOf(flag);
+            case Descriptors.EnumValueDescriptor enumValue -> enumValue.getName();
+            default -> throw new DataException("document.id.path '" + path + "' must resolve to "
+                    + "a scalar leaf, but resolved to " + id.getClass().getName());
+        };
     }
 
     private DynamicMessage decode(SinkRecord record) {
@@ -199,23 +199,19 @@ public final class OpenSearchSinkTask extends SinkTask {
                     + ", offset " + record.kafkaOffset() + ")");
         }
         try {
-            switch (config.valueFormat()) {
-                case PROTOBUF -> {
-                    return DynamicMessage.parseFrom(descriptor, asBytes(value));
-                }
-                case CONFLUENT -> {
-                    return DynamicMessage.parseFrom(descriptor,
-                            ConfluentWireFormat.payload(asBytes(value)));
-                }
-                default -> {
+            return switch (config.valueFormat()) {
+                case PROTOBUF -> DynamicMessage.parseFrom(descriptor, asBytes(value));
+                case CONFLUENT -> DynamicMessage.parseFrom(descriptor,
+                        ConfluentWireFormat.payload(asBytes(value)));
+                case JSON -> {
                     String json = value instanceof byte[] bytes
                             ? new String(bytes, StandardCharsets.UTF_8)
                             : value.toString();
                     DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
                     JsonFormat.parser().ignoringUnknownFields().merge(json, builder);
-                    return builder.build();
+                    yield builder.build();
                 }
-            }
+            };
         } catch (DataException e) {
             throw e;
         } catch (Exception e) {

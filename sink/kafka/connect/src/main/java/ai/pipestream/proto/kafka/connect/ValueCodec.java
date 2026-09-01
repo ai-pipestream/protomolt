@@ -70,23 +70,19 @@ final class ValueCodec {
     /** Decodes a record value; {@code where} contextualizes failures (e.g. "topic orders"). */
     DynamicMessage decode(Object value, String where) {
         try {
-            switch (format) {
-                case PROTOBUF -> {
-                    return DynamicMessage.parseFrom(type, asBytes(value));
-                }
-                case CONFLUENT -> {
-                    return DynamicMessage.parseFrom(type,
-                            ConfluentWireFormat.payload(asBytes(value)));
-                }
-                default -> {
+            return switch (format) {
+                case PROTOBUF -> DynamicMessage.parseFrom(type, asBytes(value));
+                case CONFLUENT -> DynamicMessage.parseFrom(type,
+                        ConfluentWireFormat.payload(asBytes(value)));
+                case JSON -> {
                     String json = value instanceof byte[] bytes
                             ? new String(bytes, StandardCharsets.UTF_8)
                             : value.toString();
                     DynamicMessage.Builder builder = DynamicMessage.newBuilder(type);
                     JsonFormat.parser().ignoringUnknownFields().merge(json, builder);
-                    return builder.build();
+                    yield builder.build();
                 }
-            }
+            };
         } catch (DataException e) {
             throw e;
         } catch (Exception e) {
@@ -98,10 +94,8 @@ final class ValueCodec {
 
     /** Encodes a message back into the shape the record value arrived in. */
     Object encode(Message message, Object originalValue) {
-        switch (format) {
-            case PROTOBUF -> {
-                return message.toByteArray();
-            }
+        return switch (format) {
+            case PROTOBUF -> message.toByteArray();
             case CONFLUENT -> {
                 byte[] original = asBytes(originalValue);
                 int offset;
@@ -117,9 +111,9 @@ final class ValueCodec {
                 byte[] framed = new byte[offset + payload.length];
                 System.arraycopy(original, 0, framed, 0, offset);
                 System.arraycopy(payload, 0, framed, offset, payload.length);
-                return framed;
+                yield framed;
             }
-            default -> {
+            case JSON -> {
                 String json;
                 try {
                     json = JsonFormat.printer().print(message);
@@ -127,11 +121,11 @@ final class ValueCodec {
                     throw new DataException("Mapped message does not print as proto3 JSON: "
                             + e.getMessage(), e);
                 }
-                return originalValue instanceof byte[]
+                yield originalValue instanceof byte[]
                         ? json.getBytes(StandardCharsets.UTF_8)
                         : json;
             }
-        }
+        };
     }
 
     private static byte[] asBytes(Object value) {

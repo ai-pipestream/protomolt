@@ -345,26 +345,27 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
 
     /** REST-edge failures to gRPC statuses; messages carry no credentials. */
     private static void fail(StreamObserver<?> observer, Throwable t) {
-        Status status;
+        // A status the edge already produced travels as-is; everything else is mapped.
         if (t instanceof io.grpc.StatusRuntimeException e) {
             observer.onError(e);
             return;
-        } else if (t instanceof ConfluenceClient.ConfluenceApiException e) {
-            status = (switch (e.status()) {
+        }
+        Status status = switch (t) {
+            case ConfluenceClient.ConfluenceApiException e -> (switch (e.status()) {
                 case 400 -> Status.INVALID_ARGUMENT;
                 case 401, 403 -> Status.PERMISSION_DENIED;
                 case 404 -> Status.NOT_FOUND;
                 case 429 -> Status.RESOURCE_EXHAUSTED;
                 default -> Status.INTERNAL;
             }).withDescription(e.getMessage());
-        } else if (t instanceof InterruptedException e) {
-            Thread.currentThread().interrupt();
-            status = Status.CANCELLED.withDescription("interrupted: " + e.getMessage());
-        } else if (t instanceof IOException e) {
-            status = Status.UNAVAILABLE.withDescription("Confluence unreachable: " + e.getMessage());
-        } else {
-            status = Status.INTERNAL.withDescription(String.valueOf(t.getMessage()));
-        }
+            case InterruptedException e -> {
+                Thread.currentThread().interrupt();
+                yield Status.CANCELLED.withDescription("interrupted: " + e.getMessage());
+            }
+            case IOException e ->
+                    Status.UNAVAILABLE.withDescription("Confluence unreachable: " + e.getMessage());
+            default -> Status.INTERNAL.withDescription(String.valueOf(t.getMessage()));
+        };
         observer.onError(status.asRuntimeException());
     }
 }
