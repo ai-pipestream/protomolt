@@ -263,6 +263,15 @@ public final class ClusterDirectory {
      * Applies a heartbeat presence record for a registered node. The identical record is a
      * no-op; a changed record requires a strictly higher heartbeat sequence.
      *
+     * <p><b>Presence is soft state and emits no event.</b> A heartbeat restates a fact the
+     * node regenerates every few seconds and that expires on its own, so persisting it buys
+     * nothing a restart could not rebuild by waiting. What it costs is the whole durable
+     * write path on the cluster's most frequent call. The registration epoch is what fences
+     * presence, and that stays durable: this method refuses any record whose
+     * {@code node_epoch} disagrees with the registered advertisement, so a delayed frame
+     * from a superseded incarnation cannot extend a node's life whether or not the heartbeat
+     * that established the current epoch is still in the log.
+     *
      * @param record the presence record to apply
      * @return what the apply did
      * @throws IllegalArgumentException when the record fails validation, names another cluster
@@ -287,8 +296,6 @@ public final class ClusterDirectory {
                 existing.getNodeEpoch(), existing.getHeartbeatSeq(),
                 "presence for node '" + nodeId + "'");
         presence.put(nodeId, record);
-        emit(ClusterEventType.CLUSTER_EVENT_TYPE_PRESENCE_UPDATED, nodeId, "",
-                b -> b.setPresence(record));
         return ApplyOutcome.UPDATED;
     }
 
@@ -546,6 +553,55 @@ public final class ClusterDirectory {
     /** Returns the event log in emission order. */
     public List<ClusterEvent> events() {
         return List.copyOf(events);
+    }
+
+    /**
+     * Copies the directory, sharing nothing a later mutation could reach. Every value held
+     * is an immutable message or record, so copying the maps is a true copy. This is how a
+     * presence update produces a directory to install without replaying the event log: an
+     * installed directory is never mutated, and soft state must not break that.
+     *
+     * @return an independent directory holding the same state at the same sequence
+     */
+    ClusterDirectory copy() {
+        ClusterDirectory copy = new ClusterDirectory(cluster, clock);
+        copy.nodes.putAll(nodes);
+        copy.nodePositions.putAll(nodePositions);
+        copy.presence.putAll(presence);
+        copy.nodeCapacity.putAll(nodeCapacity);
+        copy.processors.putAll(processors);
+        copy.processorPositions.putAll(processorPositions);
+        copy.processorCapacity.putAll(processorCapacity);
+        copy.events.addAll(events);
+        copy.eventSeq = eventSeq;
+        return copy;
+    }
+
+    /**
+     * Carries live presence onto a directory rebuilt from the durable record. Presence emits
+     * no events, so a replayed directory knows only what registration armed and what the
+     * last fold captured; without this, every durable mutation would silently roll the
+     * cluster's liveness back to that and sweep nodes that are heartbeating fine.
+     *
+     * <p>A record is adopted only when the rebuilt directory still registers the node at the
+     * same epoch. That is the same fence heartbeats pass, applied at the same place: presence
+     * belonging to an incarnation the durable record has superseded, or to a node it no
+     * longer carries, is dropped rather than carried forward. A rebuilt record that somehow
+     * sits ahead of the live one wins, because the durable record is the older authority.
+     *
+     * @param source the installed directory whose presence to carry forward
+     */
+    void adoptPresence(ClusterDirectory source) {
+        source.presence.forEach((nodeId, record) -> {
+            NodeAdvertisement node = nodes.get(nodeId);
+            if (node == null || record.getNodeEpoch() != node.getEpoch()) {
+                return;
+            }
+            NodePresence rebuilt = presence.get(nodeId);
+            if (rebuilt == null || record.getHeartbeatSeq() >= rebuilt.getHeartbeatSeq()) {
+                presence.put(nodeId, record);
+            }
+        });
     }
 
     private void removeProcessor(String processorId, ProcessorAdvertisement advertisement,

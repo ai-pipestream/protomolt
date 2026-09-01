@@ -20,6 +20,15 @@ import java.util.function.Function;
  * applied to a replayed candidate, persisted as a complete event log, and only then
  * installed as the live directory. Failed writes cannot leak memory-only membership.
  *
+ * <p><b>Heartbeats never reach the repository.</b> Presence is soft state: a node restates
+ * it every few seconds and it expires on its own, so it is held in memory and persisted
+ * only incidentally, when a fold happens to capture it. Every other change is durable. This
+ * is what takes the cluster's most frequent call off the write path entirely, and it is why
+ * the event log now grows with membership rather than with time. The price is that a
+ * coordinator restart begins with whatever presence the last fold captured, which is
+ * usually expired, so nodes are swept and re-register. That is the recovery the fleet
+ * already performs, now on a predictable trigger rather than an accidental one.
+ *
  * <p><b>Readers never wait on the repository.</b> A mutation persists before it installs,
  * so the write path owns the durable round trip for as long as the repository takes.
  * Readers therefore do not share that lock: {@link #current} is volatile, an installed
@@ -34,10 +43,11 @@ public final class PersistentClusterDirectory {
 
     /**
      * How many events may accumulate beyond the last checkpoint before the log is folded.
-     * Every mutation rewrites the whole retained log, so this is also the bound on the work
-     * one heartbeat costs. Left unbounded, a directory that emits an event per heartbeat
-     * makes each heartbeat more expensive than the last and eventually reaches the events
-     * cap, after which no mutation can be persisted at all.
+     * Every durable mutation rewrites the whole retained log, so this bounds the work one
+     * such mutation costs. Since presence became soft state the log grows only with
+     * registrations, processor leases, capacity, and expiries, so folds are rare; the bound
+     * remains because an unbounded log still ends at the events cap, past which nothing can
+     * be persisted at all.
      */
     public static final int DEFAULT_RETAINED_EVENTS = 256;
 
@@ -106,9 +116,14 @@ public final class PersistentClusterDirectory {
         return mutate(candidate -> candidate.register(advertisement));
     }
 
-    /** Applies a node heartbeat after the resulting event log is durable. */
+    /**
+     * Applies a node heartbeat to memory alone. Presence is soft state: it expires on its
+     * own and the node restates it every few seconds, so it never reaches the repository and
+     * a heartbeat costs no durable write. See {@link ClusterDirectory#heartbeat} for why the
+     * registered epoch, which stays durable, is what fences it.
+     */
     public ClusterDirectory.ApplyOutcome heartbeat(NodePresence presence) {
-        return mutate(candidate -> candidate.heartbeat(presence));
+        return soften(candidate -> candidate.heartbeat(presence));
     }
 
     /** Registers or refreshes a processor after the resulting event log is durable. */
@@ -184,10 +199,43 @@ public final class PersistentClusterDirectory {
         return Optional.ofNullable(checkpoint);
     }
 
+    /**
+     * Applies a change that produces no durable event, installing it without touching the
+     * repository. The candidate is copied rather than replayed: there is nothing to persist,
+     * so there is nothing to rebuild from, and copying keeps the rule that an installed
+     * directory is never mutated, which is what lets readers run without a lock.
+     */
+    private ClusterDirectory.ApplyOutcome soften(
+            Function<ClusterDirectory, ClusterDirectory.ApplyOutcome> operation) {
+        synchronized (writeLock) {
+            ClusterDirectory candidate = current.copy();
+            int priorSize = candidate.events().size();
+            ClusterDirectory.ApplyOutcome outcome = operation.apply(candidate);
+            if (candidate.events().size() != priorSize) {
+                throw new IllegalStateException(
+                        "a soft directory change emitted "
+                                + (candidate.events().size() - priorSize)
+                                + " durable events, which this path drops on the floor; the "
+                                + "mesh refuses to install a directory whose log it silently "
+                                + "discarded");
+            }
+            if (outcome == ClusterDirectory.ApplyOutcome.UNCHANGED) {
+                return outcome;
+            }
+            current = candidate;
+            return outcome;
+        }
+    }
+
     private <T> T mutate(Function<ClusterDirectory, T> operation) {
         synchronized (writeLock) {
             ClusterDirectory candidate = restore(new ClusterEventRepository.StoredDirectory(
                     checkpoint, current.events()));
+            // The rebuild knows only the presence that registration armed and the last fold
+            // captured, because heartbeats emit nothing. Carrying the live records over is
+            // what stops an unrelated mutation from rolling liveness back and sweeping nodes
+            // that are heartbeating normally.
+            candidate.adoptPresence(current);
             int priorSize = candidate.events().size();
             T result = operation.apply(candidate);
             if (candidate.events().size() == priorSize) {

@@ -22,15 +22,46 @@ Reads take no lock. An installed projection is replaced, never mutated, so a
 reader works from one volatile read of the current directory and never waits
 behind a mutation's repository round trip. Sharing a lock between the two
 starves reads: a monitor makes no fairness promise, and on a cluster where a
-node heartbeats steadily the write path is almost always holding it. A read can
+node heartbeats steadily the write path was almost always holding it. A read can
 observe the state from just before a concurrent commit, which is inherent to
 any snapshot of a live directory and is what `snapshot_seq` reports.
 
+## Presence is soft state
+
+A heartbeat restates a fact the node regenerates every few seconds and that
+expires on its own. Persisting it buys nothing a restart could not rebuild by
+waiting, and it costs the entire durable write path on the cluster's most
+frequent call. So presence lives in memory, emits no event, and reaches the
+repository only incidentally, when a fold happens to capture it.
+
+What fences presence is the registered epoch, and that stays durable. A
+heartbeat is refused unless its `node_epoch` agrees with the registered
+advertisement, so a delayed frame from a superseded incarnation cannot extend a
+node's life whether or not the heartbeat history still exists. The fence never
+depended on the presence events; it depended on registration, which is why
+dropping them is safe.
+
+Two consequences worth stating plainly. An accepted heartbeat does not advance
+`snapshot_seq`, because nothing was recorded; `outcome` is what reports that it
+landed, and `snapshot_seq` now means durable membership change specifically. And
+a coordinator restart begins from whatever presence the last fold captured,
+which is usually expired, so nodes are swept and re-register. That is the
+recovery the fleet already performed whenever a restart outran a TTL, now on a
+predictable trigger rather than an accidental one.
+
+Because a durable mutation rebuilds its candidate by replaying the log, and the
+log has never seen a heartbeat, the live presence records are carried onto that
+candidate explicitly. Without it every unrelated mutation would roll liveness
+back to what registration armed and sweep nodes that are heartbeating normally.
+A record is carried only when the rebuilt directory still registers the node at
+the same epoch, which is the same fence applied at the same place.
+
 ## Compaction
 
-A heartbeat is a mutation, so a live cluster appends an event every few seconds
-per node. Kept whole, that log grows without bound, every mutation rewrites all
-of it, and the 100,000-event cap eventually refuses each mutation permanently.
+Registrations, processor leases, capacity, and expiries are durable, so the log
+grows with membership rather than with time. Kept whole it still grows without
+bound, every mutation rewrites all of it, and the 100,000-event cap eventually
+refuses each mutation permanently.
 
 `DirectoryCheckpoint` folds the prefix away. It carries the `ClusterSnapshot` at
 a sequence plus the fencing tombstones, which the snapshot alone cannot express
