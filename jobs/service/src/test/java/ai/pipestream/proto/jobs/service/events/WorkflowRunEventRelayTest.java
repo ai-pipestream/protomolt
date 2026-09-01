@@ -36,7 +36,7 @@ class WorkflowRunEventRelayTest {
     @BeforeEach
     void fresh() {
         store = new InMemoryWorkflowRunStore();
-        producer = new MockProducer<>(true, new StringSerializer(),
+        producer = new MockProducer<>(true, null, new StringSerializer(),
                 (topic, data) -> data == null ? null : data.toByteArray());
         relay = new WorkflowRunEventRelay(store, producer, TOPIC, Duration.ofMillis(10), 100);
     }
