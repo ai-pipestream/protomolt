@@ -9,7 +9,7 @@ Delete an entry once it is done. An empty page means the handoff is clean.
 
 ## Where the tree and the fleet stand
 
-`main` is `b6850989` on both remotes. Forgejo is master; GitHub receives
+`main` is the same commit on both remotes. Forgejo is master; GitHub receives
 `sync/forgejo-main` pull requests and its `main` is protected by five required
 checks (`build (21)`, `build (25)`, `conformance`, `console`, `integration`).
 
@@ -36,8 +36,8 @@ refuses to touch the stack until both images are published, redeploys stack 20
 from the tagged `compose.yml`, waits for `UP`, and then asks the Docker endpoint
 whether the container is really running the released image.
 
-Before the first release, add the `PORTAINER_TOKEN` Forgejo secret the lane
-reads. Nothing else is owed. Then:
+The `PORTAINER_TOKEN` Forgejo secret the lane reads is in place, so the
+remaining work is the release:
 
 1. Confirm GitHub `main` already has `deploy-nas.yml`. Axion tags the GitHub
    commit, and Forgejo runs the workflow file found in the tagged tree, so a tag
@@ -45,6 +45,19 @@ reads. Nothing else is owed. Then:
 2. Dispatch **Release and Publish** on GitHub with the `patch` bump. With no
    `v*` tag in either forge, axion's first release is `v0.1.0`.
 3. From the LAN, `git push origin v0.1.0`. That push is the deploy.
+
+Step 2 uploads 145 modules under `ai.pipestream` to Maven Central, and
+`nmcpAggregation` sets `publishingType = 'AUTOMATIC'`, so the upload becomes
+public with no staging review and cannot be reversed later. It would be the
+first public release of this project. The workflow also tags before it uploads,
+so a rejected upload would leave a public `v0.1.0` tag in place. Using
+`USER_MANAGED` instead keeps the deployment in a staging state for a manual
+release, which is the gentler route for a first cut. The release is on hold for
+this reason; everything up to it is finished.
+
+The publishing credentials (`MAVEN_CENTRAL_*`, `GPG_*`) are GitHub org secrets,
+not repository ones, so they resolve even though the repository secret list
+looks nearly empty.
 
 **Do not work the propagation question again.** Axion cuts tags on GitHub, and a
 tag pushed there does not show up on Forgejo. A test tag was checked on both
