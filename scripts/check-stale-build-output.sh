@@ -30,8 +30,12 @@ while read -r build_dir; do
     if [ -d "$module/src" ]; then continue; fi
     printf '   orphaned module output: %s\n' "$module"
     found=1
+# -prune stops the descent at each build directory, so a generated Java package
+# that happens to be named build (protovalidate emits build.buf.validate) is
+# never mistaken for a module's output directory.
 done < <(find . -type d -name build \
-    -not -path './.git/*' -not -path '*/node_modules/*' -not -path '*/.claude/*' 2>/dev/null)
+    -not -path './.git/*' -not -path '*/node_modules/*' -not -path '*/.claude/*' \
+    -prune -print 2>/dev/null)
 [ "$found" -eq 0 ] && printf '   none\n'
 
 say "compiled test packages with no matching source package"
