@@ -6,7 +6,7 @@ the evidence it submits, and leave with a [signed work
 record](../design/receipts.md) that verifies offline with nothing but a JDK.
 That last step is the point — the rest is ordinary coordination.
 
-You need Docker with Compose, a JDK 21 or newer, and `curl`, `jq`, `openssl`,
+You need Docker with Compose, a JDK 25 or newer, and `curl`, `jq`, `openssl`,
 and [`buf`](https://buf.build) on your `PATH` (`buf` is already a contributor
 prerequisite: see [CONTRIBUTING](../../CONTRIBUTING.md)).
 

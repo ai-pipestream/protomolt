@@ -7,15 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Compilation is pinned to --release 21, but that alone does not prove the declared
-  # Java 21 runtime baseline: this matrix runs every test JVM on 21 and on the current
-  # JDK (the build itself always runs on the toolchain JDK).
+  # Compilation is pinned to --release 25, and the test JVM runs on that same baseline.
+  # The matrix stays a matrix so a newer JDK can be added beside it without reshaping
+  # the job (the build itself always runs on the toolchain JDK).
   build:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        test-jdk: ['21', '25']
+        test-jdk: ['25']
     steps:
       - uses: actions/checkout@v4
         with:

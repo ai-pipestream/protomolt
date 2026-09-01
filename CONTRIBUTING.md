@@ -12,7 +12,7 @@ cd protomolt
 ./gradlew build
 ```
 
-You need JDK 21+ and [buf](https://buf.build/docs/installation) on the
+You need JDK 25+ and [buf](https://buf.build/docs/installation) on the
 `PATH`. `./gradlew build` runs the full test suite, `buf lint`, and the
 protovalidate conformance gate. See
 [docs/operations/building.md](docs/operations/building.md) for the optional registry integration

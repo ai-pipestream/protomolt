@@ -98,7 +98,7 @@ From a clone, `docker compose up` builds and runs the same server, and
 surfaces answer. See [Running in Docker](docs/apps/docker.md).
 
 Prefer a process over a container? Every release attaches runnable
-`protomolt-serve` and `protomolt-mcp` zips (JRE 21+ is the only prerequisite),
+`protomolt-serve` and `protomolt-mcp` zips (JRE 25+ is the only prerequisite),
 or build from a clone:
 
 ```shell
@@ -802,7 +802,7 @@ Vocabulary note: the request-gating component is a **service**, **role** or
 
 # Requirements
 
-- JDK 21 or newer at runtime (the build itself runs on any JDK via Gradle
+- JDK 25 or newer at runtime (the build itself runs on any JDK via Gradle
   toolchains; GraalVM CE 25 works as the build JDK)
 - Gradle 9.6+ for building from source (wrapper included)
 - GraalVM JDK 25 only when building the native CLI with

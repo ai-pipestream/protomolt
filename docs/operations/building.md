@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- JDK 21 or newer. The build uses Gradle toolchains (with the Foojay
+- JDK 25 or newer. The build uses Gradle toolchains (with the Foojay
   resolver), so any recent JDK can run the wrapper; artifacts target 21.
 - [buf](https://buf.build/docs/installation) on the `PATH` for proto
   linting (`buf lint` runs as part of `check`).
