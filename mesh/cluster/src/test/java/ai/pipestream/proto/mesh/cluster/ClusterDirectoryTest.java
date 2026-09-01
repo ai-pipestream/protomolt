@@ -181,6 +181,37 @@ class ClusterDirectoryTest {
     }
 
     @Test
+    void aLogWrittenBeforePresenceWentSoftStillReplays() {
+        // Nothing emits a presence event any more, so this log cannot be produced by the
+        // code under test. Every directory stored before the change is full of them, and
+        // replaying one is the only thing standing between an upgrade and a coordinator that
+        // refuses its own history, so the event has to be built by hand to keep the path
+        // covered rather than merely present.
+        directory.register(ClusterFixtures.node("node-1"));
+        ClusterEvent registration = directory.events().get(0);
+        NodePresence beat = ClusterFixtures.presenceBuilder("node-1", 5)
+                .setState(PresenceState.PRESENCE_STATE_SUSPECT)
+                .build();
+        ClusterEvent legacyPresence = ClusterEvent.newBuilder()
+                .setSeq(registration.getSeq() + 1)
+                .setOccurredAt(registration.getOccurredAt())
+                .setType(ClusterEventType.CLUSTER_EVENT_TYPE_PRESENCE_UPDATED)
+                .setNodeId("node-1")
+                .setPresence(beat)
+                .build();
+
+        ClusterDirectory restored = ClusterDirectory.replay(ClusterFixtures.cluster(),
+                List.of(registration, legacyPresence), clock);
+
+        assertThat(restored.presence("node-1").orElseThrow().getState())
+                .isEqualTo(PresenceState.PRESENCE_STATE_SUSPECT);
+        assertThat(restored.presence("node-1").orElseThrow().getHeartbeatSeq()).isEqualTo(5);
+        // The stored sequence is preserved, so a fold of this log accounts for the presence
+        // events it drops rather than renumbering around them.
+        assertThat(restored.snapshot().getSnapshotSeq()).isEqualTo(legacyPresence.getSeq());
+    }
+
+    @Test
     void aHeartbeatEmitsNoEvent() {
         directory.register(ClusterFixtures.node("node-1"));
         int afterRegistration = directory.events().size();
