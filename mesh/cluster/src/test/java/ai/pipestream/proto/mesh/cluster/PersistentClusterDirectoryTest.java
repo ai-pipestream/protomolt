@@ -2,6 +2,7 @@ package ai.pipestream.proto.mesh.cluster;
 
 import ai.pipestream.proto.mesh.cluster.ClusterEventRepository.StoredDirectory;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterDescriptor;
+import ai.pipestream.proto.mesh.cluster.v1.ClusterEvent;
 import ai.pipestream.proto.mesh.cluster.v1.ClusterSnapshot;
 import org.junit.jupiter.api.Test;
 
@@ -101,24 +102,24 @@ class PersistentClusterDirectoryTest {
     }
 
     @Test
-    void heartbeatsFoldTheLogInsteadOfGrowingItWithoutBound() {
+    void durableChangesFoldTheLogInsteadOfGrowingItWithoutBound() {
         CountingRepository events = new CountingRepository();
         ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
         PersistentClusterDirectory directory = new PersistentClusterDirectory(
                 ClusterFixtures.cluster(), clock, events, 4);
         directory.register(ClusterFixtures.node("node-1"));
 
-        for (int heartbeat = 1; heartbeat <= 40; heartbeat++) {
-            directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", heartbeat).build());
+        for (int update = 1; update <= 40; update++) {
+            directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", update)
+                    .setInFlight(update % 16)
+                    .build());
             assertThat(directory.eventLog())
-                    .as("retained events after heartbeat %d", heartbeat)
+                    .as("retained events after capacity update %d", update)
                     .hasSizeLessThanOrEqualTo(4);
         }
 
         assertThat(directory.checkpoint()).isPresent();
-        assertThat(directory.snapshot().getSnapshotSeq()).isEqualTo(40);
-        assertThat(directory.presence("node-1")).get()
-                .satisfies(presence -> assertThat(presence.getHeartbeatSeq()).isEqualTo(40));
+        assertThat(directory.snapshot().getSnapshotSeq()).isEqualTo(41);
 
         // A directory restored from what was stored is the directory that stored it: the
         // fold is only sound if the events it dropped left nothing behind.
@@ -126,6 +127,73 @@ class PersistentClusterDirectoryTest {
                 ClusterFixtures.cluster(), clock, events, 4);
         assertThat(restored.snapshot()).isEqualTo(directory.snapshot());
         assertThat(restored.eventLog()).isEqualTo(directory.eventLog());
+    }
+
+    @Test
+    void aHeartbeatCostsNoDurableWriteAndLeavesTheLogAlone() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.node("node-1"));
+        int savesAfterRegistration = events.saves;
+        List<ClusterEvent> logAfterRegistration = directory.eventLog();
+
+        for (int heartbeat = 2; heartbeat <= 500; heartbeat++) {
+            directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", heartbeat).build());
+        }
+
+        // This is the whole point of the change: the cluster's most frequent call is off the
+        // durable write path. Five hundred heartbeats, not one repository round trip, and a
+        // log that never moved, so nothing here can ever reach a fold or a storage wall.
+        assertThat(events.saves).isEqualTo(savesAfterRegistration);
+        assertThat(directory.eventLog()).isEqualTo(logAfterRegistration);
+        assertThat(directory.checkpoint()).isEmpty();
+        assertThat(directory.presence("node-1").orElseThrow().getHeartbeatSeq()).isEqualTo(500);
+    }
+
+    @Test
+    void aDurableChangeKeepsPresenceThatOnlyMemoryKnows() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", 9)
+                .setTtl(com.google.protobuf.Duration.newBuilder().setSeconds(600))
+                .setExpiresAt(ClusterFixtures.ts(ClusterFixtures.T0.plusSeconds(600)))
+                .build());
+
+        // An unrelated durable mutation rebuilds its candidate from the log, which has never
+        // seen a heartbeat. Without carrying live presence across that rebuild the node's
+        // liveness silently reverts to whatever registration armed, and the next sweep takes
+        // a node that is heartbeating perfectly well.
+        directory.updateCapacity(ClusterFixtures.capacityBuilder("node-1", 1).build());
+
+        assertThat(directory.presence("node-1").orElseThrow().getHeartbeatSeq()).isEqualTo(9);
+        assertThat(directory.presence("node-1").orElseThrow().getExpiresAt())
+                .isEqualTo(ClusterFixtures.ts(ClusterFixtures.T0.plusSeconds(600)));
+
+        clock.advance(java.time.Duration.ofSeconds(120));
+        assertThat(directory.sweep()).isEmpty();
+        assertThat(directory.node("node-1")).isPresent();
+    }
+
+    @Test
+    void aSupersededIncarnationCannotHeartbeatEvenThoughNoHeartbeatIsDurable() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 4);
+        directory.register(ClusterFixtures.nodeBuilder("node-1", 7, 1).build());
+        directory.register(ClusterFixtures.nodeBuilder("node-1", 9, 2).build());
+
+        // Presence emits nothing, so the fence cannot live in the heartbeat history. It lives
+        // in the registered epoch, which is durable, and that is what refuses the old frame.
+        assertThatThrownBy(() -> directory.heartbeat(
+                ClusterFixtures.presenceBuilder("node-1", 400).setNodeEpoch(7).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("node_epoch");
     }
 
     @Test
