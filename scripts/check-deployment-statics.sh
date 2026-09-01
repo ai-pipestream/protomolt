@@ -140,8 +140,18 @@ for dockerfile, copy_source, gradle_file, distribution in pairs:
     print("dockerfile OK", dockerfile, "->", copy_source)
 
 agent_host = open("apps/agent-host/Dockerfile").read()
-if "FROM eclipse-temurin:21-jdk" not in agent_host:
-    print("agent-host image must include javac for delegated build and test work")
+# The requirement is javac, not a particular release: this image runs delegated builds
+# and tests. Asserting a version literal made the check fail the moment the JDK baseline
+# moved, while a -jre image of the pinned version would have passed it.
+temurin_bases = [line.split(None, 1)[1].split()[0]
+                 for line in agent_host.splitlines()
+                 if line.startswith("FROM eclipse-temurin:")]
+if not temurin_bases:
+    print("agent-host image must build on an eclipse-temurin base")
+    sys.exit(1)
+if not all(base.endswith("-jdk") for base in temurin_bases):
+    print("agent-host image must include javac for delegated build and test work,",
+          "found:", ", ".join(temurin_bases))
     sys.exit(1)
 print("agent-host image includes a JDK for delegated build and test work")
 if "chmod 755 /home/protomolt" not in agent_host:
