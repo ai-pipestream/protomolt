@@ -431,15 +431,13 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                         .toList();
                 Set<String> placed = new HashSet<>();
                 for (String subKey : srcChunkOrder) {
-                    Optional<PartManifestEntry> replacement = findEntry(writtenPresent, part, subKey);
-                    Optional<PartManifestEntry> kept = findEntry(carried, part, subKey);
-                    if (replacement.isPresent()) {
-                        ordered.add(replacement.get());
-                        placed.add(subKey);
-                    } else if (kept.isPresent()) {
-                        ordered.add(kept.get());
-                        placed.add(subKey);
-                    }
+                    // A rewritten set wins its slot; otherwise the carried one holds it.
+                    findEntry(writtenPresent, part, subKey)
+                            .or(() -> findEntry(carried, part, subKey))
+                            .ifPresent(entry -> {
+                                ordered.add(entry);
+                                placed.add(subKey);
+                            });
                 }
                 for (PartManifestEntry e : writtenPresent) {
                     if (e.getPart() == part && !placed.contains(e.getSubKey())) {
@@ -450,12 +448,10 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                     ordered.add(emptyEntry(part, now));
                 }
             } else {
-                Optional<PartManifestEntry> w = findEntry(writtenPresent, part, null);
-                if (w.isPresent()) {
-                    ordered.add(w.get());
-                } else {
-                    ordered.add(findEntry(carried, part, null).orElse(emptyEntry(part, now)));
-                }
+                // Same precedence, one expression: written, then carried, then EMPTY.
+                ordered.add(findEntry(writtenPresent, part, null)
+                        .or(() -> findEntry(carried, part, null))
+                        .orElseGet(() -> emptyEntry(part, now)));
             }
         }
         return DocumentManifest.newBuilder()

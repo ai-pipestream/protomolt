@@ -18,6 +18,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Gatherers;
 
 /**
  * {@link BlobStore} over Redis (blocking Jedis on virtual threads) — the
@@ -204,18 +205,18 @@ public final class RedisBlobStore implements BlobStore, AutoCloseable {
 
     @Override
     public BatchDeleteResult deleteAll(String bucket, List<String> keys) {
-        List<byte[]> physical = keys.stream()
+        List<List<byte[]>> batches = keys.stream()
                 .filter(k -> k != null && !k.isBlank())
                 .distinct()
                 .flatMap(k -> java.util.stream.Stream.of(
                         bytes(physicalKey(bucket, k)), bytes(physicalKey(bucket, k) + META_SUFFIX)))
+                .gather(Gatherers.windowFixed(DELETE_CHUNK))
                 .toList();
         // DEL of an absent key is success in Redis — the port's
         // NoSuchKey-is-success rule holds for free, so only a real connection
         // failure would surface (as a JedisException, not a failed key).
         try (Jedis jedis = pool.getResource()) {
-            for (int from = 0; from < physical.size(); from += DELETE_CHUNK) {
-                List<byte[]> chunk = physical.subList(from, Math.min(from + DELETE_CHUNK, physical.size()));
+            for (List<byte[]> chunk : batches) {
                 try (Pipeline pipeline = jedis.pipelined()) {
                     for (byte[] key : chunk) {
                         pipeline.del(key);
