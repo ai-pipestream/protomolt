@@ -53,7 +53,8 @@ The stack provides:
 | RustFS | `http://nas:31900` | Persistent S3-compatible artifact storage |
 | Keycloak | `http://nas:19901` | Local OIDC identity provider |
 | repo-service | internal only | Claim-check document store backing the delegation transcript |
-| repo-postgres | internal only | repo-service ledger database |
+| repo-postgres | internal only | repo-service ledger database and the workflow-runs (`jobs`) database |
+| jobs-init | one-shot | Creates the `jobs` database when it is missing; the coordinator waits for it |
 
 Traefik terminates TLS with the NAS wildcard certificate for all externally
 named surfaces:
@@ -141,6 +142,19 @@ Keycloak uses its embedded development database on a persistent volume and is
 intentionally started with `start-dev`. It is suitable for this private
 development coordinator, not a public production identity service. Startup
 imports the `protomolt` realm only when it does not already exist.
+
+Durable workflow runs live in a second database, `jobs` (name it with
+`PROTOMOLT_JOBS_DB_NAME`), in the same PostgreSQL instance as the repo-service
+ledger; separate databases keep the two Flyway histories apart. The `jobs-init`
+one-shot creates it with `psql` on every deploy, only when it does not exist,
+and the coordinator does not start until that has completed. This is
+deliberately not a `docker-entrypoint-initdb.d` script: PostgreSQL runs those
+only against an empty data directory, so on the volume already in service they
+create nothing. The coordinator connects as the repo role, which owns the
+database, with `PROTOMOLT_JOBS_JDBC`, `PROTOMOLT_JOBS_USER`, and
+`PROTOMOLT_JOBS_PASSWORD`; no extra stack variable is needed.
+`deploy/portainer/test/jobs-init-test.sh` runs the exact script from the stack
+file with a fake `psql` and is part of `scripts/check-deployment-statics.sh`.
 
 Back up the `protomolt-data`, `rustfs-data`, `keycloak-data`, and
 `repo-postgres-data` volumes before upgrading or replacing the stack. The first
