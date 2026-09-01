@@ -47,13 +47,6 @@ services:
       - ${PROTOMOLT_MESH_CREATED_AT:-2026-08-14T00:00:00Z}
       - --demo
     environment:
-      # Durable workflow runs: the job row in Postgres is the truth. The
-      # credentials ride the environment rather than the command line, which
-      # docker inspect shows in full. No broker here, so the worker drains
-      # the store directly; --jobs-kafka is what adds propagation later.
-      PROTOMOLT_JOBS_JDBC: jdbc:postgresql://repo-postgres:5432/${PROTOMOLT_JOBS_DB_NAME:-jobs}
-      PROTOMOLT_JOBS_USER: ${PROTOMOLT_REPO_DB_USER:-documents}
-      PROTOMOLT_JOBS_PASSWORD: ${PROTOMOLT_REPO_DB_PASSWORD:?set PROTOMOLT_REPO_DB_PASSWORD in Portainer}
       PROTOMOLT_API_TOKEN: ${PROTOMOLT_API_TOKEN:?set PROTOMOLT_API_TOKEN in Portainer}
       PROTOMOLT_TASK_CONSOLE_TOKEN: ${PROTOMOLT_TASK_CONSOLE_TOKEN:?set PROTOMOLT_TASK_CONSOLE_TOKEN in Portainer}
       PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS: ${PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS:-43200}
@@ -63,8 +56,6 @@ services:
         condition: service_completed_successfully
       repo-init:
         condition: service_completed_successfully
-      repo-postgres:
-        condition: service_healthy
     volumes:
       - protomolt-data:/data
     ports:
@@ -144,9 +135,6 @@ services:
       POSTGRES_USER: ${PROTOMOLT_REPO_DB_USER:-documents}
       POSTGRES_PASSWORD: ${PROTOMOLT_REPO_DB_PASSWORD:?set PROTOMOLT_REPO_DB_PASSWORD in Portainer}
       POSTGRES_DB: ${PROTOMOLT_REPO_DB_NAME:-documents}
-    configs:
-      - source: init-jobs-db
-        target: /docker-entrypoint-initdb.d/init-jobs-db.sql
     volumes:
       - repo-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -201,7 +189,7 @@ services:
     restart: "no"
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.2
+    image: quay.io/keycloak/keycloak:26.7.3
     container_name: protomolt-keycloak
     command: ["start-dev", "--import-realm"]
     environment:
@@ -247,17 +235,6 @@ services:
     restart: unless-stopped
 
 configs:
-  # One PostgreSQL instance holds two databases: the repository ledger
-  # (POSTGRES_DB, created by the image) and the workflow-runs store,
-  # created here. Separate databases keep the two Flyway histories apart.
-  # Compose substitutes the names, so the file the image runs is plain SQL.
-  # Entrypoint scripts run only against an empty data directory, so this
-  # takes effect on a fresh volume and is inert on an existing one.
-  init-jobs-db:
-    content: |
-      CREATE DATABASE "${PROTOMOLT_JOBS_DB_NAME:-jobs}"
-          OWNER "${PROTOMOLT_REPO_DB_USER:-documents}";
-
   protomolt-realm:
     content: |
       {
