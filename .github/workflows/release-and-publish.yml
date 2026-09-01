@@ -113,8 +113,8 @@ jobs:
         run: |
           V="${{ steps.ver.outputs.version }}"
           gh release create "v$V" --title "ProtoMolt $V" --generate-notes \
-            "apps/serve/build/distributions/protomolt-serve-$V.zip#protomolt-serve $V (run bin/protomolt-serve, JRE 21+)" \
-            "surface/mcp/build/distributions/protomolt-mcp-$V.zip#protomolt-mcp $V (run bin/protomolt-mcp, JRE 21+)" \
+            "apps/serve/build/distributions/protomolt-serve-$V.zip#protomolt-serve $V (run bin/protomolt-serve, JRE 25+)" \
+            "surface/mcp/build/distributions/protomolt-mcp-$V.zip#protomolt-mcp $V (run bin/protomolt-mcp, JRE 25+)" \
             "sink/kafka/connect/build/distributions/protomolt-connect-plugin-$V.zip#protomolt-kafka-connect $V (Kafka Connect plugin, unzip onto plugin.path)" \
             "apps/document-platform/build/distributions/protomolt-document-platform-$V.zip#protomolt-document-platform $V (run bin/protomolt-document-platform, JRE 25+)"
 

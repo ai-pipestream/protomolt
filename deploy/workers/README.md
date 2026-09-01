@@ -8,7 +8,7 @@ tooling layer:
 - `protomolt-worker-cpp` carries GCC, Clang, CMake, Ninja, Conan, the gRPC C++
   development libraries, and the C++ gRPC generator.
 
-Both images carry `protomolt-agent-host` on a Java 21 runtime, Codex CLI,
+Both images carry `protomolt-agent-host` on a Java 25 runtime, Codex CLI,
 Node, Bun, Python, uv, Git, `buf`, `protoc`, `grpcurl`, and a Docker client.
 The Docker client has no authority by itself. Do not mount the host Docker
 socket into an untrusted coding worker. Use a separately authenticated remote

@@ -18,7 +18,7 @@ pipeline over the KServe v2 gRPC API.
 - An **OpenVINO Model Server** reachable over gRPC. OVMS speaks the KServe v2
   / Open Inference Protocol (`inference.GRPCInferenceService`). This tutorial
   uses a host:port of `ovms-host:9000`; substitute your own.
-- **JDK 21+** to build and run ProtoMolt.
+- **JDK 25+** to build and run ProtoMolt.
 - **[`grpcurl`](https://github.com/fullstorydev/grpcurl)**: a handy
   command-line gRPC client, used here to show the reflection result plainly
   before we bring the agent in.

@@ -6,7 +6,7 @@
 # (./gradlew :protomolt-acp-agent:installDist), keeping the image a thin JRE layer.
 #
 #   docker run -i --rm ghcr.io/ai-pipestream/protomolt-acp-agent
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 
 COPY build/install/protomolt-acp-agent /opt/protomolt-acp-agent
 

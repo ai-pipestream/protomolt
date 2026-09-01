@@ -5,7 +5,7 @@
 # ledger and an S3-compatible object store.
 #
 #   docker run -p 9090:9090 ghcr.io/ai-pipestream/protomolt-repo-service
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 
 COPY build/install/protomolt-repo-service /opt/protomolt-repo-service
 
