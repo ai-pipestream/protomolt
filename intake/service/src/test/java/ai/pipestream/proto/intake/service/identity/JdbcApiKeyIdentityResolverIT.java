@@ -30,7 +30,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class JdbcApiKeyIdentityResolverIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     static JdbcApiKeyIdentityResolver resolver;
 

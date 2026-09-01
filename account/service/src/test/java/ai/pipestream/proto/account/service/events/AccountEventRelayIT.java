@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AccountEventRelayIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     static AccountDatabase database;
     static JdbcAccountEventOutbox outbox;
@@ -69,7 +69,7 @@ class AccountEventRelayIT {
     }
 
     private static MockProducer<String, Message> mockProducer(boolean autoComplete) {
-        return new MockProducer<>(autoComplete, new StringSerializer(),
+        return new MockProducer<>(autoComplete, null, new StringSerializer(),
                 (topic, data) -> data == null ? null : data.toByteArray());
     }
 
@@ -93,7 +93,7 @@ class AccountEventRelayIT {
 
     /** A producer whose every send fails with the given message. */
     private static MockProducer<String, Message> alwaysFailingProducer(String message) {
-        return new MockProducer<>(true, new StringSerializer(),
+        return new MockProducer<>(true, null, new StringSerializer(),
                 (org.apache.kafka.common.serialization.Serializer<Message>)
                         (topic, data) -> data.toByteArray()) {
             @Override
@@ -144,7 +144,7 @@ class AccountEventRelayIT {
 
         // A producer whose first (and only first) send fails: the relay must
         // record the failure and leave the row PENDING for the next drain.
-        MockProducer<String, Message> producer = new MockProducer<>(true, new StringSerializer(),
+        MockProducer<String, Message> producer = new MockProducer<>(true, null, new StringSerializer(),
                 (org.apache.kafka.common.serialization.Serializer<Message>)
                         (topic, data) -> data.toByteArray()) {
             private boolean failNext = true;

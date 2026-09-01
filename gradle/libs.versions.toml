@@ -4,15 +4,13 @@ cel = "0.14.0"
 junit = "6.1.3"
 assertj = "3.27.7"
 slf4j = "2.0.18"
-kafka = "3.9.2"
-# Confluent is boxed into the 8.0.x line from both sides. Floor: 8.0 is the first line
-# compiled against protobuf-java 4.x (7.9.x's ProtobufSchema bytecode references
-# GeneratedMessageV3, removed in protobuf 4). Ceiling: 8.1+ (the Kafka 4.1-based lines,
-# verified through 8.3.0) reference org.apache.kafka.common.metrics.Monitorable (KIP-877),
-# which does not exist in the kafka-clients 3.9 line pinned above — the interop tests fail
-# to compile. Do not bump past 8.0.x until kafka-clients moves to >= 4.1.
+kafka = "4.3.1"
+# Floor: 8.0 is the first line compiled against protobuf-java 4.x (7.9.x's ProtobufSchema
+# bytecode references GeneratedMessageV3, removed in protobuf 4). The former 8.0.x ceiling
+# is lifted: 8.1+ reference org.apache.kafka.common.metrics.Monitorable (KIP-877), which
+# the kafka-clients 4.x line above supplies, so the interop tests compile and pass again.
 # Test-scoped interop only.
-confluent = "8.0.7"
+confluent = "8.3.1"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.1"
@@ -38,10 +36,11 @@ spring = "7.0.9"
 spring-boot = "4.1.1"
 vertx = "5.1.6"
 netty = "4.2.17.Final"
-# Micronaut 4.x is the JDK 21-compatible line (5.x requires JVM 25+)
+# Micronaut 4.x is the JDK 21-compatible line. 5.x publishes Gradle module metadata
+# declaring org.gradle.jvm.version=25, so against this project's options.release=21 it
 micronaut = "4.10.26"
 protobuf-gradle = "0.10.0"
-wire = "5.5.1"
+wire = "6.4.7"
 jgit = "7.7.1.202607240634-r"
 parquet = "1.18.0"
 hadoop = "3.5.0"
@@ -57,7 +56,7 @@ hibernate = "7.4.7.Final"
 hikari = "7.1.0"
 flyway = "13.4.0"
 postgresql = "42.7.13"
-jedis = "7.5.3"
+jedis = "8.0.1"
 
 [libraries]
 grpc-api = { module = "io.grpc:grpc-api", version.ref = "grpc" }

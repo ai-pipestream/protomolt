@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JdbcWorkflowRunStoreIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     static WorkflowRunDatabase database;
     static JdbcWorkflowRunStore store;

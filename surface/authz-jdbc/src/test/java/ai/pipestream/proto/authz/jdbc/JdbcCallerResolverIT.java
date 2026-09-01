@@ -29,7 +29,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class JdbcCallerResolverIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     static JdbcCallerResolver resolver;
 

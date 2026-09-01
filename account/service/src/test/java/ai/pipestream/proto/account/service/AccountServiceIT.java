@@ -65,7 +65,7 @@ class AccountServiceIT {
     private static final String REPO_INPROCESS = "it-repo";
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     /** A DriveService that records CreateDrive calls and answers idempotently. */
     static final class FakeDriveService extends DriveServiceGrpc.DriveServiceImplBase {

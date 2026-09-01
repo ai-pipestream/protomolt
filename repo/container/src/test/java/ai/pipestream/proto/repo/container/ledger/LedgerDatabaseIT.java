@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LedgerDatabaseIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     @Test
     void bootsMigratesAndValidatesMappings() {

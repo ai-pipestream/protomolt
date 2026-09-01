@@ -94,7 +94,7 @@ class RepoServiceIT {
     private static final String CONNECTOR = "connector-1";
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     @Container
     static final LocalStackContainer LOCALSTACK =

@@ -323,7 +323,7 @@ class KafkaPurgeQueueTest {
         FakeRelayStore store = new FakeRelayStore();
         store.pending.put(purgeId, Optional.of(row));
         MockConsumer<String, byte[]> consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
-        MockProducer<String, Message> producer = new MockProducer<String, Message>(true, new StringSerializer(), messageSerializer()) {
+        MockProducer<String, Message> producer = new MockProducer<String, Message>(true, null, new StringSerializer(), messageSerializer()) {
             @Override
             public synchronized Future<RecordMetadata> send(ProducerRecord<String, Message> record) {
                 CompletableFuture<RecordMetadata> future = new CompletableFuture<>();
@@ -372,7 +372,7 @@ class KafkaPurgeQueueTest {
         FakeRelayStore store = new FakeRelayStore();
         store.unrelayed.add(row);
         MockConsumer<String, byte[]> consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
-        MockProducer<String, Message> producer = new MockProducer<String, Message>(true, new StringSerializer(), messageSerializer()) {
+        MockProducer<String, Message> producer = new MockProducer<String, Message>(true, null, new StringSerializer(), messageSerializer()) {
             @Override
             public synchronized Future<RecordMetadata> send(ProducerRecord<String, Message> record) {
                 throw new SerializationException("validation rejected the command");
@@ -391,7 +391,7 @@ class KafkaPurgeQueueTest {
 
     /** An auto-completing producer with the serializers MockProducer wants. */
     private static MockProducer<String, Message> mockProducer() {
-        return new MockProducer<>(true, new StringSerializer(), messageSerializer());
+        return new MockProducer<>(true, null, new StringSerializer(), messageSerializer());
     }
 
     private static Serializer<Message> messageSerializer() {

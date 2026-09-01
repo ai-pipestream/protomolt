@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AccountServicesIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     /** A DriveService that records CreateDrive calls and answers idempotently. */
     static final class FakeDriveService extends DriveServiceGrpc.DriveServiceImplBase {

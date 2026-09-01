@@ -50,7 +50,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EventRelayIT {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     // Same baseline image as the serde lane (testcontainers' own pinned tag).
     @Container
