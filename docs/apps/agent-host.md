@@ -152,7 +152,13 @@ variable.
 
 If the local state has a nonzero cursor but the server no longer knows the
 worker, the host stops rather than registering a new identity against a lost
-transcript. A pending command batch resumes at the next locally recorded
+transcript. When the loss is real, which is what a coordinator redeployed over
+empty volumes means, rerun with `--reset-on-transcript-loss`: the host reports
+the cursor and any partly executed batch it is discarding, drops them, keeps
+the provider session (it belongs to the agent, not to the coordinator that
+forgot it), and registers from the start. The flag is off by default because
+resuming against a transcript that is gone would invent continuity.
+A pending command batch resumes at the next locally recorded
 command. There is still a narrow ambiguity if a remote mutation succeeds and
 the machine fails before its local command position is saved. Caller-supplied
 idempotency keys on MCP mutation tools are needed to close that final gap.

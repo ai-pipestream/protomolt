@@ -51,8 +51,11 @@ import java.util.function.Consumer;
  * captured at the same time serialize to equal bytes and equal canonical fingerprints
  * ({@link ClusterValidation#snapshotFingerprint}).
  *
- * <p><b>Events.</b> Every applied change appends a {@link ClusterEvent} with a
+ * <p><b>Events.</b> Every durable change appends a {@link ClusterEvent} with a
  * directory-global, strictly increasing sequence; {@link #events()} returns the log in order.
+ * Heartbeats and refresh-only re-advertisements (the same identity with only its lease
+ * window and sequence moved) are soft state and append nothing, so an expiry event may
+ * name a renewal the log never recorded; replay accepts exactly that difference.
  */
 public final class ClusterDirectory {
 
@@ -737,9 +740,21 @@ public final class ClusterDirectory {
                 : mergePresence(presence.get(nodeId), advertisement));
     }
 
+    /**
+     * Replays a node expiry. The expiry names the advertisement the directory held when it
+     * swept the node, and lease refreshes are soft state, so that advertisement may be a
+     * renewal the log never saw: same epoch, a sequence at or past the recorded one, and
+     * nothing else moved. The replay accepts exactly that and nothing looser, and it carries
+     * the expiry's position into the fencing tombstone so a restarted directory fences the
+     * dead incarnation from the same sequence the live one did.
+     */
     private void replayNodeExpiry(NodeAdvertisement advertisement) {
         String nodeId = advertisement.getNodeId();
-        require(advertisement.equals(nodes.get(nodeId)),
+        NodeAdvertisement registered = nodes.get(nodeId);
+        require(registered != null && (registered.equals(advertisement)
+                        || (advertisement.getEpoch() == registered.getEpoch()
+                        && advertisement.getSeq() >= registered.getSeq()
+                        && refreshOnly(registered, advertisement))),
                 "node expiry at replay does not match registered node '" + nodeId + "'");
         require(processors.values().stream()
                         .noneMatch(processor -> processor.getNodeId().equals(nodeId)),
@@ -747,6 +762,7 @@ public final class ClusterDirectory {
         nodes.remove(nodeId);
         presence.remove(nodeId);
         nodeCapacity.remove(nodeId);
+        nodePositions.put(nodeId, new Position(advertisement.getEpoch(), advertisement.getSeq()));
     }
 
     private void replayProcessorRegistration(ProcessorAdvertisement advertisement) {
@@ -780,13 +796,24 @@ public final class ClusterDirectory {
                 advertisement.getSeq()));
     }
 
+    /**
+     * Replays a processor expiry under the same rule as {@link #replayNodeExpiry}: the
+     * expired advertisement may be a soft lease renewal of the registered one, and the
+     * tombstone takes the expiry's position.
+     */
     private void replayProcessorExpiry(ProcessorAdvertisement advertisement) {
         String processorId = advertisement.getProcessorId();
-        require(advertisement.equals(processors.get(processorId)),
+        ProcessorAdvertisement registered = processors.get(processorId);
+        require(registered != null && (registered.equals(advertisement)
+                        || (advertisement.getLeaseEpoch() == registered.getLeaseEpoch()
+                        && advertisement.getSeq() >= registered.getSeq()
+                        && refreshOnly(registered, advertisement))),
                 "processor expiry at replay does not match registered processor '"
                         + processorId + "'");
         processors.remove(processorId);
         processorCapacity.remove(capacityKey(advertisement.getNodeId(), processorId));
+        processorPositions.put(processorId,
+                new Position(advertisement.getLeaseEpoch(), advertisement.getSeq()));
     }
 
     private void replayPresence(NodePresence record) {

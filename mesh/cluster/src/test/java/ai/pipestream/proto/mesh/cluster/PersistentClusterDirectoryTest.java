@@ -276,6 +276,86 @@ class PersistentClusterDirectoryTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void aNodeThatExpiresAfterSoftRenewalsLeavesAReplayableLog() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 64);
+        directory.register(ClusterFixtures.node("node-1"));
+
+        // Refresh-only re-advertisements live in memory alone: the log still holds the
+        // registration at seq 1, while the directory holds the renewal at seq 5.
+        for (int cycle = 2; cycle <= 5; cycle++) {
+            java.time.Instant at = ClusterFixtures.T0.plusSeconds(10L * cycle);
+            clock.advance(java.time.Duration.ofSeconds(10));
+            directory.register(ClusterFixtures.nodeBuilder("node-1", 1, cycle)
+                    .setAdvertisedAt(ClusterFixtures.ts(at)).build());
+        }
+        int savesBeforeExpiry = events.saves;
+
+        // The node goes quiet and its presence lapses. The expiry that the sweep records
+        // is durable, and it names the advertisement the directory currently holds.
+        clock.advance(java.time.Duration.ofSeconds(120));
+        assertThat(directory.sweep()).hasSize(1);
+        assertThat(events.saves).isEqualTo(savesBeforeExpiry + 1);
+        assertThat(directory.node("node-1")).isEmpty();
+
+        // The log the directory just wrote must replay. Every later mutation rebuilds
+        // from it, and so does a restart; a log the directory refuses is a directory
+        // that can never change again.
+        assertThat(directory.register(ClusterFixtures.nodeBuilder("node-1", 1, 6).build()))
+                .isEqualTo(ClusterDirectory.ApplyOutcome.REGISTERED);
+        PersistentClusterDirectory restored = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 64);
+        assertThat(restored.node("node-1")).isPresent();
+        assertThat(restored.snapshot().getSnapshotSeq())
+                .isEqualTo(directory.snapshot().getSnapshotSeq());
+    }
+
+    @Test
+    void aProcessorWhoseLeaseLapsesAfterSoftRenewalsLeavesAReplayableLog() {
+        CountingRepository events = new CountingRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 64);
+        directory.register(ClusterFixtures.node("node-1"));
+        directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1").build());
+        // Keep the node itself alive well past the processor lease, so only the processor
+        // expires and the failure, if any, is the processor path's own.
+        directory.heartbeat(ClusterFixtures.presenceBuilder("node-1", 2)
+                .setTtl(com.google.protobuf.Duration.newBuilder().setSeconds(3600))
+                .setExpiresAt(ClusterFixtures.ts(ClusterFixtures.T0.plusSeconds(3600)))
+                .build());
+
+        for (int cycle = 2; cycle <= 5; cycle++) {
+            java.time.Instant at = ClusterFixtures.T0.plusSeconds(10L * cycle);
+            clock.advance(java.time.Duration.ofSeconds(10));
+            directory.registerProcessor(ClusterFixtures.processorBuilder("proc-1", "node-1")
+                    .setSeq(cycle)
+                    .setAdvertisedAt(ClusterFixtures.ts(at))
+                    .setLeaseExpiresAt(ClusterFixtures.ts(at.plusSeconds(60))).build());
+        }
+        int savesBeforeExpiry = events.saves;
+
+        clock.advance(java.time.Duration.ofSeconds(120));
+        assertThat(directory.sweep()).hasSize(1);
+        assertThat(events.saves).isEqualTo(savesBeforeExpiry + 1);
+        assertThat(directory.processor("proc-1")).isEmpty();
+        assertThat(directory.node("node-1")).isPresent();
+
+        assertThat(directory.registerProcessor(
+                ClusterFixtures.processorBuilder("proc-1", "node-1").setSeq(6)
+                        .setLeaseExpiresAt(ClusterFixtures.ts(clock.instant().plusSeconds(60)))
+                        .build()))
+                .isEqualTo(ClusterDirectory.ApplyOutcome.REGISTERED);
+        PersistentClusterDirectory restored = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, events, 64);
+        assertThat(restored.processor("proc-1")).isPresent();
+        assertThat(restored.snapshot().getSnapshotSeq())
+                .isEqualTo(directory.snapshot().getSnapshotSeq());
+    }
+
     private static class CountingRepository implements ClusterEventRepository {
         private StoredDirectory current = StoredDirectory.of(List.of());
         private int saves;
