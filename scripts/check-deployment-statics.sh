@@ -118,6 +118,78 @@ print("krick compose mounts git config read-only for both agents")
 print("krick compose mounts linked-worktree git metadata for both agents")
 PYEOF
 
+say "postgres volumes match the data path of the image major they pin"
+python3 - <<'PYEOF'
+import sys
+try:
+    import yaml
+except ImportError:
+    print("SKIP: pyyaml not installed")
+    sys.exit(0)
+
+# The official postgres images moved where the server keeps its cluster. Through
+# 17, PGDATA and the declared VOLUME were both /var/lib/postgresql/data. From 18,
+# PGDATA is /var/lib/postgresql/<major>/docker and the VOLUME is the parent.
+# Pairing an 18 image with the 17 path fails silently rather than loudly: the
+# server initialises a fresh cluster on a path the compose file does not mount,
+# reports healthy on an empty database, and loses it on the next recreate. A
+# major bump that "needs no source changes" is exactly how that arrives, so the
+# pairing is checked here rather than discovered on a deploy.
+LEGACY = "/var/lib/postgresql/data"
+PARENT = "/var/lib/postgresql"
+
+
+def image_major(tag):
+    """Leading integer of a tag: 18.6-alpine and 18-alpine both give 18."""
+    digits = ""
+    for char in tag:
+        if not char.isdigit():
+            break
+        digits += char
+    return int(digits) if digits else None
+
+
+checked = 0
+for path in [
+    "deploy/document-platform/compose.yml",
+    "deploy/document-platform/compose-roles.yml",
+    "deploy/portainer/compose.yml",
+    "deploy/krick/compose.yml",
+    "deploy/nano1/compose.yml",
+    "docker-compose.yml",
+]:
+    with open(path) as handle:
+        document = yaml.safe_load(handle) or {}
+    for name, service in (document.get("services") or {}).items():
+        image = (service or {}).get("image") or ""
+        if not image.startswith("postgres:"):
+            continue
+        if service.get("entrypoint") is not None:
+            # The image is also the psql client: jobs-init runs one command and
+            # exits, with no data directory to place. Overriding the entrypoint
+            # is what separates those from a server, so they are skipped rather
+            # than made to carry a volume they never write.
+            continue
+        major = image_major(image.split(":", 1)[1])
+        if major is None:
+            print(f"{path}: {name} pins a postgres tag with no readable major: {image}")
+            sys.exit(1)
+        expected = PARENT if major >= 18 else LEGACY
+        mounted = [
+            entry.split(":")[1]
+            for entry in (service.get("volumes") or [])
+            if isinstance(entry, str) and ":" in entry
+        ]
+        found = [target for target in mounted if target in (LEGACY, PARENT)]
+        if found != [expected]:
+            print(f"{path}: {name} runs {image}, whose PGDATA lives under {expected},")
+            print(f"  but the service mounts {found or 'nothing'} there.")
+            print("  A postgres major bump moves PGDATA; move the volume with it.")
+            sys.exit(1)
+        checked += 1
+print("postgres services mount the path their image major uses:", checked)
+PYEOF
+
 say "dockerfiles: COPY sources match the Gradle installDist layout"
 python3 - <<'PYEOF'
 import os, sys

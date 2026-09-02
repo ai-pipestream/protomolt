@@ -147,7 +147,15 @@ services:
       POSTGRES_PASSWORD: ${PROTOMOLT_REPO_DB_PASSWORD:?set PROTOMOLT_REPO_DB_PASSWORD in Portainer}
       POSTGRES_DB: ${PROTOMOLT_REPO_DB_NAME:-documents}
     volumes:
-      - repo-postgres-data:/var/lib/postgresql/data
+      # The 18 images moved PGDATA into a version-scoped subdirectory
+      # (/var/lib/postgresql/18/docker) and declare /var/lib/postgresql as the
+      # volume; 17 used /var/lib/postgresql/data for both. Mounting the 17 path
+      # under 18 does not fail loudly: the server initialises a fresh cluster on
+      # a path this file does not mount, reports healthy on an empty database,
+      # and loses it on the next recreate. Mount the parent so the versioned
+      # directory lives inside the volume, and so the next major lands beside
+      # this one instead of on top of it.
+      - repo-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

@@ -22,7 +22,9 @@ services:
       POSTGRES_DB: documents
     volumes:
       - ./init-jobs-db.sql:/docker-entrypoint-initdb.d/init-jobs-db.sql:ro
-      - roles-postgres:/var/lib/postgresql/data
+      # PGDATA is /var/lib/postgresql/18/docker on the 18 images, so the
+      # volume goes on the parent; see deploy/portainer/compose.yml.
+      - roles-postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U protomolt -d documents"]
       interval: 5s
