@@ -311,7 +311,7 @@ class GoldenPathSystemTest {
     void theRegistryServesTheFleetDocumentModelAsAPublishedArtifact() throws Exception {
         String documentProto = Files.readString(
                 Path.of("..", "..", "parse", "document", "src", "main", "proto",
-                        "ai", "pipestream", "proto", "parse", "document", "v1", "document.proto"));
+                        "ai", "protomolt", "proto", "parse", "document", "v1", "document.proto"));
         ProtoSourceSet sources = ProtoSourceSet.builder()
                 .add("ai/protomolt/proto/parse/document/v1/document.proto", documentProto, "fleet")
                 .build();
@@ -322,7 +322,7 @@ class GoldenPathSystemTest {
 
         HttpResponse<byte[]> descriptorSet = HTTP.send(
                 HttpRequest.newBuilder(registryBase.resolve(
-                                "/protomolt/subjects/ai%2Fpipestream%2Fproto%2Fparse%2Fdocument%2Fv1%2Fdocument.proto/descriptor-set"))
+                                "/protomolt/subjects/ai%2Fprotomolt%2Fproto%2Fparse%2Fdocument%2Fv1%2Fdocument.proto/descriptor-set"))
                         .timeout(Duration.ofSeconds(10)).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(descriptorSet.statusCode()).isEqualTo(200);
