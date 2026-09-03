@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.meta.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.meta";
+option java_outer_classname = "MetadataProto";
+
+import "google/protobuf/descriptor.proto";
+
+// How Pipestream holds descriptive / operational metadata on protobuf schemas.
+// Independent of validation and indexing — those standards may read labels but
+// do not own this option namespace.
+
+// Descriptive and operational metadata for one field: docs, ownership,
+// sensitivity class, and free-form labels. Attached via the
+// (ai.protomolt.proto.meta.v1.field) option on FieldOptions.
+message FieldMeta {
+  // Human-readable description (docs, OpenAPI, UI).
+  string description = 1;
+  // Display label override (empty = use field name).
+  string display_name = 2;
+  // Owning team / system.
+  string owner = 3;
+  // Sensitivity class: e.g. public, internal, pii, secret.
+  string sensitivity = 4;
+  // Free-form labels for routing, policy, and extraction.
+  map<string, string> labels = 5;
+  // The original JSON key this field was derived from (e.g. by infer-schema
+  // when sanitizing "user-name" to user_name). Unlike the descriptor's
+  // json_name, this survives every text round-trip; ProtoMolt loaders
+  // materialize it back into json_name when the descriptor lacks one.
+  string json_name = 6;
+}
+
+// Descriptive and operational metadata for one message. Attached via the
+// (ai.protomolt.proto.meta.v1.message) option on MessageOptions.
+message MessageMeta {
+  // Human-readable description (docs, OpenAPI, UI).
+  string description = 1;
+  // Owning team / system.
+  string owner = 2;
+  // Sensitivity class: e.g. public, internal, pii, secret.
+  string sensitivity = 3;
+  // Free-form labels for routing, policy, and extraction.
+  map<string, string> labels = 4;
+}
+
+extend google.protobuf.FieldOptions {
+  // Field-level metadata option: attach a FieldMeta to any field.
+  FieldMeta field = 59100491;
+}
+
+extend google.protobuf.MessageOptions {
+  // Message-level metadata option: attach a MessageMeta to any message.
+  MessageMeta message = 59100492;
+}

@@ -22,8 +22,8 @@ describe('finding the metrics profile', () => {
         return { services: [{ name: 'search-node' }, { name: 'lake' }] }
       }
       return body!.name === 'lake'
-        ? { services: [{ name: 'ai.pipestream.proto.metric.v1.MetricService' }] }
-        : { services: [{ name: 'ai.pipestream.proto.search.v1.SearchService' }] }
+        ? { services: [{ name: 'ai.protomolt.proto.metric.v1.MetricService' }] }
+        : { services: [{ name: 'ai.protomolt.proto.search.v1.SearchService' }] }
     })
     expect(await findMetricsProfile(fetchFn)).toBe('lake')
   })
@@ -46,7 +46,7 @@ describe('mapping members', () => {
 describe('metric calls through ServiceInvoke', () => {
   it('describes a subject and returns the first streamed response', async () => {
     const fetchFn = bridge((url, body) => {
-      expect(body!.method).toBe('ai.pipestream.proto.metric.v1.MetricService/DescribeMapping')
+      expect(body!.method).toBe('ai.protomolt.proto.metric.v1.MetricService/DescribeMapping')
       expect(body!.request).toEqual({ mappingSubject: 'orders-value' })
       return { ok: true, status: 'OK', responses: [{ members: [{ name: 'orders' }] }] }
     })

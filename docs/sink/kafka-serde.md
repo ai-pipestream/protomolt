@@ -32,7 +32,7 @@ by this deserializer.
 A descriptor set the deployment already packages, on the classpath or inline:
 
 ```properties
-value.serializer=ai.pipestream.proto.kafka.serde.ProtoMoltProtobufSerializer
+value.serializer=ai.protomolt.proto.kafka.serde.ProtoMoltProtobufSerializer
 protomolt.descriptor.set.resource=schemas/orders.desc
 protomolt.message.type=acme.orders.v1.Order
 ```

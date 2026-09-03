@@ -1,0 +1,270 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.validate.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.validate.testdata";
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+// Additional fixtures for the extended test classes. One message per probe so
+// each test exercises a single behavior; unset fields are skipped by presence
+// semantics (collections and implicit-presence scalars excepted).
+
+// Implicit-presence probe: rules on non-optional scalars run against the zero
+// value, because there is no presence bit that would skip them.
+message ImplicitGauntlet {
+  // Non-optional int32 that must be >= 10; the zero value of a default
+  // instance is validated, not skipped.
+  int32 level = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    int32: { gte: 10 }
+  }];
+  // Non-optional string that must be >= 2 characters; "" is validated.
+  string code = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    string: { min_len: 2 }
+  }];
+}
+
+// Pattern-through-the-dialect probe; StringGauntlet pins no pattern rule.
+message PatternGauntlet {
+  // Must match ^[a-z]+$ when set.
+  optional string lower = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    string: { pattern: "^[a-z]+$" }
+  }];
+}
+
+// Numeric-precedence probe: when a field populates more than one numeric rule
+// set the source translation prefers the wider signed set (int64 over int32),
+// then signed over unsigned (int32 over uint64), then double over float.
+message MultiNumericGauntlet {
+  // Both int32 and int64 rules; int64 must win (violation ids say which ran).
+  optional int32 both = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    int32: { gt: 100 }
+    int64: { lt: 5 }
+  }];
+  // Both int32 and uint64 rules; the signed set must win.
+  optional int32 mixed = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    int32: { lt: 5 }
+    uint64: { gt: 100 }
+  }];
+  // Both float and double rules; double must win.
+  optional double fp = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    float: { gt: 100 }
+    double: { lt: 5 }
+  }];
+}
+
+// uint CEL probe: a uint32 value reaches CEL as an unsigned (CEL uint), so the
+// rule compares against a uint literal.
+message UintCelGauntlet {
+  // Must be an unprivileged port when set.
+  optional uint32 port = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "port.high"
+      message: "port must be >= 1024"
+      expression: "this >= 1024u"
+    }
+  }];
+}
+
+// Mood ladder for the enum-CEL probe; MOOD_UNSPECIFIED is the failing value.
+enum Mood {
+  // Default zero value; rejected by the CEL rule on shade.
+  MOOD_UNSPECIFIED = 0;
+  // Passing value.
+  MOOD_GOOD = 1;
+}
+
+// Enum CEL probe: an enum value reaches CEL as its number (CEL int).
+message EnumCelGauntlet {
+  // Must be set to a non-zero value when the field is present.
+  optional Mood shade = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "shade.set"
+      message: "shade must be a defined mood"
+      expression: "this != 0"
+    }
+  }];
+}
+
+// Collection CEL probe: a field-level CEL rule on a repeated field binds the
+// whole list; on a map field it binds the whole map (comprehension over keys).
+message CollectionCelGauntlet {
+  // No element may be the empty string.
+  repeated string names = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "names.non_empty"
+      message: "names must not contain empty strings"
+      expression: "this.all(n, n.size() > 0)"
+    }
+  }];
+  // No key may be the empty string.
+  map<string, int32> quotas = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "quotas.keyed"
+      message: "quota keys must not be empty"
+      expression: "this.all(k, k.size() > 0)"
+    }
+  }];
+}
+
+// Item CEL probe: a CEL rule inside repeated.items runs per element with the
+// element path subscript.
+message ItemCelGauntlet {
+  // Every element must be odd.
+  repeated int32 odds = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    repeated: {
+      items: {
+        cel: {
+          id: "odds.odd"
+          message: "element must be odd"
+          expression: "this % 2 == 1"
+        }
+      }
+    }
+  }];
+}
+
+// now-binding probe: a Timestamp field reaches CEL as a timestamp and can be
+// compared against the bound `now`.
+message NowGauntlet {
+  // Must be in the future relative to validation time.
+  google.protobuf.Timestamp deadline = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "deadline.future"
+      message: "deadline must be in the future"
+      expression: "this > now"
+    }
+  }];
+}
+
+// Wrapper probe: rules declared on a wrapper field apply to the wrapped scalar
+// (an unset wrapper is absent; a set wrapper is unwrapped and checked).
+message WrapperGauntlet {
+  // Wrapped string must be >= 2 characters.
+  google.protobuf.StringValue name = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    string: { min_len: 2 }
+  }];
+  // Wrapped int32 must be >= 1; a wrapped zero is present and fails.
+  google.protobuf.Int32Value count = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    int32: { gte: 1 }
+  }];
+  // CEL on a wrapper binds the unwrapped scalar (here a string).
+  google.protobuf.StringValue tagged = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "wrapper.tagged"
+      message: "tag must be >= 2 characters"
+      expression: "this.size() >= 2"
+    }
+  }];
+}
+
+// Real-oneof probe: a custom rule source marks `pick` required.
+message Choice {
+  // Exactly-one probe; the required rule comes from a custom source.
+  oneof pick {
+    // String alternative.
+    string text = 1;
+    // Numeric alternative.
+    int32 number = 2;
+  }
+}
+
+// Synthetic message-oneof probe: two implicit-presence strings whose field
+// rules (min_len) only run while populated once a custom source declares a
+// message-level oneof over them.
+message SyntheticOneofGauntlet {
+  // First alternative; must be >= 2 characters when populated.
+  string alpha = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    string: { min_len: 2 }
+  }];
+  // Second alternative; must be >= 2 characters when populated.
+  string beta = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    string: { min_len: 2 }
+  }];
+}
+
+// Well-known-type probe: Any and FieldMask fields carry no dialect rules (the
+// dialect has none for them); custom sources attach the constraints in tests.
+message Envelope {
+  // Payload whose type URL custom rules allow-list.
+  google.protobuf.Any payload = 1;
+  // Mask whose paths custom rules constrain.
+  google.protobuf.FieldMask mask = 2;
+}
+
+// Unique-semantics probe: repeated doubles with unique use IEEE equality
+// (NaN is never a duplicate; -0.0 equals 0.0).
+message UniqueGauntlet {
+  // Samples must be pairwise distinct under IEEE equality.
+  repeated double samples = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    repeated: { unique: true }
+  }];
+}
+
+// Int-keyed map probe for violation path subscripts (unquoted [key] form).
+message IntMapGauntlet {
+  // Keys must be >= 10; values must be >= 2 characters.
+  map<int32, string> prefs = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    map: {
+      keys: { int32: { gte: 10 } }
+      values: { string: { min_len: 2 } }
+    }
+  }];
+}
+
+// Required-collection probe: an empty repeated field fails `required`.
+message RequiredRepeatedGauntlet {
+  // At least one entry must be present.
+  repeated string entries = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+  }];
+}
+
+// Nested message-CEL probe: the child's message rule is compiled against the
+// child's own descriptor, so `this.score` type-checks in the child's scope.
+message NestedCelChild {
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "child.score"
+      message: "score must be >= 10"
+      expression: "this.score >= 10"
+    }
+  };
+
+  // Child's own score; the message rule sees it as this.score.
+  optional int32 score = 1;
+}
+
+// Parent carrying the nested message-CEL probe; violations report at child.
+message NestedCelParent {
+  // Nested child whose own message rule runs when the child is present.
+  NestedCelChild child = 1;
+}
+
+// CEL result-shape probe: string results carry the failure text, a blank id
+// falls back to the expression text, and repeated cel rules index their rule
+// paths (cel[0], cel[1]).
+message CelShapeGauntlet {
+  // Two CEL rules: the first returns a string (non-empty = failure message)
+  // with no id; the second is an ordinary boolean rule with an id.
+  optional string word = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: { expression: "this.size() >= 2 ? '' : 'too short'" }
+    cel: {
+      id: "word.no_space"
+      message: "no spaces allowed"
+      expression: "!this.contains(' ')"
+    }
+  }];
+  // String-result rule using the format() standard-library function.
+  optional int32 widgets = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "widgets.count"
+      expression: "this <= 10 ? '' : '%d widgets is too many'.format([this])"
+    }
+  }];
+}

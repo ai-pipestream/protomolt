@@ -1,0 +1,331 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.metric.v1;
+
+import "ai/protomolt/proto/metric/v1/metric.proto";
+import "ai/protomolt/proto/types/v1/ranges.proto";
+import "ai/protomolt/proto/types/v1/tree_path.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.metric";
+option java_outer_classname = "MetricServiceProto";
+
+// ============================================================================
+// METRIC SERVICE — aggregate queries over a mapping subject.
+//
+// The descriptor is the semantic layer: measures and dimensions are the
+// metric.v1 declarations on the subject's message type, so what is queryable
+// is exactly what the schema declares. Every request is gated by membership:
+// an unknown subject, an unknown member, a role mismatch, or a backend the
+// subject was not mounted with is refused loudly by name — the service never
+// guesses what a caller meant.
+//
+// These request messages carry validate.v1 rules and the service mounts the
+// validating interceptor from day one: shape rules are the schema's job, and
+// hand-written refusals cover only what annotations cannot express
+// (membership, roles, capabilities).
+// ============================================================================
+
+// Which engine runs the reduction.
+enum MetricBackend {
+  // Unset: resolves to the mount's engine on a single-engine mount
+  // (configuration, not a guess); refused with the mounted set on a
+  // multi-engine mount. Never a silent pick.
+  METRIC_BACKEND_UNSPECIFIED = 0;
+  // Interactive, document-native: collectors over the search service's index.
+  METRIC_BACKEND_LUCENE = 1;
+  // Lake-native: a single SELECT over an Iceberg table the sink wrote.
+  METRIC_BACKEND_ICEBERG = 2;
+}
+
+// One group-by member reference.
+message MemberRef {
+  // The mapping member name. Required.
+  string name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Bucketing grain; DATE dimensions only. Unset on a DATE dimension falls
+  // back to the member's declared default_grain.
+  TimeGrain grain = 2;
+}
+
+// One filter over a member: an equality set over a keyword or bool
+// dimension, a date range over a DATE dimension, or a path prefix over a
+// TREE_PATH dimension. Exactly one form.
+message MetricFilter {
+  // The mapping member name the filter applies to. Required.
+  string member = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Equality set: a row matches when the member equals any value, compared
+  // against the dimension's rendered form (the same strings result rows
+  // carry). An empty set without a range is refused by the compiler; it
+  // would silently match nothing.
+  repeated string equals = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {max_items: 100, items: {string: {min_len: 1, max_len: 200}}}
+    }
+  ];
+  // Date range over a DATE dimension; exactly one of equals/range. The
+  // canonical types.v1 day-grain range: ISO calendar-day bounds, an unset
+  // bound is an open end, an absent inclusivity flag means included, and
+  // excluding a bound drops that entire day. The type's own rules refuse
+  // an empty or inverted range at the gate.
+  ai.protomolt.proto.types.v1.DateRange range = 3;
+  // Descendant-or-self filter over a TREE_PATH dimension: a row matches
+  // when its path is this path or any path below it. Root-first segments,
+  // wire-plain like every TreePath; the type's own rules refuse an empty
+  // path or a segment containing the "/" render delimiter. Exactly one of
+  // equals/range/prefix.
+  ai.protomolt.proto.types.v1.TreePath prefix = 4;
+}
+
+// One aggregate query against a mapping subject.
+message QueryMetricsRequest {
+  // The mapping subject to query. Required; unknown subjects are refused
+  // with the list of served subjects.
+  string mapping_subject = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Explicit engine selector. Unset on a single-engine mount means the
+  // mount's engine; unset on a multi-engine mount is refused naming the
+  // mounted engines. A backend the subject was not mounted with is refused.
+  MetricBackend backend = 2;
+  // Measure member names to compute. Required, at least one. Each name is
+  // bounded like every other member reference, so an unbounded string cannot
+  // reach the executor through this field.
+  repeated string measures = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {
+        min_items: 1
+        max_items: 100
+        items: {string: {min_len: 1, max_len: 200}}
+      }
+    }
+  ];
+  // Group-by dimensions; empty means one row over all matching rows. Bounded
+  // because the group cardinality a query can request is the cost the
+  // executor pays.
+  repeated MemberRef dimensions = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {max_items: 32}
+    }
+  ];
+  // Row filters, all of which must match. Bounded for the same reason as
+  // the dimensions above.
+  repeated MetricFilter filters = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {max_items: 64}
+    }
+  ];
+  // Maximum result rows. Required; must be positive and bounded — over-cap
+  // requests are refused, not clamped.
+  int32 limit = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int32: {gt: 0, lte: 1000}
+    }
+  ];
+}
+
+// One result row.
+message MetricRow {
+  // Selected dimension values, keyed by member name, rendered as strings
+  // (a DATE dimension renders its bucket, e.g. "2026-08" for MONTH).
+  map<string, string> dimensions = 1;
+  // Computed measures, keyed by member name. Double by decision of record:
+  // counts stay exact through 2^53 and the typed-cell question was settled
+  // for stored fields, not aggregates.
+  map<string, double> measures = 2;
+}
+
+// What one QueryMetrics call computed.
+message QueryMetricsResponse {
+  // The queried subject, echoed.
+  string mapping_subject = 1;
+  // The engine that ran the reduction (resolved when the request left it
+  // unset on a single-engine mount).
+  MetricBackend backend = 2;
+  // The result rows, at most the request's limit.
+  repeated MetricRow rows = 3;
+  // Total rows returned.
+  int32 row_count = 4;
+  // The executor's physical plan (collector description, generated SQL):
+  // human and agent evidence, never a source of truth for a later query.
+  string physical_plan = 5;
+}
+
+// Asks for one subject's queryable surface.
+message DescribeMappingRequest {
+  // The mapping subject to describe. Required.
+  string mapping_subject = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+}
+
+// One queryable member of a mapping.
+message MappingMember {
+  // The public member name (the declared name, or the field name).
+  string name = 1;
+  // Whether the member groups or aggregates.
+  MemberRole role = 2;
+  // The measure's aggregate; unset on dimensions.
+  Aggregate aggregate = 3;
+  // The backing proto field path; empty when synthetic.
+  string field_path = 4;
+  // Human description, from meta.v1 when present.
+  string description = 5;
+  // Sensitivity class, from meta.v1 when present.
+  string sensitivity = 6;
+  // Default bucketing grain; DATE dimensions only.
+  TimeGrain default_grain = 7;
+}
+
+// What one DescribeMapping call answered.
+message DescribeMappingResponse {
+  // The described subject, echoed.
+  string mapping_subject = 1;
+  // Fully-qualified message type the mapping was built from.
+  string message_type = 2;
+  // Every queryable member, in declaration order.
+  repeated MappingMember members = 3;
+  // The engines this mount can run.
+  repeated MetricBackend backends = 4;
+}
+
+// Rebuilds one declared rollup: the aggregate query runs on the named
+// engine and its complete result replaces the named lake table, so later
+// reads scan the rollup instead of grouping the subject on the fly. The
+// rebuild is exact or refused: a result that fills the engine's group
+// budget cannot be attested complete and never lands.
+message RebuildRollupRequest {
+  // The mapping subject to aggregate. Required.
+  string mapping_subject = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Explicit engine selector, resolved exactly like QueryMetrics.
+  MetricBackend backend = 2;
+  // Measure member names to compute. Required, at least one. Each name is
+  // bounded like every other member reference, so an unbounded string cannot
+  // reach the executor through this field.
+  repeated string measures = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {
+        min_items: 1
+        max_items: 100
+        items: {string: {min_len: 1, max_len: 200}}
+      }
+    }
+  ];
+  // Group-by dimensions; empty means one row over all matching rows. Bounded
+  // because the group cardinality a query can request is the cost the
+  // executor pays.
+  repeated MemberRef dimensions = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {max_items: 32}
+    }
+  ];
+  // Row filters, all of which must match. Bounded for the same reason as
+  // the dimensions above.
+  repeated MetricFilter filters = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {max_items: 64}
+    }
+  ];
+  // The rollup table name inside the mount's lake namespace. Required.
+  string table = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Optional rebuild-time enrichment: dimensions denormalized from a
+  // second subject. Joins happen here, never at query time.
+  RollupEnrichment enrichment = 7;
+}
+
+// One rebuild-time enrichment: a lookup against a second subject,
+// strictly one to at most one. A join key matching more than one
+// enrichment combination refuses the whole rebuild (join-fanout); a key
+// matching nothing leaves the pulled columns empty and the response
+// counts it. The pulled members land as ordinary dimension columns, so
+// the enriched rollup serves back through rollup:<table> unchanged.
+message RollupEnrichment {
+  // The subject whose dimensions enrich the aggregate. Required.
+  string subject = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // The join key: a dimension member named in the primary request's
+  // dimensions AND declared as a dimension on the enrichment subject.
+  // Rows match on the dimension's rendered string. Required.
+  string join_key = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Enrichment dimension members to pull; at least one, none colliding
+  // with a primary dimension, measure, or the join key.
+  repeated string members = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {min_items: 1, items: {string: {min_len: 1, max_len: 200}}}
+    }
+  ];
+  // Engine for the lookup on the enrichment subject, resolved exactly
+  // like QueryMetrics against that subject's mounted engines.
+  MetricBackend backend = 4;
+}
+
+// What one RebuildRollup call wrote.
+message RebuildRollupResponse {
+  // The queried subject, echoed.
+  string mapping_subject = 1;
+  // The engine that ran the reduction.
+  MetricBackend backend = 2;
+  // The replaced table, as the lake knows it (namespace-qualified).
+  string table = 3;
+  // Rows the rollup now holds.
+  int64 rows_written = 4;
+  // The lake snapshot the replace committed.
+  int64 snapshot_id = 5;
+  // The reduction's physical plan: evidence of what the rollup holds.
+  string physical_plan = 6;
+  // The enrichment subject, echoed; empty when the rebuild had none.
+  string enriched_from = 7;
+  // Rows whose join key matched no enrichment combination: their pulled
+  // columns are empty, counted here as evidence rather than silence.
+  int64 rows_unenriched = 8;
+}
+
+// Aggregate queries over descriptor-declared metric mappings. A sibling of
+// the search service's SearchService, never a new RPC on it: retrieval and
+// aggregation stay independently mountable.
+service MetricService {
+  // One subject's queryable surface: members, roles, backends.
+  rpc DescribeMapping(DescribeMappingRequest) returns (DescribeMappingResponse);
+  // One aggregate query: measures, group-by, filters, bounded limit.
+  rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+  // One declared-rollup rebuild: the aggregate result replaces a lake
+  // table. Refused on a mount without a rollup sink, and refused rather
+  // than truncated when the result fills the group budget.
+  rpc RebuildRollup(RebuildRollupRequest) returns (RebuildRollupResponse);
+}

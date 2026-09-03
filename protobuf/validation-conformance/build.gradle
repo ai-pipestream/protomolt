@@ -22,5 +22,5 @@ protobuf {
 
 application {
     // Phase 2: the stdin/stdout executor driven by buf's protovalidate-conformance binary.
-    mainClass = 'ai.pipestream.proto.validate.conformance.ConformanceMain'
+    mainClass = 'ai.protomolt.proto.validate.conformance.ConformanceMain'
 }

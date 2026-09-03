@@ -12,17 +12,17 @@ The masking primitive is `SensitivityMasker` in
 ## Declaring sensitivity
 
 Masking reads the `sensitivity` field of the
-`ai.pipestream.proto.meta.v1.field` option (extension number `59100491` on
+`ai.protomolt.proto.meta.v1.field` option (extension number `59100491` on
 `FieldOptions`): the same [metadata](../schema/metadata.md) option that carries
 descriptions, ownership, and labels.
 
 ```protobuf
-import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
 
 message Order {
   string id = 1;
-  string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
-  bytes  token = 3 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "secret"}];
+  string email = 2 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
+  bytes  token = 3 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "secret"}];
 }
 ```
 
@@ -124,7 +124,7 @@ unresolved payloads are not reported. The [CLI](../apps/cli.md) and the
 
 ## The `RedactMessage` transform
 
-`ai.pipestream.proto.kafka.connect.RedactMessage` masks record values in
+`ai.protomolt.proto.kafka.connect.RedactMessage` masks record values in
 any Connect pipeline, source or sink. It shares the descriptor-driven
 config every ProtoMolt transform uses.
 
@@ -139,7 +139,7 @@ config every ProtoMolt transform uses.
 
 ```json
 "transforms": "redact",
-"transforms.redact.type": "ai.pipestream.proto.kafka.connect.RedactMessage",
+"transforms.redact.type": "ai.protomolt.proto.kafka.connect.RedactMessage",
 "transforms.redact.schema.descriptor.set.base64": "CvQBCg9zaG9w...",
 "transforms.redact.message.type": "shop.v1.Order",
 "transforms.redact.classes": "pii,secret",

@@ -38,7 +38,7 @@ say "ACP agent → reflect → grpc-invoke, against our own gRPC"
 ./gradlew :protomolt-acp-agent:acpGrpcLive --console=plain -q \
   -Pagent="docker run -i --rm --network ${NET} protomolt-acp-agent:local" \
   -Ptarget="serve:9090" \
-  -Pmethod="ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes" \
+  -Pmethod="ai.protomolt.proto.grpc.service.v1.ProtoMoltService/ListTypes" \
   || fail "the agent could not reflect or invoke our gRPC service"
 
 say "PASS — the ACP agent reflected and invoked ProtoMolt's own gRPC service"

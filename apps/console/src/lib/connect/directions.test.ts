@@ -40,7 +40,7 @@ describe('connect directions', () => {
     }) as { name: string; config: Record<string, string> }
     expect(doc.name).toBe('orders-to-grpc')
     expect(doc.config['connector.class'])
-      .toBe('ai.pipestream.proto.kafka.connect.GrpcSinkConnector')
+      .toBe('ai.protomolt.proto.kafka.connect.GrpcSinkConnector')
     expect(doc.config['grpc.method']).toBe('shop.v1.OrderService/RecordBatch')
     expect(doc.config['value.format']).toBe('confluent')
     expect(doc.config['value.converter'])

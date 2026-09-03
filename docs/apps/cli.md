@@ -13,7 +13,7 @@ not configured remain discoverable and answer `unavailable`. The standalone
 cli/build/install/protomolt-cli/bin/protomolt-cli list
 ```
 
-The entry point is `ai.pipestream.proto.cli.ProtoMoltCli`, so the module can
+The entry point is `ai.protomolt.proto.cli.ProtoMoltCli`, so the module can
 also be run from a jar or embedded directly. `ProtoMoltCli.run` takes its
 streams and its catalog as arguments; `main` only wires the process streams
 and the exit code.
@@ -91,7 +91,7 @@ elsewhere. On the command line, pass `sources` or `descriptorSetBase64`,
 the latter is what `compile`, `reflect`, and `gather-git` return, and what
 the registry's descriptor-set endpoint serves. Inline `sources` are
 compiled per call and must carry every file they import, including
-`ai/pipestream/proto/meta/v1/metadata.proto` and the other ProtoMolt option
+`ai/protomolt/proto/meta/v1/metadata.proto` and the other ProtoMolt option
 files if the schema uses them.
 
 Two verbs behave differently here than they do in a server, because the CLI

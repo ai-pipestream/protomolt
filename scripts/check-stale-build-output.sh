@@ -13,8 +13,8 @@
 # starts empty every time, so this only ever bites a developer.
 #
 # The ADR-002 search rename on 2026-08-20 left 27 orphaned module trees and
-# 595 MB behind in one working copy, and the stale classes under the old
-# ai.pipestream.proto.chunk package failed the suite on 2026-09-01.
+# 595 MB behind in one working copy, and stale classes from the old chunk
+# package failed the suite on 2026-09-01.
 #
 # Run from the repository root. Exits non-zero and names what to remove.
 set -euo pipefail

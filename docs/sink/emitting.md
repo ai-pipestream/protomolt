@@ -49,7 +49,7 @@ carries the knowledge:
 
 - every message, enum, and service becomes a concept document
   (`messages/<full.name>.md`, ...), with `type`, `title`, `description`, and
-  `tags` frontmatter filled from the `ai.pipestream.proto.meta.v1`
+  `tags` frontmatter filled from the `ai.protomolt.proto.meta.v1`
   annotations;
 - the `# Schema` table lists each field with its type, label, declared
   description, and sensitivity class, a column generic producers

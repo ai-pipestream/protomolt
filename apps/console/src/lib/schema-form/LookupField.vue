@@ -39,14 +39,14 @@ import { hasLookupResolver, resolveLookup, type LookupOption } from './lookups'
 const props = defineProps<{
   modelValue: unknown
   label: string
-  /** The property schema carrying x-pipestream-lookup. */
+  /** The property schema carrying x-protomolt-lookup. */
   schema: any
   required?: boolean
 }>()
 
 defineEmits<{ 'update:modelValue': [value: unknown] }>()
 
-const kind = computed(() => props.schema?.['x-pipestream-lookup'] as string)
+const kind = computed(() => props.schema?.['x-protomolt-lookup'] as string)
 const multiple = computed(() => props.schema?.type === 'array')
 const description = computed(() => props.schema?.description as string | undefined)
 const hasResolver = computed(() => hasLookupResolver(kind.value))

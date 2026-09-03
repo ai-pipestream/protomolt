@@ -5,7 +5,7 @@
  */
 import { findProfileByContract, invokeUnary } from './services'
 
-export const METRIC_SERVICE = 'ai.pipestream.proto.metric.v1.MetricService'
+export const METRIC_SERVICE = 'ai.protomolt.proto.metric.v1.MetricService'
 
 export interface MappingMember {
   name: string

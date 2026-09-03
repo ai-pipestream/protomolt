@@ -24,7 +24,7 @@ protovalidate annotations:
 | `email`, `uuid`, `hostname`, `uri`, `ipv4`, `ipv6` | the corresponding `format` values |
 
 CEL rules cannot be expressed in JSON Schema; they are surfaced verbatim
-under the `x-pipestream-cel` vendor extension so consumers can display or
+under the `x-protomolt-cel` vendor extension so consumers can display or
 enforce them separately.
 
 Structural details follow proto3 JSON conventions: message types are defined

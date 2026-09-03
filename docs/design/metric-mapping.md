@@ -322,14 +322,14 @@ metric prerequisite.
 Everything under this heading is built. The sketches below are kept as
 the reasoning; where the shipped shape differs, the difference is named
 in the section. The proto of record is
-`protobuf/metric/src/main/proto/ai/pipestream/proto/metric/v1/metric.proto`
+`protobuf/metric/src/main/proto/ai/protomolt/proto/metric/v1/metric.proto`
 for the options and
-`metric/proto/src/main/proto/ai/pipestream/proto/metric/v1/metric_service.proto`
+`metric/proto/src/main/proto/ai/protomolt/proto/metric/v1/metric_service.proto`
 for the service.
 
 ### Option dialect
 
-Package `ai.pipestream.proto.metric.v1`, beside the other
+Package `ai.protomolt.proto.metric.v1`, beside the other
 descriptor-option standards, on extension ids `59100541` (field) and
 `59100542` (message). Two deltas from the sketch: the message extension
 is named `metric_message` (a `MessageOptions` extension cannot share
@@ -340,7 +340,7 @@ than waiting for v1.1.
 ```protobuf
 syntax = "proto3";
 
-package ai.pipestream.proto.metric.v1;
+package ai.protomolt.proto.metric.v1;
 
 import "google/protobuf/descriptor.proto";
 
@@ -408,48 +408,48 @@ extend google.protobuf.MessageOptions {
 Worked example (not a shipped schema):
 
 ```protobuf
-import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
-import "ai/pipestream/proto/metric/v1/metric.proto";
-import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/metric/v1/metric.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
 import "google/protobuf/timestamp.proto";
 
 message Order {
-  option (ai.pipestream.proto.metric.v1.metric_message) = {
+  option (ai.protomolt.proto.metric.v1.metric_message) = {
     subject: "orders"
     identity_field: "id"
   };
 
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
   ];
   string segment = 2 [
-    (ai.pipestream.proto.index.hints.v1.index) = {
+    (ai.protomolt.proto.index.hints.v1.index) = {
       type: INDEX_FIELD_TYPE_KEYWORD
       facetable: true
     },
-    (ai.pipestream.proto.metric.v1.metric) = { role: MEMBER_ROLE_DIMENSION },
-    (ai.pipestream.proto.meta.v1.field) = { description: "Sales segment" }
+    (ai.protomolt.proto.metric.v1.metric) = { role: MEMBER_ROLE_DIMENSION },
+    (ai.protomolt.proto.meta.v1.field) = { description: "Sales segment" }
   ];
   google.protobuf.Timestamp created_at = 3 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE },
-    (ai.pipestream.proto.metric.v1.metric) = {
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_DATE },
+    (ai.protomolt.proto.metric.v1.metric) = {
       role: MEMBER_ROLE_DIMENSION
       default_grain: TIME_GRAIN_MONTH
     }
   ];
   int64 amount_cents = 4 [
-    (ai.pipestream.proto.index.hints.v1.index) = {
+    (ai.protomolt.proto.index.hints.v1.index) = {
       type: INDEX_FIELD_TYPE_INT64
       sortable: true
     },
-    (ai.pipestream.proto.metric.v1.metric) = {
+    (ai.protomolt.proto.metric.v1.metric) = {
       role: MEMBER_ROLE_MEASURE
       aggregate: AGGREGATE_SUM
       name: "revenue"
     }
   ];
   bool paying = 5 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_BOOLEAN }
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_BOOLEAN }
   ];
 }
 ```
@@ -482,7 +482,7 @@ you cannot annotate still serve.
 
 ### Query contract
 
-Package `ai.pipestream.proto.metric.v1`, in `metric/proto` the way
+Package `ai.protomolt.proto.metric.v1`, in `metric/proto` the way
 `search.v1` lives in `search/proto`. The sketch below is what shipped,
 with three additions: `MetricFilter` grew a `DateRange range` and a
 `TreePath prefix` beside the equality set (exactly one form per
@@ -508,8 +508,8 @@ message MetricFilter {
   string member = 1;
   // Equality set. Empty values refused. Exactly one of these three forms.
   repeated string equals = 2;
-  ai.pipestream.proto.types.v1.DateRange range = 3;   // DATE dimensions
-  ai.pipestream.proto.types.v1.TreePath prefix = 4;   // TREE_PATH dimensions
+  ai.protomolt.proto.types.v1.DateRange range = 3;   // DATE dimensions
+  ai.protomolt.proto.types.v1.TreePath prefix = 4;   // TREE_PATH dimensions
 }
 
 message QueryMetricsRequest {

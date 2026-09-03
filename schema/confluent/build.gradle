@@ -15,8 +15,8 @@ dependencies {
 // "Integration tests") to the test JVM. All lanes self-provision Testcontainers
 // registries; the override only retargets the Apicurio ccompat lanes.
 tasks.withType(Test).configureEach {
-    def value = providers.systemProperty('pipestream.it.apicurio.url')
+    def value = providers.systemProperty('protomolt.it.apicurio.url')
     if (value.isPresent()) {
-        systemProperty 'pipestream.it.apicurio.url', value.get()
+        systemProperty 'protomolt.it.apicurio.url', value.get()
     }
 }

@@ -272,7 +272,7 @@ cat > trust.json <<EOF
              "subjectKinds":["delegation-task"]}]}
 EOF
 
-buf convert --type ai.pipestream.proto.receipt.v1.TrustSnapshot \
+buf convert --type ai.protomolt.proto.receipt.v1.TrustSnapshot \
   --from trust.json#format=json --to trust.binpb
 ```
 
@@ -283,7 +283,7 @@ dependencies at all.
 ```shell
 ./gradlew :protomolt-record-verifier:jar
 java -cp "$(ls apps/record-verifier/build/libs/protomolt-record-verifier-*.jar)" \
-  ai.pipestream.receipt.verify.Main record.binpb trust.binpb
+  ai.protomolt.receipt.verify.Main record.binpb trust.binpb
 ```
 
 ```

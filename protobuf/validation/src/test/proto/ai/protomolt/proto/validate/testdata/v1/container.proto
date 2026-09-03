@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.validate.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.validate.testdata";
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+// Minimal enum used to check how the validator treats unconstrained enum
+// fields and the `required` rule on a message-level scalar.
+enum Color {
+  // Default zero value; an unset enum field.
+  COLOR_UNSPECIFIED = 0;
+  // The only concrete color; used as the passing value for `required`.
+  COLOR_RED = 1;
+}
+
+// Child element stored inside Container.items; deliberately carries no rules
+// so the traversal tests isolate container behavior.
+message Item {
+  // Item label; unconstrained.
+  string name = 1;
+}
+
+// Traversal fixture: mixes a map field, a repeated message field, and a
+// `required` enum field so ProtoValidatorTest can verify that the validator
+// walks every field kind and that an unset required enum (COLOR_UNSPECIFIED)
+// is reported as a violation.
+message Container {
+  // Free-form key/value labels; unconstrained map traversal probe.
+  map<string, string> labels = 1;
+  // Nested items; repeated message traversal probe.
+  repeated Item items = 2;
+  // Required enum: must be set to a non-default value.
+  Color color = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+  }];
+}

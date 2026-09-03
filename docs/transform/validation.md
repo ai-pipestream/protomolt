@@ -12,14 +12,14 @@ full protovalidate conformance suite.
 ## Declaring rules
 
 ```protobuf
-import "ai/pipestream/proto/validate/v1/validate.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
 
 message Person {
-  string name = 1 [(ai.pipestream.proto.validate.v1.field) = {
+  string name = 1 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
     string: { min_len: 2 }
   }];
-  string email = 2 [(ai.pipestream.proto.validate.v1.field) = {
+  string email = 2 [(ai.protomolt.proto.validate.v1.field) = {
     cel: { id: "email.not_localhost"
            expression: "!this.endsWith('@localhost')" }
   }];
@@ -95,11 +95,11 @@ cleanly by dropping the dependency. The chain can also be pinned explicitly:
 
 ```java
 // Built-in dialect only, ignoring classpath extensions
-ProtoValidator.forMessageType(desc, ValidationRuleSources.pipestreamOnly());
+ProtoValidator.forMessageType(desc, ValidationRuleSources.protomoltOnly());
 
 // Explicit multi-dialect chain
 ProtoValidator.forMessageType(desc,
-    List.of(new AiPipestreamRuleSource(), new ProtovalidateRuleSource()));
+    List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()));
 ```
 
 ## Protovalidate interoperability

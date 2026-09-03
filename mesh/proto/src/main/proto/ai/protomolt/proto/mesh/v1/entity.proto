@@ -1,0 +1,457 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.v1;
+
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.v1";
+
+// ============================================================================
+// MESH CORE CONTRACTS: the transport-independent entity vocabulary every mesh
+// node, processor, route, and persistence adapter shares. Contract gate only:
+// no networking, storage, or processor logic lives here.
+//
+// An EntityEnvelope carries exactly one inline google.protobuf.Any payload or
+// one typed ClaimCheck. Schema identity is a pair: the fully qualified payload
+// type name plus the canonical SHA-256 fingerprint of the descriptor-set
+// closure that defines it. A type URL alone is never sufficient identity.
+//
+// The header mirrors the PipeStream transport-visible identity (stable entity,
+// parent, and scope ids, depth, data layer, payload length and digest,
+// deadline, completion policy, profile references, security posture digest,
+// trace and evidence correlation ids) and never carries credentials, bearer
+// tokens, private keys, or raw policy documents.
+//
+// Every persisted field carries validate.v1 bounds and meta.v1 sensitivity.
+// Index hints appear only on the fields the named discovery queries use:
+// entity id, scope id, parent id, state, processor id, type name, created
+// time, and terminal time. Payload bytes, claim-check details, posture
+// digests, and correlation ids are not search fields.
+// ============================================================================
+
+// One entity crossing a mesh boundary: immutable identity header, exact schema
+// identity, and exactly one body form. The body forms are plain fields (not a
+// oneof) so a producer bug that sets both is constructible and the message CEL
+// rejects it before any routing, persistence, or processor execution sees it.
+//
+// Schema identity CEL runs on the statically known fields: the claim-check
+// form must retain the schema's exact type name and fingerprint. The inline
+// form's type-URL agreement is enforced by the contract gate (MeshValidation
+// plus SchemaIdentityResolver), because evaluating into a google.protobuf.Any
+// would require the packed type's descriptor in the CEL runtime.
+message EntityEnvelope {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One mesh entity: header, exact schema identity, and exactly one inline Any payload or typed claim check."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: [
+      {
+        id: "exactly-one-body"
+        message: "an entity carries exactly one inline payload or one claim check, never both and never neither"
+        expression: "has(this.payload) != has(this.claim_check)"
+      },
+      {
+        id: "claim-check-names-schema"
+        message: "a claim check must retain the schema's exact type name and descriptor fingerprint"
+        expression: "!has(this.claim_check) || (this.claim_check.payload_type_name == this.schema.type_name && this.claim_check.descriptor_fingerprint == this.schema.descriptor_fingerprint)"
+      }
+    ]
+  };
+
+  // The entity's transport-visible identity and processing posture.
+  EntityHeader header = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Exact schema identity for the body: type name plus canonical
+  // descriptor-set fingerprint.
+  SchemaReference schema = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The inline payload. Its type URL must end with "/" + schema.type_name; its
+  // serialized value is what header.payload_length and header.payload_digest
+  // describe.
+  google.protobuf.Any payload = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // The claim check naming a content-addressed artifact when the payload is
+  // too large to travel inline. The claim check retains the intended protobuf
+  // type and descriptor fingerprint so rehydration restores exact identity.
+  ClaimCheck claim_check = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// The entity's stable, transport-visible identity. Everything a router or
+// persistence adapter needs without opening the payload; nothing secret.
+message EntityHeader {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Transport-visible entity identity: ids, scope, data layer, payload digest, deadline, completion policy, profile references, posture digest, correlation ids."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: [
+      {
+        id: "parent-implies-depth"
+        message: "a child entity names its parent and has depth at least 1; a root entity has depth 0 and no parent"
+        expression: "size(this.parent_entity_id) > 0 ? this.scope_depth > 0u : this.scope_depth == 0u"
+      },
+      {
+        id: "deadline-after-creation"
+        message: "a deadline must fall after the entity's creation time"
+        expression: "!has(this.deadline) || this.deadline > this.created_at"
+      }
+    ]
+  };
+
+  // Stable entity uuid, minted once at submission; the idempotency key under
+  // at-least-once delivery.
+  string entity_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
+  ];
+  // The parent entity's uuid when a processor dehydrated this entity out of
+  // another; empty on a root entity.
+  string parent_entity_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
+  ];
+  // The scatter/rehydration scope this entity belongs to. A root entity opens
+  // its own scope; children share their parent's scope id.
+  string scope_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
+  ];
+  // Dehydration depth inside the scope: 0 for the root, parent depth + 1 for
+  // each child. Bounded so a runaway scatter fails validation.
+  uint32 scope_depth = 4 [
+    (ai.protomolt.proto.validate.v1.field).uint32.lte = 64,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Application-defined data layer (for example "hot" or "archive") that route
+  // profiles may select on; empty when the application does not use layers.
+  string data_layer = 5 [
+    (ai.protomolt.proto.validate.v1.field).string.pattern = "^$|^[a-z][a-z0-9-]{0,63}$",
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // IANA media type of the payload encoding (normally
+  // "application/x-protobuf"); empty means the default protobuf binary encoding.
+  string content_type = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {max_len: 255, mime_type: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Exact serialized length of the payload: the Any value bytes for an inline
+  // body, the stored artifact bytes for a claim check.
+  uint64 payload_length = 7 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // Lowercase SHA-256 hex of the exact payload bytes payload_length measures.
+  string payload_digest = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the submitting node created the entity.
+  google.protobuf.Timestamp created_at = 9 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_DATE}
+  ];
+  // The entity's absolute deadline, nested inside whatever budget the caller
+  // holds. An entity past its deadline fails validation at the next boundary.
+  google.protobuf.Timestamp deadline = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // How a scope treats child outcomes at the checkpoint barrier.
+  CompletionPolicy completion_policy = 11 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The versioned route profile the router should select with, by reference.
+  ProfileReference route_profile = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // The processing profile the payload's contract requests, by reference.
+  ProfileReference processing_profile = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // The security policy the posture digest derives from, by reference. The
+  // policy document itself never travels in an entity.
+  ProfileReference security_policy = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // Lowercase SHA-256 hex of the canonical derived security posture. The
+  // posture details themselves are not entity data.
+  string security_posture_digest = 15 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // W3C trace id (32 lowercase hex) correlating this entity with the trace the
+  // submission rode in on; empty when tracing is not in use.
+  string trace_id = 16 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {hex: true, len: 32}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Correlates this entity with its execution evidence records; empty until a
+  // processor emits evidence.
+  string evidence_correlation_id = 17 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// Exact schema identity for an entity body. The type name says which message
+// definition the payload claims to be; the descriptor fingerprint binds that
+// name to exact schema bytes, so a same-named type with drifted content is a
+// different schema and a receiver must reject it.
+message SchemaReference {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Payload schema identity: fully qualified type name plus the canonical descriptor-set SHA-256 fingerprint."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Fully qualified protobuf message name (for example
+  // "ai.protomolt.proto.mesh.test.v1.TestDocument").
+  string type_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
+  ];
+  // Lowercase SHA-256 hex of the canonical descriptor-set closure that defines
+  // type_name: the defining file plus its transitive dependencies, sorted by
+  // file name and serialized deterministically.
+  string descriptor_fingerprint = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional registry namespace or URI a receiver can resolve the descriptor
+  // set from when it does not already hold the schema.
+  string registry_reference = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.pattern = "^$|^[A-Za-z][A-Za-z0-9+.-]*:[^ ]{1,2048}$",
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional content-addressed descriptor-set artifact, for receivers that
+  // fetch schemas from an artifact repository instead of a registry.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference descriptor_artifact = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// A typed claim check: the payload lives in a content-addressed artifact and
+// the envelope carries only its coordinates plus the retained schema identity.
+// Coordinates only; a claim check never carries credentials, pre-signed URLs,
+// or inline bytes.
+message ClaimCheck {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Claim check naming the content-addressed artifact holding the payload, retaining the intended type and descriptor fingerprint."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The stored payload bytes, by content address.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference artifact = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The fully qualified protobuf type the stored bytes deserialize to.
+  string payload_type_name = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The canonical descriptor-set fingerprint of payload_type_name, retained so
+  // rehydration verifies schema identity before unpacking.
+  string descriptor_fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the stored artifact stops being fetchable; empty means the artifact
+  // repository's default retention applies.
+  google.protobuf.Timestamp expires_at = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// A versioned, immutable processing profile (route, processing, security,
+// scatter, or rehydration), by reference. Profiles are trusted registry
+// configuration; an entity names them, it never inlines them.
+message ProfileReference {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Reference to one versioned immutable profile: path-safe name, optional version, optional content fingerprint."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Path-safe profile name.
+  string name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Profile version inside the name; empty names the registry's current
+  // promoted version.
+  string version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 64}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Lowercase SHA-256 hex of the canonical profile content, when the caller
+  // pins an exact immutable revision.
+  string fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The mutable processing state of one entity: the part of the contract a
+// persistence adapter updates as routing and execution advance. The header is
+// immutable identity; this record is the current truth about progress.
+message EntityStatus {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Mutable entity state: lifecycle state, holding processor, terminal verdict and time."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Current lifecycle state; UNSPECIFIED is invalid.
+  EntityState state = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
+  ];
+  // Path-safe id of the processor currently holding the entity; empty while
+  // the entity is unassigned.
+  string processor_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
+  ];
+  // The kind of processor currently holding the entity; UNSPECIFIED while
+  // unassigned.
+  ProcessorKind processor_kind = 3 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The terminal verdict; set exactly when state is TERMINAL, UNSPECIFIED
+  // otherwise.
+  TerminalState terminal_state = 4 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the entity reached its terminal state; set exactly when state is
+  // TERMINAL.
+  google.protobuf.Timestamp terminal_at = 5 [
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_DATE}
+  ];
+  // When this status record was last updated.
+  google.protobuf.Timestamp updated_at = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// Where one entity is in its mesh lifecycle.
+enum EntityState {
+  // Invalid; every status names a real state.
+  ENTITY_STATE_UNSPECIFIED = 0;
+  // Accepted by the submitting node; not yet routed.
+  ENTITY_STATE_SUBMITTED = 1;
+  // A route decision selected a processor; not yet executing.
+  ENTITY_STATE_ROUTED = 2;
+  // A processor holds the entity and is executing.
+  ENTITY_STATE_PROCESSING = 3;
+  // Dehydrated into children; parked at the checkpoint barrier.
+  ENTITY_STATE_WAITING_ON_CHILDREN = 4;
+  // The barrier is satisfied; child results are being rehydrated.
+  ENTITY_STATE_REHYDRATING = 5;
+  // Processing is over; terminal_state says how it ended.
+  ENTITY_STATE_TERMINAL = 6;
+}
+
+// How a terminal entity ended.
+enum TerminalState {
+  // Not terminal (or invalid on a terminal entity).
+  TERMINAL_STATE_UNSPECIFIED = 0;
+  // A validated result was produced.
+  TERMINAL_STATE_COMPLETED = 1;
+  // Processing failed and retries are exhausted or not attempted.
+  TERMINAL_STATE_FAILED = 2;
+  // The submitter or a coordinator cancelled the entity.
+  TERMINAL_STATE_CANCELLED = 3;
+  // The entity's deadline passed before completion.
+  TERMINAL_STATE_EXPIRED = 4;
+  // Validation or policy refused the entity before execution.
+  TERMINAL_STATE_REJECTED = 5;
+}
+
+// Where one scatter/rehydration scope is in its lifecycle. The scope runtime
+// drives these transitions; the enum lives here because the contract owns it.
+enum ScopeState {
+  // Invalid; every scope record names a real state.
+  SCOPE_STATE_UNSPECIFIED = 0;
+  // Children may still join the scope.
+  SCOPE_STATE_OPEN = 1;
+  // No new children; the scope is waiting on the in-flight ones.
+  SCOPE_STATE_CLOSING = 2;
+  // The barrier verdict is final; the scope accepts no further transitions.
+  SCOPE_STATE_CLOSED = 3;
+}
+
+// What kind of processor an entity can be routed to or is held by.
+enum ProcessorKind {
+  // Invalid where a kind is required; unassigned where optional.
+  PROCESSOR_KIND_UNSPECIFIED = 0;
+  // A gRPC service invoked dynamically.
+  PROCESSOR_KIND_GRPC_SERVICE = 1;
+  // An LLM through the structured-generation coordinator.
+  PROCESSOR_KIND_LLM = 2;
+  // A deterministic in-process component.
+  PROCESSOR_KIND_DETERMINISTIC = 3;
+  // An OpenNLP analysis pipeline (for example the PII processor).
+  PROCESSOR_KIND_OPENNLP_PIPELINE = 4;
+  // Another mesh node the entity is forwarded to.
+  PROCESSOR_KIND_MESH_NODE = 5;
+}
+
+// How a scope judges child outcomes at the checkpoint barrier.
+enum CompletionPolicy {
+  // Invalid; every entity declares a policy.
+  COMPLETION_POLICY_UNSPECIFIED = 0;
+  // Every child must complete; any failure fails the barrier.
+  COMPLETION_POLICY_STRICT = 1;
+  // Failed children are tolerated; the barrier completes on the rest.
+  COMPLETION_POLICY_LENIENT = 2;
+  // Child outcomes are advisory; the barrier completes regardless.
+  COMPLETION_POLICY_BEST_EFFORT = 3;
+  // A declared quorum of completed children satisfies the barrier.
+  COMPLETION_POLICY_QUORUM = 4;
+}

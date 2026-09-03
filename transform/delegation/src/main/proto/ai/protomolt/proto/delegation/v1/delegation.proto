@@ -1,0 +1,1195 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.delegation.v1;
+
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.delegation.v1";
+
+// ============================================================================
+// AGENT DELEGATION: the engine-neutral coordinator/worker contract.
+//
+// A coordinator delegates one bounded task to an LLM-backed worker process
+// over a single bidirectional stream. The LLM never owns the socket: an
+// adapter or runner process maintains the stream and invokes the provider
+// (Sol, Kimi, Cursor, Codex, ...), so provider identity is hello metadata,
+// not a protocol peer. One stream carries one worker's session; a task's
+// frames are correlated by task_id, and each (worker stream, lane, task,
+// attempt) scope
+// carries its own strictly increasing seq, so a recorded transcript replays
+// deterministically.
+//
+// The lifecycle is honest about review: a worker never gets to declare a
+// task done. It submits a completion candidate with structured evidence that
+// every required acceptance check ran, and the coordinator either accepts
+// that revision or requests a revision with feedback. A candidate without
+// per-check evidence and at least one commit or artifact reference is
+// structurally invalid.
+//
+// Leases are explicit: an offer grants one attempt's lease, heartbeats keep
+// it, renewals extend the coordinator-declared expiry, and expiry or
+// cancellation ends the attempt. A later offer (next attempt, optionally
+// resuming from a recorded checkpoint) is the only way a task moves again.
+//
+// Mid-task questions, answers, and guidance ride the same stream as
+// non-transitioning task messages: recorded and sequenced like any other
+// frame, but never a lifecycle transition and never a review path.
+//
+// Every field carries validate.v1 bounds and meta.v1 sensitivity metadata.
+// No field carries index annotations: transcripts are replayed, not searched,
+// so no field is genuinely searchable.
+// ============================================================================
+
+// The delegation boundary: one long-lived bidirectional stream per worker
+// process. The worker opens the stream with a hello; every later frame is
+// correlated by task_id and sequenced per (worker stream, lane, task,
+// attempt).
+service AgentDelegationService {
+  // The single delegation stream. The first request frame must be a hello;
+  // the coordinator answers with an admission decision before any task frame.
+  rpc Delegate(stream DelegateRequest) returns (stream DelegateResponse);
+}
+
+// One worker-to-coordinator frame. The envelope is the idempotency and
+// ordering unit: frame_id dedupes redelivery under at-least-once transport,
+// and seq orders the frame inside its (worker lane, task, attempt) scope.
+// Session frames (hello) leave task_id empty and use the session sequence.
+message DelegateRequest {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One worker-to-coordinator frame: hello, task response, heartbeat, progress, checkpoint, or completion candidate."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "hello-is-session-scoped"
+      message: "a hello frame leaves task_id empty; every other worker frame names its task"
+      expression: "has(this.hello) ? size(this.task_id) == 0 : size(this.task_id) > 0"
+    }
+    cel: {
+      id: "task-message-matches-envelope"
+      message: "a task message must name the envelope's task"
+      expression: "has(this.task_message) ? this.task_message.task_id == this.task_id : true"
+    }
+  };
+
+  // Sender-generated uuid; the idempotency key. A redelivered frame with an
+  // identical payload replays silently; the same id with a changed payload is
+  // a conflicting duplicate.
+  string frame_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The task this frame concerns; empty on the session-scoped hello.
+  string task_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // 1-based sequence inside this worker stream's (worker lane, task_id,
+  // attempt) scope; gaps and rewinds are findings. Session frames sequence on
+  // the empty task.
+  int64 seq = 3 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the sender emitted the frame.
+  google.protobuf.Timestamp sent_at = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The frame's payload.
+  oneof payload {
+    // Session handshake and capability advertisement; first frame only.
+    WorkerHello hello = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The worker takes the offered lease.
+    TaskAccept accept = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The worker declines the offer; the attempt ends and may be re-offered.
+    TaskReject reject = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // Liveness signal on the active lease.
+    Heartbeat heartbeat = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // One monotonic progress note.
+    ProgressEvent progress = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // One resumable checkpoint of worker state.
+    Checkpoint checkpoint = 15 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The worker cannot proceed without something; terminal for the attempt.
+    BlockedReport blocked = 16 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The worker gave up; terminal for the attempt.
+    FailureReport failed = 17 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The worker confirms it honored a coordinator cancellation.
+    CancelledNotice cancelled = 18 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The reviewable result: structured evidence plus output references.
+    CompletionCandidate completion = 19 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // A non-transitioning structured message: question, answer, or note. It is
+    // recorded and sequenced but never moves the task lifecycle.
+    TaskMessage task_message = 20 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+// One coordinator-to-worker frame. Same envelope discipline as the worker
+// lane: frame_id dedupes, seq orders inside the (coordinator lane, task,
+// attempt) scope, and the admission decision is the session frame.
+message DelegateResponse {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One coordinator-to-worker frame: admission, offer, lease renewal or expiry, cancellation, or review verdict."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "admission-is-session-scoped"
+      message: "an admission frame leaves task_id empty; every other coordinator frame names its task"
+      expression: "has(this.admission) ? size(this.task_id) == 0 : size(this.task_id) > 0"
+    }
+    cel: {
+      id: "task-message-matches-envelope"
+      message: "a task message must name the envelope's task"
+      expression: "has(this.task_message) ? this.task_message.task_id == this.task_id : true"
+    }
+  };
+
+  // Coordinator-generated uuid; the idempotency key for this lane.
+  string frame_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The task this frame concerns; empty on the session-scoped admission.
+  string task_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // 1-based sequence inside this worker stream's (coordinator lane, task_id,
+  // attempt) scope.
+  int64 seq = 3 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the coordinator emitted the frame.
+  google.protobuf.Timestamp sent_at = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The frame's payload.
+  oneof payload {
+    // Admission verdict for the worker's hello; first response frame only.
+    AdmissionDecision admission = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // A bounded task and its lease; one active lease per task at a time.
+    TaskOffer offer = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The lease's declared expiry moved forward.
+    LeaseRenewal renewal = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The coordinator declares the lease expired; the attempt ends.
+    LeaseExpired expired = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The coordinator cancels the attempt; terminal for the attempt.
+    Cancellation cancellation = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The candidate is rejected with feedback; the worker revises.
+    RevisionRequested revision_requested = 15 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The candidate revision is accepted; terminal for the task.
+    CompletionAccepted accepted = 16 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // A non-transitioning structured message: guidance, an answer, or a note.
+    // It is recorded and sequenced but never moves the task lifecycle.
+    TaskMessage task_message = 17 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+// The worker's handshake: identity, protocol version, capabilities, and the
+// provider it drives. The provider fields are descriptive metadata only; the
+// provider never owns the socket and is never a protocol peer.
+message WorkerHello {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Worker handshake: path-safe identity, protocol version, capabilities, and provider metadata."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Stable path-safe worker identity for this stream's session.
+  string worker_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The delegation protocol version the worker speaks; only 1 exists.
+  int32 protocol_version = 2 [
+    (ai.protomolt.proto.validate.v1.field).int32.const = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The provider the runner invokes (for example "sol" or "kimi"); empty for
+  // a deterministic worker. Metadata only.
+  string provider = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 128,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The model the provider runs, when one is configured. Metadata only.
+  string model = 4 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 256,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The provider-reported model version or digest, when reported.
+  string model_version = 5 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 512,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What the worker can do, most relevant first.
+  repeated WorkerCapability capabilities = 6 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 64,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One advertised worker capability.
+message WorkerCapability {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One worker capability: a path-safe name plus a bounded description."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Path-safe capability name (for example "java-build" or "proto-edit").
+  string name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Human-readable detail with no admission semantics.
+  string description = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The coordinator's admission verdict on a hello.
+message AdmissionDecision {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Admission verdict: admitted flag, the session id when admitted, the reason when not."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "rejection-carries-reason"
+      message: "a rejected admission must say why"
+      expression: "this.admitted || size(this.reason) > 0"
+    }
+  };
+
+  // Whether the worker may receive offers on this session.
+  bool admitted = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // The coordinator's session uuid; empty when rejected.
+  string session_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Why admission was refused; required when admitted is false.
+  string reason = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One bounded task and the lease that authorizes one worker to attempt it.
+// The offer is the only place an objective, scope, constraints, and the
+// required acceptance checks are stated; a completion candidate is judged
+// against exactly this spec.
+message TaskOffer {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "A bounded task delegation: attempt number, the task spec, the lease, and an optional resume point."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // 1-based attempt number. Re-offers increment by exactly one; each attempt
+  // gets its own lease and its own frame sequence scope.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The bounded work itself.
+  TaskSpec spec = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // How long the lease runs without renewal.
+  google.protobuf.Duration lease_duration = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      duration: {
+        gte: {nanos: 1}
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The coordinator-declared expiry of this lease. Renewals must move it
+  // forward; an expiry declaration ends the attempt.
+  google.protobuf.Timestamp expires_at = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Resume point into a prior attempt's recorded checkpoints, when this offer
+  // continues interrupted work. The reference must name a checkpoint the
+  // worker actually recorded for this task.
+  CheckpointReference resume_from = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// The bounded definition of one delegated task: what to achieve, where the
+// worker may operate, the constraints it must respect, the acceptance checks
+// it must prove, and the context artifacts it starts from.
+message TaskSpec {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "The bounded task definition: objective, allowed scope, constraints, required acceptance checks, and context artifacts."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // What the task must achieve. The objective is authoritative prose; the
+  // required checks are how completion is judged.
+  string objective = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 16384}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Where the worker may operate: path globs, module names, or capability
+  // names the coordinator enforces out of band.
+  repeated string allowed_scope = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 256
+      items: {
+        string: {max_len: 512}
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Hard constraints the worker must respect (for example "no new
+  // dependencies" or "in-process tests only").
+  repeated string constraints = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 256
+      items: {
+        string: {max_len: 2048}
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The acceptance checks a completion candidate must prove ran. At least
+  // one: a worker saying "done" is never sufficient.
+  repeated AcceptanceCheck required_checks = 4 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      min_items: 1
+      max_items: 64
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Content-addressed context the worker starts from (specs, fixtures, prior
+  // outputs), by reference only.
+  repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference context = 5 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 64,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The task's own deadline, nested inside whatever budget the coordinator
+  // holds. Absent means the lease expiry alone bounds the work.
+  google.protobuf.Duration deadline = 6 [
+    (ai.protomolt.proto.validate.v1.field).duration.gte = {nanos: 1},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One acceptance check the coordinator will demand evidence for.
+message AcceptanceCheck {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One named acceptance check: the worker must prove it ran before acceptance."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // Path-safe check name; the completion evidence keys on it.
+  string name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What passing means, in human terms.
+  string description = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// A pointer to one recorded checkpoint of one attempt.
+message CheckpointReference {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "A resume pointer: attempt, checkpoint sequence, and the opaque resume token."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt the checkpoint belongs to.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The checkpoint's sequence inside that attempt.
+  int32 checkpoint_seq = 2 [
+    (ai.protomolt.proto.validate.v1.field).int32.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The opaque token the worker recorded with the checkpoint.
+  string resume_token = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 512}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The worker takes the offered lease.
+message TaskAccept {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Lease acceptance for one offered attempt."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt being accepted; must equal the open offer's attempt.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The worker declines the offer; the attempt ends and the task may be
+// re-offered to any worker as the next attempt.
+message TaskReject {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Offer rejection with a bounded reason; terminal for the attempt."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt being rejected; must equal the open offer's attempt.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Why the worker declined.
+  string reason = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 2048}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Whether another worker could plausibly take the task; advisory only.
+  bool retryable = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// A liveness signal on the active lease. The coordinator answers with a
+// renewal, an expiry, or a cancellation.
+message Heartbeat {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Lease liveness signal with an optional bounded note."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt whose lease is being kept alive.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional bounded status note.
+  string note = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 1024,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One progress note. Progress sequences are strictly increasing inside the
+// attempt, so a replayed or reordered event is detectable.
+message ProgressEvent {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One monotonic progress note inside an attempt."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt the progress belongs to.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // 1-based, strictly increasing inside the attempt.
+  int32 progress_seq = 2 [
+    (ai.protomolt.proto.validate.v1.field).int32.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What advanced, in bounded prose.
+  string message = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 4096}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One resumable checkpoint of worker state. Checkpoint sequences are strictly
+// increasing inside the attempt; a regression is a finding, never a silent
+// rewind.
+message Checkpoint {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One resumable checkpoint: monotonic sequence, resume token, and optional state artifact."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt the checkpoint belongs to.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // 1-based, strictly increasing inside the attempt.
+  int32 checkpoint_seq = 2 [
+    (ai.protomolt.proto.validate.v1.field).int32.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The opaque token a later offer's resume_from echoes back.
+  string resume_token = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 512}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The checkpointed state as a content-addressed artifact, when the state is
+  // too large for the token.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference state = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // Optional bounded note about what the checkpoint covers.
+  string note = 5 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 1024,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The worker cannot proceed: it names what it needs and stops. Terminal for
+// the attempt; the coordinator may cancel, let the lease expire, or re-offer
+// with a revised spec as the next attempt.
+message BlockedReport {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "A bounded blocked report: why the worker stopped and what it needs."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt that is blocked.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Why the worker cannot proceed.
+  string reason = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 4096}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What would unblock the work (for example "write access to module X").
+  repeated string needs = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 32
+      items: {
+        string: {max_len: 1024}
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The worker gave up on the attempt; terminal for the attempt.
+message FailureReport {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "A bounded failure report with the verbatim error; terminal for the attempt."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt that failed.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The verbatim error, bounded.
+  string error = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 8192}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Whether a fresh attempt could plausibly succeed; advisory only.
+  bool retryable = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// The worker confirms it honored the coordinator's cancellation. The
+// cancellation itself ends the attempt; this notice only proves the worker
+// observed it, and is a finding when no cancellation is in flight.
+message CancelledNotice {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Worker acknowledgement of a coordinator cancellation."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The cancelled attempt.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Optional bounded note (for example how far the worker got).
+  string note = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 1024,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// A non-transitioning structured message carried on either lane: a worker's
+// mid-task question, the coordinator's answer or guidance, or a note either
+// side wants on the record. A task message is recorded in the transcript and
+// sequenced like any other frame, but it never changes the task lifecycle:
+// it is not a progress signal, not a checkpoint, and not a review path. The
+// coordinator relays nothing; a message between two workers is only on the
+// record, never delivered.
+message TaskMessage {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One non-transitioning structured task message: question, answer, guidance, or note, in either direction."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "sender-differs-from-recipient"
+      message: "a task message must not be addressed to its own sender"
+      expression: "this.sender != this.recipient"
+    }
+  };
+
+  // Sender-generated uuid; the message's own identity, distinct from the
+  // carrying frame's idempotency key.
+  string message_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Who sent the message: the worker id on the worker lane, the literal
+  // "coordinator" on the coordinator lane.
+  string sender = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Who the message is for: a worker id or the literal "coordinator".
+  string recipient = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The task the message concerns; must equal the carrying frame's task_id.
+  string task_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What the message is: question, answer, guidance, or note; UNSPECIFIED is
+  // invalid.
+  TaskMessageKind kind = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The message this answers, when it continues a thread; empty otherwise.
+  string reply_to = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The message body, bounded. Long content belongs in artifacts.
+  string text = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 8192}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Content-addressed artifacts the message refers to (logs, diffs, specs),
+  // by reference only.
+  repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference artifacts = 8 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 32,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the sender composed the message.
+  google.protobuf.Timestamp sent_at = 9 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// What a task message is. The kind carries intent only; it never drives the
+// lifecycle.
+enum TaskMessageKind {
+  // Invalid; every message names its kind.
+  TASK_MESSAGE_KIND_UNSPECIFIED = 0;
+  // The sender asks something and expects an answer.
+  TASK_MESSAGE_KIND_QUESTION = 1;
+  // The sender answers a question; reply_to names it.
+  TASK_MESSAGE_KIND_ANSWER = 2;
+  // Coordinator direction that changes how the worker should proceed without
+  // changing the task or its lease.
+  TASK_MESSAGE_KIND_GUIDANCE = 3;
+  // Anything else either side wants on the record.
+  TASK_MESSAGE_KIND_NOTE = 4;
+}
+
+// The reviewable result of an attempt: one revision of structured completion
+// evidence. The candidate must prove every required acceptance check ran and
+// must reference at least one commit or artifact; a bare "done" is
+// structurally invalid. The coordinator answers with acceptance or a
+// revision request, and a revised candidate carries the next revision number.
+message CompletionCandidate {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One revision of completion evidence: per-check proof plus commit and artifact references."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "candidate-references-output"
+      message: "a completion candidate must reference at least one commit or artifact; saying done is not evidence"
+      expression: "size(this.commits) + size(this.artifacts) > 0"
+    }
+  };
+
+  // 1-based revision of this attempt's candidacy; increments by exactly one
+  // after each revision request.
+  int32 revision = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What the worker believes it achieved, in bounded prose.
+  string summary = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 4096}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Proof that each required acceptance check ran. Every required check of
+  // the offer's spec must appear exactly once, with a passing verdict.
+  repeated CheckEvidence evidence = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      min_items: 1
+      max_items: 64
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The commits the work landed in.
+  repeated CommitReference commits = 4 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 64,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Content-addressed outputs the work produced (reports, generated sources,
+  // logs), by reference only.
+  repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference artifacts = 5 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 64,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The lease attempt that produced this candidate. This prevents a delayed
+  // candidate from an earlier lease from being interpreted as current after
+  // the same worker is re-offered the task.
+  int32 attempt = 6 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// Proof that one acceptance check ran. The raw check output is never inlined:
+// bounded detail prose plus content-addressed artifact references only.
+message CheckEvidence {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Evidence that one required acceptance check ran: verdict, timing, bounded detail, artifact references."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The required check this evidence answers; must name one of the offer
+  // spec's required checks.
+  string check_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The check's verdict; UNSPECIFIED is invalid.
+  CheckVerdict verdict = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // When the check ran, recorded by the worker.
+  google.protobuf.Timestamp ran_at = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Bounded detail (for example "312 tests, 0 failures"); raw output lives in
+  // artifacts, never here.
+  string detail = 4 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 4096,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Content-addressed check output (logs, reports), by reference only.
+  repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference artifacts = 5 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 32,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One commit the delegated work landed in.
+message CommitReference {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One commit reference: repository, exact SHA, and bounded subject."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The repository the commit belongs to (a name or URL the coordinator can
+  // resolve out of band).
+  string repository = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 512}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The full lowercase commit SHA.
+  string commit = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha1_hex: true}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The bounded commit subject, for review display.
+  string subject = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 256,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The lease's declared expiry moved forward. A renewal must strictly advance
+// the expiry the offer or the last renewal declared.
+message LeaseRenewal {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Lease renewal: the new coordinator-declared expiry, strictly advancing."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt whose lease is renewed.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The new declared expiry; must be after the previously declared one.
+  google.protobuf.Timestamp expires_at = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The coordinator declares the lease expired; the attempt ends and the task
+// may be re-offered to any worker as the next attempt.
+message LeaseExpired {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Lease expiry declaration; terminal for the attempt."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt whose lease expired.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Why the coordinator let the lease lapse (for example "no heartbeat").
+  string reason = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The coordinator cancels the attempt. Cancellation is terminal the moment
+// the coordinator emits it: any worker frame that arrives for the attempt
+// afterwards, including a completion candidate, is a finding.
+message Cancellation {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Coordinator cancellation; terminal for the attempt the moment it is emitted."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The attempt being cancelled.
+  int32 attempt = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Why the work is called off.
+  string reason = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 2048}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The candidate revision is rejected with actionable feedback; the worker
+// keeps the lease and answers with the next revision.
+message RevisionRequested {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Review feedback rejecting one candidate revision, naming the checks that failed review."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The candidate revision being rejected; must be the open candidate.
+  int32 revision = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // What must change, in bounded prose.
+  string feedback = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 8192}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The required checks whose evidence did not convince the reviewer.
+  repeated string failed_checks = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 64
+      items: {
+        string: {slug: true, max_len: 128}
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The open attempt whose candidate is being returned for revision.
+  int32 attempt = 4 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The candidate revision is accepted. Terminal for the task: nothing about
+// the task may follow.
+message CompletionAccepted {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "Acceptance of one candidate revision; terminal for the task."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The candidate revision being accepted; must be the open candidate.
+  int32 revision = 1 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The one-line acceptance verdict, for review display.
+  string verdict = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {max_len: 2048}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The open attempt whose candidate is accepted.
+  int32 attempt = 3 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {
+      gte: 1
+      lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// How one acceptance check came out.
+enum CheckVerdict {
+  // Invalid; evidence must record a real verdict.
+  CHECK_VERDICT_UNSPECIFIED = 0;
+  // The check ran and passed.
+  CHECK_VERDICT_PASSED = 1;
+  // The check ran and failed; the candidate carrying it is not acceptable.
+  CHECK_VERDICT_FAILED = 2;
+}
+
+// Which side of the stream a transcript entry was recorded from.
+enum Lane {
+  // Invalid; every entry names its lane.
+  LANE_UNSPECIFIED = 0;
+  // A frame the worker emitted (a DelegateRequest).
+  LANE_WORKER = 1;
+  // A frame the coordinator emitted (a DelegateResponse).
+  LANE_COORDINATOR = 2;
+}
+
+// One recorded frame of one delegation stream: the lane, the worker the
+// stream belonged to, and the frame itself. The offline lifecycle reducer
+// consumes a Transcript of these in recorded order.
+message TranscriptEntry {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One recorded delegation frame with its lane and stream identity."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "lane-matches-frame"
+      message: "lane WORKER carries worker_frame, lane COORDINATOR carries coordinator_frame"
+      expression: "(this.lane == 1 && has(this.worker_frame)) || (this.lane == 2 && has(this.coordinator_frame))"
+    }
+  };
+
+  // Which side emitted the frame; must match the frame field that is set.
+  Lane lane = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The worker whose stream carried the frame (the sender on the worker
+  // lane, the addressee on the coordinator lane).
+  string worker_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 128}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The recorded frame; exactly one is set, matching lane.
+  oneof frame {
+    // A worker-emitted frame, set exactly when lane is WORKER.
+    DelegateRequest worker_frame = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // A coordinator-emitted frame, set exactly when lane is COORDINATOR.
+    DelegateResponse coordinator_frame = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+// An ordered recording of delegation frames, the offline reducer's input.
+// Entries are processed in list order, which is the recorded order; the
+// reducer never reorders, repairs, or drops an entry silently.
+message Transcript {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "An ordered recording of delegation frames for offline lifecycle checking."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The recorded frames, in the order they were observed.
+  repeated TranscriptEntry entries = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 65536,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}

@@ -1,7 +1,7 @@
 # Search service
 
 `protomolt-search-service` is the user-facing query surface and its indexing
-RPC (`protomolt-search-proto`, `ai.pipestream.proto.search.v1`). It mounts
+RPC (`protomolt-search-proto`, `ai.protomolt.proto.search.v1`). It mounts
 as the `search` role over a co-mounted or remote `repo` role, owns a
 Lucene index per served subject, and is the first consumer of the
 [embedding lane](embeddings.md): indexing a document runs chunk-and-embed

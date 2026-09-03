@@ -16,7 +16,7 @@ tasks.register('graphProbe', JavaExec) {
     group = 'protomolt'
     description = 'Probe what a Graph tenant allows: -Ptenant=... -Pclient=... [-Psecret=...] (see docs/acquire/msgraph.md)'
     classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'ai.pipestream.proto.acquire.msgraph.GraphProbe'
+    mainClass = 'ai.protomolt.proto.acquire.msgraph.GraphProbe'
     doFirst {
         def probeArgs = []
         ['tenant', 'client', 'secret'].each { name ->

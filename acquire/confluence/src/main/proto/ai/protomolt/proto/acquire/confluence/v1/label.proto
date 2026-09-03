@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.acquire.confluence.v1;
+
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.acquire.confluence.v1";
+
+// ============================================================================
+// LABEL AND LIKE
+// ============================================================================
+
+// A content label.
+message Label {
+  // ID of the label.
+  string id = 1;
+  // Name of the label.
+  string name = 2 [
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      sortable: true
+    },
+    (ai.protomolt.proto.validate.v1.field) = { required: true }
+  ];
+  // Prefix of the label (e.g. "global", "my", "team").
+  string prefix = 3 [
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A like on a piece of content.
+message Like {
+  // Account ID of the user who liked the content.
+  string account_id = 1 [
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.protomolt.proto.validate.v1.field) = { required: true }
+  ];
+}

@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.acquire.confluence.v1;
+
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.acquire.confluence.v1";
+
+// ============================================================================
+// USER
+// ============================================================================
+
+// The account type of the user.
+enum AccountType {
+  // Zero value; the account type is unknown or was not returned.
+  ACCOUNT_TYPE_UNSPECIFIED = 0;
+  // A regular Atlassian account user.
+  ACCOUNT_TYPE_ATLASSIAN = 1;
+  // An app (bot) account.
+  ACCOUNT_TYPE_APP = 2;
+  // A portal-only customer account.
+  ACCOUNT_TYPE_CUSTOMER = 3;
+  // Fallback for account types not recognized by this schema.
+  ACCOUNT_TYPE_UNKNOWN = 4;
+}
+
+// The account status of the user.
+enum AccountStatus {
+  // Zero value; the account status is unknown or was not returned.
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  // The account is active.
+  ACCOUNT_STATUS_ACTIVE = 1;
+  // The account is deactivated but retained.
+  ACCOUNT_STATUS_INACTIVE = 2;
+  // The account is closed.
+  ACCOUNT_STATUS_CLOSED = 3;
+  // Fallback for account statuses not recognized by this schema.
+  ACCOUNT_STATUS_UNKNOWN = 4;
+}
+
+// An icon. If used as a profilePicture, this may be returned as null,
+// depending on the user's privacy setting.
+message Icon {
+  // Path to the icon, relative to the tenant base URL.
+  string path = 1;
+  // Whether the icon is the default icon.
+  bool is_default = 2;
+}
+
+// A Confluence user (the v2 user shape).
+message User {
+  // Account ID of the user.
+  string account_id = 1 [
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.protomolt.proto.validate.v1.field) = { required: true }
+  ];
+  // The account type of the user.
+  AccountType account_type = 2;
+  // The account status of the user.
+  AccountStatus account_status = 3;
+  // Display name of the user.
+  string display_name = 4 [
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }
+  ];
+  // Public name of the user.
+  string public_name = 5;
+  // The email address of the user. Depending on the user's privacy setting,
+  // this may return an empty string.
+  string email = 6 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "user.email_format"
+      message: "email must be empty or a valid address"
+      expression: "this == '' || this.matches('^[^ @]+@[^ @]+[.][^ @]+$')"
+    }
+  }];
+  // Time zone of the user. Depending on the user's privacy setting, this may
+  // return null (empty when unset).
+  string time_zone = 7;
+  // Space ID of the user's personal space. Null if the user has no personal
+  // space.
+  optional string personal_space_id = 8;
+  // Whether the user is an external collaborator.
+  bool is_external_collaborator = 9;
+  // Profile picture of the user (may be null per privacy settings).
+  Icon profile_picture = 10;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

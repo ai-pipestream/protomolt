@@ -112,16 +112,16 @@ lint:
     # bar; see the module comment above. Top-level ignore ONLY: a
     # module-level lint block breaks the workspace image `buf breaking`
     # compares.
-    - parse/document/src/main/proto/ai/pipestream/proto/parse/document/v1/document.proto
+    - parse/document/src/main/proto/ai/protomolt/proto/parse/document/v1/document.proto
     # The vendored gRParse streaming surface keeps gRParse's own lint bar for
     # the same byte-identity reason.
-    - parse/grparse/src/main/proto/ai/pipestream/proto/parse/grparse/v1/parse_stream.proto
-    - parse/grparse/src/main/proto/ai/pipestream/proto/parse/grparse/v1/parse_types.proto
+    - parse/grparse/src/main/proto/ai/protomolt/proto/parse/grparse/v1/parse_stream.proto
+    - parse/grparse/src/main/proto/ai/protomolt/proto/parse/grparse/v1/parse_types.proto
   ignore_only:
     # GetDocument and GetDocumentByReference deliberately share
     # GetDocumentResponse: same payload, two coordinate systems.
     RPC_REQUEST_RESPONSE_UNIQUE:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
+      - repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_service.proto
     # Every ProtoMolt proto that generates Java sets java_multiple_files. These
     # two fixtures are deliberately inconsistent with each other because they
     # stand in for FOREIGN descriptors, which ProtoMolt must consume whatever
@@ -134,25 +134,22 @@ lint:
       - sink/kafka/serde/src/test/proto/serde/gen/v1/gen_order.proto
       - sink/kafka/serde/src/test/proto/serde/gen/v1/legacy_event.proto
     RPC_RESPONSE_STANDARD_NAME:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
+      - repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_service.proto
 breaking:
   use:
     - FILE
   except:
-    # Temporary, for the last untyped payloads on the work-record verbs: the
-    # workflow field on replay, promote and evaluate becomes the durable
-    # ai.pipestream.proto.grpc.workflow.v1.Workflow, and trust becomes
-    # ai.pipestream.proto.receipt.v1.TrustSnapshot, both in place of
-    # google.protobuf.Struct. Each already carried exactly that message as
-    # JSON, which the verbs parsed by hand; declaring the type moves the
-    # contract into the message. Nothing consumes the Struct forms, so the
-    # breaks are deliberate. Drop this block in the next pull request that
-    # touches this file, per the convention recorded below.
+    # Temporary, for the move of every proto package from ai.pipestream to
+    # ai.protomolt. Against the previous main, buf sees each file deleted at
+    # its old path, each extension renamed with its package and typed by the
+    # renamed option message, and a new java_package on the two test protos
+    # whose path did not change. The break is deliberate and data written
+    # under the old names is recreated. Drop this block in the next pull
+    # request that touches this file, per the convention recorded below.
+    - FILE_NO_DELETE
+    - FIELD_SAME_NAME
     - FIELD_SAME_TYPE
-    # Same change, other half: the artifact bag on those two requests becomes a
-    # declared map<string, string> in place of a Struct, which buf reports as a
-    # cardinality change rather than a type change.
-    - FIELD_SAME_CARDINALITY
+    - FILE_SAME_JAVA_PACKAGE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

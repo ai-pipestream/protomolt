@@ -3,7 +3,7 @@
 A workflow turns a successful gRPC exploration into a checked, replayable
 contract. It records the input type, service dependencies, ordered steps,
 typed dataflow, output mapping, and deadline. The protobuf contract is
-[`grpc_workflow.proto`](../../surface/grpc/workflow/src/main/proto/ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto).
+[`grpc_workflow.proto`](../../surface/grpc/workflow/src/main/proto/ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto).
 
 The normal lifecycle is:
 

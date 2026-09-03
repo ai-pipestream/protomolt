@@ -19,7 +19,7 @@ describe('finding the search profile', () => {
       }
       if (url.endsWith('/ServiceInspect')) {
         return body!.name === 'westcoast-node'
-          ? { services: [{ name: 'ai.pipestream.proto.search.v1.SearchService' }] }
+          ? { services: [{ name: 'ai.protomolt.proto.search.v1.SearchService' }] }
           : { services: [{ name: 'shop.Billing' }] }
       }
       throw new Error(`unexpected ${url}`)
@@ -48,7 +48,7 @@ describe('finding the search profile', () => {
             { message: 'unreachable' }) }
       }
       return { ok: true, status: 200, text: async () => JSON.stringify(
-          { services: [{ name: 'ai.pipestream.proto.search.v1.SearchService' }] }) }
+          { services: [{ name: 'ai.protomolt.proto.search.v1.SearchService' }] }) }
     }) as never
     expect(await findSearchProfile(fetchFn)).toBe('search')
     expect(calls).toEqual(['down', 'search'])
@@ -59,7 +59,7 @@ describe('search calls through ServiceInvoke', () => {
   it('lists subjects from the first streamed response', async () => {
     const fetchFn = bridge((url, body) => {
       expect(url.endsWith('/ServiceInvoke')).toBe(true)
-      expect(body!.method).toBe('ai.pipestream.proto.search.v1.SearchService/ListSubjects')
+      expect(body!.method).toBe('ai.protomolt.proto.search.v1.SearchService/ListSubjects')
       return { ok: true, status: 'OK', responses: [{ subjects: [{ subject: 'people' }] }] }
     })
     expect(await listSubjects('search', fetchFn)).toEqual([{ subject: 'people' }])

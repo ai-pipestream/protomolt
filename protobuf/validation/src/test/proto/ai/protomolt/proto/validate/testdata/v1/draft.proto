@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.validate.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.validate.testdata";
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+// Child form whose own rules must not run when the parent declares incompleteness,
+// because the field walk that would reach it is suspended.
+message DraftChild {
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "child.always_fails"
+      message: "this rule always fails when evaluated"
+      expression: "false"
+    }
+  };
+
+  // Required child value; deliberately never satisfied in the tests.
+  optional string value = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+  }];
+}
+
+// Fixture for skip_when semantics: a filler that cannot complete the form declares
+// incomplete instead of fabricating values, and the message-level CEL rule polices
+// the declaration itself by requiring a reason.
+message DraftForm {
+  option (ai.protomolt.proto.validate.v1.message) = {
+    skip_when: "incomplete"
+    cel: {
+      id: "incomplete.needs_reason"
+      message: "a reason is required when declaring the form incomplete"
+      expression: "!this.incomplete || this.incomplete_reason.size() > 0"
+    }
+  };
+
+  // Set by the filler when it cannot satisfy the form; suspends all field-level rules.
+  bool incomplete = 1;
+
+  // Free-form explanation of why the form could not be completed.
+  string incomplete_reason = 2;
+
+  // Display name; required and 2-40 characters while the form is not declared incomplete.
+  optional string name = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: { min_len: 2, max_len: 40 }
+  }];
+
+  // Topics covered; at least one while the form is not declared incomplete.
+  repeated string topics = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    repeated: { min_items: 1 }
+  }];
+
+  // Nested detail; its own field and message rules are unreachable while the parent
+  // declares incompleteness.
+  DraftChild child = 5;
+}

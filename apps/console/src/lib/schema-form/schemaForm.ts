@@ -43,7 +43,7 @@ export type FieldKind =
 /** Classify a property schema into the renderer it gets. */
 export function fieldKind(prop: any): FieldKind {
   if (!prop || typeof prop !== 'object') return 'json'
-  if (prop['x-pipestream-lookup']) return 'lookup'
+  if (prop['x-protomolt-lookup']) return 'lookup'
   if (Array.isArray(prop.enum)) return 'enum'
   switch (prop.type) {
     case 'boolean':

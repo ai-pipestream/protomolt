@@ -110,7 +110,7 @@ instead, use `AccountServices.build(config)` + `startInProcess(name)`.
 
 ## API surface
 
-`AccountService` (`account/proto`, package `ai.pipestream.proto.account.v1`),
+`AccountService` (`account/proto`, package `ai.protomolt.proto.account.v1`),
 unary-only and grpc-web friendly:
 
 - `CreateAccount` — provisions `intake` + `pipeline` drives, then commits

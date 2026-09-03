@@ -23,7 +23,7 @@ generated objects — there is no parallel Java model.
 
 A new leaf family, `asset/`:
 
-- **`asset/proto`** (`ai.pipestream.proto.asset.v1`) — the contract: format
+- **`asset/proto`** (`ai.protomolt.proto.asset.v1`) — the contract: format
   facts, classification, content profiles. A leaf dependency the way
   `repo/proto` is, consumed by the archive (which stores classifications),
   the parse family (which produces them), and the search mapping subjects

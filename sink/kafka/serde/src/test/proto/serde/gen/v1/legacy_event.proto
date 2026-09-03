@@ -8,7 +8,7 @@ syntax = "proto3";
 
 package serde.gen.v1;
 
-option java_package = "ai.pipestream.proto.kafka.serde.testdata";
+option java_package = "ai.protomolt.proto.kafka.serde.testdata";
 
 // Named identically to the file so that protoc's outer class name collides
 // with it, which is the condition under test.

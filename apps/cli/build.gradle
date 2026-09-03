@@ -13,7 +13,7 @@ dependencies {
 }
 
 application {
-    mainClass = 'ai.pipestream.proto.cli.ProtoMoltCli'
+    mainClass = 'ai.protomolt.proto.cli.ProtoMoltCli'
 }
 
 // Native-image experiment (graalvm-test branch). Reachability metadata comes from the

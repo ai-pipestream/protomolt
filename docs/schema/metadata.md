@@ -7,18 +7,18 @@ from message contents with CEL selectors.
 ## Declared metadata (`protomolt-protobuf-metadata`)
 
 The metadata standard defines `FieldOptions` / `MessageOptions` extensions
-under `ai.pipestream.proto.meta.v1` for descriptive and operational
+under `ai.protomolt.proto.meta.v1` for descriptive and operational
 metadata: ownership, sensitivity, descriptions:
 
 ```protobuf
-import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
 
 message Doc {
-  option (ai.pipestream.proto.meta.v1.message) = {
+  option (ai.protomolt.proto.meta.v1.message) = {
     owner: "search-platform"
     sensitivity: "internal"
   };
-  string doc_id = 1 [(ai.pipestream.proto.meta.v1.field) = {
+  string doc_id = 1 [(ai.protomolt.proto.meta.v1.field) = {
     description: "Stable id"
     sensitivity: "public"
   }];

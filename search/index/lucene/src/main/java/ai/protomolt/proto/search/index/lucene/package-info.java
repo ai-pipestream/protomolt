@@ -1,0 +1,23 @@
+/**
+ * Lucene plugin for the search-index SPI: maps protobuf messages into Lucene documents and
+ * reports the per-field index settings a mapping implies.
+ *
+ * <p>{@link ai.protomolt.proto.search.index.lucene.ProtoLuceneMapper} implements
+ * {@link ai.protomolt.proto.search.index.spi.SearchEngineIndexer} and turns a message plus an
+ * {@link ai.protomolt.proto.search.index.spi.IndexMapping} into an
+ * {@code org.apache.lucene.document.Document}, emitting KNN vector fields, point and doc-values
+ * fields, and sub-fields named {@code field.sub}.
+ * {@link ai.protomolt.proto.search.index.lucene.LuceneIndexerProvider} is the
+ * {@code ServiceLoader} entry registered under
+ * {@link ai.protomolt.proto.search.index.spi.SearchEngineIndexerProvider}.
+ *
+ * <p>Lucene has no schema artifact, so
+ * {@link ai.protomolt.proto.search.index.lucene.LuceneFieldSpecs} takes the place of the mappings
+ * file the OpenSearch and Solr plugins generate: a typed per-field report of analyzers, vector
+ * encoding and similarity, and expected doc-values types, which the caller applies when
+ * configuring the {@code IndexWriter}.
+ *
+ * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/search/indexing.md">Search
+ * indexing guide</a> for the hint surface shared by all engines.
+ */
+package ai.protomolt.proto.search.index.lucene;

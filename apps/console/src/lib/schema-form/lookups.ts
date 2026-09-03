@@ -1,8 +1,8 @@
 /**
- * Lookup resolver registry for the x-pipestream-lookup schema convention.
+ * Lookup resolver registry for the x-protomolt-lookup schema convention.
  *
  * A module config schema property annotated with
- * `"x-pipestream-lookup": "<kind>"` declares that the field is a REFERENCE
+ * `"x-protomolt-lookup": "<kind>"` declares that the field is a REFERENCE
  * (index mappings, vector sets, embedding models, ...). The form renderer asks
  * this registry to resolve the kind to selectable options; the hosting app
  * registers one resolver per kind at startup (using whatever clients it has).

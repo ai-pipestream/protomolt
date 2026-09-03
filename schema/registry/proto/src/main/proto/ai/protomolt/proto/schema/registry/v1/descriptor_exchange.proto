@@ -1,0 +1,220 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.schema.registry.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.schema.registry.v1";
+
+// ============================================================================
+// DESCRIPTOR EXCHANGE: language-neutral transfer of protobuf descriptor sets
+// between services.
+//
+// Payloads are OPAQUE serialized google.protobuf.FileDescriptorSet bytes plus
+// content hashes. Nothing protomolt-specific appears in this contract: no
+// workflow, mapping, or repository types. Descriptors are vocabulary and
+// mappings are policy, and the two version independently, so index mappings
+// are deliberately out of scope for this contract.
+//
+// Content addressing: a set's identity is the SHA-256 of its canonical bytes,
+// so Register is idempotent and "same schema" is an equality check.
+// ============================================================================
+
+// One descriptor set payload: the canonical serialized
+// google.protobuf.FileDescriptorSet bytes and their content hash.
+message DescriptorSet {
+  // Serialized google.protobuf.FileDescriptorSet in the canonical form the
+  // publisher produced. The bytes are opaque to the exchange contract: a
+  // peer stores and forwards them without interpreting them.
+  bytes descriptor_set = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      bytes: {min_len: 1}
+    }
+  ];
+  // Lowercase hex SHA-256 of descriptor_set; the set's content identity.
+  string sha256 = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+}
+
+// Registration metadata for one content-addressed descriptor set.
+message DescriptorSetVersion {
+  // Lowercase hex SHA-256 of the canonical bytes; the version identity.
+  string sha256 = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Size of the canonical bytes, so a peer can judge a fetch before pulling.
+  int64 size_bytes = 2;
+  // When the set was first registered with this peer.
+  google.protobuf.Timestamp registered_at = 3;
+  // Identity of the registering caller as reported at registration; empty
+  // when the peer does not track registrant identity.
+  string registered_by = 4;
+}
+
+// Pushes one descriptor set to a peer.
+message RegisterDescriptorSetRequest {
+  // The set to register. Required.
+  DescriptorSet set = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true}
+  ];
+}
+
+// What one RegisterDescriptorSet call landed.
+message RegisterDescriptorSetResponse {
+  // The version record for the set.
+  DescriptorSetVersion version = 1;
+  // True when the digest was already registered. Register is idempotent:
+  // a repeat push of the same bytes succeeds and reports true here.
+  bool already_registered = 2;
+}
+
+// Asks a peer for one descriptor set by digest.
+message GetDescriptorSetRequest {
+  // Digest of the set to fetch. Required.
+  string sha256 = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+}
+
+// The descriptor set a peer holds for the requested digest.
+message GetDescriptorSetResponse {
+  // The set bytes and hash.
+  DescriptorSet set = 1;
+  // The registration metadata this peer holds for the set.
+  DescriptorSetVersion version = 2;
+}
+
+// Asks a peer which descriptor set versions it holds. Deliberately keyed on
+// nothing: the listing is the peer's full inventory, paged.
+message ListDescriptorSetsRequest {
+  // Maximum versions to return. Zero asks for the peer's default page size;
+  // over-cap requests are refused, not clamped.
+  int32 page_size = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int32: {gte: 0, lte: 1000}
+    }
+  ];
+  // Continuation token from a previous response; empty for the first page.
+  string page_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+    }
+  ];
+}
+
+// One page of a peer's descriptor set inventory.
+message ListDescriptorSetsResponse {
+  // The versions this peer holds, in registration order, oldest first.
+  repeated DescriptorSetVersion versions = 1;
+  // Token for the next page; empty when the listing is complete.
+  string next_page_token = 2;
+}
+
+// One announcement that the sender holds a descriptor set version.
+message VersionAnnouncement {
+  // Digest of the announced set. Required.
+  string sha256 = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Size of the canonical bytes, so the receiver can judge the fetch.
+  int64 size_bytes = 2;
+}
+
+// The sender's answer to an announcement or a delivered set: the version is
+// registered, or deliberately declined.
+message VersionAck {
+  // Digest of the acknowledged set. Required.
+  string sha256 = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // True when the version is now held (already had it, or fetched and
+  // registered it); false when the sender declines it.
+  bool accepted = 2;
+  // Why the version was declined; empty when accepted.
+  string reason = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    }
+  ];
+}
+
+// Asks the announcing peer to deliver the bytes for one announced digest.
+message DescriptorSetFetch {
+  // Digest of the set to deliver. Required.
+  string sha256 = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+}
+
+// One client-to-server frame of the sync stream.
+message SyncDescriptorSetsRequest {
+  // Exactly one frame kind per message.
+  oneof frame {
+    // Announces a version the sender holds.
+    VersionAnnouncement announce = 1;
+    // Acknowledges a version: registered, or declined with a reason.
+    VersionAck ack = 2;
+    // Requests the bytes for an announced digest.
+    DescriptorSetFetch fetch = 3;
+    // Delivers set bytes the other side requested.
+    DescriptorSet set = 4;
+  }
+}
+
+// One server-to-client frame of the sync stream. The frame vocabulary is the
+// same in both directions: either side announces new versions and the other
+// acks or requests the bytes.
+message SyncDescriptorSetsResponse {
+  // Exactly one frame kind per message.
+  oneof frame {
+    // Announces a version the sender holds.
+    VersionAnnouncement announce = 1;
+    // Acknowledges a version: registered, or declined with a reason.
+    VersionAck ack = 2;
+    // Requests the bytes for an announced digest.
+    DescriptorSetFetch fetch = 3;
+    // Delivers set bytes the other side requested.
+    DescriptorSet set = 4;
+  }
+}
+
+// The descriptor exchange surface: push, pull, and live sync of
+// content-addressed descriptor sets between peers.
+service DescriptorExchangeService {
+  // Registers one descriptor set. Idempotent: the digest is the identity, so
+  // re-registering the same bytes succeeds and reports already_registered.
+  rpc RegisterDescriptorSet(RegisterDescriptorSetRequest) returns (RegisterDescriptorSetResponse);
+
+  // Fetches one descriptor set by digest.
+  rpc GetDescriptorSet(GetDescriptorSetRequest) returns (GetDescriptorSetResponse);
+
+  // Lists the descriptor set versions a peer holds.
+  rpc ListDescriptorSets(ListDescriptorSetsRequest) returns (ListDescriptorSetsResponse);
+
+  // Bidirectional sync: either side announces versions it holds and the
+  // other acks or requests the bytes, so two peers converge on the same
+  // content-addressed inventory without a shared store.
+  rpc SyncDescriptorSets(stream SyncDescriptorSetsRequest) returns (stream SyncDescriptorSetsResponse);
+}

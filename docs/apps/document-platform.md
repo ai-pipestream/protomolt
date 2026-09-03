@@ -34,7 +34,7 @@ the jobs store) and RustFS for object storage. Ports:
 
 - The git-backed registry initializes at `DOCUMENT_PLATFORM_REGISTRY_GIT`
   (default `/data/registry.git`) and **publishes the fleet document model**
-  (`ai/pipestream/proto/parse/document/v1/document.proto`) from the build's own
+  (`ai/protomolt/proto/parse/document/v1/document.proto`) from the build's own
   classpath, so the registry serves it as a subject from the start. The
   registry is not optional here: the platform runs it by default.
 - The `parse-document` workflow registers under that name, so a durable parse
@@ -129,7 +129,7 @@ environment-only configuration, exactly as before.
 The first consumer is the parse role's routing rules: the routing
 contract publishes to the registry at boot beside the document model,
 so the registry's config gate checks a `parse-routing` document (an
-`ai.pipestream.proto.parse.v1.RoutingConfig`) against it — an empty
+`ai.protomolt.proto.parse.v1.RoutingConfig`) against it — an empty
 rule set refuses at the gate, because a coordinator with no rules
 routes nothing and that must be said, not configured. A valid document
 swaps the live rules on the next interval with no reboot and no CRUD
