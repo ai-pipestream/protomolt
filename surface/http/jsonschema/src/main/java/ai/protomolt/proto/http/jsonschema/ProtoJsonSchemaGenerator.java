@@ -39,7 +39,7 @@ import java.util.Objects;
  * message type is defined once by full name — recursion-safe. Properties use proto3
  * JSON names (lowerCamelCase). {@code required: true} constraints become the JSON
  * Schema {@code required} array; CEL rules are not expressible in JSON Schema and are
- * surfaced verbatim under the {@code x-pipestream-cel} vendor keyword.
+ * surfaced verbatim under the {@code x-protomolt-cel} vendor keyword.
  *
  * <p>{@link #generateRooted(Descriptor)} produces the same schema with the root message
  * described in place rather than behind a reference. Tool-calling clients, MCP among
@@ -53,7 +53,7 @@ import java.util.Objects;
  */
 public final class ProtoJsonSchemaGenerator {
 
-    private static final String CEL_KEYWORD = "x-pipestream-cel";
+    private static final String CEL_KEYWORD = "x-protomolt-cel";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final List<ValidationRuleSource> sources;
@@ -438,7 +438,7 @@ public final class ProtoJsonSchemaGenerator {
                         PROTOBUF_FQN, PROTOBUF_DOT_FQN, MIME_TYPE, LANGUAGE_TAG, CURRENCY_CODE,
                         PHONE_NUMBER, SHA256_HEX, SHA1_HEX, HEX, BASE64, SLUG, REGION_CODE,
                         PATH_SAFE_NAME, GTIN, DECIMAL, ENDPOINT_ADDRESS, IDENTIFIER ->
-                        schemaOf("x-pipestream-format", format.ruleId());
+                        schemaOf("x-protomolt-format", format.ruleId());
             };
         }
 

@@ -238,13 +238,13 @@ class ProtoJsonSchemaGeneratorTest {
     @SuppressWarnings("unchecked")
     void celRulesSurfaceAsVendorKeyword() {
         List<Map<String, Object>> fieldCel =
-                (List<Map<String, Object>>) property("note").get("x-pipestream-cel");
+                (List<Map<String, Object>>) property("note").get("x-protomolt-cel");
         assertThat(fieldCel).hasSize(1);
         assertThat(fieldCel.get(0).get("id")).isEqualTo("note.short");
         assertThat(fieldCel.get(0).get("expression")).isEqualTo("this.size() < 100");
 
         List<Map<String, Object>> messageCel =
-                (List<Map<String, Object>>) accountDef().get("x-pipestream-cel");
+                (List<Map<String, Object>>) accountDef().get("x-protomolt-cel");
         assertThat(messageCel).hasSize(1);
         assertThat(messageCel.get(0).get("id")).isEqualTo("account.pro_needs_email");
     }

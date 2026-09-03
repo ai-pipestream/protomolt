@@ -7,7 +7,7 @@
  * corresponding JSON Schema keywords. Because the generator consumes the neutral constraint
  * model rather than a specific annotation dialect, any rule source contributes — including
  * protovalidate annotations. Rules with no JSON Schema equivalent are not dropped silently:
- * CEL expressions are surfaced verbatim under the {@code x-pipestream-cel} vendor keyword.
+ * CEL expressions are surfaced verbatim under the {@code x-protomolt-cel} vendor keyword.
  *
  * <p>The rule-source chain is the extension point: {@link ProtoJsonSchemaGenerator#create()}
  * uses {@link ai.protomolt.proto.validate.spi.ValidationRuleSources#defaults()}, and the

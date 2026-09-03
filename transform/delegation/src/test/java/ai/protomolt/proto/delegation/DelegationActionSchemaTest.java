@@ -174,7 +174,7 @@ class DelegationActionSchemaTest {
      */
     @Test
     void theReviewCrossFieldRulesReachCallersAsDocumentedRules() {
-        String rules = root(schemaOf("delegation-review")).path("x-pipestream-cel").toString();
+        String rules = root(schemaOf("delegation-review")).path("x-protomolt-cel").toString();
         assertThat(rules)
                 .contains("acceptance-carries-verdict")
                 .contains("revision-carries-feedback")
@@ -184,7 +184,7 @@ class DelegationActionSchemaTest {
     /** The message verb's direction rules are declared the same way. */
     @Test
     void theMessageDirectionRulesReachCallersAsDocumentedRules() {
-        String rules = root(schemaOf("delegation-message")).path("x-pipestream-cel").toString();
+        String rules = root(schemaOf("delegation-message")).path("x-protomolt-cel").toString();
         assertThat(rules)
                 .contains("coordinator-message-names-recipient")
                 .contains("worker-message-addresses-coordinator");
