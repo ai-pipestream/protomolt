@@ -10,8 +10,8 @@
  * and the exit code.</p>
  *
  * <p>The catalog is assembled from the action modules rather than defined here, so this
- * package adds no verbs of its own; {@code ai.pipestream.proto.mcp} and
- * {@code ai.pipestream.proto.acp.agent} serve the same catalog to agents.</p>
+ * package adds no verbs of its own; {@code ai.protomolt.proto.mcp} and
+ * {@code ai.protomolt.proto.acp.agent} serve the same catalog to agents.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/actions.md">action
  * catalog guide</a> for the verbs and their envelopes.</p>

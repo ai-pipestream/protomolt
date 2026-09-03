@@ -54,9 +54,9 @@ class ParquetExportTest {
     @BeforeAll
     static void compile() throws Exception {
         String metadataProto = new String(ParquetExportTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto").readAllBytes());
+                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto").readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "meta")
+                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "meta")
                 .add("pq/export/person.proto", SENS_PROTO, "test").build());
         // Re-parse with the metadata extensions registered so the sensitivity option is readable,
         // not an unknown field - what ProtoMolt's compile/reflect verbs hand a real caller.

@@ -43,7 +43,7 @@ class SerdeMetricsListenersTest {
     void aProviderThatCannotLoadIsSkipped(@TempDir Path dir) throws Exception {
         Path services = Files.createDirectories(dir.resolve("META-INF/services"));
         Files.writeString(services.resolve(SerdeMetricsListener.class.getName()),
-                "ai.pipestream.proto.kafka.serde.RecordingMetricsListener\n"
+                "ai.protomolt.proto.kafka.serde.RecordingMetricsListener\n"
                         + "no.such.BogusListener\n");
         try (URLClassLoader loader = new URLClassLoader(
                 new URL[]{dir.toUri().toURL()}, getClass().getClassLoader())) {

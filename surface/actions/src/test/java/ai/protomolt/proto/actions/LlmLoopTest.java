@@ -32,7 +32,7 @@ class LlmLoopTest {
         ObjectNode compileInput = obj("{\"sources\": {}}");
         ObjectNode sources = (ObjectNode) compileInput.get("sources");
         sources.put("loop/person.proto", PERSON_PROTO);
-        sources.put("ai/protomolt/proto/validate/v1/validate.proto",
+        sources.put("ai/pipestream/proto/validate/v1/validate.proto",
                 TestFixtures.validateProtoSource());
         ObjectNode compiled = catalog.execute("compile", compileInput);
         assertThat(compiled.get("ok").asBoolean()).isTrue();

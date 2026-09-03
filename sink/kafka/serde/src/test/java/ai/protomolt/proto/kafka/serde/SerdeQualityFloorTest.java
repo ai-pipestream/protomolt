@@ -46,10 +46,10 @@ class SerdeQualityFloorTest {
     @BeforeAll
     static void compile() throws Exception {
         String qualityProto = new String(SerdeQualityFloorTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/quality/v1/quality.proto")
+                .getResourceAsStream("ai/pipestream/proto/quality/v1/quality.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/quality/v1/quality.proto", qualityProto, "test")
+                .add("ai/pipestream/proto/quality/v1/quality.proto", qualityProto, "test")
                 .add("serde/floor/v1/article.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

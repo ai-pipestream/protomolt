@@ -57,8 +57,8 @@ class SearchWorkflowsTest {
                 .decode(SearchWorkflows.deleteDescriptorSetBase64()));
         assertThat(schema.getFileList()).extracting(FileDescriptorProto::getName)
                 .contains(
-                        "ai/protomolt/proto/search/v1/search_service.proto",
-                        "ai/protomolt/proto/repo/v1/document_service.proto");
+                        "ai/pipestream/proto/search/v1/search_service.proto",
+                        "ai/pipestream/proto/repo/v1/document_service.proto");
     }
 
     @Test

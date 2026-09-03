@@ -14,10 +14,10 @@
  * <p>{@link ai.protomolt.proto.cel.CelProtoMapper} applies
  * {@link ai.protomolt.proto.cel.CelMappingRule}s to a message builder, where each rule may carry
  * a boolean filter, a value selector, or a fallback to the text rules of
- * {@code ai.pipestream.proto.mapper}. Rules observe the progressive state of the builder, so
+ * {@code ai.protomolt.proto.mapper}. Rules observe the progressive state of the builder, so
  * later expressions see earlier writes. This package layers on
  * {@link ai.protomolt.proto.mapper.ProtoFieldMapper} for the field access itself and is in turn
- * used by {@code ai.pipestream.proto.mapper.metadata} and {@code ai.pipestream.proto.projection}.</p>
+ * used by {@code ai.protomolt.proto.mapper.metadata} and {@code ai.protomolt.proto.projection}.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/mapping.md">Field
  * mapping guide</a> for filter and selector examples.</p>

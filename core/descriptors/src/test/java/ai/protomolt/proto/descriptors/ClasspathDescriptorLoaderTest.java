@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ClasspathDescriptorLoaderTest {
 
-    private static final String TYPE = "ai.pipestream.proto.descriptors.fixture.GeneratedLike";
+    private static final String TYPE = "ai.protomolt.proto.descriptors.fixture.GeneratedLike";
 
     private final ClasspathDescriptorLoader loader = new ClasspathDescriptorLoader();
 

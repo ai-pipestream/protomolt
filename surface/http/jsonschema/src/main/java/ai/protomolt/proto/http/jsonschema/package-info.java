@@ -14,7 +14,7 @@
  * overload taking an explicit list lets a caller narrow or extend the dialects consulted. The
  * result is returned as an ordered map or as JSON text.
  *
- * <p>This package describes message types; {@code ai.pipestream.proto.http.openapi} describes
+ * <p>This package describes message types; {@code ai.protomolt.proto.http.openapi} describes
  * service surfaces, and {@code ai.pipestream.proto.validate} enforces the same rules at
  * runtime. See the
  * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/json-schema.md">JSON Schema

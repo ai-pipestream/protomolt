@@ -9,11 +9,11 @@
  * cases that need no destination at all, such as the deterministic in-memory zip a verb
  * response carries a whole bundle in.</p>
  *
- * <p>This package is the mirror image of the {@code ai.pipestream.proto.acquire.gather} modules:
+ * <p>This package is the mirror image of the {@code ai.protomolt.proto.acquire.gather} modules:
  * gatherers turn a place into proto sources, renderers turn schemas or messages into a bundle,
  * and sinks turn a bundle back into a place. The renderers themselves live in sibling modules —
- * {@code ai.pipestream.proto.emit.okf} for Open Knowledge Format documents and
- * {@code ai.pipestream.proto.emit.parquet} for columnar message data.</p>
+ * {@code ai.protomolt.proto.emit.okf} for Open Knowledge Format documents and
+ * {@code ai.protomolt.proto.emit.parquet} for columnar message data.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/emitting.md">Emitting
  * bundles guide</a> for the end-to-end flow.</p>

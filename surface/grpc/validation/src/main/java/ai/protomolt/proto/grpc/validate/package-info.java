@@ -12,7 +12,7 @@
  * <p>{@link GrpcValidationMetricsListener} is the extension point. Implementations are
  * discovered with {@link java.util.ServiceLoader} and hear every validation, rejection and
  * quality score; a listener that throws is logged once and never fails a call. The
- * {@code ai.pipestream.proto.grpc.validate.micrometer} package ships the Micrometer binding.</p>
+ * {@code ai.protomolt.proto.grpc.validate.micrometer} package ships the Micrometer binding.</p>
  *
  * <p>The rules and dimensions themselves come from sibling modules — the engine is
  * {@link ai.protomolt.proto.validate.ProtoValidator} and the scorer is

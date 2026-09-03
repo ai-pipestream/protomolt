@@ -49,7 +49,7 @@ class TreePathMetricsTest {
     static Descriptor build(DescriptorProto message) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("test/products.proto").setPackage("test").setSyntax("proto3")
-                .addDependency("ai/protomolt/proto/types/v1/tree_path.proto")
+                .addDependency("ai/pipestream/proto/types/v1/tree_path.proto")
                 .addMessageType(message)
                 .build();
         return FileDescriptor.buildFrom(

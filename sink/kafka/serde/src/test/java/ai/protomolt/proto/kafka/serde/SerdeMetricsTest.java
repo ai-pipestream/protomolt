@@ -41,10 +41,10 @@ class SerdeMetricsTest {
     @BeforeAll
     static void compile() throws Exception {
         String validateProto = new String(SerdeMetricsTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")
+                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("serde/spi/v1/event.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

@@ -110,9 +110,9 @@ class LiveStructuredInferenceIT {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
-    private static final String PROJECTION = "ai/protomolt/proto/projection/v1/projection.proto";
-    private static final String METADATA = "ai/protomolt/proto/meta/v1/metadata.proto";
+    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
+    private static final String PROJECTION = "ai/pipestream/proto/projection/v1/projection.proto";
+    private static final String METADATA = "ai/pipestream/proto/meta/v1/metadata.proto";
     private static final String ACCEPTANCE = "ai/protomolt/proto/serve/live/acceptance.proto";
 
     private static final String UPSTREAM = "live.acceptance.UpstreamResult";

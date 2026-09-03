@@ -19,7 +19,7 @@
  * their own to accept credentials.
  *
  * <p>Extension jars are not bean archives, so this producer is registered at build time by the
- * companion {@code ai.pipestream.proto.integration.quarkus.deployment} package. HTTP endpoints are not provided
+ * companion {@code ai.protomolt.proto.integration.quarkus.deployment} package. HTTP endpoints are not provided
  * here — the Quarkus host facade lives in {@code servers/quarkus}.
  *
  * <p>See the

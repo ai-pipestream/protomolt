@@ -215,7 +215,7 @@ class CrossCheckTest {
         }
         assertThat(root).isNotNull();
         java.nio.file.Path main = root.resolve(
-                "apps/record-verifier/src/main/java/ai/pipestream/receipt/verify");
+                "apps/record-verifier/src/main/java/ai/protomolt/receipt/verify");
         try (var sources = java.nio.file.Files.list(main)) {
             for (java.nio.file.Path source : sources.toList()) {
                 for (String line : java.nio.file.Files.readAllLines(source)) {
@@ -223,7 +223,7 @@ class CrossCheckTest {
                         assertThat(line)
                                 .as("%s must import only the JDK or this package",
                                         source.getFileName())
-                                .matches("import (static )?(java\\.|ai\\.pipestream\\.receipt\\.verify\\.).*");
+                                .matches("import (static )?(java\\.|ai\\.protomolt\\.receipt\\.verify\\.).*");
                     }
                 }
             }

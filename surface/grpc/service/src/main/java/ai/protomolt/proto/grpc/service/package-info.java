@@ -19,7 +19,7 @@
  * {@link ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor} applies the credential
  * check server-wide when one is configured.
  *
- * <p>{@code ai.pipestream.proto.serve} mounts this service alongside the REST, OpenAPI, and MCP
+ * <p>{@code ai.protomolt.proto.serve} mounts this service alongside the REST, OpenAPI, and MCP
  * surfaces in one process. See the
  * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/grpc-service.md">gRPC
  * service guide</a>.

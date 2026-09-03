@@ -63,7 +63,7 @@ class RegistryConfigSourceTest {
         store = GitSchemaRegistryStore.builder()
                 .repositoryDir(work.resolve("registry"))
                 .build();
-        String validateSubject = "ai/protomolt/proto/validate/v1/validate.proto";
+        String validateSubject = "ai/pipestream/proto/validate/v1/validate.proto";
         String validateSource;
         try (var in = RegistryConfigSourceTest.class.getClassLoader()
                 .getResourceAsStream(validateSubject)) {

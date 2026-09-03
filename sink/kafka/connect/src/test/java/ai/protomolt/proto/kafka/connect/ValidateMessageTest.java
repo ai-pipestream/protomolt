@@ -49,11 +49,11 @@ class ValidateMessageTest {
     static void compile() throws Exception {
         String validateProto;
         try (InputStream in = ValidateMessageTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")) {
+                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")) {
             validateProto = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("validate/test/event.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

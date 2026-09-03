@@ -16,7 +16,7 @@
  * carried at runtime as an {@link ApiTokenRequirement}. Failures are reported as subtypes of
  * {@link ProtoRestException} so a host can map each one to a status code.
  *
- * <p>{@code ai.pipestream.proto.http.openapi} generates an OpenAPI document from the same registry,
+ * <p>{@code ai.protomolt.proto.http.openapi} generates an OpenAPI document from the same registry,
  * and the server modules bind the gateway to a concrete HTTP stack. See the
  * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST gateway
  * guide</a>.

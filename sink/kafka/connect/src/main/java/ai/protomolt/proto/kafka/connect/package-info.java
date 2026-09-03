@@ -22,8 +22,8 @@
  *
  * <p>Every type is resolved from a serialized {@code google.protobuf.FileDescriptorSet} supplied
  * in configuration, so the worker needs no proto files and no rebuild when a schema changes. The
- * Iceberg sink ships separately in {@code ai.pipestream.proto.kafka.connect.iceberg}, and the
- * lower-level streaming SPI these connectors sit above is {@code ai.pipestream.proto.acquire.connector}.</p>
+ * Iceberg sink ships separately in {@code ai.protomolt.proto.kafka.connect.iceberg}, and the
+ * lower-level streaming SPI these connectors sit above is {@code ai.protomolt.proto.acquire.connector}.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/kafka-connect.md">Kafka
  * Connect guide</a> for connector and transform configuration.</p>

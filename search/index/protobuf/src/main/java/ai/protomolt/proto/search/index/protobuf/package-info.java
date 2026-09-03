@@ -9,7 +9,7 @@
  * two concerns stay independent: pass a validator only when a caller wants the two chained.</p>
  *
  * <p>The hint sources are the extension point and live in
- * {@code ai.pipestream.proto.search.index.spi}: {@link ProtobufIndexer#create()} infers from the
+ * {@code ai.protomolt.proto.search.index.spi}: {@link ProtobufIndexer#create()} infers from the
  * descriptor alone, while {@link ProtobufIndexer#defaults} consults a catalog, then the
  * {@code ai.pipestream.proto.index.hints.v1} descriptor options, then inference. Descriptor sets
  * parsed at runtime need the hint and validation extensions registered first, which

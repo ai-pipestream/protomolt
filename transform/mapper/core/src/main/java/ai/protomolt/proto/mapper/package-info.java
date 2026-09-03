@@ -12,7 +12,7 @@
  * <p>The rule language covers assignment, append, and clear;
  * {@link ai.protomolt.proto.mapper.TextRuleParser} parses rule text into
  * {@link ai.protomolt.proto.mapper.TextMappingRule} records. Conditional mapping and computed
- * values are layered on top by {@code ai.pipestream.proto.cel}, which wraps this package with CEL
+ * values are layered on top by {@code ai.protomolt.proto.cel}, which wraps this package with CEL
  * filters and selectors. Mapping is separate from validation: reshaping a message and judging it
  * are distinct concerns.</p>
  *

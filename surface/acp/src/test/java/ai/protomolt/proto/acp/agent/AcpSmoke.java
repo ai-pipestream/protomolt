@@ -14,7 +14,7 @@ import java.util.List;
  *
  * <p>The agent command is the program arguments, defaulting to the published ACP container:
  * {@code docker run -i --rm protomolt-acp-agent:local}. Pass a different command to point it
- * elsewhere, e.g. {@code AcpSmoke java -cp ... ai.pipestream.proto.acp.agent.ProtoMoltAcpAgent} to
+ * elsewhere, e.g. {@code AcpSmoke java -cp ... ai.protomolt.proto.acp.agent.ProtoMoltAcpAgent} to
  * drive the agent as a plain child process without a container. Invoked by the
  * {@code :protomolt-acp-agent:acpSmoke} Gradle task and by {@code scripts/docker-smoke.sh}.</p>
  */

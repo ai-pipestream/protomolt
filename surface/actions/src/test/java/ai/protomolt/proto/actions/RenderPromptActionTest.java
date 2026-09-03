@@ -102,10 +102,10 @@ class RenderPromptActionTest {
         ObjectNode compileInput = obj("{\"sources\": {}}");
         ObjectNode sources = (ObjectNode) compileInput.get("sources");
         sources.put("probe/probe.proto", probeProto);
-        sources.put("ai/protomolt/proto/llm/v1/llm.proto",
-                classpathProto("/ai/protomolt/proto/llm/v1/llm.proto"));
-        sources.put("ai/protomolt/proto/quality/v1/quality.proto",
-                classpathProto("/ai/protomolt/proto/quality/v1/quality.proto"));
+        sources.put("ai/pipestream/proto/llm/v1/llm.proto",
+                classpathProto("/ai/pipestream/proto/llm/v1/llm.proto"));
+        sources.put("ai/pipestream/proto/quality/v1/quality.proto",
+                classpathProto("/ai/pipestream/proto/quality/v1/quality.proto"));
         ObjectNode compiled = catalog.execute("compile", compileInput);
         assertThat(compiled.get("ok").asBoolean()).isTrue();
 

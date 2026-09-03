@@ -25,7 +25,7 @@ import java.util.Set;
  * metadata extensions or nothing is masked.</p>
  *
  * <p>Independently of both, every message is validated against the constraint and CEL rules its
- * descriptor declares (see {@code ai.pipestream.proto.validate.ProtoValidator}) before it is
+ * descriptor declares (see {@code ai.protomolt.proto.validate.ProtoValidator}) before it is
  * written, and the write fails on the first offending message. {@link #withoutValidation()}
  * opts out; nothing else here affects validation.</p>
  */

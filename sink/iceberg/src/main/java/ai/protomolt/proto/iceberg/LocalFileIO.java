@@ -16,7 +16,7 @@ import java.util.Map;
  * A {@code FileIO} for {@code file://} warehouses with no Hadoop anywhere: Iceberg's default
  * resolver hands local paths to {@code HadoopFileIO}, whose filesystem cache calls
  * {@code Subject.getSubject} — gone since JDK 24 (JEP 486). This one is plain {@code java.nio}.
- * Point a catalog at it with {@code io-impl=ai.pipestream.proto.iceberg.LocalFileIO};
+ * Point a catalog at it with {@code io-impl=ai.protomolt.proto.iceberg.LocalFileIO};
  * useful for local warehouses, shared-volume test rigs, and anywhere else the data lives on
  * a real filesystem.
  */

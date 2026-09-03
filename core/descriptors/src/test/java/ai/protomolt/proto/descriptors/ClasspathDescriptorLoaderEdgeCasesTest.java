@@ -12,8 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ClasspathDescriptorLoaderEdgeCasesTest {
 
-    private static final String TYPE = "ai.pipestream.proto.descriptors.fixture.GeneratedLike";
-    private static final String DEEP_TYPE = "ai.pipestream.proto.descriptors.fixture.Deep";
+    private static final String TYPE = "ai.protomolt.proto.descriptors.fixture.GeneratedLike";
+    private static final String DEEP_TYPE = "ai.protomolt.proto.descriptors.fixture.Deep";
 
     private final ClasspathDescriptorLoader loader = new ClasspathDescriptorLoader();
 

@@ -11,8 +11,8 @@ import java.io.PrintStream;
  * Copilot connectors API — reporting each as available, permission-denied, or absent.
  *
  * <pre>
- * java -cp ... ai.pipestream.proto.acquire.msgraph.GraphProbe --tenant &lt;tenant-id&gt; --client &lt;app-id&gt;
- * java -cp ... ai.pipestream.proto.acquire.msgraph.GraphProbe --tenant ... --client ... --secret ...
+ * java -cp ... ai.protomolt.proto.acquire.msgraph.GraphProbe --tenant &lt;tenant-id&gt; --client &lt;app-id&gt;
+ * java -cp ... ai.protomolt.proto.acquire.msgraph.GraphProbe --tenant ... --client ... --secret ...
  * </pre>
  *
  * <p>{@code --verbose} prints Graph's full error body under each failing probe; the

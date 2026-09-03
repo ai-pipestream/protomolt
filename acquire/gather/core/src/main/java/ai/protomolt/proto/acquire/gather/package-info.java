@@ -17,8 +17,8 @@
  * the gathered set is {@link ai.protomolt.proto.sources.ProtoSourceCompiler}'s job, not this
  * package's.</p>
  *
- * <p>Remote origins live in sibling modules: {@code ai.pipestream.proto.acquire.gather.git} for git
- * repositories and {@code ai.pipestream.proto.acquire.gather.maven} for artifacts resolved by
+ * <p>Remote origins live in sibling modules: {@code ai.protomolt.proto.acquire.gather.git} for git
+ * repositories and {@code ai.protomolt.proto.acquire.gather.maven} for artifacts resolved by
  * coordinate.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">gathering

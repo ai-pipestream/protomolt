@@ -53,8 +53,8 @@ class DocumentPurgeCommandFactoryTest {
         List<String> files = set.getFileList().stream().map(f -> f.getName()).toList();
 
         assertThat(files).contains(
-                "ai/protomolt/proto/repo/v1/document_purge.proto",
-                "ai/protomolt/proto/validate/v1/validate.proto",
+                "ai/pipestream/proto/repo/v1/document_purge.proto",
+                "ai/pipestream/proto/validate/v1/validate.proto",
                 "google/protobuf/timestamp.proto");
     }
 }

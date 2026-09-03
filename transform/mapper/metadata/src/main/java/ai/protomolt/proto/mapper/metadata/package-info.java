@@ -8,7 +8,7 @@
  * cached per descriptor.</p>
  *
  * <p>Compilation and evaluation are delegated to
- * {@link ai.protomolt.proto.cel.CelEvaluator} from {@code ai.pipestream.proto.cel}. This package
+ * {@link ai.protomolt.proto.cel.CelEvaluator} from {@code ai.protomolt.proto.cel}. This package
  * covers metadata read from message contents at runtime, as distinct from descriptive metadata
  * declared on schemas as descriptor options under {@code ai.pipestream.proto.meta}.</p>
  *

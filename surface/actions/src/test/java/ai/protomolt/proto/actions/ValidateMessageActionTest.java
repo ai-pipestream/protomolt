@@ -97,7 +97,7 @@ class ValidateMessageActionTest {
                   string name = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 3];
                 }
                 """);
-        sources.put("ai/protomolt/proto/validate/v1/validate.proto",
+        sources.put("ai/pipestream/proto/validate/v1/validate.proto",
                 TestFixtures.validateProtoSource());
         ObjectNode result = catalog.execute("validate-message", input);
         assertThat(result.get("valid").asBoolean()).isFalse();

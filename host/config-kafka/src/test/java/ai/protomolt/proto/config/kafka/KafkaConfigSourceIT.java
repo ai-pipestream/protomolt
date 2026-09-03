@@ -83,7 +83,7 @@ class KafkaConfigSourceIT {
 
     @BeforeAll
     static void boot() throws Exception {
-        String validateSubject = "ai/protomolt/proto/validate/v1/validate.proto";
+        String validateSubject = "ai/pipestream/proto/validate/v1/validate.proto";
         String validateSource;
         try (var in = KafkaConfigSourceIT.class.getClassLoader()
                 .getResourceAsStream(validateSubject)) {

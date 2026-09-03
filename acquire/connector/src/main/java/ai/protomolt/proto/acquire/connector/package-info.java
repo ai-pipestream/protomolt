@@ -20,7 +20,7 @@
  * <p>Byte-oriented sources delegate framing to a {@link ai.protomolt.proto.acquire.connector.MessageParser},
  * whose factory methods cover a fixed message type, length-free protobuf bytes, and the Confluent
  * wire format by way of {@code protomolt-kafka-serde}. The Kafka Connect runtime in
- * {@code ai.pipestream.proto.kafka.connect} is the production path when a deployment wants managed
+ * {@code ai.protomolt.proto.kafka.connect} is the production path when a deployment wants managed
  * offsets and rebalance-safe delivery.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/connector.md">Stream

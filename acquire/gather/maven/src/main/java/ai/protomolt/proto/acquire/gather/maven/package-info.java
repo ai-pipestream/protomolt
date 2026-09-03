@@ -10,8 +10,8 @@
  * {@link ai.protomolt.proto.acquire.gather.JarProtoExtraction}, so in-jar paths become import paths
  * and the well-known types the compiler already supplies are skipped.</p>
  *
- * <p>The SPI and the local sources live in {@code ai.pipestream.proto.acquire.gather};
- * {@code ai.pipestream.proto.acquire.gather.git} is the git-backed sibling.</p>
+ * <p>The SPI and the local sources live in {@code ai.protomolt.proto.acquire.gather};
+ * {@code ai.protomolt.proto.acquire.gather.git} is the git-backed sibling.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">gathering
  * guide</a> for how a gathered source set is compiled and registered.</p>

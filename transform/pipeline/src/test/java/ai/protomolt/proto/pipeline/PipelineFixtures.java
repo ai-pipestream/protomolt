@@ -29,9 +29,9 @@ import java.util.List;
  */
 final class PipelineFixtures {
 
-    static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
+    static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
     static final String PROJECTION =
-            "ai/protomolt/proto/projection/v1/projection.proto";
+            "ai/pipestream/proto/projection/v1/projection.proto";
 
     static final String PROTO = """
             syntax = "proto3";

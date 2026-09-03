@@ -6,7 +6,7 @@ import java.util.function.Predicate;
 
 /**
  * Well-known string formats a {@link StringConstraints} can demand. Each format carries its stable
- * violation rule id and delegates the actual test to the RFC-accurate {@code ai.pipestream.proto.formats}
+ * violation rule id and delegates the actual test to the RFC-accurate {@code ai.protomolt.proto.formats}
  * validators. Checks are purely syntactic (no DNS lookups or network access).
  *
  * <p>Matching protovalidate, an empty string satisfies the format check itself — an empty value is

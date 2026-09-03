@@ -42,11 +42,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ProtoSourceCompilerOptionsTest {
 
-    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
-    private static final String METADATA = "ai/protomolt/proto/meta/v1/metadata.proto";
-    private static final String LLM = "ai/protomolt/proto/llm/v1/llm.proto";
-    private static final String QUALITY = "ai/protomolt/proto/quality/v1/quality.proto";
-    private static final String FORM = "ai/protomolt/proto/prompt/testdata/v1/form.proto";
+    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
+    private static final String METADATA = "ai/pipestream/proto/meta/v1/metadata.proto";
+    private static final String LLM = "ai/pipestream/proto/llm/v1/llm.proto";
+    private static final String QUALITY = "ai/pipestream/proto/quality/v1/quality.proto";
+    private static final String FORM = "ai/pipestream/proto/prompt/testdata/v1/form.proto";
 
     private static final ExtensionRegistry REGISTRY = ExtensionRegistry.newInstance();
 

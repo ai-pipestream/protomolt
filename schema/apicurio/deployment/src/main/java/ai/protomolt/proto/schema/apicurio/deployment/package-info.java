@@ -6,6 +6,6 @@
  * additional beans, so an application picks up the loader without declaring the beans itself.</p>
  *
  * <p>Nothing in this package is on the application runtime classpath; the loader, publisher and
- * configuration types it refers to live in {@code ai.pipestream.proto.schema.apicurio}.</p>
+ * configuration types it refers to live in {@code ai.protomolt.proto.schema.apicurio}.</p>
  */
 package ai.protomolt.proto.schema.apicurio.deployment;

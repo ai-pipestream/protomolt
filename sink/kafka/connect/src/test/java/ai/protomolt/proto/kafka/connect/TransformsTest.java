@@ -54,11 +54,11 @@ class TransformsTest {
     static void compileSchema() throws Exception {
         String validateProto;
         try (InputStream in = TransformsTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")) {
+                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")) {
             validateProto = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("smt/test/event.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()
@@ -370,7 +370,7 @@ class TransformsTest {
     @Test
     void redactMasksDeclaredSensitivityClasses() throws Exception {
         String metadataProto = new String(getClass().getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")
+                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
                 .readAllBytes(), StandardCharsets.UTF_8);
         String customerProto = """
                 syntax = "proto3";
@@ -382,7 +382,7 @@ class TransformsTest {
                 }
                 """;
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "test")
+                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "test")
                 .add("smt/test/customer.proto", customerProto, "test")
                 .build());
         Descriptor customer = compiled.descriptorFor("smt/test/customer.proto").orElseThrow()

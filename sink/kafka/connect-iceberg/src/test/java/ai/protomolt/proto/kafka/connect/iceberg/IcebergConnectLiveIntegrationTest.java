@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 class IcebergConnectLiveIntegrationTest {
 
-    private static final String LOCAL_FILE_IO = "ai.pipestream.proto.iceberg.LocalFileIO";
+    private static final String LOCAL_FILE_IO = "ai.protomolt.proto.iceberg.LocalFileIO";
 
     // The warehouse is bind-mounted at the SAME absolute path inside the container, so the
     // catalog and this JVM both resolve file:// data locations without an object store.

@@ -59,7 +59,7 @@ class MetricWorkflowsTest {
                         .path("schema").path("descriptorSetBase64").asText()));
         assertThat(set.getFileList())
                 .anySatisfy(file -> assertThat(file.getName())
-                        .isEqualTo("ai/protomolt/proto/metric/v1/metric_service.proto"));
+                        .isEqualTo("ai/pipestream/proto/metric/v1/metric_service.proto"));
     }
 
     @Test

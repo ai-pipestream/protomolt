@@ -123,7 +123,7 @@ class TreePathsTest {
                 .setName("tree_path_doc.proto")
                 .setPackage("ai.pipestream.test")
                 .setSyntax("proto3")
-                .addDependency("ai/protomolt/proto/types/v1/tree_path.proto")
+                .addDependency("ai/pipestream/proto/types/v1/tree_path.proto")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")
                         .addField(FieldDescriptorProto.newBuilder()

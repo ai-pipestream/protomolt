@@ -7,10 +7,10 @@
  * the plugin; {@link ai.protomolt.proto.kafka.connect.opensearch.OpenSearchSinkTask}
  * decodes each record (raw protobuf, Confluent wire format, or proto3 JSON) into the
  * configured message type, maps it with
- * {@code ai.pipestream.proto.search.index.opensearch.OpenSearchDocumentMapper} against the mapping
+ * {@code ai.protomolt.proto.search.index.opensearch.OpenSearchDocumentMapper} against the mapping
  * built from the descriptor's {@code (ai.pipestream.proto.index.hints.v1.index)} options,
  * and writes each batch as one bulk request through
- * {@code ai.pipestream.proto.search.index.opensearch.OpenSearchSink}. The index can be created
+ * {@code ai.protomolt.proto.search.index.opensearch.OpenSearchSink}. The index can be created
  * from the mapping-generated properties at task start.
  *
  * <p>Because the mapping runs through the shared write path, {@code google.protobuf.Any}

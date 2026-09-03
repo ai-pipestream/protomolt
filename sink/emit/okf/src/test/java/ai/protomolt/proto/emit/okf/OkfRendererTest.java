@@ -66,10 +66,10 @@ class OkfRendererTest {
 
     private static List<FileDescriptor> compile() throws Exception {
         String metadataProto = new String(OkfRendererTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")
+                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "meta")
+                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "meta")
                 .add("okf/shop/v1/shop.proto", SHOP_PROTO, "test")
                 .build());
         return OkfRegistryBundles.linkWithMetadata(compiled.descriptorSet());
@@ -169,9 +169,9 @@ class OkfRendererTest {
                 }
                 """;
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/index/hints/v1/hints.proto", hints, "hints")
-                .add("ai/protomolt/proto/llm/v1/llm.proto", llm, "llm")
-                .add("ai/protomolt/proto/projection/v1/projection.proto", projection, "projection")
+                .add("ai/pipestream/proto/index/hints/v1/hints.proto", hints, "hints")
+                .add("ai/pipestream/proto/llm/v1/llm.proto", llm, "llm")
+                .add("ai/pipestream/proto/projection/v1/projection.proto", projection, "projection")
                 .add("okf/docs/v1/docs.proto", schema, "test")
                 .build());
         Bundle bundle = new OkfRenderer().render(

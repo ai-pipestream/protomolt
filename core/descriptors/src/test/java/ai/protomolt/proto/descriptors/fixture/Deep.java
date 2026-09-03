@@ -49,7 +49,7 @@ public abstract class Deep implements Message {
         FileDescriptorProto proto = FileDescriptorProto.newBuilder()
             .setName("fixture/deep.proto")
             .setSyntax("proto3")
-            .setPackage("ai.pipestream.proto.descriptors.fixture")
+            .setPackage("ai.protomolt.proto.descriptors.fixture")
             .addMessageType(DescriptorProto.newBuilder()
                 .setName("Deep")
                 .addNestedType(DescriptorProto.newBuilder()

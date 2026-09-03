@@ -89,7 +89,7 @@ class SerdeConfluentInteropIntegrationTest {
      * client resolves them from its bundled copy, and our compiler does the same.
      */
     private static final String TIMESTAMP_SUBJECT = "google/protobuf/timestamp.proto";
-    private static final String ADDRESS_SUBJECT = "ai/protomolt/proto/repo/v1/address.proto";
+    private static final String ADDRESS_SUBJECT = "ai/pipestream/proto/repo/v1/address.proto";
     /** DocumentEvent is the fifth top-level message in document_events.proto. */
     private static final List<Integer> DOCUMENT_EVENT_INDEX = List.of(4);
 

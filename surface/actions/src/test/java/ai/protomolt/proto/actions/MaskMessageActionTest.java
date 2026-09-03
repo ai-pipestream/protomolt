@@ -68,7 +68,7 @@ class MaskMessageActionTest {
 
     private ObjectNode maskInput(String extraJson) throws Exception {
         String metadataProto = new String(getClass().getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")
+                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
                 .readAllBytes());
         ObjectNode input = obj("""
                 {"schema": {"sources": {}}, "type": "mask.test.Customer",
@@ -76,7 +76,7 @@ class MaskMessageActionTest {
                              "contact": {"phone": "555", "city": "Springfield"}}%s}
                 """.formatted(extraJson.isEmpty() ? "" : ", " + extraJson));
         ObjectNode sources = (ObjectNode) input.get("schema").get("sources");
-        sources.put("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto);
+        sources.put("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto);
         sources.put("mask/test/customer.proto", PROTO);
         return input;
     }

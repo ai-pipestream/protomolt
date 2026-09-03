@@ -107,7 +107,7 @@ class KafkaEventingConfluentInteropIT {
      * Confluent registers the non-well-known import as a referenced subject named by the import
      * path; well-known types ({@code google/protobuf/*}) never become subjects.
      */
-    private static final String ADDRESS_SUBJECT = "ai/protomolt/proto/repo/v1/address.proto";
+    private static final String ADDRESS_SUBJECT = "ai/pipestream/proto/repo/v1/address.proto";
     /** DocumentEvent is the fifth top-level message in document_events.proto. */
     private static final List<Integer> DOCUMENT_EVENT_INDEX = List.of(4);
     /** 5-byte frame prefix: magic byte plus the 4-byte schema id. */

@@ -35,7 +35,7 @@ import java.util.Base64;
 public final class ValidatingWorkflows {
 
     private static final String VALIDATE_PROTO =
-            "ai/protomolt/proto/validate/v1/validate.proto";
+            "ai/pipestream/proto/validate/v1/validate.proto";
 
     /** The fixture proto. */
     public static final String PROTO = """

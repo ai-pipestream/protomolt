@@ -56,9 +56,9 @@ class MicrometerGrpcValidationMetricsTest {
     static void start() throws Exception {
         ClassLoader loader = MicrometerGrpcValidationMetricsTest.class.getClassLoader();
         String validateProto = new String(loader.getResourceAsStream(
-                "ai/protomolt/proto/validate/v1/validate.proto").readAllBytes());
+                "ai/pipestream/proto/validate/v1/validate.proto").readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("grpc/metrics/test/v1/echo.proto", PROTO, "test")
                 .build());
         pingType = compiled.descriptorFor("grpc/metrics/test/v1/echo.proto").orElseThrow()

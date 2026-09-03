@@ -99,7 +99,7 @@ class RangeBoundsTest {
                 .setName("canonical_doc.proto")
                 .setPackage("ai.pipestream.test")
                 .setSyntax("proto3")
-                .addDependency("ai/protomolt/proto/types/v1/ranges.proto")
+                .addDependency("ai/pipestream/proto/types/v1/ranges.proto")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")
                         .addField(FieldDescriptorProto.newBuilder()

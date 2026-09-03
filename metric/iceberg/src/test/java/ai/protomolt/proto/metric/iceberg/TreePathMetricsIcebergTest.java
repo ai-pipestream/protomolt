@@ -78,7 +78,7 @@ class TreePathMetricsIcebergTest {
     @BeforeAll
     static void boot() throws Exception {
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/types/v1/tree_path.proto", TREE_PATH_PROTO, "test")
+                .add("ai/pipestream/proto/types/v1/tree_path.proto", TREE_PATH_PROTO, "test")
                 .add("catalogit/v1/product.proto", PRODUCT_PROTO, "test")
                 .build());
         product = compiled.descriptorFor("catalogit/v1/product.proto").orElseThrow()

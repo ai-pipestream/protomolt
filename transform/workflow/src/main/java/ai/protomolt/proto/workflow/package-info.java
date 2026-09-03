@@ -16,8 +16,8 @@
  *
  * <p>Mapping and static checking are borrowed from
  * {@link ai.protomolt.proto.shapes.RuleChecker} and the scoped rule dialect in
- * {@code ai.pipestream.proto.shapes}; the calls themselves are made through
- * {@code ai.pipestream.proto.grpc.invoke}.</p>
+ * {@code ai.protomolt.proto.shapes}; the calls themselves are made through
+ * {@code ai.protomolt.proto.grpc.invoke}.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/workflow-manager.md">workflow
  * manager design note</a> for the model behind these types.</p>

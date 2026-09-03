@@ -12,7 +12,7 @@
  * <p>{@link IcebergPartitions} builds a {@code PartitionSpec} by column name and reads a message's
  * source-column values so the sink can route rows to partitions. {@link LocalFileIO} is a
  * {@code FileIO} for {@code file://} warehouses built on {@code java.nio}, named through the
- * catalog's {@code io-impl} property; the {@code ai.pipestream.proto.iceberg.s3} package in
+ * catalog's {@code io-impl} property; the {@code ai.protomolt.proto.iceberg.s3} package in
  * the sibling module does the same for S3-compatible object stores.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/iceberg.md">Apache

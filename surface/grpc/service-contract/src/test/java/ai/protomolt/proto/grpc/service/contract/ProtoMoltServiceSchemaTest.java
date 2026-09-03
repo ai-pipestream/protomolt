@@ -98,6 +98,6 @@ class ProtoMoltServiceSchemaTest {
         assertThat(ProtoMoltServiceSchema.service().getMethods()).isNotEmpty();
         assertThat(ProtoMoltServiceSchema.file().getDependencies())
                 .extracting(file -> file.getName())
-                .contains("ai/protomolt/proto/grpc/profile/v1/service_profile.proto");
+                .contains("ai/pipestream/proto/grpc/profile/v1/service_profile.proto");
     }
 }

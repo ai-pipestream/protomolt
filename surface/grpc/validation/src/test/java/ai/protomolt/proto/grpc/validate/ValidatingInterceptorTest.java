@@ -84,12 +84,12 @@ class ValidatingInterceptorTest {
     static void compile() throws Exception {
         ClassLoader loader = ValidatingInterceptorTest.class.getClassLoader();
         String validateProto = new String(loader.getResourceAsStream(
-                "ai/protomolt/proto/validate/v1/validate.proto").readAllBytes());
+                "ai/pipestream/proto/validate/v1/validate.proto").readAllBytes());
         String qualityProto = new String(loader.getResourceAsStream(
-                "ai/protomolt/proto/quality/v1/quality.proto").readAllBytes());
+                "ai/pipestream/proto/quality/v1/quality.proto").readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
-                .add("ai/protomolt/proto/quality/v1/quality.proto", qualityProto, "test")
+                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/pipestream/proto/quality/v1/quality.proto", qualityProto, "test")
                 .add("grpc/validate/test/v1/echo.proto", PROTO, "test")
                 .build());
         var file = compiled.descriptorFor("grpc/validate/test/v1/echo.proto").orElseThrow();

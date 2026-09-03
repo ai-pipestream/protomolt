@@ -10,7 +10,7 @@
  * <p>Failures surface as {@link ProtobufJsonException}, with
  * {@link MalformedProtobufJsonException} distinguishing input that cannot be merged into the
  * target message from internal conversion faults. The transcoder carries no HTTP or framework
- * dependencies; {@code ai.pipestream.proto.http.rest} builds the JSON/REST gateway on top of it.
+ * dependencies; {@code ai.protomolt.proto.http.rest} builds the JSON/REST gateway on top of it.
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST
  * gateway guide</a> for how the transcoder is wired into a server.

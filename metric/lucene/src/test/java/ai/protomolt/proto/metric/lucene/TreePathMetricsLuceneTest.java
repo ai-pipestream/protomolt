@@ -114,7 +114,7 @@ class TreePathMetricsLuceneTest {
     static Descriptor productDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("test/product.proto").setPackage("test").setSyntax("proto3")
-                .addDependency("ai/protomolt/proto/types/v1/tree_path.proto")
+                .addDependency("ai/pipestream/proto/types/v1/tree_path.proto")
                 .addMessageType(DescriptorProto.newBuilder().setName("Product")
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("id").setNumber(1)

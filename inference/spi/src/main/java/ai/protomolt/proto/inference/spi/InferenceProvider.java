@@ -12,7 +12,7 @@ import ai.protomolt.proto.inference.v1.ModelEntry;
  *
  * <p>Providers are discovered with {@link java.util.ServiceLoader}: an
  * implementation module lists its provider class in
- * {@code META-INF/services/ai.pipestream.proto.inference.spi.InferenceProvider}.
+ * {@code META-INF/services/ai.protomolt.proto.inference.spi.InferenceProvider}.
  * Implementations must be stateless and thread-safe — all per-model state
  * lives in the {@link ModelEntry} (endpoint, backend model name), so one
  * provider instance serves every catalog entry of its kind.</p>

@@ -13,6 +13,6 @@
  * contract source for services that do not enable gRPC reflection.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">gathering
- * guide</a>; the SPI and the local sources live in {@code ai.pipestream.proto.acquire.gather}.</p>
+ * guide</a>; the SPI and the local sources live in {@code ai.protomolt.proto.acquire.gather}.</p>
  */
 package ai.protomolt.proto.acquire.gather.git;

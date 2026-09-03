@@ -40,7 +40,7 @@ public abstract class GeneratedLike implements Message {
         FileDescriptorProto proto = FileDescriptorProto.newBuilder()
             .setName("fixture/generated_like.proto")
             .setSyntax("proto3")
-            .setPackage("ai.pipestream.proto.descriptors.fixture")
+            .setPackage("ai.protomolt.proto.descriptors.fixture")
             .addMessageType(DescriptorProto.newBuilder()
                 .setName("GeneratedLike")
                 .addField(FieldDescriptorProto.newBuilder()

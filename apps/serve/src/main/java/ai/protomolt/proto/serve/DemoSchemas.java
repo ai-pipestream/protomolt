@@ -37,9 +37,9 @@ final class DemoSchemas {
 
     /** Option schemas the demo imports, registered as their own subjects. */
     static final List<String> OPTION_SUBJECTS = List.of(
-            "ai/protomolt/proto/index/hints/v1/indexing_hints.proto",
-            "ai/protomolt/proto/meta/v1/metadata.proto",
-            "ai/protomolt/proto/validate/v1/validate.proto");
+            "ai/pipestream/proto/index/hints/v1/indexing_hints.proto",
+            "ai/pipestream/proto/meta/v1/metadata.proto",
+            "ai/pipestream/proto/validate/v1/validate.proto");
 
     private static final String SHOP_RESOURCE = "ai/protomolt/proto/serve/demo_shop.proto";
 

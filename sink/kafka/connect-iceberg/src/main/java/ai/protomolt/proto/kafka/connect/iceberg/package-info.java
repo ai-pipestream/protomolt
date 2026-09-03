@@ -15,7 +15,7 @@
  * Iceberg's catalog builder, so any catalog Iceberg supports works without a code change.</p>
  *
  * <p>This module packages as its own plugin directory, separate from the gRPC connectors and
- * transforms in {@code ai.pipestream.proto.kafka.connect}, so a worker can install either without
+ * transforms in {@code ai.protomolt.proto.kafka.connect}, so a worker can install either without
  * the other's dependencies.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/sink/iceberg.md">Iceberg

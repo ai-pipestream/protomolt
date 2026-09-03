@@ -14,8 +14,8 @@
  * reactive runtime. {@link CatalogLineRunner} is the piece this module adds: it maps one prompt
  * line to one catalog verb run.</p>
  *
- * <p>{@code ai.pipestream.proto.mcp} serves the same catalog to agents over the Model Context
- * Protocol, and {@code ai.pipestream.proto.cli} over a terminal; all three share the line
+ * <p>{@code ai.protomolt.proto.mcp} serves the same catalog to agents over the Model Context
+ * Protocol, and {@code ai.protomolt.proto.cli} over a terminal; all three share the line
  * contract that a failing verb prints its error and leaves the session running.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/acp.md">ACP

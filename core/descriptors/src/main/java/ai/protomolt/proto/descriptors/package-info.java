@@ -19,9 +19,9 @@
  * and are registered against the same registry.</p>
  *
  * <p>Every ProtoMolt feature that needs a descriptor obtains it through this
- * package; {@code ai.pipestream.proto.helpers} builds its conversion and
+ * package; {@code ai.protomolt.proto.helpers} builds its conversion and
  * mapping utilities on a registry instance, and
- * {@code ai.pipestream.proto.sources} produces descriptors that can be fed
+ * {@code ai.protomolt.proto.sources} produces descriptors that can be fed
  * back into one.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/core/descriptor-sources.md">Descriptor

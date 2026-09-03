@@ -420,6 +420,6 @@ class ConfluenceGrpcServiceTest {
             files.add(DescriptorProtos.FileDescriptorProto.parseFrom(bytes).getName());
         }
         assertThat(files).contains(
-                "ai/protomolt/proto/acquire/confluence/v1/confluence_service.proto");
+                "ai/pipestream/proto/acquire/confluence/v1/confluence_service.proto");
     }
 }

@@ -161,7 +161,7 @@ class TaxonomyMountsTest {
                 .setName("taxonomy_mounts_test.proto")
                 .setSyntax("proto3")
                 .setPackage("test.config")
-                .addDependency("ai/protomolt/proto/types/v1/tree_path.proto")
+                .addDependency("ai/pipestream/proto/types/v1/tree_path.proto")
                 .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
                         .setName("Doc")
                         .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()

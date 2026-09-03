@@ -55,11 +55,11 @@ class RedactMessageTest {
     static void compile() throws Exception {
         String metadataProto;
         try (InputStream in = RedactMessageTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")) {
+                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")) {
             metadataProto = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "test")
+                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "test")
                 .add("redact/test/customer.proto", CUSTOMER_PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

@@ -64,7 +64,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class StructuredWorkflowReplayTest {
 
-    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
+    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
 
     private static final String PROTO = """
             syntax = "proto3";

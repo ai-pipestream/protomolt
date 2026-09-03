@@ -43,10 +43,10 @@ class SerdeDescriptorsTest {
     @BeforeAll
     static void compile() throws Exception {
         String validateProto = new String(SerdeDescriptorsTest.class.getClassLoader()
-                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")
+                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("serde/desc/v1/order.proto", PROTO, "test")
                 .build());
         descriptorSetBytes = compiled.descriptorSet().toByteArray();

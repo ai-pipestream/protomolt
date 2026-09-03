@@ -12,11 +12,11 @@
  *
  * <p>{@link RuleChecker} statically validates both rule dialects against descriptors, so a
  * ruleset fails at configuration time rather than on a message; it is also what
- * {@code ai.pipestream.proto.workflow} uses to verify a workflow. {@link SchemaInferrer} works in
+ * {@code ai.protomolt.proto.workflow} uses to verify a workflow. {@link SchemaInferrer} works in
  * the other direction, deriving a message type from sample {@code Struct} data.</p>
  *
  * <p>The single-message counterparts of these rules live in
- * {@code ai.pipestream.proto.mapper} and {@code ai.pipestream.proto.cel}; this package adds
+ * {@code ai.protomolt.proto.mapper} and {@code ai.protomolt.proto.cel}; this package adds
  * the named-source scope on top of them.</p>
  *
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/transform/join-shapes.md">join
