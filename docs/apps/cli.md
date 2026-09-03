@@ -13,7 +13,7 @@ not configured remain discoverable and answer `unavailable`. The standalone
 cli/build/install/protomolt-cli/bin/protomolt-cli list
 ```
 
-The entry point is `ai.pipestream.proto.cli.ProtoMoltCli`, so the module can
+The entry point is `ai.protomolt.proto.cli.ProtoMoltCli`, so the module can
 also be run from a jar or embedded directly. `ProtoMoltCli.run` takes its
 streams and its catalog as arguments; `main` only wires the process streams
 and the exit code.

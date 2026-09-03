@@ -84,7 +84,7 @@ protobuf {
 // The live smoke test hits the real workspace, so it never runs in the default
 // test task (and is assumption-gated on credentials as a second guard).
 tasks.named('test') {
-    exclude 'ai/pipestream/proto/acquire/confluence/ConfluenceLiveSmokeIT.class'
+    exclude 'ai/protomolt/proto/acquire/confluence/ConfluenceLiveSmokeIT.class'
 }
 
 // The projector and its test load Lucene (Java 25 bytecode), so this module's
@@ -103,6 +103,6 @@ tasks.register('liveSmokeTest', Test) {
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     filter {
-        includeTestsMatching 'ai.pipestream.proto.acquire.confluence.ConfluenceLiveSmokeIT'
+        includeTestsMatching 'ai.protomolt.proto.acquire.confluence.ConfluenceLiveSmokeIT'
     }
 }

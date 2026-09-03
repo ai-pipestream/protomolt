@@ -58,6 +58,6 @@ tasks.withType(Test).configureEach {
 tasks.register('generateActionInventory', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'ai.pipestream.proto.mcp.CatalogInventoryGenerator'
+    mainClass = 'ai.protomolt.proto.mcp.CatalogInventoryGenerator'
     args rootProject.file('docs/generated/action-inventory.json').absolutePath
 }

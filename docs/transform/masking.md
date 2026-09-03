@@ -124,7 +124,7 @@ unresolved payloads are not reported. The [CLI](../apps/cli.md) and the
 
 ## The `RedactMessage` transform
 
-`ai.pipestream.proto.kafka.connect.RedactMessage` masks record values in
+`ai.protomolt.proto.kafka.connect.RedactMessage` masks record values in
 any Connect pipeline, source or sink. It shares the descriptor-driven
 config every ProtoMolt transform uses.
 
@@ -139,7 +139,7 @@ config every ProtoMolt transform uses.
 
 ```json
 "transforms": "redact",
-"transforms.redact.type": "ai.pipestream.proto.kafka.connect.RedactMessage",
+"transforms.redact.type": "ai.protomolt.proto.kafka.connect.RedactMessage",
 "transforms.redact.schema.descriptor.set.base64": "CvQBCg9zaG9w...",
 "transforms.redact.message.type": "shop.v1.Order",
 "transforms.redact.classes": "pii,secret",

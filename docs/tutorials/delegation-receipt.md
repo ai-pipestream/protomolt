@@ -283,7 +283,7 @@ dependencies at all.
 ```shell
 ./gradlew :protomolt-record-verifier:jar
 java -cp "$(ls apps/record-verifier/build/libs/protomolt-record-verifier-*.jar)" \
-  ai.pipestream.receipt.verify.Main record.binpb trust.binpb
+  ai.protomolt.receipt.verify.Main record.binpb trust.binpb
 ```
 
 ```

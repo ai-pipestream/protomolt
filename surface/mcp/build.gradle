@@ -25,5 +25,5 @@ dependencies {
 }
 
 application {
-    mainClass = 'ai.pipestream.proto.mcp.McpMain'
+    mainClass = 'ai.protomolt.proto.mcp.McpMain'
 }

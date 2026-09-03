@@ -43,7 +43,7 @@ itself; there is no Connect schema involved).
 {
   "name": "orders-to-opensearch",
   "config": {
-    "connector.class": "ai.pipestream.proto.kafka.connect.opensearch.OpenSearchSinkConnector",
+    "connector.class": "ai.protomolt.proto.kafka.connect.opensearch.OpenSearchSinkConnector",
     "topics": "orders",
     "value.converter": "org.apache.kafka.connect.converters.ByteArrayConverter",
     "schema.descriptor.set.base64": "CrgCCg5zaG9wL29yZGVyLnBy...",

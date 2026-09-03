@@ -12,5 +12,5 @@ dependencies {
 }
 
 application {
-    mainClass = 'ai.pipestream.proto.agenthost.AgentHostMain'
+    mainClass = 'ai.protomolt.proto.agenthost.AgentHostMain'
 }

@@ -113,7 +113,7 @@ same question.
 ## Command line
 
 ```shell
-java -cp protomolt-record-verifier.jar ai.pipestream.receipt.verify.Main \
+java -cp protomolt-record-verifier.jar ai.protomolt.receipt.verify.Main \
     record.binpb trust.binpb [artifact-dir]
 ```
 

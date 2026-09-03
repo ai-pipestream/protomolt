@@ -155,7 +155,7 @@ only after the commit; delivery is at-least-once (a redelivered batch appends ag
 and Iceberg does not deduplicate).
 
 ```properties
-connector.class=ai.pipestream.proto.kafka.connect.iceberg.IcebergSinkConnector
+connector.class=ai.protomolt.proto.kafka.connect.iceberg.IcebergSinkConnector
 topics=orders
 value.converter=org.apache.kafka.connect.converters.ByteArrayConverter
 schema.descriptor.set.base64=<base64 FileDescriptorSet>

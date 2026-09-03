@@ -61,7 +61,7 @@ word, never a synonym of a term above.
 ## Naming and structure (ADR-002)
 
 A module's name is `protomolt-` plus its directory path segments joined with
-dashes. Its Java package is `ai.pipestream.proto.` plus those same segments,
+dashes. Its Java package is `ai.protomolt.proto.` plus those same segments,
 dots for dashes. The published Maven artifactId is the module name. One
 module, one package; a package is never split across two modules.
 
@@ -75,8 +75,8 @@ remaining segment is kept, in order.
 
 | Path | Module | Package |
 |---|---|---|
-| intake/service | protomolt-intake-service | ai.pipestream.proto.intake.service |
-| host/config-registry | protomolt-config-registry | ai.pipestream.proto.config.registry |
+| intake/service | protomolt-intake-service | ai.protomolt.proto.intake.service |
+| host/config-registry | protomolt-config-registry | ai.protomolt.proto.config.registry |
 
 Proto packages are `ai.pipestream.proto.<domain>[.<sub>].v1` and always carry
 the `proto` segment.
@@ -101,8 +101,8 @@ appears (`formats`, `sources`, `types`) is one stem, not a violation.
 
 A subtree's `core` directory holds its namesake module, named and packaged
 without the core segment: `acquire/gather/core` is `protomolt-acquire-gather`
-at `ai.pipestream.proto.acquire.gather`, and `transform/mapper/core` is
-`protomolt-mapper` at `ai.pipestream.proto.mapper`.
+at `ai.protomolt.proto.acquire.gather`, and `transform/mapper/core` is
+`protomolt-mapper` at `ai.protomolt.proto.mapper`.
 
 ### Technical terms
 
@@ -119,7 +119,7 @@ These are correct as they stand. Do not "fix" them.
 
 | Site | Exception | Reason |
 |---|---|---|
-| apps/record-verifier | package `ai.pipestream.receipt.verify` | zero runtime coupling to the platform is the point |
+| apps/record-verifier | package `ai.protomolt.receipt.verify` | zero runtime coupling to the platform is the point |
 | protobuf/validation-protovalidate | `buf.validate` proto package | vendored upstream vocabulary |
 | protobuf/seo | schema.org words such as Recipe | external vocabulary, exempt from ADR-001 retirement |
 | bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |

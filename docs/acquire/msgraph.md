@@ -15,7 +15,7 @@ Windows agent. Two lanes:
   index them. This is the roll-your-own-agent lane: cross-platform, no MSI,
   no agent enrollment.
 
-The classes live in `ai.pipestream.proto.acquire.msgraph`: `GraphAuth` (OAuth2),
+The classes live in `ai.protomolt.proto.acquire.msgraph`: `GraphAuth` (OAuth2),
 `GraphClient` (authorized JSON with Graph's `Retry-After` throttling contract
 honored), `GraphFiles`, `GraphConnections`, and `GraphSchemas`.
 

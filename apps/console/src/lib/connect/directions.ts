@@ -62,7 +62,7 @@ export interface SinkConfigInput {
 /** The ready-to-POST Kafka Connect connector document. */
 export function buildSinkConnectorConfig(input: SinkConfigInput): Record<string, unknown> {
   const config: Record<string, string> = {
-    'connector.class': 'ai.pipestream.proto.kafka.connect.GrpcSinkConnector',
+    'connector.class': 'ai.protomolt.proto.kafka.connect.GrpcSinkConnector',
     'tasks.max': '1',
     topics: input.topics,
     'grpc.target': input.target,

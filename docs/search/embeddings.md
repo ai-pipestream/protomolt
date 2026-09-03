@@ -46,7 +46,7 @@ checked exception. Whoever obtained a provider closes it.
 provider on the classpath keyed by id, and `byId(String)` resolves one,
 failing with the list of available ids when the requested provider is not
 there. Registration is the standard
-`META-INF/services/ai.pipestream.proto.search.embedding.EmbeddingProvider` file.
+`META-INF/services/ai.protomolt.proto.search.embedding.EmbeddingProvider` file.
 
 ## The embedding lane
 

@@ -12,7 +12,7 @@ dependencies {
 }
 
 def embeddedWasm = layout.projectDirectory.file(
-        'src/main/resources/ai/pipestream/proto/codegen/protoc-wrapper-v4.wasm')
+        'src/main/resources/ai/protomolt/proto/codegen/protoc-wrapper-v4.wasm')
 def embeddedWasmChecksum = layout.projectDirectory.file(
         'provenance/protoc-wrapper-v4.sha256')
 

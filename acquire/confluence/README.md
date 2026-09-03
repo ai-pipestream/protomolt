@@ -208,7 +208,7 @@ the environment:
 CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki \
 CONFLUENCE_USER=me@example.com CONFLUENCE_TOKEN=... \
   java -cp protomolt-acquire-confluence.jar \
-  ai.pipestream.proto.acquire.confluence.ConfluenceProxyServer
+  ai.protomolt.proto.acquire.confluence.ConfluenceProxyServer
 ```
 
 The server registers the gRPC health service and server reflection, and shuts

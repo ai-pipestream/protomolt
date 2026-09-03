@@ -20,7 +20,7 @@ services in both directions, descriptor-native with no generated stubs:
 Everything is configured with a serialized
 `google.protobuf.FileDescriptorSet`: no proto files on the worker, no code
 generation, no rebuild when the schema changes. The classes live in
-`ai.pipestream.proto.kafka.connect`.
+`ai.protomolt.proto.kafka.connect`.
 
 Two sibling plugins land records in storage instead of gRPC: the
 [Iceberg sink](iceberg.md) (`protomolt-kafka-connect-iceberg`) and the
@@ -60,7 +60,7 @@ Releases attach the same zip as `protomolt-kafka-connect-plugin-<version>.zip`.
 {
   "name": "orders-to-grpc",
   "config": {
-    "connector.class": "ai.pipestream.proto.kafka.connect.GrpcSinkConnector",
+    "connector.class": "ai.protomolt.proto.kafka.connect.GrpcSinkConnector",
     "topics": "orders",
     "grpc.target": "order-service:9090",
     "grpc.method": "shop.v1.OrderService/Record",
@@ -98,7 +98,7 @@ fail, skip, or dead-letter queue.
 {
   "name": "grpc-to-ticks",
   "config": {
-    "connector.class": "ai.pipestream.proto.kafka.connect.GrpcSourceConnector",
+    "connector.class": "ai.protomolt.proto.kafka.connect.GrpcSourceConnector",
     "topic": "ticks",
     "grpc.target": "feed-service:9090",
     "grpc.method": "feed.v1.FeedService/Watch",
@@ -164,10 +164,10 @@ CEL expressions against the message type: at configure time.
 
 ```json
 "transforms": "validate,route",
-"transforms.validate.type": "ai.pipestream.proto.kafka.connect.ValidateMessage",
+"transforms.validate.type": "ai.protomolt.proto.kafka.connect.ValidateMessage",
 "transforms.validate.schema.descriptor.set.base64": "CvQBCg9zaG9w...",
 "transforms.validate.message.type": "shop.v1.Order",
-"transforms.route.type": "ai.pipestream.proto.kafka.connect.CelFilter",
+"transforms.route.type": "ai.protomolt.proto.kafka.connect.CelFilter",
 "transforms.route.schema.descriptor.set.base64": "CvQBCg9zaG9w...",
 "transforms.route.message.type": "shop.v1.Order",
 "transforms.route.expression": "input.region == 'us-east' && input.qty > 0"
