@@ -1,0 +1,191 @@
+package ai.protomolt.proto.search.index.spi;
+
+import ai.protomolt.proto.search.index.hints.FieldIndexHint;
+import ai.protomolt.proto.search.index.hints.IndexFieldType;
+import ai.protomolt.proto.search.index.hints.IndexingHintsProto;
+import com.google.protobuf.DescriptorProtos.FieldOptions;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.ExtensionRegistry;
+import com.google.protobuf.InvalidProtocolBufferException;
+
+import java.util.Optional;
+
+/**
+ * Reads {@code (ai.pipestream.proto.index.hints.v1.index)} custom options from the descriptor.
+ * Prefer descriptors parsed/built with {@link #registerExtensions(ExtensionRegistry)}; when a
+ * descriptor set was linked without it, the hint survives as an unknown field and is reparsed
+ * against a knowing registry rather than silently dropped — a dropped hint would not just lose
+ * an analyzer, it would revert deliberate schema decisions like {@code validate_payloads: false}.
+ */
+public final class ProtoOptionsIndexingHintSource implements IndexingHintSource {
+
+    private static final ExtensionRegistry EXTENSIONS = ExtensionRegistry.newInstance();
+
+    static {
+        registerExtensions(EXTENSIONS);
+    }
+
+    public static void registerExtensions(ExtensionRegistry registry) {
+        IndexingHintsProto.registerAllExtensions(registry);
+    }
+
+    @Override
+    public Optional<ResolvedFieldHint> resolve(FieldDescriptor field) {
+        FieldIndexHint hint = hint(field);
+        return hint == null ? Optional.empty() : Optional.of(toResolved(hint, field));
+    }
+
+    /** The {@code (index)} hint on the field's options, reparsing an unknown-field carrier. */
+    private static FieldIndexHint hint(FieldDescriptor field) {
+        FieldOptions options = field.getOptions();
+        if (options.hasExtension(IndexingHintsProto.index)) {
+            return options.getExtension(IndexingHintsProto.index);
+        }
+        if (!options.getUnknownFields().hasField(IndexingHintsProto.index.getNumber())) {
+            return null;
+        }
+        try {
+            return FieldOptions.parseFrom(options.toByteString(), EXTENSIONS)
+                    .getExtension(IndexingHintsProto.index);
+        } catch (InvalidProtocolBufferException e) {
+            throw new IndexMappingException(
+                    "cannot reparse field options carrying "
+                            + "(ai.pipestream.proto.index.hints.v1.index): " + e.getMessage(),
+                    field.getFullName());
+        }
+    }
+
+    static ResolvedFieldHint toResolved(FieldIndexHint hint, FieldDescriptor field) {
+        IndexFieldKind kind = toKind(hint.getType());
+        // Type left unset → infer it from the descriptor; explicitly-set attributes still win.
+        ResolvedFieldHint defaults = kind == IndexFieldKind.UNSPECIFIED
+                ? InferringIndexingHintSource.infer(field)
+                : ResolvedFieldHint.of(kind);
+        ResolvedFieldHint.Builder builder = defaults.toBuilder()
+                .stored(hint.hasStored() ? hint.getStored() : defaults.stored())
+                .indexed(hint.hasIndexed() ? hint.getIndexed() : defaults.indexed())
+                .name(hint.getName())
+                .vectorDims(hint.getVectorDims())
+                .vectorSimilarity(toSimilarity(hint.getVectorSimilarity()))
+                .vectorElementType(toElementType(hint.getVectorElementType()))
+                .analyzer(hint.getAnalyzer())
+                .searchAnalyzer(hint.getSearchAnalyzer())
+                .skipIfMissing(hint.hasSkipIfMissing() ? hint.getSkipIfMissing() : true)
+                .sortable(hint.getSortable())
+                .facetable(hint.getFacetable())
+                .mapMode(toMapMode(hint.getMapMode()))
+                .dateFormat(hint.getDateFormat())
+                .dateResolution(toResolution(hint.getDateResolution()))
+                .engineParams(hint.getEngineParamsMap())
+                .blockRole(toBlockRole(hint.getBlockRole()))
+                .validatePayloads(hint.hasValidatePayloads() ? hint.getValidatePayloads() : true);
+        if (hint.hasNullValue()) {
+            builder.nullValue(hint.getNullValue());
+        }
+        if (hint.hasChunkingPolicy()) {
+            builder.chunkingPolicy(toPolicy(hint.getChunkingPolicy()));
+        }
+        if (hint.hasHnsw()) {
+            builder.hnswParams(new ResolvedFieldHint.HnswParams(
+                    hint.getHnsw().hasM() ? hint.getHnsw().getM() : 0,
+                    hint.getHnsw().hasEfConstruction() ? hint.getHnsw().getEfConstruction() : 0));
+        }
+        for (var subField : hint.getSubFieldsList()) {
+            builder.addSubField(new ResolvedFieldHint.SubField(
+                    toKind(subField.getType()), subField.getName(), subField.getAnalyzer()));
+        }
+        return builder.build();
+    }
+
+    private static BlockRole toBlockRole(ai.protomolt.proto.search.index.hints.BlockRole role) {
+        return switch (role) {
+            case BLOCK_ROLE_CHUNKS -> BlockRole.CHUNKS;
+            case BLOCK_ROLE_DOC_ID -> BlockRole.DOC_ID;
+            case BLOCK_ROLE_CHUNK_ID -> BlockRole.CHUNK_ID;
+            case BLOCK_ROLE_UNSPECIFIED, UNRECOGNIZED -> BlockRole.UNSPECIFIED;
+        };
+    }
+
+    private static ChunkingPolicy toPolicy(ai.protomolt.proto.search.index.hints.ChunkingPolicy policy) {
+        var chunking = policy.getChunking();
+        var embedding = policy.getEmbedding();
+        return new ChunkingPolicy(
+                new ChunkingPolicy.ChunkingSpec(
+                        chunking.getStrategy(),
+                        chunking.getStrategyVersion(),
+                        chunking.getTargetTokens(),
+                        chunking.getOverlapTokens(),
+                        chunking.getMinTokens(),
+                        chunking.getMaxTokens(),
+                        chunking.getBoundary()),
+                new ChunkingPolicy.EmbeddingSpec(
+                        embedding.getModel(),
+                        embedding.getDims(),
+                        toSimilarity(embedding.getSimilarity()),
+                        embedding.getNormalize()),
+                policy.getVectorField(),
+                policy.getStoreChunkText());
+    }
+
+    private static VectorSimilarity toSimilarity(ai.protomolt.proto.search.index.hints.VectorSimilarity similarity) {
+        return switch (similarity) {
+            case VECTOR_SIMILARITY_DOT_PRODUCT -> VectorSimilarity.DOT_PRODUCT;
+            case VECTOR_SIMILARITY_L2 -> VectorSimilarity.L2;
+            case VECTOR_SIMILARITY_MAX_INNER_PRODUCT -> VectorSimilarity.MAX_INNER_PRODUCT;
+            // COSINE is the documented default for unspecified.
+            case VECTOR_SIMILARITY_COSINE, VECTOR_SIMILARITY_UNSPECIFIED, UNRECOGNIZED -> VectorSimilarity.COSINE;
+        };
+    }
+
+    private static VectorElementType toElementType(ai.protomolt.proto.search.index.hints.VectorElementType elementType) {
+        return switch (elementType) {
+            case VECTOR_ELEMENT_TYPE_BYTE -> VectorElementType.BYTE;
+            // FLOAT32 is the documented default for unspecified.
+            case VECTOR_ELEMENT_TYPE_FLOAT32, VECTOR_ELEMENT_TYPE_UNSPECIFIED, UNRECOGNIZED -> VectorElementType.FLOAT32;
+        };
+    }
+
+    private static MapMode toMapMode(ai.protomolt.proto.search.index.hints.MapMode mapMode) {
+        return switch (mapMode) {
+            case MAP_MODE_FLATTEN -> MapMode.FLATTEN;
+            case MAP_MODE_ENTRIES -> MapMode.ENTRIES;
+            case MAP_MODE_JSON -> MapMode.JSON;
+            case MAP_MODE_SKIP -> MapMode.SKIP;
+            // null = unset: each engine keeps its documented default.
+            case MAP_MODE_UNSPECIFIED, UNRECOGNIZED -> null;
+        };
+    }
+
+    private static DateResolution toResolution(ai.protomolt.proto.search.index.hints.DateResolution resolution) {
+        return switch (resolution) {
+            case DATE_RESOLUTION_SECONDS -> DateResolution.SECONDS;
+            // MILLIS is the documented default for unspecified.
+            case DATE_RESOLUTION_MILLIS, DATE_RESOLUTION_UNSPECIFIED, UNRECOGNIZED -> DateResolution.MILLIS;
+        };
+    }
+
+    private static IndexFieldKind toKind(IndexFieldType type) {
+        return switch (type) {
+            case INDEX_FIELD_TYPE_TEXT -> IndexFieldKind.TEXT;
+            case INDEX_FIELD_TYPE_KEYWORD -> IndexFieldKind.KEYWORD;
+            case INDEX_FIELD_TYPE_INT32 -> IndexFieldKind.INT32;
+            case INDEX_FIELD_TYPE_INT64 -> IndexFieldKind.INT64;
+            case INDEX_FIELD_TYPE_FLOAT -> IndexFieldKind.FLOAT;
+            case INDEX_FIELD_TYPE_DOUBLE -> IndexFieldKind.DOUBLE;
+            case INDEX_FIELD_TYPE_BOOLEAN -> IndexFieldKind.BOOLEAN;
+            case INDEX_FIELD_TYPE_DATE -> IndexFieldKind.DATE;
+            case INDEX_FIELD_TYPE_BINARY -> IndexFieldKind.BINARY;
+            case INDEX_FIELD_TYPE_VECTOR -> IndexFieldKind.VECTOR;
+            case INDEX_FIELD_TYPE_OBJECT -> IndexFieldKind.OBJECT;
+            case INDEX_FIELD_TYPE_NESTED -> IndexFieldKind.NESTED;
+            case INDEX_FIELD_TYPE_SKIP -> IndexFieldKind.SKIP;
+            case INDEX_FIELD_TYPE_INT_RANGE -> IndexFieldKind.INT_RANGE;
+            case INDEX_FIELD_TYPE_LONG_RANGE -> IndexFieldKind.LONG_RANGE;
+            case INDEX_FIELD_TYPE_FLOAT_RANGE -> IndexFieldKind.FLOAT_RANGE;
+            case INDEX_FIELD_TYPE_DOUBLE_RANGE -> IndexFieldKind.DOUBLE_RANGE;
+            case INDEX_FIELD_TYPE_DATE_RANGE -> IndexFieldKind.DATE_RANGE;
+            case INDEX_FIELD_TYPE_TREE_PATH -> IndexFieldKind.TREE_PATH;
+            case INDEX_FIELD_TYPE_UNSPECIFIED, UNRECOGNIZED -> IndexFieldKind.UNSPECIFIED;
+        };
+    }
+}

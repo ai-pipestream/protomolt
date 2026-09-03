@@ -1,0 +1,66 @@
+package ai.protomolt.proto.workflow;
+
+import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
+import ai.protomolt.proto.prompt.PromptPacket;
+import ai.protomolt.proto.prompt.PromptRenderer;
+import ai.protomolt.proto.prompt.RenderPromptRequest;
+import com.google.protobuf.Any;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.util.JsonFormat;
+
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Recomputes the prompt and schema fingerprints of a structured-generation step
+ * offline: the same persona-free prompt packet the coordinator renders, hashed.
+ * Recording and replay both derive evidence fingerprints here, so a drifted
+ * renderer or schema surfaces identically on both sides. Raw instructions and
+ * schema text are never persisted - only their lowercase SHA-256 hex.
+ */
+final class StructuredProvenance {
+
+    private StructuredProvenance() {
+    }
+
+    /** Lowercase SHA-256 hex of the persona-free rendered instructions. */
+    static String promptFingerprint(Descriptor targetType) {
+        return sha256Hex(render(targetType).getInstructions());
+    }
+
+    /**
+     * Lowercase SHA-256 hex of the persona-free rendered instructions with the
+     * step's grounding rendered as document-specific context. Replay recomputes the
+     * fingerprint of a grounded structured step here from the re-derived grounding.
+     */
+    static String promptFingerprint(Descriptor targetType, Any grounding,
+                                    JsonFormat.TypeRegistry typeRegistry) {
+        return sha256Hex(render(targetType, grounding, typeRegistry).getInstructions());
+    }
+
+    /** Lowercase SHA-256 hex of the persona-free response JSON Schema. */
+    static String schemaFingerprint(Descriptor targetType) {
+        return sha256Hex(render(targetType).getResponseJsonSchema());
+    }
+
+    private static PromptPacket render(Descriptor targetType) {
+        return PromptRenderer.create().render(targetType,
+                RenderPromptRequest.newBuilder()
+                        .setTargetType(targetType.getFullName())
+                        .build(),
+                targetType.getFile().getFullName());
+    }
+
+    private static PromptPacket render(Descriptor targetType, Any grounding,
+                                       JsonFormat.TypeRegistry typeRegistry) {
+        return PromptRenderer.create().render(targetType,
+                RenderPromptRequest.newBuilder()
+                        .setTargetType(targetType.getFullName())
+                        .setOverrides(grounding)
+                        .build(),
+                targetType.getFile().getFullName(), typeRegistry);
+    }
+
+    private static String sha256Hex(String text) {
+        return ServiceProfileValidation.sha256(text.getBytes(StandardCharsets.UTF_8));
+    }
+}
