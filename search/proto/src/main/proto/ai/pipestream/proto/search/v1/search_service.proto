@@ -7,7 +7,7 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.search.v1";
+option java_package = "ai.protomolt.proto.search.v1";
 
 // ============================================================================
 // SEARCH SERVICE — the user-facing query surface and its indexing RPC.

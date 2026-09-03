@@ -8,7 +8,7 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+option java_package = "ai.protomolt.proto.acquire.confluence.v1";
 
 // ============================================================================
 // CRAWL / LIVE-UPDATE ENVELOPES - what the crawler emits and what live

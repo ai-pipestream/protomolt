@@ -9,7 +9,7 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.delegation.v1";
+option java_package = "ai.protomolt.proto.delegation.v1";
 
 // ============================================================================
 // AGENT DELEGATION: the engine-neutral coordinator/worker contract.

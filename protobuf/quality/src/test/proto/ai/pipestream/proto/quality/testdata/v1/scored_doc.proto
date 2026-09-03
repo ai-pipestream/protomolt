@@ -6,7 +6,7 @@ package ai.pipestream.proto.quality.testdata.v1;
 
 import "ai/pipestream/proto/quality/v1/quality.proto";
 
-option java_package = "ai.pipestream.proto.quality.testdata";
+option java_package = "ai.protomolt.proto.quality.testdata";
 option java_multiple_files = true;
 
 // The primary scoring fixture. It declares four dimensions that between them

@@ -3,7 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.llm.v1;
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.llm";
+option java_package = "ai.protomolt.proto.llm";
 option java_outer_classname = "LlmProto";
 
 import "google/protobuf/descriptor.proto";

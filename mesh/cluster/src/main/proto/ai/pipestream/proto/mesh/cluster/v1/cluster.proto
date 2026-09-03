@@ -10,7 +10,7 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.mesh.cluster.v1";
+option java_package = "ai.protomolt.proto.mesh.cluster.v1";
 
 // ============================================================================
 // MESH CLUSTER CONTRACTS: cluster advertisement, presence, and the

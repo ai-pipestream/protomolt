@@ -8,7 +8,7 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/duration.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.pipeline.v1";
+option java_package = "ai.protomolt.proto.pipeline.v1";
 
 // The pipeline execution contract: the compiled, streaming-aware form of a
 // Workflow. A pipeline is the typed-edge-normalized rendering of a workflow:

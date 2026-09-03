@@ -8,7 +8,7 @@ import "google/protobuf/descriptor.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "MeshOptionsProto";
-option java_package = "ai.pipestream.proto.mesh.v1";
+option java_package = "ai.protomolt.proto.mesh.v1";
 
 // ============================================================================
 // MESH PROCESSING OPTIONS: strongly typed message and field options that

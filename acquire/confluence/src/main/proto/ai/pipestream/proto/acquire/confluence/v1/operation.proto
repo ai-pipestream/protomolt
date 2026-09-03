@@ -5,7 +5,7 @@ package ai.pipestream.proto.acquire.confluence.v1;
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.acquire.confluence.v1";
+option java_package = "ai.protomolt.proto.acquire.confluence.v1";
 
 // ============================================================================
 // OPERATION - permitted-operations checks on entities.

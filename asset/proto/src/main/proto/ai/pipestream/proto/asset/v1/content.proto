@@ -5,7 +5,7 @@ package ai.pipestream.proto.asset.v1;
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.asset.v1";
+option java_package = "ai.protomolt.proto.asset.v1";
 
 // ============================================================================
 // CONTENT CLASSES — what an asset's content is structurally, as distinct

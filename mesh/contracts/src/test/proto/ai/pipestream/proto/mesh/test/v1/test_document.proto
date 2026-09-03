@@ -7,7 +7,7 @@ import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.mesh.test.v1";
+option java_package = "ai.protomolt.proto.mesh.test.v1";
 
 // Test fixture for the mesh contracts module: an application contract fully
 // annotated with the mesh message and field options, used by the option

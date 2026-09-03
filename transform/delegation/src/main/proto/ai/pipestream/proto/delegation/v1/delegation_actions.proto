@@ -7,7 +7,7 @@ import "ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.delegation.v1";
+option java_package = "ai.protomolt.proto.delegation.v1";
 
 // ============================================================================
 // DELEGATION ACTION CONTRACTS - the request and response messages of the

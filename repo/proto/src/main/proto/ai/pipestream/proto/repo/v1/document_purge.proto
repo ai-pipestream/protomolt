@@ -6,7 +6,7 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.repo.v1";
+option java_package = "ai.protomolt.proto.repo.v1";
 
 // ============================================================================
 // DOCUMENT PURGE COMMANDS - the Kafka claim-distribution contract of the

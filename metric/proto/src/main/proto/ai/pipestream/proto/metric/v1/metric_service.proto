@@ -8,7 +8,7 @@ import "ai/pipestream/proto/types/v1/tree_path.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.metric";
+option java_package = "ai.protomolt.proto.metric";
 option java_outer_classname = "MetricServiceProto";
 
 // ============================================================================

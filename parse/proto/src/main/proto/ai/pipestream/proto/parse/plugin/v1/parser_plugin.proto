@@ -9,7 +9,7 @@ import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.parse.plugin.v1";
+option java_package = "ai.protomolt.proto.parse.plugin.v1";
 
 // ============================================================================
 // PARSER PLUGIN — the contract every parser service implements.

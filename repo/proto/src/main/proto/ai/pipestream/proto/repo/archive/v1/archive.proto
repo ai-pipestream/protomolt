@@ -7,7 +7,7 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.repo.archive.v1";
+option java_package = "ai.protomolt.proto.repo.archive.v1";
 
 // ============================================================================
 // ARCHIVES — account-scoped named collections of entries.

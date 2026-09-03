@@ -3,7 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.inference.structured.testdata.v1;
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.inference.structured.testdata";
+option java_package = "ai.protomolt.proto.inference.structured.testdata";
 option java_outer_classname = "FormProto";
 
 import "ai/pipestream/proto/meta/v1/metadata.proto";

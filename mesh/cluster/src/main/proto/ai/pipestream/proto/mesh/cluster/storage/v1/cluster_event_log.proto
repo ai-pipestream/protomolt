@@ -7,7 +7,7 @@ import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.mesh.cluster.storage.v1";
+option java_package = "ai.protomolt.proto.mesh.cluster.storage.v1";
 
 // Complete, gap-free replay log for one cluster directory.
 message ClusterEventLog {

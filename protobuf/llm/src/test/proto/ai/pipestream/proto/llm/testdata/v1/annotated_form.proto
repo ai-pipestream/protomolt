@@ -3,7 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.llm.testdata.v1;
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.llm.testdata";
+option java_package = "ai.protomolt.proto.llm.testdata";
 option java_outer_classname = "AnnotatedFormProto";
 
 import "ai/pipestream/proto/llm/v1/llm.proto";

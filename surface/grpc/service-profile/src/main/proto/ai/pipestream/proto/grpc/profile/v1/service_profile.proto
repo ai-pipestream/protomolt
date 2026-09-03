@@ -5,7 +5,7 @@ package ai.pipestream.proto.grpc.profile.v1;
 import "google/protobuf/duration.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.grpc.profile.v1";
+option java_package = "ai.protomolt.proto.grpc.profile.v1";
 
 // A stable logical identity and the environment-specific connection details for one gRPC
 // service. Credentials and key material are resolved by the host; this contract carries only

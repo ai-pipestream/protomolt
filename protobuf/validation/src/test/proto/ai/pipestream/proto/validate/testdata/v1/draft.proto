@@ -3,7 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.validate.testdata.v1;
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.validate.testdata";
+option java_package = "ai.protomolt.proto.validate.testdata";
 
 import "ai/pipestream/proto/validate/v1/validate.proto";
 

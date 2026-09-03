@@ -7,7 +7,7 @@ import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.asset.v1";
+option java_package = "ai.protomolt.proto.asset.v1";
 
 // ============================================================================
 // CLASSIFICATION — what an asset is, as a stored state machine.

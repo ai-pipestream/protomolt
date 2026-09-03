@@ -7,7 +7,7 @@ import "ai/pipestream/proto/parse/grparse/v1/parse_types.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "ParseStreamProto";
-option java_package = "ai.pipestream.proto.parse.grparse.v1";
+option java_package = "ai.protomolt.proto.parse.grparse.v1";
 
 // ============================================================================
 // Document streaming contract (fork-owned)

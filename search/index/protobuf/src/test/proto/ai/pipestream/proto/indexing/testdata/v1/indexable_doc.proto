@@ -3,7 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.indexing.testdata.v1;
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.indexing.testdata";
+option java_package = "ai.protomolt.proto.indexing.testdata";
 
 import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";

@@ -6,7 +6,7 @@ import "google/protobuf/struct.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.parse.v1";
+option java_package = "ai.protomolt.proto.parse.v1";
 
 // ============================================================================
 // ROUTING RULES — CEL-driven parser selection.

@@ -10,7 +10,7 @@ import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.mesh.v1";
+option java_package = "ai.protomolt.proto.mesh.v1";
 
 // ============================================================================
 // MESH CORE CONTRACTS: the transport-independent entity vocabulary every mesh

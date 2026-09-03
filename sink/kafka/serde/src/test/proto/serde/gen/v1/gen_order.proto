@@ -8,7 +8,7 @@ package serde.gen.v1;
 
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
-option java_package = "ai.pipestream.proto.kafka.serde.testdata";
+option java_package = "ai.protomolt.proto.kafka.serde.testdata";
 option java_multiple_files = true;
 
 // An order carrying one declared rule, so a round trip proves the serializer

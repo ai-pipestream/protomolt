@@ -3,7 +3,7 @@ syntax = "proto3";
 package ai.pipestream.proto.http.jsonschema.testdata.v1;
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.http.jsonschema.testdata";
+option java_package = "ai.protomolt.proto.http.jsonschema.testdata";
 
 import "ai/pipestream/proto/validate/v1/validate.proto";
 import "google/protobuf/duration.proto";

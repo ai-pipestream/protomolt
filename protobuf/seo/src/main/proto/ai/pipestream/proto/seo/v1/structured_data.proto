@@ -9,7 +9,7 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.seo.v1";
+option java_package = "ai.protomolt.proto.seo.v1";
 
 // ============================================================================
 // GOOGLE STRUCTURED DATA — the schema.org types Google Search documents at

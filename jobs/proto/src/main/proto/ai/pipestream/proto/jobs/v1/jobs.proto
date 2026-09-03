@@ -8,7 +8,7 @@ import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.jobs.v1";
+option java_package = "ai.protomolt.proto.jobs.v1";
 
 // ============================================================================
 // WORKFLOW RUNS — the asynchronous workflow-execution Kafka contract.

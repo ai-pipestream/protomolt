@@ -11,7 +11,7 @@ package ai.pipestream.proto.quality.v1;
 
 import "google/protobuf/descriptor.proto";
 
-option java_package = "ai.pipestream.proto.quality";
+option java_package = "ai.protomolt.proto.quality";
 option java_outer_classname = "QualityProto";
 option java_multiple_files = true;
 

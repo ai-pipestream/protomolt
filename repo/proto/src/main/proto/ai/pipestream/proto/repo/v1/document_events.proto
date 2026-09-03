@@ -6,7 +6,7 @@ import "ai/pipestream/proto/repo/v1/address.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.repo.v1";
+option java_package = "ai.protomolt.proto.repo.v1";
 
 // ============================================================================
 // DOCUMENT EVENTS - the transactional-outbox Kafka contract.

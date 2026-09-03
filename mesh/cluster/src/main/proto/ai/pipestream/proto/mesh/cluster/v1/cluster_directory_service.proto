@@ -12,7 +12,7 @@ syntax = "proto3";
 package ai.pipestream.proto.mesh.cluster.v1;
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.mesh.cluster.v1";
+option java_package = "ai.protomolt.proto.mesh.cluster.v1";
 option java_outer_classname = "ClusterDirectoryServiceProto";
 
 import "ai/pipestream/proto/mesh/cluster/v1/cluster.proto";

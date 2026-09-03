@@ -10,7 +10,7 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.grpc.workflow.v1";
+option java_package = "ai.protomolt.proto.grpc.workflow.v1";
 
 // A descriptor-grounded sequence of gRPC calls that can be checked, replayed, and promoted.
 message Workflow {

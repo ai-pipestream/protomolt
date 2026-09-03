@@ -6,7 +6,7 @@ import "ai/pipestream/proto/meta/v1/metadata.proto";
 import "ai/pipestream/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.inference.v1";
+option java_package = "ai.protomolt.proto.inference.v1";
 
 // ============================================================================
 // INFERENCE — the generic model-inference contract.

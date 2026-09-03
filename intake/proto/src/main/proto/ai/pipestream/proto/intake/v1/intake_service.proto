@@ -6,7 +6,7 @@ import "ai/pipestream/proto/repo/v1/address.proto";
 import "ai/pipestream/proto/repo/v1/document.proto";
 
 option java_multiple_files = true;
-option java_package = "ai.pipestream.proto.intake.v1";
+option java_package = "ai.protomolt.proto.intake.v1";
 
 // ============================================================================
 // INTAKE — the only authenticated way into the platform.
