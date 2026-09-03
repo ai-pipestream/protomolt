@@ -86,14 +86,14 @@ class RenderPromptActionTest {
         String probeProto = """
                 syntax = "proto3";
                 package probe;
-                import "ai/pipestream/proto/llm/v1/llm.proto";
-                import "ai/pipestream/proto/quality/v1/quality.proto";
+                import "ai/protomolt/proto/llm/v1/llm.proto";
+                import "ai/protomolt/proto/quality/v1/quality.proto";
                 message Probe {
-                  option (ai.pipestream.proto.quality.v1.quality) = {
+                  option (ai.protomolt.proto.quality.v1.quality) = {
                     dimension: {id: "completeness", cel: "size(this.court) > 0 ? 1.0 : 0.0"}
                   };
                   // The issuing court.
-                  string court = 1 [(ai.pipestream.proto.llm.v1.field) = {
+                  string court = 1 [(ai.protomolt.proto.llm.v1.field) = {
                     instruction: "Name the court exactly as it appears in the caption."
                     volatile: true
                   }];
@@ -102,10 +102,10 @@ class RenderPromptActionTest {
         ObjectNode compileInput = obj("{\"sources\": {}}");
         ObjectNode sources = (ObjectNode) compileInput.get("sources");
         sources.put("probe/probe.proto", probeProto);
-        sources.put("ai/pipestream/proto/llm/v1/llm.proto",
-                classpathProto("/ai/pipestream/proto/llm/v1/llm.proto"));
-        sources.put("ai/pipestream/proto/quality/v1/quality.proto",
-                classpathProto("/ai/pipestream/proto/quality/v1/quality.proto"));
+        sources.put("ai/protomolt/proto/llm/v1/llm.proto",
+                classpathProto("/ai/protomolt/proto/llm/v1/llm.proto"));
+        sources.put("ai/protomolt/proto/quality/v1/quality.proto",
+                classpathProto("/ai/protomolt/proto/quality/v1/quality.proto"));
         ObjectNode compiled = catalog.execute("compile", compileInput);
         assertThat(compiled.get("ok").asBoolean()).isTrue();
 

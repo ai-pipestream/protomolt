@@ -52,7 +52,7 @@ public final class MetricWorkflows {
         ObjectNode rebuild = steps.addObject();
         rebuild.put("name", "rebuild");
         rebuild.put("target", metricsTarget);
-        rebuild.put("method", "ai.pipestream.proto.metric.v1.MetricService/RebuildRollup");
+        rebuild.put("method", "ai.protomolt.proto.metric.v1.MetricService/RebuildRollup");
         rebuild.put("deadlineMs", deadlineMs);
         rebuild.putArray("rules")
                 .add("mapping_subject = input.mapping_subject")
@@ -62,7 +62,7 @@ public final class MetricWorkflows {
                 .add("filters = input.filters")
                 .add("table = input.table");
         ObjectNode output = workflow.putObject("output");
-        output.put("type", "ai.pipestream.proto.metric.v1.RebuildRollupResponse");
+        output.put("type", "ai.protomolt.proto.metric.v1.RebuildRollupResponse");
         output.putArray("rules")
                 .add("mapping_subject = rebuild.mapping_subject")
                 .add("backend = rebuild.backend")

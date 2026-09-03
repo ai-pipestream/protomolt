@@ -32,14 +32,14 @@ class MetricWorkflowsTest {
         assertThat(workflow.path("name").asText())
                 .isEqualTo(MetricWorkflows.REBUILD_ROLLUP_WORKFLOW);
         assertThat(workflow.path("inputType").asText())
-                .isEqualTo("ai.pipestream.proto.metric.v1.RebuildRollupRequest");
+                .isEqualTo("ai.protomolt.proto.metric.v1.RebuildRollupRequest");
 
         JsonNode rebuild = workflow.path("steps").get(0);
         assertThat(workflow.path("steps")).hasSize(1);
         assertThat(rebuild.path("name").asText()).isEqualTo("rebuild");
         assertThat(rebuild.path("target").asText()).isEqualTo("inprocess:metrics");
         assertThat(rebuild.path("method").asText())
-                .isEqualTo("ai.pipestream.proto.metric.v1.MetricService/RebuildRollup");
+                .isEqualTo("ai.protomolt.proto.metric.v1.MetricService/RebuildRollup");
         assertThat(rules(rebuild)).containsExactly(
                 "mapping_subject = input.mapping_subject",
                 "backend = input.backend",
@@ -49,7 +49,7 @@ class MetricWorkflowsTest {
                 "table = input.table");
 
         assertThat(workflow.path("output").path("type").asText())
-                .isEqualTo("ai.pipestream.proto.metric.v1.RebuildRollupResponse");
+                .isEqualTo("ai.protomolt.proto.metric.v1.RebuildRollupResponse");
     }
 
     @Test
@@ -59,7 +59,7 @@ class MetricWorkflowsTest {
                         .path("schema").path("descriptorSetBase64").asText()));
         assertThat(set.getFileList())
                 .anySatisfy(file -> assertThat(file.getName())
-                        .isEqualTo("ai/pipestream/proto/metric/v1/metric_service.proto"));
+                        .isEqualTo("ai/protomolt/proto/metric/v1/metric_service.proto"));
     }
 
     @Test

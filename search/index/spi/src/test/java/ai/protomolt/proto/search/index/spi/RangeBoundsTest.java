@@ -67,7 +67,7 @@ class RangeBoundsTest {
     void duckTypedPairsKeepTheirAlwaysPresentAlwaysIncludedContract() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("duck_bounds.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Bounds")
@@ -97,20 +97,20 @@ class RangeBoundsTest {
     void aFieldOfACanonicalTypeInfersItsRangeKindWithNoHint() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("canonical_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
-                .addDependency("ai/pipestream/proto/types/v1/ranges.proto")
+                .addDependency("ai/protomolt/proto/types/v1/ranges.proto")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("stay").setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.proto.types.v1.DateRange")
+                                .setTypeName(".ai.protomolt.proto.types.v1.DateRange")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("bytes_window").setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.proto.types.v1.LongRange")
+                                .setTypeName(".ai.protomolt.proto.types.v1.LongRange")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         var doc = FileDescriptor.buildFrom(

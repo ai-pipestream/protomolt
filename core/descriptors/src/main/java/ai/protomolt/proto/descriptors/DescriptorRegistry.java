@@ -156,7 +156,7 @@ public class DescriptorRegistry {
     /**
      * Finds a descriptor by its full name.
      *
-     * @param fullName The full name (e.g., "ai.pipestream.data.v1.SearchMetadata")
+     * @param fullName The full name (e.g., "ai.protomolt.data.v1.SearchMetadata")
      * @return The descriptor, or null if not found
      */
     public Descriptor findDescriptorByFullName(String fullName) {

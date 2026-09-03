@@ -77,7 +77,7 @@ class TreePathsTest {
     void mappingRefusesTreePathOverAMessageWithoutSegments() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("no_segments_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("NotAPath")
@@ -90,7 +90,7 @@ class TreePathsTest {
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("category").setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.NotAPath")
+                                .setTypeName(".ai.protomolt.test.NotAPath")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         var doc = FileDescriptor.buildFrom(file, new FileDescriptor[0])
@@ -121,20 +121,20 @@ class TreePathsTest {
             throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("tree_path_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
-                .addDependency("ai/pipestream/proto/types/v1/tree_path.proto")
+                .addDependency("ai/protomolt/proto/types/v1/tree_path.proto")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("category").setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.proto.types.v1.TreePath")
+                                .setTypeName(".ai.protomolt.proto.types.v1.TreePath")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("categories").setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.proto.types.v1.TreePath")
+                                .setTypeName(".ai.protomolt.proto.types.v1.TreePath")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                 .build();
         return FileDescriptor.buildFrom(
@@ -146,7 +146,7 @@ class TreePathsTest {
             String name, FieldDescriptorProto.Builder field) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName(name.toLowerCase(java.util.Locale.ROOT) + ".proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder().setName(name).addField(field))
                 .build();

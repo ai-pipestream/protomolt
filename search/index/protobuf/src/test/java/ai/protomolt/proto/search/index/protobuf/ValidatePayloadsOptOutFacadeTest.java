@@ -155,7 +155,7 @@ class ValidatePayloadsOptOutFacadeTest {
         AnyEnvelope envelope = AnyEnvelope.newBuilder()
                 .setDocId("doc-1")
                 .setUnchecked(Any.newBuilder()
-                        .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                        .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                         .setValue(ByteString.copyFromUtf8("x"))
                         .build())
                 .build();

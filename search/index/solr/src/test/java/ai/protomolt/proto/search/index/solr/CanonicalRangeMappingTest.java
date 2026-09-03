@@ -88,7 +88,7 @@ class CanonicalRangeMappingTest {
     private static Descriptor docDescriptor(Descriptor rangeType) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("canonical_" + rangeType.getName().toLowerCase() + "_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency(rangeType.getFile().getName())
                 .addMessageType(DescriptorProto.newBuilder()

@@ -126,8 +126,8 @@ class MessageProjectionTest {
         MessageProjection projection = searchDocProjection();
         assertThat(projection.targetType()).isEqualTo(SearchDoc.getDescriptor());
         assertThat(projection.declaredSources()).containsExactly(
-                "ai.pipestream.proto.projection.test.v1.Case",
-                "ai.pipestream.proto.projection.test.v1.Matter");
+                "ai.protomolt.proto.projection.test.v1.Case",
+                "ai.protomolt.proto.projection.test.v1.Matter");
         assertThat(projection.supports(Case.getDescriptor())).isTrue();
         assertThat(projection.supports(Address.getDescriptor())).isFalse();
     }

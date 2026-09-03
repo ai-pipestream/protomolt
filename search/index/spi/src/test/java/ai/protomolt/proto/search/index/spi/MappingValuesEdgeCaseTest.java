@@ -435,10 +435,10 @@ class MappingValuesEdgeCaseTest {
         }
 
         private static FileDescriptor file() throws Exception {
-            String pkg = ".ai.pipestream.test.mappingedge";
+            String pkg = ".ai.protomolt.test.mappingedge";
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("mapping_values_edge.proto")
-                    .setPackage("ai.pipestream.test.mappingedge")
+                    .setPackage("ai.protomolt.test.mappingedge")
                     .setSyntax("proto3")
                     .addDependency("google/protobuf/any.proto")
                     .addDependency("google/protobuf/struct.proto")

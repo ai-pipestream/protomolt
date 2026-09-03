@@ -2,7 +2,7 @@
  * The built-in rule source for the Pipestream {@code validate.v1} annotation dialect.
  *
  * <p>{@link ai.protomolt.proto.validate.source.AiPipestreamRuleSource} reads the
- * {@code (ai.pipestream.proto.validate.v1.field)} and {@code (ai.pipestream.proto.validate.v1.message)}
+ * {@code (ai.protomolt.proto.validate.v1.field)} and {@code (ai.protomolt.proto.validate.v1.message)}
  * options off protobuf descriptors and translates them into the neutral
  * {@link ai.protomolt.proto.validate.model.FieldConstraints} and
  * {@link ai.protomolt.proto.validate.model.MessageConstraints} model.

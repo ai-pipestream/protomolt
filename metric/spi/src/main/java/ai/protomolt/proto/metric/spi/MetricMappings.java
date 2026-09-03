@@ -51,7 +51,7 @@ import java.util.Set;
 public final class MetricMappings {
 
     private static final String TIMESTAMP_TYPE = "google.protobuf.Timestamp";
-    private static final String TREE_PATH_TYPE = "ai.pipestream.proto.types.v1.TreePath";
+    private static final String TREE_PATH_TYPE = "ai.protomolt.proto.types.v1.TreePath";
 
     private MetricMappings() {
     }

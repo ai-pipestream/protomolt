@@ -34,9 +34,9 @@ class TransformsTest {
     private static final String PROTO = """
             syntax = "proto3";
             package smt.test;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Event {
-              string id = 1 [(ai.pipestream.proto.validate.v1.field) = {
+              string id = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 string: {min_len: 3}
               }];
               int64 seq = 2;
@@ -54,11 +54,11 @@ class TransformsTest {
     static void compileSchema() throws Exception {
         String validateProto;
         try (InputStream in = TransformsTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")) {
+                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")) {
             validateProto = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("smt/test/event.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()
@@ -370,19 +370,19 @@ class TransformsTest {
     @Test
     void redactMasksDeclaredSensitivityClasses() throws Exception {
         String metadataProto = new String(getClass().getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
+                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")
                 .readAllBytes(), StandardCharsets.UTF_8);
         String customerProto = """
                 syntax = "proto3";
                 package smt.test;
-                import "ai/pipestream/proto/meta/v1/metadata.proto";
+                import "ai/protomolt/proto/meta/v1/metadata.proto";
                 message Customer {
                   string id = 1;
-                  string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+                  string email = 2 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
                 }
                 """;
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "test")
+                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "test")
                 .add("smt/test/customer.proto", customerProto, "test")
                 .build());
         Descriptor customer = compiled.descriptorFor("smt/test/customer.proto").orElseThrow()

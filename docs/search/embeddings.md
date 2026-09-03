@@ -121,11 +121,11 @@ them, the mapper produces the document, the embedder fills the vector, and
 the sink lands it in OpenSearch:
 
 ```protobuf
-import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
 
 message Sentence {
-  string sentence = 1 [(ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }];
-  repeated float embedding = 2 [(ai.pipestream.proto.index.hints.v1.index) = {
+  string sentence = 1 [(ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }];
+  repeated float embedding = 2 [(ai.protomolt.proto.index.hints.v1.index) = {
     type: INDEX_FIELD_TYPE_VECTOR
     vector_dims: 256
   }];

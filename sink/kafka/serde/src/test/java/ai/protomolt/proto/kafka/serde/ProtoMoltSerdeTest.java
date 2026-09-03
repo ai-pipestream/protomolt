@@ -29,11 +29,11 @@ class ProtoMoltSerdeTest {
     private static final String PROTO = """
             syntax = "proto3";
             package serde.orders.v1;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Ignored { string filler = 1; }
             message Order {
-              string id = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 3];
-              int32 quantity = 2 [(ai.pipestream.proto.validate.v1.field).int32.gte = 1];
+              string id = 1 [(ai.protomolt.proto.validate.v1.field).string.min_len = 3];
+              int32 quantity = 2 [(ai.protomolt.proto.validate.v1.field).int32.gte = 1];
             }
             message Envelope {
               message Inner { string v = 1; }
@@ -46,10 +46,10 @@ class ProtoMoltSerdeTest {
     @BeforeAll
     static void compile() throws Exception {
         String validateProto = new String(ProtoMoltSerdeTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")
+                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("serde/orders/v1/order.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

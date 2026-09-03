@@ -10,7 +10,7 @@
  * <p>Compilation and evaluation are delegated to
  * {@link ai.protomolt.proto.cel.CelEvaluator} from {@code ai.protomolt.proto.cel}. This package
  * covers metadata read from message contents at runtime, as distinct from descriptive metadata
- * declared on schemas as descriptor options under {@code ai.pipestream.proto.meta}.</p>
+ * declared on schemas as descriptor options under {@code ai.protomolt.proto.meta}.</p>
  *
  * <p>See the
  * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/metadata.md">Schema metadata

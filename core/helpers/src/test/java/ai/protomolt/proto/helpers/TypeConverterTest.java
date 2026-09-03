@@ -258,7 +258,7 @@ public class TypeConverterTest {
                 () -> converter.structToMessage(struct, enumDescriptor));
         assertTrue(ex.getMessage().contains("color"));
         assertTrue(ex.getMessage().contains("MAGENTA"));
-        assertTrue(ex.getMessage().contains("ai.pipestream.test.Color"));
+        assertTrue(ex.getMessage().contains("ai.protomolt.test.Color"));
     }
 
     @Test
@@ -464,7 +464,7 @@ public class TypeConverterTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_converter.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(testMessageProto)
                 .build();
 
@@ -488,13 +488,13 @@ public class TypeConverterTest {
                 .addField(FieldDescriptorProto.newBuilder()
                         .setName("children").setNumber(2)
                         .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                        .setTypeName(".ai.pipestream.test.ChildMessage")
+                        .setTypeName(".ai.protomolt.test.ChildMessage")
                         .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED))
                 .build();
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_repeated_round_trip.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(childMessageProto)
                 .addMessageType(parentMessageProto)
                 .build();
@@ -512,7 +512,7 @@ public class TypeConverterTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_int.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(intMessageProto)
                 .build();
 
@@ -533,12 +533,12 @@ public class TypeConverterTest {
                 .addField(FieldDescriptorProto.newBuilder()
                         .setName("color").setNumber(1)
                         .setType(FieldDescriptorProto.Type.TYPE_ENUM)
-                        .setTypeName(".ai.pipestream.test.Color"))
+                        .setTypeName(".ai.protomolt.test.Color"))
                 .build();
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_enum.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addEnumType(enumProto)
                 .addMessageType(enumMessageProto)
                 .build();
@@ -556,7 +556,7 @@ public class TypeConverterTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_bytes.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(bytesMessageProto)
                 .build();
 
@@ -574,7 +574,7 @@ public class TypeConverterTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_repeated.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(repeatedMessageProto)
                 .build();
 

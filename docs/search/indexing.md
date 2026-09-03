@@ -27,16 +27,16 @@ required. The `.proto` ships inside `protomolt-search-index-spi` (and is availab
 on the classpath as a resource):
 
 ```protobuf
-import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
 
 message Doc {
-  string doc_id = 1 [(ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }];
-  string title  = 2 [(ai.pipestream.proto.index.hints.v1.index) = {
+  string doc_id = 1 [(ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }];
+  string title  = 2 [(ai.protomolt.proto.index.hints.v1.index) = {
     type: INDEX_FIELD_TYPE_TEXT
     analyzer: "english"
     sub_fields: [{ name: "raw", type: INDEX_FIELD_TYPE_KEYWORD }]
   }];
-  repeated float embedding = 3 [(ai.pipestream.proto.index.hints.v1.index) = {
+  repeated float embedding = 3 [(ai.protomolt.proto.index.hints.v1.index) = {
     type: INDEX_FIELD_TYPE_VECTOR
     vector_dims: 768
     vector_similarity: VECTOR_SIMILARITY_COSINE
@@ -163,7 +163,7 @@ seen on the write path.
 Unpacked payloads pass through every `AnyPayloadValidator` discovered via
 `ServiceLoader` before their fields are mapped. `protomolt-search-index-protobuf`
 registers the declared-rules validation standard, so with that module on the
-classpath a payload carrying `ai.pipestream.proto.validate.v1` (or, with the
+classpath a payload carrying `ai.protomolt.proto.validate.v1` (or, with the
 optional reader, `buf.validate`) rules is validated on unpack and a violation
 aborts the document — violation paths are reported under the Any field's
 path. Payload types declaring no rules validate clean at no cost, and the
@@ -210,7 +210,7 @@ points, so an invalid document is never upserted.
 
 `render-index-mappings` (OpenSearch) accepts a `sensitivity` object that
 applies the schema's declared sensitivity classes
-(`ai.pipestream.proto.meta.v1.field.sensitivity`) to the search layer:
+(`ai.protomolt.proto.meta.v1.field.sensitivity`) to the search layer:
 
 - `{"encrypt": ["pii"]}`: those fields render as store-only ciphertext
   containers (`"type": "keyword", "index": false, "doc_values": false`).

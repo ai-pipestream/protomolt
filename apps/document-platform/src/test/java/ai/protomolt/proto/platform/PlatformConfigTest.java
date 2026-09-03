@@ -69,13 +69,13 @@ class PlatformConfigTest {
             // An invalid document (no rules) refuses at the registry gate
             // against the published routing contract and never applies.
             HttpResponse<String> refused = putConfig(platform.registryPort(), """
-                    {"messageType": "ai.pipestream.proto.parse.v1.RoutingConfig",
+                    {"messageType": "ai.protomolt.proto.parse.v1.RoutingConfig",
                      "config": {}}""");
             assertThat(refused.statusCode()).isEqualTo(422);
             assertThat(ruleIds(platform)).containsExactly("default-text");
 
             HttpResponse<String> accepted = putConfig(platform.registryPort(), """
-                    {"messageType": "ai.pipestream.proto.parse.v1.RoutingConfig",
+                    {"messageType": "ai.protomolt.proto.parse.v1.RoutingConfig",
                      "config": {"rules": [{
                          "ruleId": "config-markdown-only",
                          "when": "mime_type == 'text/markdown'",

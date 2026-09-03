@@ -36,7 +36,7 @@ class MessageParserTest {
 
         Message parsed = MessageParser.forType(type).parse(payload);
 
-        assertThat(parsed.getDescriptorForType().getFullName()).isEqualTo("ai.pipestream.test.Doc");
+        assertThat(parsed.getDescriptorForType().getFullName()).isEqualTo("ai.protomolt.test.Doc");
         assertThat(parsed.getField(type.findFieldByName("doc_id"))).isEqualTo("abc");
     }
 
@@ -48,7 +48,7 @@ class MessageParserTest {
 
         assertThatThrownBy(() -> MessageParser.forType(type).parse(truncated))
                 .isInstanceOf(SourceException.class)
-                .hasMessage("payload is not a valid ai.pipestream.test.Doc")
+                .hasMessage("payload is not a valid ai.protomolt.test.Doc")
                 .hasCauseInstanceOf(InvalidProtocolBufferException.class);
     }
 
@@ -108,7 +108,7 @@ class MessageParserTest {
     private static Descriptor docDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("parser_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")

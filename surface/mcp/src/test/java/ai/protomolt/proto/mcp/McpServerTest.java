@@ -57,7 +57,7 @@ class McpServerTest {
         assertThat(result.get("serverInfo").get("name").asText()).isEqualTo("protomolt-test");
         assertThat(result.get("capabilities").has("tools")).isTrue();
         assertThat(result.get("capabilities").has("resources")).isTrue();
-        assertThat(result.path("_meta").path("ai.pipestream.protomolt/workspace").asText())
+        assertThat(result.path("_meta").path("ai.protomolt/workspace").asText())
                 .isEqualTo(WorkspaceResources.URI);
     }
 
@@ -161,10 +161,10 @@ class McpServerTest {
         }
         assertThat(tools.findValuesAsText("name"))
                 .contains("compile", "check-compat", "eval-cel", "list-types");
-        assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
+        assertThat(result.path("_meta").path("ai.protomolt/toolCount").asInt())
                 .isEqualTo(tools.size());
         assertThat(result.path("_meta")
-                .path("ai.pipestream.protomolt/toolCatalogFingerprint").asText())
+                .path("ai.protomolt/toolCatalogFingerprint").asText())
                 .matches("sha256:[0-9a-f]{64}");
     }
 
@@ -229,9 +229,9 @@ class McpServerTest {
                 read.path("contents").get(0).path("text").asText());
 
         String expected = tools.path("_meta")
-                .path("ai.pipestream.protomolt/toolCatalogFingerprint").asText();
+                .path("ai.protomolt/toolCatalogFingerprint").asText();
         assertThat(initialized.path("_meta")
-                .path("ai.pipestream.protomolt/toolCatalogFingerprint").asText())
+                .path("ai.protomolt/toolCatalogFingerprint").asText())
                 .isEqualTo(expected);
         assertThat(workspace.path("toolCatalog").path("fingerprint").asText())
                 .isEqualTo(expected);

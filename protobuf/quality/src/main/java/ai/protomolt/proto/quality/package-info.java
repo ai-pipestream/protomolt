@@ -2,7 +2,7 @@
  * Data quality scored from dimensions a message type declares on its own descriptor.
  *
  * <p>{@link QualityScorer} is the entry point: it reads the
- * {@code (ai.pipestream.proto.quality.v1.quality)} message option — a list of
+ * {@code (ai.protomolt.proto.quality.v1.quality)} message option — a list of
  * {@link QualityDimension} entries, each a CEL expression over {@code this} returning a score —
  * compiles them once per message type, and returns a {@link QualityReport} holding the score per
  * dimension and their weighted composite. Dimensions that fail on a particular message are

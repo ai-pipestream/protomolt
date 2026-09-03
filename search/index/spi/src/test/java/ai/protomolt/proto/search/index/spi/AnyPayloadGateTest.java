@@ -81,7 +81,7 @@ class AnyPayloadGateTest {
         DynamicMessage message = DynamicMessage.newBuilder(fixtures.envelope)
                 .addRepeatedField(fixtures.envelope.findFieldByName("extras"), Any.pack(fixtures.inner("A", 1)))
                 .addRepeatedField(fixtures.envelope.findFieldByName("extras"), Any.newBuilder()
-                        .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                        .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                         .setValue(ByteString.copyFromUtf8("x"))
                         .build())
                 .build();
@@ -89,7 +89,7 @@ class AnyPayloadGateTest {
         assertThatThrownBy(() -> gate.validate(message))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("extras[1]")
-                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
+                .hasMessageContaining("type.googleapis.com/ai.protomolt.test.MissingType");
     }
 
     @Test
@@ -153,7 +153,7 @@ class AnyPayloadGateTest {
         GateFixtures fixtures = GateFixtures.create();
         AnyPayloadGate gate = new AnyPayloadGate(fixtures.registry, List.of());
         DynamicMessage message = fixtures.envelope(Any.newBuilder()
-                .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                 .setValue(ByteString.copyFromUtf8("x"))
                 .build());
 
@@ -200,7 +200,7 @@ class AnyPayloadGateTest {
         AnyPayloadGate gate = new AnyPayloadGate(fixtures.registry,
                 List.of((unpacked, path) -> { }), hints);
         DynamicMessage message = fixtures.envelope(Any.newBuilder()
-                .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                 .setValue(ByteString.copyFromUtf8("x"))
                 .build());
 
@@ -293,7 +293,7 @@ class AnyPayloadGateTest {
         private static FileDescriptor gateFile() throws Exception {
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("any_payload_gate_doc.proto")
-                    .setPackage("ai.pipestream.test.gate")
+                    .setPackage("ai.protomolt.test.gate")
                     .setSyntax("proto3")
                     .addDependency("google/protobuf/any.proto")
                     .addMessageType(DescriptorProto.newBuilder()
@@ -320,19 +320,19 @@ class AnyPayloadGateTest {
                                     .setName("items")
                                     .setNumber(4)
                                     .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                    .setTypeName(".ai.pipestream.test.gate.Item")
+                                    .setTypeName(".ai.protomolt.test.gate.Item")
                                     .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addField(FieldDescriptorProto.newBuilder()
                                     .setName("keyed")
                                     .setNumber(5)
                                     .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                    .setTypeName(".ai.pipestream.test.gate.Envelope.KeyedEntry")
+                                    .setTypeName(".ai.protomolt.test.gate.Envelope.KeyedEntry")
                                     .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addField(FieldDescriptorProto.newBuilder()
                                     .setName("labels")
                                     .setNumber(6)
                                     .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                    .setTypeName(".ai.pipestream.test.gate.Envelope.LabelsEntry")
+                                    .setTypeName(".ai.protomolt.test.gate.Envelope.LabelsEntry")
                                     .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addNestedType(mapEntry("KeyedEntry",
                                     anyField("value", 2, FieldDescriptorProto.Label.LABEL_OPTIONAL)))

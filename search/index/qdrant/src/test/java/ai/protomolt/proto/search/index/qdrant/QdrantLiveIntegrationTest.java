@@ -88,7 +88,7 @@ class QdrantLiveIntegrationTest {
                                         .setText("oranges and groves")
                                         .addEmbeddings(embedding(0f, 1f, 0f, 0f)))))
                 .build();
-        IndexMapping indexMapping = new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+        IndexMapping indexMapping = new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
                 new IndexMapping.IndexedField("search_metadata.title", "title",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 new IndexMapping.IndexedField("search_metadata.source_uri", "source_uri",

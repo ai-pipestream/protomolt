@@ -411,7 +411,7 @@ class PlatformAccessPolicyTest {
 
             // schema-read does not write: publishing config is refused.
             assertThat(putConfig(registryPort, "some-subject", QUERIER, """
-                    {"messageType": "ai.pipestream.proto.authz.v1.AccessPolicy",
+                    {"messageType": "ai.protomolt.proto.authz.v1.AccessPolicy",
                      "config": {}}""").statusCode()).isEqualTo(403);
         }
     }
@@ -434,7 +434,7 @@ class PlatformAccessPolicyTest {
             // follows on its refresh interval, no restart.
             HttpResponse<String> accepted = putConfig(platform.registryPort(),
                     "access-policy", OPERATOR, """
-                    {"messageType": "ai.pipestream.proto.authz.v1.AccessPolicy",
+                    {"messageType": "ai.protomolt.proto.authz.v1.AccessPolicy",
                      "config": {"principals": [{
                          "name": "lane-reader",
                          "credentialSha256": ["%s"],

@@ -28,9 +28,9 @@ class SerdeQualityTest {
     private static final String PROTO = """
             syntax = "proto3";
             package serde.quality.v1;
-            import "ai/pipestream/proto/quality/v1/quality.proto";
+            import "ai/protomolt/proto/quality/v1/quality.proto";
             message Article {
-              option (ai.pipestream.proto.quality.v1.quality) = {
+              option (ai.protomolt.proto.quality.v1.quality) = {
                 dimension: { id: "titled" cel: "this.title != ''" }
                 dimension: { id: "sized" weight: 3.0
                              cel: "clamp(double(this.body.size()) / 10.0, 0.0, 1.0)" }
@@ -48,10 +48,10 @@ class SerdeQualityTest {
     @BeforeAll
     static void compile() throws Exception {
         String qualityProto = new String(SerdeQualityTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/quality/v1/quality.proto")
+                .getResourceAsStream("ai/protomolt/proto/quality/v1/quality.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/quality/v1/quality.proto", qualityProto, "test")
+                .add("ai/protomolt/proto/quality/v1/quality.proto", qualityProto, "test")
                 .add("serde/quality/v1/article.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

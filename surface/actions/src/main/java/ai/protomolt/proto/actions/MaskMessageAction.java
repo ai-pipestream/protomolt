@@ -36,7 +36,7 @@ final class MaskMessageAction implements ProtoAction {
     @Override
     public String description() {
         return "Masks fields whose declared sensitivity class "
-                + "(ai.pipestream.proto.meta.v1.field.sensitivity) is in 'classes' — e.g. "
+                + "(ai.protomolt.proto.meta.v1.field.sensitivity) is in 'classes' — e.g. "
                 + "pii, secret. Strategies: 'remove' clears; 'redact' turns strings into "
                 + "***; 'encrypt' seals string/bytes values with AES-GCM (reversible only "
                 + "with the same key) and clears other types; 'decrypt' reverses encrypt "

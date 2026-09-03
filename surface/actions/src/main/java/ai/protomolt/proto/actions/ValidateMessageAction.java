@@ -25,7 +25,7 @@ final class ValidateMessageAction implements ProtoAction {
     @Override
     public String description() {
         return "Validates a JSON message against the validation rules declared on its protobuf "
-                + "schema (ai.pipestream.proto.validate.v1 options); returns valid:true/false plus "
+                + "schema (ai.protomolt.proto.validate.v1 options); returns valid:true/false plus "
                 + "one violation per broken rule with the field path, rule id and message.";
     }
 

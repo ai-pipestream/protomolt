@@ -19,7 +19,7 @@ class OpenSearchMappingGeneratorTest {
 
     @Test
     void scalarKindsMapToOpenSearchTypes() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("title", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 field("id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 field("small", ResolvedFieldHint.of(IndexFieldKind.INT32)),
@@ -50,7 +50,7 @@ class OpenSearchMappingGeneratorTest {
 
     @Test
     void textCarriesAnalyzersAndSubFields() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("title", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .analyzer("english")
                         .searchAnalyzer("english_search")
@@ -71,7 +71,7 @@ class OpenSearchMappingGeneratorTest {
 
     @Test
     void docValuesNullValueAndDateFormatAreEmitted() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("status", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                         .sortable(true)
                         .nullValue("unknown")
@@ -97,7 +97,7 @@ class OpenSearchMappingGeneratorTest {
 
     @Test
     void floatVectorBecomesKnnVectorWithHnswMethod() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                         .vectorDims(768)
                         .vectorSimilarity(VectorSimilarity.COSINE)
@@ -126,7 +126,7 @@ class OpenSearchMappingGeneratorTest {
                 VectorSimilarity.MAX_INNER_PRODUCT, "innerproduct");
 
         for (var entry : expected.entrySet()) {
-            IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+            IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                     field("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                             .vectorDims(4)
                             .vectorSimilarity(entry.getKey())
@@ -147,7 +147,7 @@ class OpenSearchMappingGeneratorTest {
 
     @Test
     void everyRangeKindMapsToARangeType() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("a", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE)),
                 field("b", ResolvedFieldHint.of(IndexFieldKind.LONG_RANGE)),
                 field("c", ResolvedFieldHint.of(IndexFieldKind.FLOAT_RANGE)),
@@ -165,7 +165,7 @@ class OpenSearchMappingGeneratorTest {
 
     @Test
     void engineParamsForOtherEnginesAreIgnored() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("id", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                         .engineParams(Map.of(
                                 "opensearch.index_options", "docs",
@@ -180,7 +180,7 @@ class OpenSearchMappingGeneratorTest {
 
     @Test
     void skippedFieldsAreExcluded() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("internal", ResolvedFieldHint.skipped()),
                 field("id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
@@ -194,7 +194,7 @@ class OpenSearchMappingGeneratorTest {
      */
     @Test
     void binaryNeverCarriesTheIndexParameter() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("payload", ResolvedFieldHint.builder(IndexFieldKind.BINARY)
                         .indexed(false)
                         .build()),
@@ -215,7 +215,7 @@ class OpenSearchMappingGeneratorTest {
      */
     @Test
     void jsonMapModeMapsToKeyword() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("labels", ResolvedFieldHint.builder(IndexFieldKind.OBJECT)
                         .mapMode(MapMode.JSON)
                         .build()),

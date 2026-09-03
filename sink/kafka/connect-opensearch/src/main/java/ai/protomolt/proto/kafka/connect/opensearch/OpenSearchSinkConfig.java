@@ -11,7 +11,7 @@ import java.util.Map;
  * how record values decode, where the cluster is, and how documents get their ids.
  *
  * <p>What lands in each document is decided by the schema itself: the
- * {@code (ai.pipestream.proto.index.hints.v1.index)} field options compiled into the
+ * {@code (ai.protomolt.proto.index.hints.v1.index)} field options compiled into the
  * configured descriptor set drive field kinds, engine names, analyzers, vectors, and
  * {@code google.protobuf.Any} handling — there are no per-field keys here.</p>
  */
@@ -68,7 +68,7 @@ public final class OpenSearchSinkConfig extends AbstractConfig {
                 .define(VALIDATE, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.MEDIUM,
                         "Validate each message, and every google.protobuf.Any payload it "
                                 + "packs, against the declared "
-                                + "ai.pipestream.proto.validate.v1 rules before indexing; "
+                                + "ai.protomolt.proto.validate.v1 rules before indexing; "
                                 + "violations are data errors routed by errors.tolerance. "
                                 + "Types declaring no rules validate clean at no cost. "
                                 + "'false' suspends both, e.g. to drain a topic with a "

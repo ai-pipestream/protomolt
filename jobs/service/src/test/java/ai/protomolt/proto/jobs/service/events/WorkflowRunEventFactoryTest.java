@@ -135,12 +135,12 @@ class WorkflowRunEventFactoryTest {
         FileDescriptorSet set = FileDescriptorSet.parseFrom(decoded);
         assertThat(set.getFileList()).isNotEmpty();
         assertThat(set.getFileList().stream().map(f -> f.getName()))
-                .contains("ai/pipestream/proto/jobs/v1/jobs.proto",
+                .contains("ai/protomolt/proto/jobs/v1/jobs.proto",
                         "google/protobuf/struct.proto",
                         "google/protobuf/timestamp.proto");
         // The packaged jobs.proto declares the event the relay frames.
         assertThat(set.getFileList().stream()
-                .filter(f -> f.getName().equals("ai/pipestream/proto/jobs/v1/jobs.proto"))
+                .filter(f -> f.getName().equals("ai/protomolt/proto/jobs/v1/jobs.proto"))
                 .flatMap(f -> f.getMessageTypeList().stream().map(m -> m.getName())))
                 .contains("WorkflowRunEvent", "WorkflowRunRequest");
     }

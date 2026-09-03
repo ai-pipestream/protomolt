@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
  * {@code INVALID_ARGUMENT}. A rule that cannot even compile is the server's schema problem and
  * no caller can fix it: {@code INTERNAL}, with the detail kept out of the wire description.</p>
  *
- * <p>Messages are also measured against the {@code ai.pipestream.proto.quality.v1} dimensions
+ * <p>Messages are also measured against the {@code ai.protomolt.proto.quality.v1} dimensions
  * their schema declares — types declaring none cost one option read ever. Scores go to the
  * metrics listeners and the {@link Builder#onQuality} callback, and a
  * {@link Builder#qualityFloor} turns the measurement into admission criteria

@@ -22,7 +22,7 @@ import ai.protomolt.proto.search.service.RepoDocumentMapping;
 final class RepoDocumentMetrics {
 
     private static final String SEARCH_METADATA_TYPE =
-            "ai.pipestream.proto.repo.v1.SearchMetadata";
+            "ai.protomolt.proto.repo.v1.SearchMetadata";
 
     private RepoDocumentMetrics() {
     }

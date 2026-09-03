@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
 class ProtoJsonSchemaGeneratorTest {
 
-    private static final String ACCOUNT = "ai.pipestream.proto.http.jsonschema.testdata.v1.Account";
+    private static final String ACCOUNT = "ai.protomolt.proto.http.jsonschema.testdata.v1.Account";
 
     private final Map<String, Object> schema =
             ProtoJsonSchemaGenerator.create().generate(Account.getDescriptor());

@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Validation on write: {@link QdrantPointMapper#map} gates the source message on its
- * declared {@code ai.pipestream.proto.validate.v1} rules before producing points. The repo
+ * declared {@code ai.protomolt.proto.validate.v1} rules before producing points. The repo
  * Document declares no rules today, so the gate is exercised with a ruled dynamic message:
  * a violating message is rejected by the validator, a valid one sails past validation and
  * fails only at the Document-type check — proving the gate ran first.
@@ -92,7 +92,7 @@ class QdrantPointMapperValidationTest {
         // Validation passed; only the Document-type check remains to fail.
         assertThatThrownBy(() -> mapper.map(valid, EMPTY_MAPPING))
                 .isInstanceOf(MappingException.class)
-                .hasMessageContaining("ai.pipestream.proto.repo.v1.Document");
+                .hasMessageContaining("ai.protomolt.proto.repo.v1.Document");
     }
 
     @Test
@@ -108,7 +108,7 @@ class QdrantPointMapperValidationTest {
                                         .setChunkNumber(0)
                                         .setText("chunk text"))))
                 .build();
-        IndexMapping mapping = new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
                 new IndexMapping.IndexedField("doc_id", "doc_id",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 

@@ -348,7 +348,7 @@ public class MappingHelperTest {
             .addField(FieldDescriptorProto.newBuilder()
                 .setName("search_metadata").setNumber(2)
                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                .setTypeName(".ai.pipestream.test.SearchMetadata"))
+                .setTypeName(".ai.protomolt.test.SearchMetadata"))
             .build();
 
         // OpenSearchDocument
@@ -383,7 +383,7 @@ public class MappingHelperTest {
         com.google.protobuf.DescriptorProtos.FileDescriptorProto fileProto =
             com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_mapping.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addDependency(structFd.getFullName())
                 .addDependency(timestampFd.getFullName())
                 .addMessageType(searchMetadataProto)

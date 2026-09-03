@@ -110,6 +110,6 @@ class ServiceWorkspaceContractTest {
         // action parsed by hand. Declaring the type is what moves that into the contract.
         assertThat(request("ServiceRegisterRequest").findFieldByName("profile")
                 .getMessageType().getFullName())
-                .isEqualTo("ai.pipestream.proto.grpc.profile.v1.ServiceProfile");
+                .isEqualTo("ai.protomolt.proto.grpc.profile.v1.ServiceProfile");
     }
 }

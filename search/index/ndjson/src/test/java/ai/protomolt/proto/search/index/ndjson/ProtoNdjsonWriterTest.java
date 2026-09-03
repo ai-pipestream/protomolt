@@ -174,7 +174,7 @@ class ProtoNdjsonWriterTest {
         FileDescriptor file = FileDescriptor.buildFrom(
                 FileDescriptorProto.newBuilder()
                         .setName("any_ndjson.proto")
-                        .setPackage("ai.pipestream.test")
+                        .setPackage("ai.protomolt.test")
                         .setSyntax("proto3")
                         .addDependency("google/protobuf/any.proto")
                         .addMessageType(DescriptorProto.newBuilder()
@@ -208,7 +208,7 @@ class ProtoNdjsonWriterTest {
         ProtoNdjsonWriter resolving = new ProtoNdjsonWriter(NdjsonOptions.defaults(), registry);
 
         assertThat(resolving.toJsonLine(message))
-                .contains("\"@type\":\"type.googleapis.com/ai.pipestream.test.InnerPayload\"")
+                .contains("\"@type\":\"type.googleapis.com/ai.protomolt.test.InnerPayload\"")
                 .contains("\"title\":\"Opinion\"");
     }
 
@@ -224,7 +224,7 @@ class ProtoNdjsonWriterTest {
     private static Descriptor sampleDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("sample.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("SampleDoc")

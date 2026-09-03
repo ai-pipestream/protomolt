@@ -17,7 +17,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void scalarKindsMapToStockSolrTypes() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("title", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 field("id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 field("small", ResolvedFieldHint.of(IndexFieldKind.INT32)),
@@ -50,7 +50,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void analyzerNameBecomesTheTextFieldType() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("title", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .analyzer("text_en")
                         .build())));
@@ -63,7 +63,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void sortableOrFacetableSetsDocValues() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("status", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD).sortable(true).build()),
                 field("count", ResolvedFieldHint.builder(IndexFieldKind.INT64).facetable(true).build())));
 
@@ -78,7 +78,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void everyRangeKindBecomesMinMaxFields() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("a", ResolvedFieldHint.of(IndexFieldKind.INT_RANGE)),
                 field("b", ResolvedFieldHint.of(IndexFieldKind.LONG_RANGE)),
                 field("c", ResolvedFieldHint.of(IndexFieldKind.FLOAT_RANGE)),
@@ -98,7 +98,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void vectorFieldGetsADenseVectorFieldType() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                         .vectorDims(768)
                         .vectorSimilarity(VectorSimilarity.COSINE)
@@ -127,7 +127,7 @@ class SolrSchemaGeneratorTest {
                 .vectorDims(4)
                 .vectorSimilarity(VectorSimilarity.L2)
                 .build();
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("embedding_a", vector), field("embedding_b", vector)));
 
         SolrSchemaGenerator.SolrSchema schema = generator.generate(mapping);
@@ -149,7 +149,7 @@ class SolrSchemaGeneratorTest {
                 VectorSimilarity.MAX_INNER_PRODUCT, "dot_product");
 
         for (var entry : expected.entrySet()) {
-            IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+            IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                     field("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                             .vectorDims(4)
                             .vectorSimilarity(entry.getKey())
@@ -163,7 +163,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void subFieldsProduceFieldsAndCopyFields() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("title", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""))
                         .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.TEXT, "en", "text_en"))
@@ -182,7 +182,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void engineParamsForSolrAreMergedVerbatim() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("id", ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                         .engineParams(Map.of(
                                 "solr.omitNorms", "true",
@@ -198,7 +198,7 @@ class SolrSchemaGeneratorTest {
 
     @Test
     void skippedFieldsAreExcluded() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 field("internal", ResolvedFieldHint.skipped()),
                 field("id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
@@ -209,7 +209,7 @@ class SolrSchemaGeneratorTest {
     /** Solr rejects every value after the first for a field the schema declares singular. */
     @Test
     void repeatedFieldsAreDeclaredMultiValued() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 repeatedField("tags", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 field("title", ResolvedFieldHint.of(IndexFieldKind.TEXT))));
 
@@ -222,7 +222,7 @@ class SolrSchemaGeneratorTest {
     /** DenseVectorField carries the whole vector in one value and rejects multiValued. */
     @Test
     void repeatedVectorFieldStaysSingleValued() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 repeatedField("embedding", ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                         .vectorDims(4)
                         .vectorSimilarity(VectorSimilarity.L2)
@@ -235,7 +235,7 @@ class SolrSchemaGeneratorTest {
     /** A copyField destination has to accept every value its multiValued source produces. */
     @Test
     void subFieldsOfARepeatedFieldAreAlsoMultiValued() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 repeatedField("tags", ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                         .addSubField(new ResolvedFieldHint.SubField(IndexFieldKind.KEYWORD, "raw", ""))
                         .build())));

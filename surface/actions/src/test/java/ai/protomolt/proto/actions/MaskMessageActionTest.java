@@ -14,15 +14,15 @@ class MaskMessageActionTest {
     private static final String PROTO = """
             syntax = "proto3";
             package mask.test;
-            import "ai/pipestream/proto/meta/v1/metadata.proto";
+            import "ai/protomolt/proto/meta/v1/metadata.proto";
             message Customer {
               string id = 1;
-              string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
-              string ssn = 3 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "secret"}];
+              string email = 2 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
+              string ssn = 3 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "secret"}];
               Contact contact = 4;
             }
             message Contact {
-              string phone = 1 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+              string phone = 1 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
               string city = 2;
             }
             """;
@@ -68,7 +68,7 @@ class MaskMessageActionTest {
 
     private ObjectNode maskInput(String extraJson) throws Exception {
         String metadataProto = new String(getClass().getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
+                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")
                 .readAllBytes());
         ObjectNode input = obj("""
                 {"schema": {"sources": {}}, "type": "mask.test.Customer",
@@ -76,7 +76,7 @@ class MaskMessageActionTest {
                              "contact": {"phone": "555", "city": "Springfield"}}%s}
                 """.formatted(extraJson.isEmpty() ? "" : ", " + extraJson));
         ObjectNode sources = (ObjectNode) input.get("schema").get("sources");
-        sources.put("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto);
+        sources.put("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto);
         sources.put("mask/test/customer.proto", PROTO);
         return input;
     }

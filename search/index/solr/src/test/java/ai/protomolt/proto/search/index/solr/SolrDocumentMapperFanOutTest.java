@@ -113,10 +113,10 @@ class SolrDocumentMapperFanOutTest {
         }
 
         private static FileDescriptor file() throws Exception {
-            String pkg = ".ai.pipestream.test.solrfanout";
+            String pkg = ".ai.protomolt.test.solrfanout";
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("solr_fanout.proto")
-                    .setPackage("ai.pipestream.test.solrfanout")
+                    .setPackage("ai.protomolt.test.solrfanout")
                     .setSyntax("proto3")
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Inner")

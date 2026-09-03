@@ -106,9 +106,9 @@ class McpHttpTest {
         assertThat(result.path("serverInfo").path("name").asText()).isEqualTo("protomolt");
         assertThat(result.path("capabilities").has("tools")).isTrue();
         assertThat(result.path("capabilities").has("resources")).isTrue();
-        assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
+        assertThat(result.path("_meta").path("ai.protomolt/toolCount").asInt())
                 .isEqualTo(62);
-        assertThat(result.path("_meta").path("ai.pipestream.protomolt/workspace").asText())
+        assertThat(result.path("_meta").path("ai.protomolt/workspace").asText())
                 .isEqualTo("protomolt://workspace");
         assertThat(result.path("instructions").asText())
                 .contains("service-register", "service-inspect", "reflect", "grpc-invoke",
@@ -140,7 +140,7 @@ class McpHttpTest {
         JsonNode result = MAPPER.readTree(response.body()).path("result");
         JsonNode tools = result.path("tools");
         assertThat(tools.size()).isEqualTo(62);
-        assertThat(result.path("_meta").path("ai.pipestream.protomolt/toolCount").asInt())
+        assertThat(result.path("_meta").path("ai.protomolt/toolCount").asInt())
                 .isEqualTo(tools.size());
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
                 "generate-stubs", "join-messages", "synthesize-shape", "merge-schemas",

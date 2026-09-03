@@ -31,8 +31,8 @@ class DocumentPartCodecEdgeTest {
 
         assertThatThrownBy(() -> DocumentPartCodec.split(notADocument, LAYOUT))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("ai.pipestream.proto.repo.v1.Document")
-                .hasMessageContaining("ai.pipestream.proto.repo.v1.NodeAddress");
+                .hasMessageContaining("ai.protomolt.proto.repo.v1.Document")
+                .hasMessageContaining("ai.protomolt.proto.repo.v1.NodeAddress");
     }
 
     @Test

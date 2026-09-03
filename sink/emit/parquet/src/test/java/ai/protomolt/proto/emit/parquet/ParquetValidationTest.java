@@ -32,21 +32,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ParquetValidationTest {
 
-    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
+    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
 
     private static final String PROTO = """
             syntax = "proto3";
             package pq.guard;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Account {
-              option (ai.pipestream.proto.validate.v1.message) = {
+              option (ai.protomolt.proto.validate.v1.message) = {
                 cel: {
                   id: "account.within_limit"
                   message: "balance must not exceed the limit"
                   expression: "this.balance <= this.limit"
                 }
               };
-              string id = 1 [(ai.pipestream.proto.validate.v1.field) = {
+              string id = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 string: { min_len: 3 }
               }];
               int64 balance = 2;

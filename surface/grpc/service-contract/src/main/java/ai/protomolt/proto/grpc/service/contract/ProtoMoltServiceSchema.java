@@ -33,17 +33,17 @@ public final class ProtoMoltServiceSchema {
      * here.
      */
     private static final List<String> IMPORTED_RESOURCE_PATHS = List.of(
-            "ai/pipestream/proto/grpc/profile/v1/service_profile.proto",
-            "ai/pipestream/proto/validate/v1/validate.proto",
-            "ai/pipestream/proto/grpc/workflow/v1/grpc_workflow.proto",
-            "ai/pipestream/proto/inference/v1/inference.proto",
-            "ai/pipestream/proto/inference/v1/structured.proto",
-            "ai/pipestream/proto/meta/v1/metadata.proto",
-            "ai/pipestream/proto/prompt/v1/prompt.proto",
-            "ai/pipestream/proto/receipt/v1/receipt.proto");
+            "ai/protomolt/proto/grpc/profile/v1/service_profile.proto",
+            "ai/protomolt/proto/validate/v1/validate.proto",
+            "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto",
+            "ai/protomolt/proto/inference/v1/inference.proto",
+            "ai/protomolt/proto/inference/v1/structured.proto",
+            "ai/protomolt/proto/meta/v1/metadata.proto",
+            "ai/protomolt/proto/prompt/v1/prompt.proto",
+            "ai/protomolt/proto/receipt/v1/receipt.proto");
 
     /** Fully qualified service name. */
-    public static final String SERVICE_FULL_NAME = "ai.pipestream.proto.grpc.service.v1.ProtoMoltService";
+    public static final String SERVICE_FULL_NAME = "ai.protomolt.proto.grpc.service.v1.ProtoMoltService";
 
     private static final class Holder {
         static final String SOURCE = readSource();

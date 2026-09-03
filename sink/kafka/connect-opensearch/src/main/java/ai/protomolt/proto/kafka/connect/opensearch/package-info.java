@@ -8,7 +8,7 @@
  * decodes each record (raw protobuf, Confluent wire format, or proto3 JSON) into the
  * configured message type, maps it with
  * {@code ai.protomolt.proto.search.index.opensearch.OpenSearchDocumentMapper} against the mapping
- * built from the descriptor's {@code (ai.pipestream.proto.index.hints.v1.index)} options,
+ * built from the descriptor's {@code (ai.protomolt.proto.index.hints.v1.index)} options,
  * and writes each batch as one bulk request through
  * {@code ai.protomolt.proto.search.index.opensearch.OpenSearchSink}. The index can be created
  * from the mapping-generated properties at task start.

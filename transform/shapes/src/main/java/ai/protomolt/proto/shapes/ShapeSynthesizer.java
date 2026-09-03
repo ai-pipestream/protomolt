@@ -309,7 +309,7 @@ public final class ShapeSynthesizer {
                         .getExtension(ai.protomolt.proto.meta.MetadataProto.field)
                         .getJsonName();
                 if (!original.isEmpty()) {
-                    brackets.add("(ai.pipestream.proto.meta.v1.field) = {json_name: \""
+                    brackets.add("(ai.protomolt.proto.meta.v1.field) = {json_name: \""
                             + original + "\"}");
                 }
             }

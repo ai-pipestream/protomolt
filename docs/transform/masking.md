@@ -12,17 +12,17 @@ The masking primitive is `SensitivityMasker` in
 ## Declaring sensitivity
 
 Masking reads the `sensitivity` field of the
-`ai.pipestream.proto.meta.v1.field` option (extension number `59100491` on
+`ai.protomolt.proto.meta.v1.field` option (extension number `59100491` on
 `FieldOptions`): the same [metadata](../schema/metadata.md) option that carries
 descriptions, ownership, and labels.
 
 ```protobuf
-import "ai/pipestream/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
 
 message Order {
   string id = 1;
-  string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
-  bytes  token = 3 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "secret"}];
+  string email = 2 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
+  bytes  token = 3 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "secret"}];
 }
 ```
 

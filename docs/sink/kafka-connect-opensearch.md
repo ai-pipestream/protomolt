@@ -1,7 +1,7 @@
 # Kafka Connect: OpenSearch sink
 
 `protomolt-kafka-connect-opensearch` lands topic records in OpenSearch as documents
-shaped by the schema itself: the `(ai.pipestream.proto.index.hints.v1.index)`
+shaped by the schema itself: the `(ai.protomolt.proto.index.hints.v1.index)`
 field options compiled into the configured descriptor set drive field kinds,
 engine names, analyzers, vectors, and `google.protobuf.Any` handling. There
 are no per-field connector keys; the connector is a thin Kafka Connect shell
@@ -14,7 +14,7 @@ Because document mapping runs through the shared index mapping:
   unpacked payload passes the declared-rules gate (`skip_when`, per-field
   `ignore`, and the `validate_payloads: false` schema opt-out honored).
 - Top-level messages are validated against their declared
-  `ai.pipestream.proto.validate.v1` rules before indexing (`validate=false`
+  `ai.protomolt.proto.validate.v1` rules before indexing (`validate=false`
   turns this off). Violations are data errors, routed by the worker's
   `errors.tolerance` (fail, skip, or dead-letter).
 - The target index can be created at task start from the mapping-generated

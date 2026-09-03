@@ -55,7 +55,7 @@ class TaxonomyAwareAnyGateTest {
         DescriptorProtos.FileDescriptorProto file = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("taxonomy_any_gate_test.proto")
                 .setSyntax("proto3")
-                .setPackage("ai.pipestream.proto.types.v1")
+                .setPackage("ai.protomolt.proto.types.v1")
                 .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
                         .setName("TreePath")
                         .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
@@ -67,7 +67,7 @@ class TaxonomyAwareAnyGateTest {
                         .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
                                 .setName("category").setNumber(1)
                                 .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.proto.types.v1.TreePath")
+                                .setTypeName(".ai.protomolt.proto.types.v1.TreePath")
                                 .setLabel(DescriptorProtos.FieldDescriptorProto.Label.LABEL_OPTIONAL)
                                 .setOptions(taxonomyRule)))
                 .build();

@@ -58,7 +58,7 @@ class TreePathMappingTest {
     }
 
     private static IndexMapping mapping() {
-        return new IndexMapping("ai.pipestream.test.Doc", List.of(
+        return new IndexMapping("ai.protomolt.test.Doc", List.of(
                 new IndexMapping.IndexedField("category", "category",
                         ResolvedFieldHint.builder(IndexFieldKind.TREE_PATH)
                                 .facetable(true).build())));
@@ -67,7 +67,7 @@ class TreePathMappingTest {
     private static Descriptor docDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("tree_path_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency(TreePath.getDescriptor().getFile().getName())
                 .addMessageType(DescriptorProto.newBuilder()

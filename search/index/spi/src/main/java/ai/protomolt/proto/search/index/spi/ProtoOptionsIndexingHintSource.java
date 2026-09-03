@@ -11,7 +11,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Optional;
 
 /**
- * Reads {@code (ai.pipestream.proto.index.hints.v1.index)} custom options from the descriptor.
+ * Reads {@code (ai.protomolt.proto.index.hints.v1.index)} custom options from the descriptor.
  * Prefer descriptors parsed/built with {@link #registerExtensions(ExtensionRegistry)}; when a
  * descriptor set was linked without it, the hint survives as an unknown field and is reparsed
  * against a knowing registry rather than silently dropped — a dropped hint would not just lose
@@ -50,7 +50,7 @@ public final class ProtoOptionsIndexingHintSource implements IndexingHintSource 
         } catch (InvalidProtocolBufferException e) {
             throw new IndexMappingException(
                     "cannot reparse field options carrying "
-                            + "(ai.pipestream.proto.index.hints.v1.index): " + e.getMessage(),
+                            + "(ai.protomolt.proto.index.hints.v1.index): " + e.getMessage(),
                     field.getFullName());
         }
     }

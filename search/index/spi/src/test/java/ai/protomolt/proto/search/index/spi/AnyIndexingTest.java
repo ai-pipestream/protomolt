@@ -72,14 +72,14 @@ class AnyIndexingTest {
         AnyFixtures fixtures = AnyFixtures.create();
         IndexMapping mapping = fixtures.factory.create(fixtures.envelope);
         DynamicMessage message = fixtures.envelope(Any.newBuilder()
-                .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                 .setValue(ByteString.copyFromUtf8("x"))
                 .build());
 
         assertThatThrownBy(() -> fixtures.anyIndexing.expand(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
-                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
+                .hasMessageContaining("type.googleapis.com/ai.protomolt.test.MissingType");
     }
 
     @Test
@@ -317,7 +317,7 @@ class AnyIndexingTest {
         AnyIndexing anyIndexing = new AnyIndexing(fixtures.registry, factory,
                 List.of((unpacked, path) -> { }));
         DynamicMessage message = fixtures.envelope(Any.newBuilder()
-                .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                 .setValue(ByteString.copyFromUtf8("x"))
                 .build());
 
@@ -387,7 +387,7 @@ class AnyIndexingTest {
         private static FileDescriptor anyFile() throws Exception {
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("any_index_doc.proto")
-                    .setPackage("ai.pipestream.test")
+                    .setPackage("ai.protomolt.test")
                     .setSyntax("proto3")
                     .addDependency("google/protobuf/any.proto")
                     .addMessageType(DescriptorProto.newBuilder()
@@ -414,7 +414,7 @@ class AnyIndexingTest {
                                     .setName("items")
                                     .setNumber(4)
                                     .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                    .setTypeName(".ai.pipestream.test.Item")
+                                    .setTypeName(".ai.protomolt.test.Item")
                                     .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                     .build();
             return FileDescriptor.buildFrom(proto, new FileDescriptor[]{AnyProto.getDescriptor()});

@@ -25,7 +25,7 @@ import java.util.Set;
  * Renders protobuf schemas as an Open Knowledge Format (OKF v0.1) bundle: plain markdown
  * files with YAML frontmatter, one concept per message, enum, and service, cross-linked into
  * the knowledge graph agents and catalogs consume. The schema is the source of truth — the
- * {@code ai.pipestream.proto.meta.v1} annotations become frontmatter (description, owner,
+ * {@code ai.protomolt.proto.meta.v1} annotations become frontmatter (description, owner,
  * labels) and schema-table columns (per-field descriptions, sensitivity classes), and every
  * message-typed field links to its type's concept document.
  *
@@ -56,13 +56,13 @@ public final class OkfRenderer {
     private static final List<String> INTERNAL_PACKAGES = List.of(
             "google.protobuf",
             "buf.validate",
-            "ai.pipestream.proto.meta.v1",
-            "ai.pipestream.proto.validate.v1",
-            "ai.pipestream.proto.llm.v1",
-            "ai.pipestream.proto.quality.v1",
-            "ai.pipestream.proto.metric.v1",
-            "ai.pipestream.proto.projection.v1",
-            "ai.pipestream.proto.index.hints.v1");
+            "ai.protomolt.proto.meta.v1",
+            "ai.protomolt.proto.validate.v1",
+            "ai.protomolt.proto.llm.v1",
+            "ai.protomolt.proto.quality.v1",
+            "ai.protomolt.proto.metric.v1",
+            "ai.protomolt.proto.projection.v1",
+            "ai.protomolt.proto.index.hints.v1");
 
     /** Renders every user-defined type and service in {@code files} as one bundle. */
     public Bundle render(List<FileDescriptor> files, Options options) {

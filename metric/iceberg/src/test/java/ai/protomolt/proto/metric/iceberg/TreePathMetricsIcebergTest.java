@@ -48,7 +48,7 @@ class TreePathMetricsIcebergTest {
 
     static final String TREE_PATH_PROTO = """
             syntax = "proto3";
-            package ai.pipestream.proto.types.v1;
+            package ai.protomolt.proto.types.v1;
 
             message TreePath {
               repeated string segments = 1;
@@ -58,11 +58,11 @@ class TreePathMetricsIcebergTest {
     static final String PRODUCT_PROTO = """
             syntax = "proto3";
             package catalogit.v1;
-            import "ai/pipestream/proto/types/v1/tree_path.proto";
+            import "ai/protomolt/proto/types/v1/tree_path.proto";
 
             message Product {
               string id = 1;
-              ai.pipestream.proto.types.v1.TreePath category = 2;
+              ai.protomolt.proto.types.v1.TreePath category = 2;
               int64 amount = 3;
             }
             """;
@@ -78,7 +78,7 @@ class TreePathMetricsIcebergTest {
     @BeforeAll
     static void boot() throws Exception {
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/types/v1/tree_path.proto", TREE_PATH_PROTO, "test")
+                .add("ai/protomolt/proto/types/v1/tree_path.proto", TREE_PATH_PROTO, "test")
                 .add("catalogit/v1/product.proto", PRODUCT_PROTO, "test")
                 .build());
         product = compiled.descriptorFor("catalogit/v1/product.proto").orElseThrow()

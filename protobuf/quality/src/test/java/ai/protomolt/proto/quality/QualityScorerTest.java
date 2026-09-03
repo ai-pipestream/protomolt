@@ -117,7 +117,7 @@ class QualityScorerTest {
                 MissingDimensionId.newBuilder().setPresent("x").build()))
                 .isInstanceOf(QualitySchemaException.class)
                 .hasMessage("A quality dimension on "
-                        + "ai.pipestream.proto.quality.testdata.v1.MissingDimensionId has no id");
+                        + "ai.protomolt.proto.quality.testdata.v1.MissingDimensionId has no id");
     }
 
     @Test
@@ -126,7 +126,7 @@ class QualityScorerTest {
                 MissingCelExpression.newBuilder().setPresent("x").build()))
                 .isInstanceOf(QualitySchemaException.class)
                 .hasMessage("Quality dimension 'completeness' on "
-                        + "ai.pipestream.proto.quality.testdata.v1.MissingCelExpression"
+                        + "ai.protomolt.proto.quality.testdata.v1.MissingCelExpression"
                         + " has no CEL expression");
     }
 
@@ -137,7 +137,7 @@ class QualityScorerTest {
                 NegativeWeight.newBuilder().setPresent("x").build()))
                 .isInstanceOf(QualitySchemaException.class)
                 .hasMessage("Quality dimension 'completeness' on "
-                        + "ai.pipestream.proto.quality.testdata.v1.NegativeWeight"
+                        + "ai.protomolt.proto.quality.testdata.v1.NegativeWeight"
                         + " has a negative weight");
     }
 

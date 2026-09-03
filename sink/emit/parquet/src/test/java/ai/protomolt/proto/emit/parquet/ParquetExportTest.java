@@ -40,11 +40,11 @@ class ParquetExportTest {
     private static final String SENS_PROTO = """
             syntax = "proto3";
             package pq.export;
-            import "ai/pipestream/proto/meta/v1/metadata.proto";
+            import "ai/protomolt/proto/meta/v1/metadata.proto";
             message Person {
               string id = 1;
-              string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
-              string ssn = 3 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "secret"}];
+              string email = 2 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
+              string ssn = 3 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "secret"}];
               int64 age = 4;
             }
             """;
@@ -54,9 +54,9 @@ class ParquetExportTest {
     @BeforeAll
     static void compile() throws Exception {
         String metadataProto = new String(ParquetExportTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto").readAllBytes());
+                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto").readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "meta")
+                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "meta")
                 .add("pq/export/person.proto", SENS_PROTO, "test").build());
         // Re-parse with the metadata extensions registered so the sensitivity option is readable,
         // not an unknown field - what ProtoMolt's compile/reflect verbs hand a real caller.

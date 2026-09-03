@@ -42,13 +42,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class WorkflowReplayTest {
 
-    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
+    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
 
     private static final String PROTO = """
             syntax = "proto3";
             package replay.test;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
-            message Text { string text = 1 [(ai.pipestream.proto.validate.v1.field) = {
+            import "ai/protomolt/proto/validate/v1/validate.proto";
+            message Text { string text = 1 [(ai.protomolt.proto.validate.v1.field) = {
               string: { min_len: 3 }
             }]; }
             message Tokens { repeated int64 ids = 1; }

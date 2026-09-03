@@ -128,7 +128,7 @@ class DoclingProjectionTest {
                 ParserDocument.newBuilder()
                         .setShape(
                                 Any.newBuilder()
-                                        .setTypeUrl("type.googleapis.com/ai.pipestream.proto.parse.document.v1.Document")
+                                        .setTypeUrl("type.googleapis.com/ai.protomolt.proto.parse.document.v1.Document")
                                         .setValue(com.google.protobuf.ByteString.copyFromUtf8("garbage-not-a-messageÿ")))
                         .build();
         assertThatThrownBy(() -> DoclingProjection.fromParserDocument(corrupt))

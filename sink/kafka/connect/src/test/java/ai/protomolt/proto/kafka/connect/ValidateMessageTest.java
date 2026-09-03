@@ -32,9 +32,9 @@ class ValidateMessageTest {
     private static final String PROTO = """
             syntax = "proto3";
             package validate.test;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Event {
-              string id = 1 [(ai.pipestream.proto.validate.v1.field) = {
+              string id = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 string: {min_len: 3}
               }];
             }
@@ -49,11 +49,11 @@ class ValidateMessageTest {
     static void compile() throws Exception {
         String validateProto;
         try (InputStream in = ValidateMessageTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")) {
+                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")) {
             validateProto = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("validate/test/event.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

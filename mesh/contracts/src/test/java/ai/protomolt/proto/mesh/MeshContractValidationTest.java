@@ -65,7 +65,7 @@ class MeshContractValidationTest {
     void aClaimCheckThatDisagreesWithTheSchemaFails() {
         EntityEnvelope entity = MeshFixtures.claimCheckEntity()
                 .setClaimCheck(MeshFixtures.claimCheckEntity().getClaimCheck().toBuilder()
-                        .setPayloadTypeName("ai.pipestream.proto.mesh.test.v1.TestResult"))
+                        .setPayloadTypeName("ai.protomolt.proto.mesh.test.v1.TestResult"))
                 .build();
         assertRuleFails(entity, "claim-check-names-schema");
     }

@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Scores messages against the quality dimensions their own schema declares.
  *
- * <p>The dimensions are {@code (ai.pipestream.proto.quality.v1.quality)} message options — CEL
+ * <p>The dimensions are {@code (ai.protomolt.proto.quality.v1.quality)} message options — CEL
  * expressions over {@code this} returning a score — so quality travels with the descriptor the
  * way validation rules do. Where validation is a gate (admissible or not), quality is a
  * measurement: every expression's result is coerced to a double and clamped to {@code [0, 1]},
@@ -207,7 +207,7 @@ public final class QualityScorer {
                     .getExtension(QualityProto.quality);
         } catch (InvalidProtocolBufferException e) {
             throw new QualitySchemaException(
-                    "cannot reparse options carrying (ai.pipestream.proto.quality.v1.quality): "
+                    "cannot reparse options carrying (ai.protomolt.proto.quality.v1.quality): "
                             + e.getMessage(), e);
         }
     }

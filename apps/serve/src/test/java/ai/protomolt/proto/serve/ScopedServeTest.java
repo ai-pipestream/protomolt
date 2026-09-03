@@ -163,7 +163,7 @@ class ScopedServeTest {
         HttpResponse<String> initialized = post("/mcp", initialize, "api_token", READER);
         assertThat(initialized.statusCode()).isEqualTo(200);
         JsonNode meta = MAPPER.readTree(initialized.body()).path("result").path("_meta");
-        assertThat(meta.path("ai.pipestream.protomolt/toolCount").asInt())
+        assertThat(meta.path("ai.protomolt/toolCount").asInt())
                 .isEqualTo(READER_TOOLS);
 
         String session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();

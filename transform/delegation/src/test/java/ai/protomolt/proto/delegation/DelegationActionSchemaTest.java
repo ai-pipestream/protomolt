@@ -108,9 +108,9 @@ class DelegationActionSchemaTest {
         JsonNode spec = property(schema, "spec");
         String ref = spec.path("$ref").asText();
         assertThat(ref).as("spec reference").isEqualTo(
-                "#/$defs/ai.pipestream.proto.delegation.v1.TaskSpec");
+                "#/$defs/ai.protomolt.proto.delegation.v1.TaskSpec");
         JsonNode definition = schema.path("$defs")
-                .path("ai.pipestream.proto.delegation.v1.TaskSpec");
+                .path("ai.protomolt.proto.delegation.v1.TaskSpec");
         assertThat(definition.path("properties").path("objective").path("maxLength").asInt())
                 .isEqualTo(16_384);
         assertThat(definition.path("properties").path("requiredChecks").path("minItems").asInt())
@@ -212,7 +212,7 @@ class DelegationActionSchemaTest {
         assertThat(capabilities.path("type").asText()).isEqualTo("array");
         assertThat(capabilities.path("maxItems").asInt()).isEqualTo(64);
         JsonNode capability = schema.path("$defs")
-                .path("ai.pipestream.proto.delegation.v1.WorkerCapability");
+                .path("ai.protomolt.proto.delegation.v1.WorkerCapability");
         assertThat(capability.path("properties").path("name").path("maxLength").asInt())
                 .isEqualTo(128);
         assertThat(capability.path("required").toString()).contains("name");

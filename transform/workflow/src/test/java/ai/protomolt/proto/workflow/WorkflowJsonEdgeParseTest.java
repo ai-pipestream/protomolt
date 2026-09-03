@@ -25,15 +25,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WorkflowJsonEdgeParseTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
+    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
 
     private static final String PROTO = """
             syntax = "proto3";
             package workflow.edgejson.test;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Ticket { string title = 1; }
             message Summary {
-              string headline = 1 [(ai.pipestream.proto.validate.v1.field) = {
+              string headline = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 required: true
                 string: {min_len: 3, max_len: 200}
               }];

@@ -346,7 +346,7 @@ class OpenSearchDocumentMapperTest {
         assertThatThrownBy(() -> opensearch.map(env.unknownType(), mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
-                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
+                .hasMessageContaining("type.googleapis.com/ai.protomolt.test.MissingType");
     }
 
     @Test
@@ -456,7 +456,7 @@ class OpenSearchDocumentMapperTest {
     private static Descriptor chunkedDocDescriptor() throws Exception {
         FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                 .setName("chunked_doc.proto")
-                .setPackage("ai.pipestream.test.chunked")
+                .setPackage("ai.protomolt.test.chunked")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Chunk")
@@ -481,7 +481,7 @@ class OpenSearchDocumentMapperTest {
                                 .setName("chunks")
                                 .setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.chunked.Chunk")
+                                .setTypeName(".ai.protomolt.test.chunked.Chunk")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                 .build();
         return FileDescriptor.buildFrom(proto, new FileDescriptor[]{})
@@ -499,7 +499,7 @@ class OpenSearchDocumentMapperTest {
             FileDescriptor file = FileDescriptor.buildFrom(
                     FileDescriptorProto.newBuilder()
                             .setName("any_opensearch.proto")
-                            .setPackage("ai.pipestream.test")
+                            .setPackage("ai.protomolt.test")
                             .setSyntax("proto3")
                             .addDependency("google/protobuf/any.proto")
                             .addMessageType(DescriptorProto.newBuilder()
@@ -575,7 +575,7 @@ class OpenSearchDocumentMapperTest {
             return DynamicMessage.newBuilder(envelope)
                     .setField(envelope.findFieldByName("doc_id"), "doc-1")
                     .setField(envelope.findFieldByName("payload"), Any.newBuilder()
-                            .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                            .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                             .setValue(com.google.protobuf.ByteString.copyFromUtf8("x"))
                             .build())
                     .build();
@@ -641,7 +641,7 @@ class OpenSearchDocumentMapperTest {
     private static Descriptor mapFieldDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("map_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("MapDoc")
@@ -663,7 +663,7 @@ class OpenSearchDocumentMapperTest {
                                 .setName("labels")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.MapDoc.LabelsEntry")
+                                .setTypeName(".ai.protomolt.test.MapDoc.LabelsEntry")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("MapDoc");
@@ -673,7 +673,7 @@ class OpenSearchDocumentMapperTest {
             String lowerName, String upperName, FieldDescriptorProto.Type boundType) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("range_" + lowerName + "_" + boundType.name().toLowerCase() + ".proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Bounds")
@@ -693,7 +693,7 @@ class OpenSearchDocumentMapperTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RangeDoc");
@@ -702,7 +702,7 @@ class OpenSearchDocumentMapperTest {
     private static Descriptor timestampRangeDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("ts_range.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -725,7 +725,7 @@ class OpenSearchDocumentMapperTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(
@@ -736,7 +736,7 @@ class OpenSearchDocumentMapperTest {
     private static Descriptor boolDocDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("bool_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("BoolDoc")
@@ -752,7 +752,7 @@ class OpenSearchDocumentMapperTest {
     private static Descriptor timestampDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("ts_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -772,7 +772,7 @@ class OpenSearchDocumentMapperTest {
     private static Descriptor shapesDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("shapes_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Shapes")
@@ -809,7 +809,7 @@ class OpenSearchDocumentMapperTest {
                                 .setName("labels")
                                 .setNumber(4)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Shapes.LabelsEntry")
+                                .setTypeName(".ai.protomolt.test.Shapes.LabelsEntry")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Outer")
@@ -817,7 +817,7 @@ class OpenSearchDocumentMapperTest {
                                 .setName("inner")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Shapes")
+                                .setTypeName(".ai.protomolt.test.Shapes")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Outer");
@@ -826,7 +826,7 @@ class OpenSearchDocumentMapperTest {
     private static Descriptor docDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addEnumType(EnumDescriptorProto.newBuilder()
                         .setName("Color")
@@ -846,13 +846,13 @@ class OpenSearchDocumentMapperTest {
                                 .setName("colors")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_ENUM)
-                                .setTypeName(".ai.pipestream.test.Color")
+                                .setTypeName(".ai.protomolt.test.Color")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED))
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("inner")
                                 .setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Inner")
+                                .setTypeName(".ai.protomolt.test.Inner")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Doc");

@@ -26,19 +26,19 @@ class OkfRendererTest {
     private static final String SHOP_PROTO = """
             syntax = "proto3";
             package okf.shop.v1;
-            import "ai/pipestream/proto/meta/v1/metadata.proto";
+            import "ai/protomolt/proto/meta/v1/metadata.proto";
 
             message Customer {
               // Wire cannot encode map-valued options (labels); tag rendering from
               // labels is covered by the frontmatter unit test below.
-              option (ai.pipestream.proto.meta.v1.message) = {
+              option (ai.protomolt.proto.meta.v1.message) = {
                 description: "A shop customer. Owned by the accounts team."
                 owner: "accounts"
               };
-              string id = 1 [(ai.pipestream.proto.meta.v1.field) = {
+              string id = 1 [(ai.protomolt.proto.meta.v1.field) = {
                 description: "Stable customer id."
               }];
-              string email = 2 [(ai.pipestream.proto.meta.v1.field) = {
+              string email = 2 [(ai.protomolt.proto.meta.v1.field) = {
                 description: "Contact address."
                 sensitivity: "pii"
               }];
@@ -66,10 +66,10 @@ class OkfRendererTest {
 
     private static List<FileDescriptor> compile() throws Exception {
         String metadataProto = new String(OkfRendererTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
+                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "meta")
+                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "meta")
                 .add("okf/shop/v1/shop.proto", SHOP_PROTO, "test")
                 .build());
         return OkfRegistryBundles.linkWithMetadata(compiled.descriptorSet());
@@ -127,7 +127,7 @@ class OkfRendererTest {
                 .contains("| server |");
 
         // The option-carrier types themselves never pollute the bundle.
-        assertThat(bundle.paths()).noneMatch(p -> p.contains("ai.pipestream.proto.meta"));
+        assertThat(bundle.paths()).noneMatch(p -> p.contains("ai.protomolt.proto.meta"));
 
         // Enum values table.
         assertThat(bundle.text("enums/okf.shop.v1.Status.md"))
@@ -141,37 +141,37 @@ class OkfRendererTest {
         // one kind of leak cannot pass by accident.
         String hints = """
                 syntax = "proto3";
-                package ai.pipestream.proto.index.hints.v1;
+                package ai.protomolt.proto.index.hints.v1;
                 message FieldHint { string analyzer = 1; }
                 """;
         String llm = """
                 syntax = "proto3";
-                package ai.pipestream.proto.llm.v1;
+                package ai.protomolt.proto.llm.v1;
                 enum Tone { TONE_UNSPECIFIED = 0; TONE_FORMAL = 1; }
                 """;
         String projection = """
                 syntax = "proto3";
-                package ai.pipestream.proto.projection.v1;
+                package ai.protomolt.proto.projection.v1;
                 message Rule { message Scope { string path = 1; } Scope scope = 1; }
                 """;
         String schema = """
                 syntax = "proto3";
                 package okf.docs.v1;
-                import "ai/pipestream/proto/index/hints/v1/hints.proto";
-                import "ai/pipestream/proto/llm/v1/llm.proto";
-                import "ai/pipestream/proto/projection/v1/projection.proto";
+                import "ai/protomolt/proto/index/hints/v1/hints.proto";
+                import "ai/protomolt/proto/llm/v1/llm.proto";
+                import "ai/protomolt/proto/projection/v1/projection.proto";
 
                 message Doc {
                   string body = 1;
-                  ai.pipestream.proto.index.hints.v1.FieldHint hint = 2;
-                  ai.pipestream.proto.llm.v1.Tone tone = 3;
-                  ai.pipestream.proto.projection.v1.Rule rule = 4;
+                  ai.protomolt.proto.index.hints.v1.FieldHint hint = 2;
+                  ai.protomolt.proto.llm.v1.Tone tone = 3;
+                  ai.protomolt.proto.projection.v1.Rule rule = 4;
                 }
                 """;
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/index/hints/v1/hints.proto", hints, "hints")
-                .add("ai/pipestream/proto/llm/v1/llm.proto", llm, "llm")
-                .add("ai/pipestream/proto/projection/v1/projection.proto", projection, "projection")
+                .add("ai/protomolt/proto/index/hints/v1/hints.proto", hints, "hints")
+                .add("ai/protomolt/proto/llm/v1/llm.proto", llm, "llm")
+                .add("ai/protomolt/proto/projection/v1/projection.proto", projection, "projection")
                 .add("okf/docs/v1/docs.proto", schema, "test")
                 .build());
         Bundle bundle = new OkfRenderer().render(
@@ -180,9 +180,9 @@ class OkfRendererTest {
 
         assertThat(bundle.paths()).anyMatch(p -> p.contains("okf.docs.v1.Doc"));
         assertThat(bundle.paths())
-                .noneMatch(p -> p.contains("ai.pipestream.proto.index.hints"))
-                .noneMatch(p -> p.contains("ai.pipestream.proto.llm"))
-                .noneMatch(p -> p.contains("ai.pipestream.proto.projection"));
+                .noneMatch(p -> p.contains("ai.protomolt.proto.index.hints"))
+                .noneMatch(p -> p.contains("ai.protomolt.proto.llm"))
+                .noneMatch(p -> p.contains("ai.protomolt.proto.projection"));
     }
 
     @Test

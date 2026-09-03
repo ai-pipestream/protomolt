@@ -46,7 +46,7 @@ class CelProtoMapperTest {
                         .setLabel(DescriptorProtos.FieldDescriptorProto.Label.LABEL_OPTIONAL))
                 .build();
         Descriptor descriptor = FileDescriptor.buildFrom(DescriptorProtos.FileDescriptorProto.newBuilder()
-                        .setName("cel_proto2.proto").setPackage("ai.pipestream.test.legacy")
+                        .setName("cel_proto2.proto").setPackage("ai.protomolt.test.legacy")
                         .addMessageType(document).build(),
                 new FileDescriptor[]{}).findMessageTypeByName("LegacyDocument");
 
@@ -71,7 +71,7 @@ class CelProtoMapperTest {
                 .addField(field("output", 2))
                 .build();
         return FileDescriptor.buildFrom(DescriptorProtos.FileDescriptorProto.newBuilder()
-                .setName("cel.proto").setPackage("ai.pipestream.test").addMessageType(document).build(),
+                .setName("cel.proto").setPackage("ai.protomolt.test").addMessageType(document).build(),
                 new FileDescriptor[]{});
     }
 

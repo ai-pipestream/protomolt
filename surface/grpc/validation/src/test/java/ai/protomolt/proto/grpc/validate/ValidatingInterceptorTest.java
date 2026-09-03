@@ -43,28 +43,28 @@ class ValidatingInterceptorTest {
     private static final String PROTO = """
             syntax = "proto3";
             package grpc.validate.test.v1;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
-            import "ai/pipestream/proto/quality/v1/quality.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/quality/v1/quality.proto";
             message Ping {
-              option (ai.pipestream.proto.quality.v1.quality) = {
+              option (ai.protomolt.proto.quality.v1.quality) = {
                 dimension: { id: "detailed"
                              cel: "clamp(double(this.note.size()) / 10.0, 0.0, 1.0)" }
               };
-              string id = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 2];
+              string id = 1 [(ai.protomolt.proto.validate.v1.field).string.min_len = 2];
               string note = 2;
             }
             message Pong { string id = 1; }
             // A message-level rule naming a field that does not exist: the rules cannot compile,
             // which is the server's schema problem and not any caller's.
             message BadRules {
-              option (ai.pipestream.proto.validate.v1.message) = {
+              option (ai.protomolt.proto.validate.v1.message) = {
                 cel: { id: "impossible" expression: "this.no_such_field > 1" }
               };
               string id = 1;
             }
             // Rules compile; the quality dimension does not.
             message BadQuality {
-              option (ai.pipestream.proto.quality.v1.quality) = {
+              option (ai.protomolt.proto.quality.v1.quality) = {
                 dimension: { id: "impossible" cel: "this.no_such_field > 1" }
               };
               string id = 1;
@@ -84,12 +84,12 @@ class ValidatingInterceptorTest {
     static void compile() throws Exception {
         ClassLoader loader = ValidatingInterceptorTest.class.getClassLoader();
         String validateProto = new String(loader.getResourceAsStream(
-                "ai/pipestream/proto/validate/v1/validate.proto").readAllBytes());
+                "ai/protomolt/proto/validate/v1/validate.proto").readAllBytes());
         String qualityProto = new String(loader.getResourceAsStream(
-                "ai/pipestream/proto/quality/v1/quality.proto").readAllBytes());
+                "ai/protomolt/proto/quality/v1/quality.proto").readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
-                .add("ai/pipestream/proto/quality/v1/quality.proto", qualityProto, "test")
+                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/protomolt/proto/quality/v1/quality.proto", qualityProto, "test")
                 .add("grpc/validate/test/v1/echo.proto", PROTO, "test")
                 .build());
         var file = compiled.descriptorFor("grpc/validate/test/v1/echo.proto").orElseThrow();

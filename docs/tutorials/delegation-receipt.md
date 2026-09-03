@@ -272,7 +272,7 @@ cat > trust.json <<EOF
              "subjectKinds":["delegation-task"]}]}
 EOF
 
-buf convert --type ai.pipestream.proto.receipt.v1.TrustSnapshot \
+buf convert --type ai.protomolt.proto.receipt.v1.TrustSnapshot \
   --from trust.json#format=json --to trust.binpb
 ```
 

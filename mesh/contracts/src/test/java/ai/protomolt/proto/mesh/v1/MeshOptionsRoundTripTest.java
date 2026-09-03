@@ -39,7 +39,7 @@ class MeshOptionsRoundTripTest {
         assertThat(options.getProcessingProfile().getName()).isEqualTo("nlp-standard");
         assertThat(options.getProcessingProfile().getVersion()).isEqualTo("1.2.0");
         assertThat(options.getResultType())
-                .isEqualTo("ai.pipestream.proto.mesh.test.v1.TestResult");
+                .isEqualTo("ai.protomolt.proto.mesh.test.v1.TestResult");
         assertThat(options.getCapabilitiesList())
                 .containsExactly("opennlp-ner", "java-build");
         assertThat(options.getRouteProfile().getName()).isEqualTo("default-routes");

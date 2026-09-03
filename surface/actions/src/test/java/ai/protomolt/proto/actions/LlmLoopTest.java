@@ -17,9 +17,9 @@ class LlmLoopTest {
     private static final String PERSON_PROTO = """
             syntax = "proto3";
             package loop;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Person {
-              string name = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 3];
+              string name = 1 [(ai.protomolt.proto.validate.v1.field).string.min_len = 3];
               string fallback_name = 2;
             }
             """;
@@ -32,7 +32,7 @@ class LlmLoopTest {
         ObjectNode compileInput = obj("{\"sources\": {}}");
         ObjectNode sources = (ObjectNode) compileInput.get("sources");
         sources.put("loop/person.proto", PERSON_PROTO);
-        sources.put("ai/pipestream/proto/validate/v1/validate.proto",
+        sources.put("ai/protomolt/proto/validate/v1/validate.proto",
                 TestFixtures.validateProtoSource());
         ObjectNode compiled = catalog.execute("compile", compileInput);
         assertThat(compiled.get("ok").asBoolean()).isTrue();

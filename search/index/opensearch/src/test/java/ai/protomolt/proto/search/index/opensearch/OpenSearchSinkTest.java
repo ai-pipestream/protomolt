@@ -35,10 +35,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class OpenSearchSinkTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final IndexMapping TEXT_MAPPING = new IndexMapping("ai.pipestream.test.Doc",
+    private static final IndexMapping TEXT_MAPPING = new IndexMapping("ai.protomolt.test.Doc",
             List.of(new IndexMapping.IndexedField("title", "title",
                     ResolvedFieldHint.of(IndexFieldKind.TEXT))));
-    private static final IndexMapping VECTOR_MAPPING = new IndexMapping("ai.pipestream.test.Doc",
+    private static final IndexMapping VECTOR_MAPPING = new IndexMapping("ai.protomolt.test.Doc",
             List.of(new IndexMapping.IndexedField("embedding", "embedding",
                     ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(4).build())));
 

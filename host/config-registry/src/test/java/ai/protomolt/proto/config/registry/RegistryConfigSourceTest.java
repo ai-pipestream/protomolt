@@ -38,10 +38,10 @@ class RegistryConfigSourceTest {
     private static final String THROTTLE = """
             syntax = "proto3";
             package configit.v1;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Throttle {
               int32 limit = 1 [
-                (ai.pipestream.proto.validate.v1.field) = {
+                (ai.protomolt.proto.validate.v1.field) = {
                   required: true
                   int32: {gt: 0, lte: 1000}
                 }
@@ -63,7 +63,7 @@ class RegistryConfigSourceTest {
         store = GitSchemaRegistryStore.builder()
                 .repositoryDir(work.resolve("registry"))
                 .build();
-        String validateSubject = "ai/pipestream/proto/validate/v1/validate.proto";
+        String validateSubject = "ai/protomolt/proto/validate/v1/validate.proto";
         String validateSource;
         try (var in = RegistryConfigSourceTest.class.getClassLoader()
                 .getResourceAsStream(validateSubject)) {

@@ -58,7 +58,7 @@ class IncludeDefaultsTest {
     private static Descriptor docDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("defaults_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")

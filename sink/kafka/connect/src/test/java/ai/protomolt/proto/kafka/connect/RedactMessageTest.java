@@ -31,12 +31,12 @@ class RedactMessageTest {
     private static final String CUSTOMER_PROTO = """
             syntax = "proto3";
             package redact.test;
-            import "ai/pipestream/proto/meta/v1/metadata.proto";
+            import "ai/protomolt/proto/meta/v1/metadata.proto";
             message Customer {
               string id = 1;
-              string email = 2 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
-              string ssn = 3 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "secret"}];
-              int64 score = 4 [(ai.pipestream.proto.meta.v1.field) = {sensitivity: "pii"}];
+              string email = 2 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
+              string ssn = 3 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "secret"}];
+              int64 score = 4 [(ai.protomolt.proto.meta.v1.field) = {sensitivity: "pii"}];
             }
             """;
 
@@ -55,11 +55,11 @@ class RedactMessageTest {
     static void compile() throws Exception {
         String metadataProto;
         try (InputStream in = RedactMessageTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")) {
+                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")) {
             metadataProto = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "test")
+                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "test")
                 .add("redact/test/customer.proto", CUSTOMER_PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

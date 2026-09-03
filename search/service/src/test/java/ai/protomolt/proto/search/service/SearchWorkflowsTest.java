@@ -27,13 +27,13 @@ class SearchWorkflowsTest {
         assertThat(workflow.path("name").asText())
                 .isEqualTo(SearchWorkflows.DELETE_AND_UNINDEX_WORKFLOW);
         assertThat(workflow.path("inputType").asText())
-                .isEqualTo("ai.pipestream.proto.search.v1.DeleteAndUnindexRequest");
+                .isEqualTo("ai.protomolt.proto.search.v1.DeleteAndUnindexRequest");
 
         JsonNode delete = workflow.path("steps").get(0);
         assertThat(delete.path("name").asText()).isEqualTo("delete");
         assertThat(delete.path("target").asText()).isEqualTo("inprocess:repo");
         assertThat(delete.path("method").asText())
-                .isEqualTo("ai.pipestream.proto.repo.v1.DocumentService/DeleteDocument");
+                .isEqualTo("ai.protomolt.proto.repo.v1.DocumentService/DeleteDocument");
         assertThat(rules(delete)).containsExactly(
                 "by_reference.address = input.address",
                 "purge_storage = input.purge_storage");
@@ -42,13 +42,13 @@ class SearchWorkflowsTest {
         assertThat(unindex.path("name").asText()).isEqualTo("unindex");
         assertThat(unindex.path("target").asText()).isEqualTo("inprocess:search");
         assertThat(unindex.path("method").asText())
-                .isEqualTo("ai.pipestream.proto.search.v1.SearchIndexService/DeleteDocument");
+                .isEqualTo("ai.protomolt.proto.search.v1.SearchIndexService/DeleteDocument");
         assertThat(rules(unindex)).containsExactly(
                 "mapping_subject = input.mapping_subject",
                 "doc_id = input.address.doc_id");
 
         assertThat(workflow.path("output").path("type").asText())
-                .isEqualTo("ai.pipestream.proto.search.v1.DeleteDocumentResponse");
+                .isEqualTo("ai.protomolt.proto.search.v1.DeleteDocumentResponse");
     }
 
     @Test
@@ -57,8 +57,8 @@ class SearchWorkflowsTest {
                 .decode(SearchWorkflows.deleteDescriptorSetBase64()));
         assertThat(schema.getFileList()).extracting(FileDescriptorProto::getName)
                 .contains(
-                        "ai/pipestream/proto/search/v1/search_service.proto",
-                        "ai/pipestream/proto/repo/v1/document_service.proto");
+                        "ai/protomolt/proto/search/v1/search_service.proto",
+                        "ai/protomolt/proto/repo/v1/document_service.proto");
     }
 
     @Test

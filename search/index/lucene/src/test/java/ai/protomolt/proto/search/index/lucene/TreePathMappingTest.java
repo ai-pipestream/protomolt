@@ -104,7 +104,7 @@ class TreePathMappingTest {
     }
 
     private static IndexMapping mapping(ResolvedFieldHint hint, boolean repeated) {
-        return new IndexMapping("ai.pipestream.test.Doc", List.of(
+        return new IndexMapping("ai.protomolt.test.Doc", List.of(
                 new IndexMapping.IndexedField("category", "category", hint, repeated)));
     }
 
@@ -135,7 +135,7 @@ class TreePathMappingTest {
     private static Descriptor docDescriptor(boolean repeated) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("tree_path_doc_" + (repeated ? "repeated" : "singular") + ".proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency(TreePath.getDescriptor().getFile().getName())
                 .addMessageType(DescriptorProto.newBuilder()

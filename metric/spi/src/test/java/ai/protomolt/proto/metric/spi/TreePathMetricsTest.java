@@ -37,7 +37,7 @@ class TreePathMetricsTest {
         FieldDescriptorProto.Builder field = FieldDescriptorProto.newBuilder()
                 .setName(name).setNumber(number)
                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                .setTypeName(".ai.pipestream.proto.types.v1.TreePath")
+                .setTypeName(".ai.protomolt.proto.types.v1.TreePath")
                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL);
         if (metric != null) {
             field.setOptions(FieldOptions.newBuilder()
@@ -49,7 +49,7 @@ class TreePathMetricsTest {
     static Descriptor build(DescriptorProto message) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("test/products.proto").setPackage("test").setSyntax("proto3")
-                .addDependency("ai/pipestream/proto/types/v1/tree_path.proto")
+                .addDependency("ai/protomolt/proto/types/v1/tree_path.proto")
                 .addMessageType(message)
                 .build();
         return FileDescriptor.buildFrom(

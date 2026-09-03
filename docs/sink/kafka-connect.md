@@ -174,7 +174,7 @@ CEL expressions against the message type: at configure time.
 ```
 
 **`ValidateMessage`** checks each value against the validation rules
-declared on its schema (`ai.pipestream.proto.validate.v1` options): the
+declared on its schema (`ai.protomolt.proto.validate.v1` options): the
 rules travel inside the descriptor set, so the worker enforces exactly what
 the schema authors declared. Valid records pass through untouched. For
 invalid ones, `on.invalid` selects: `fail` (the default: the worker's
@@ -198,7 +198,7 @@ undecodable value or a runtime evaluation failure does: `fail` (default),
 `keep`, or `drop`.
 
 **`RedactMessage`** masks record values by their schema-declared
-sensitivity classes (`ai.pipestream.proto.meta.v1.field.sensitivity`):
+sensitivity classes (`ai.protomolt.proto.meta.v1.field.sensitivity`):
 declare `pii` once in the proto and every topic this transform touches
 honors it: `classes` (default `pii`) picks what to mask, `strategy`
 picks `remove`, `redact` (strings become `***`), `encrypt`, or `decrypt`

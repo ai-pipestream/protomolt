@@ -99,7 +99,7 @@ effect, versioned by its commit when it travels the config lane, and
 carrying **no secrets** — credentials appear only as SHA-256 digests.
 
 ```protobuf
-package ai.pipestream.proto.authz.v1;
+package ai.protomolt.proto.authz.v1;
 
 message AccessPolicy {
   repeated Principal principals = 1;  // named, non-empty, unique names

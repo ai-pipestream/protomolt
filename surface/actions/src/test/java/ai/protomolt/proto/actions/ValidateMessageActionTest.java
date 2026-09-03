@@ -92,12 +92,12 @@ class ValidateMessageActionTest {
         sources.put("person.proto", """
                 syntax = "proto3";
                 package inline.test;
-                import "ai/pipestream/proto/validate/v1/validate.proto";
+                import "ai/protomolt/proto/validate/v1/validate.proto";
                 message Person {
-                  string name = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 3];
+                  string name = 1 [(ai.protomolt.proto.validate.v1.field).string.min_len = 3];
                 }
                 """);
-        sources.put("ai/pipestream/proto/validate/v1/validate.proto",
+        sources.put("ai/protomolt/proto/validate/v1/validate.proto",
                 TestFixtures.validateProtoSource());
         ObjectNode result = catalog.execute("validate-message", input);
         assertThat(result.get("valid").asBoolean()).isFalse();

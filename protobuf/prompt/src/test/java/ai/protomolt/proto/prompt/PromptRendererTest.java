@@ -43,7 +43,7 @@ class PromptRendererTest {
         assertThat(instructions)
                 // task line + meta.v1 message description + llm.v1 message instruction
                 .contains("You are filling the form \""
-                        + "ai.pipestream.proto.prompt.testdata.v1.DecoratedOpinion\"")
+                        + "ai.protomolt.proto.prompt.testdata.v1.DecoratedOpinion\"")
                 .contains("Metadata extracted from a court opinion.")
                 .contains("Fill this form from the opinion text alone.")
                 // message-level CEL rendered with its human message
@@ -60,7 +60,7 @@ class PromptRendererTest {
                 .contains("items must be unique")
                 // enum constraint
                 .contains("must be a defined "
-                        + "ai.pipestream.proto.prompt.testdata.v1.Posture value")
+                        + "ai.protomolt.proto.prompt.testdata.v1.Posture value")
                 // enum vocabulary: the model cannot fill what it cannot name
                 .contains("defined values: POSTURE_UNSPECIFIED (means unknown),"
                         + " POSTURE_AFFIRMED, POSTURE_REVERSED")
@@ -121,7 +121,7 @@ class PromptRendererTest {
     @Test
     void rejectsATargetThatDoesNotNameTheDescriptor() {
         RenderPromptRequest mismatched = RenderPromptRequest.newBuilder()
-                .setTargetType("ai.pipestream.proto.prompt.v1.Persona")
+                .setTargetType("ai.protomolt.proto.prompt.v1.Persona")
                 .build();
 
         assertThatThrownBy(() -> PromptRenderer.create().render(FORM, mismatched, "repo://forms/v3"))

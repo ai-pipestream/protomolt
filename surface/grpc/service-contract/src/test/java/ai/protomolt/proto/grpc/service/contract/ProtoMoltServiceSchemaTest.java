@@ -64,7 +64,7 @@ class ProtoMoltServiceSchemaTest {
             assertThat(profile).as("%s.profile", response).isNotNull();
             assertThat(profile.getMessageType().getFullName())
                     .as("%s.profile type", response)
-                    .isEqualTo("ai.pipestream.proto.grpc.profile.v1.ServiceProfile");
+                    .isEqualTo("ai.protomolt.proto.grpc.profile.v1.ServiceProfile");
         }
     }
 
@@ -98,6 +98,6 @@ class ProtoMoltServiceSchemaTest {
         assertThat(ProtoMoltServiceSchema.service().getMethods()).isNotEmpty();
         assertThat(ProtoMoltServiceSchema.file().getDependencies())
                 .extracting(file -> file.getName())
-                .contains("ai/pipestream/proto/grpc/profile/v1/service_profile.proto");
+                .contains("ai/protomolt/proto/grpc/profile/v1/service_profile.proto");
     }
 }

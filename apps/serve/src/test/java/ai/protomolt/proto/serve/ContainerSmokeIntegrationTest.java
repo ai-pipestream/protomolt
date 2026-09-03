@@ -51,7 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 class ContainerSmokeIntegrationTest {
 
-    private static final String SERVICE = "ai.pipestream.proto.grpc.service.v1.ProtoMoltService";
+    private static final String SERVICE = "ai.protomolt.proto.grpc.service.v1.ProtoMoltService";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newHttpClient();

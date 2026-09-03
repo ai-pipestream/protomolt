@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class StructuredGeneratorTest {
 
     private static final String TARGET_TYPE =
-            "ai.pipestream.proto.inference.structured.testdata.v1.TestForm";
+            "ai.protomolt.proto.inference.structured.testdata.v1.TestForm";
     private static final String STRUCTURED_MODEL = "structured-model";
     private static final String TEXT_ONLY_MODEL = "text-only-model";
     private static final String VALID_FORM_JSON = "{\"name\": \"Ada Lovelace\", \"age\": 36}";
@@ -156,14 +156,14 @@ class StructuredGeneratorTest {
     @Test
     void unknownTargetTypeFailsBeforeInvocation() {
         GenerateStructuredRequest request = request(STRUCTURED_MODEL)
-                .setTargetType("ai.pipestream.proto.inference.v1.NoSuchType")
+                .setTargetType("ai.protomolt.proto.inference.v1.NoSuchType")
                 .build();
 
         assertThatThrownBy(() -> generator.generate(request))
                 .isInstanceOfSatisfying(StructuredGenerationException.class, e -> {
                     assertThat(e.getAttempts()).isEmpty();
                     assertThat(e.getTargetType())
-                            .isEqualTo("ai.pipestream.proto.inference.v1.NoSuchType");
+                            .isEqualTo("ai.protomolt.proto.inference.v1.NoSuchType");
                 });
         assertThat(provider.invocations()).isZero();
     }

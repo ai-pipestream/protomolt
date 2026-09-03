@@ -15,7 +15,7 @@
  * result is returned as an ordered map or as JSON text.
  *
  * <p>This package describes message types; {@code ai.protomolt.proto.http.openapi} describes
- * service surfaces, and {@code ai.pipestream.proto.validate} enforces the same rules at
+ * service surfaces, and {@code ai.protomolt.proto.validate} enforces the same rules at
  * runtime. See the
  * <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/json-schema.md">JSON Schema
  * guide</a>.

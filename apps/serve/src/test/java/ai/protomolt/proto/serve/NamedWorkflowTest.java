@@ -55,13 +55,13 @@ class NamedWorkflowTest {
         return """
                 {"name": "compile-and-list",
                  "schema": {"sources": %s},
-                 "inputType": "ai.pipestream.proto.grpc.service.v1.CompileRequest",
+                 "inputType": "ai.protomolt.proto.grpc.service.v1.CompileRequest",
                  "steps": [
                    {"name": "compiled", "target": "127.0.0.1:%d",
-                    "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/Compile",
+                    "method": "ai.protomolt.proto.grpc.service.v1.ProtoMoltService/Compile",
                     "rules": ["sources = input.sources"]},
                    {"name": "types", "target": "127.0.0.1:%d",
-                    "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
+                    "method": "ai.protomolt.proto.grpc.service.v1.ProtoMoltService/ListTypes",
                     "rules": ["schema.descriptor_set_base64 = compiled.descriptor_set_base64"]}
                  ]}
                 """.formatted(selfSources, serve.grpcPort(), serve.grpcPort());

@@ -20,7 +20,7 @@ and health on.
 ## Coverage
 
 Every content area of Confluence has its messages, in
-`src/main/proto/ai/pipestream/proto/acquire/confluence/v1/`:
+`src/main/proto/ai/protomolt/proto/acquire/confluence/v1/`:
 
 - Content: Page (`page.proto`), BlogPost (`blogpost.proto`), Comment
   (`comment.proto`), Attachment (`attachment.proto`), CustomContent,
@@ -105,8 +105,8 @@ The rules come in four families:
 
   ```protobuf
   string id = 1 [
-    (ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
-    (ai.pipestream.proto.validate.v1.field) = { required: true }
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD },
+    (ai.protomolt.proto.validate.v1.field) = { required: true }
   ];
   ```
 
@@ -127,7 +127,7 @@ The rules come in four families:
   | `redaction.range` | a redaction range must not end before it starts |
 
   ```protobuf
-  option (ai.pipestream.proto.validate.v1.message) = {
+  option (ai.protomolt.proto.validate.v1.message) = {
     cel: {
       id: "change.upsert_has_entity"
       message: "an UPSERT change must carry the entity it upserts"

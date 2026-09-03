@@ -265,10 +265,10 @@ public final class McpServer {
     private void addToolCatalogMetadata(ObjectNode result, ArrayNode manifest) {
         ObjectNode toolCatalog = WorkspaceResources.toolCatalog(manifest, mapper);
         ObjectNode metadata = result.putObject("_meta");
-        metadata.put("ai.pipestream.protomolt/toolCatalogFingerprint",
+        metadata.put("ai.protomolt/toolCatalogFingerprint",
                 toolCatalog.path("fingerprint").asText());
-        metadata.put("ai.pipestream.protomolt/toolCount", toolCatalog.path("count").asInt());
-        metadata.put("ai.pipestream.protomolt/workspace", WorkspaceResources.URI);
+        metadata.put("ai.protomolt/toolCount", toolCatalog.path("count").asInt());
+        metadata.put("ai.protomolt/workspace", WorkspaceResources.URI);
     }
 
     private ObjectNode callTool(JsonNode params, Caller caller) {

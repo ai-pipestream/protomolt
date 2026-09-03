@@ -37,7 +37,7 @@ class QdrantPointMapperTest {
             new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
 
     private static IndexMapping mapping() {
-        return new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+        return new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
                 new IndexMapping.IndexedField("search_metadata.title", "title",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 new IndexMapping.IndexedField("search_metadata.source_uri", "source_uri",
@@ -144,7 +144,7 @@ class QdrantPointMapperTest {
         List<IndexMapping.IndexedField> fields = new ArrayList<>(mapping().fields());
         fields.add(new IndexMapping.IndexedField("structured_data", "structured_data",
                 ResolvedFieldHint.of(IndexFieldKind.ANY)));
-        IndexMapping mappingWithAny = new IndexMapping("ai.pipestream.proto.repo.v1.Document", fields);
+        IndexMapping mappingWithAny = new IndexMapping("ai.protomolt.proto.repo.v1.Document", fields);
 
         List<PointStruct> points = anyMapper.map(document, mappingWithAny);
 
@@ -159,19 +159,19 @@ class QdrantPointMapperTest {
     void unknownStructuredDataTypeUrlFailsInsteadOfUpserting() throws Exception {
         Document document = document().toBuilder()
                 .setStructuredData(Any.newBuilder()
-                        .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                        .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                         .setValue(ByteString.copyFromUtf8("x"))
                         .build())
                 .build();
         List<IndexMapping.IndexedField> fields = new ArrayList<>(mapping().fields());
         fields.add(new IndexMapping.IndexedField("structured_data", "structured_data",
                 ResolvedFieldHint.of(IndexFieldKind.ANY)));
-        IndexMapping mappingWithAny = new IndexMapping("ai.pipestream.proto.repo.v1.Document", fields);
+        IndexMapping mappingWithAny = new IndexMapping("ai.protomolt.proto.repo.v1.Document", fields);
 
         assertThatThrownBy(() -> mapper.map(document, mappingWithAny))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("structured_data")
-                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
+                .hasMessageContaining("type.googleapis.com/ai.protomolt.test.MissingType");
     }
 
     @Test
@@ -197,7 +197,7 @@ class QdrantPointMapperTest {
         Timestamp notADocument = Timestamp.newBuilder().setSeconds(1).build();
         assertThatThrownBy(() -> mapper.map(notADocument, mapping()))
                 .isInstanceOf(MappingException.class)
-                .hasMessageContaining("ai.pipestream.proto.repo.v1.Document")
+                .hasMessageContaining("ai.protomolt.proto.repo.v1.Document")
                 .hasMessageContaining("google.protobuf.Timestamp");
     }
 
@@ -240,7 +240,7 @@ class QdrantPointMapperTest {
 
     private static IndexMapping mappingWithVectorHint(String path, int dims,
                                                    ai.protomolt.proto.search.index.spi.VectorSimilarity similarity) {
-        return new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+        return new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
                 new IndexMapping.IndexedField("search_metadata.title", "title",
                         ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
                 new IndexMapping.IndexedField(path, "embedding",
@@ -294,7 +294,7 @@ class QdrantPointMapperTest {
 
     @Test
     void vectorHintPrefersTheSemanticResultsPath() {
-        IndexMapping twoVectors = new IndexMapping("ai.pipestream.proto.repo.v1.Document", List.of(
+        IndexMapping twoVectors = new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
                 new IndexMapping.IndexedField("other_embedding", "other",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(8)

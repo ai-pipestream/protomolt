@@ -24,22 +24,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class EdgeVerifierTest {
 
-    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
+    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
     private static final String PROJECTION =
-            "ai/pipestream/proto/projection/v1/projection.proto";
+            "ai/protomolt/proto/projection/v1/projection.proto";
 
     private static final String PROTO = """
             syntax = "proto3";
             package workflow.edgecheck.test;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
-            import "ai/pipestream/proto/projection/v1/projection.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/projection/v1/projection.proto";
             message Ticket { string title = 1; }
             message LookupResult { string doc_id = 1; string internal_notes = 2; }
             message DocGrounding {
-              option (ai.pipestream.proto.projection.v1.sources) = {
+              option (ai.protomolt.proto.projection.v1.sources) = {
                 source: "workflow.edgecheck.test.LookupResult"
               };
-              string doc_id = 1 [(ai.pipestream.proto.projection.v1.from) = {
+              string doc_id = 1 [(ai.protomolt.proto.projection.v1.from) = {
                 paths: {path: "doc_id"}
               }];
             }

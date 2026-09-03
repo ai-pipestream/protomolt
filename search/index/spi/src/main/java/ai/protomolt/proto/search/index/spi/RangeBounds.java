@@ -11,7 +11,7 @@ import java.util.Optional;
 /**
  * Bound fields of a range message.
  *
- * <p>The canonical range types in {@code ai.pipestream.proto.types.v1} are recognized
+ * <p>The canonical range types in {@code ai.protomolt.proto.types.v1} are recognized
  * by name: {@code LongRange} for LONG_RANGE (and DATE_RANGE with epoch bounds),
  * {@code DoubleRange} for DOUBLE_RANGE, and {@code DateRange} for DATE_RANGE with
  * ISO calendar-day bounds ({@link #dayGrain()}). Their {@code (begin, end)} bounds are
@@ -34,9 +34,9 @@ public record RangeBounds(
         FieldDescriptor includeTail,
         boolean dayGrain) {
 
-    private static final String CANONICAL_DATE = "ai.pipestream.proto.types.v1.DateRange";
-    private static final String CANONICAL_LONG = "ai.pipestream.proto.types.v1.LongRange";
-    private static final String CANONICAL_DOUBLE = "ai.pipestream.proto.types.v1.DoubleRange";
+    private static final String CANONICAL_DATE = "ai.protomolt.proto.types.v1.DateRange";
+    private static final String CANONICAL_LONG = "ai.protomolt.proto.types.v1.LongRange";
+    private static final String CANONICAL_DOUBLE = "ai.protomolt.proto.types.v1.DoubleRange";
 
     public static Optional<RangeBounds> resolve(Descriptor message, IndexFieldKind rangeKind) {
         Optional<RangeBounds> canonical = canonical(message, rangeKind);

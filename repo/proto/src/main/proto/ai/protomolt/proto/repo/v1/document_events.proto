@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// ============================================================================
+// DOCUMENT EVENTS - the transactional-outbox Kafka contract.
+//
+// Every lifecycle commit point of the repo service (save, hard delete, purge
+// request, purge completion) writes one envelope here into the
+// document_events_outbox table IN THE SAME TRANSACTION as the ledger mutation
+// (Flyway V4); a background relay publishes PENDING rows to the single
+// document-events topic, keyed by doc_id so each document's events are
+// partition-ordered. Delivery is at-least-once: consumers dedupe on
+// DocumentEvent.event_id (the outbox row id).
+//
+// The four event types ride one topic inside the DocumentEvent wrapper: the
+// protomolt serde is pinned to the wrapper type, so no schema registry is
+// needed on either side.
+// ============================================================================
+
+// A document body was (re)written and its ledger row is AVAILABLE. Fired on
+// full and partial saves, including the revive of a tombstoned row; checksum
+// dedupe hits elide the write and fire nothing.
+message DocumentSaved {
+  // The canonical storage identity of the saved row.
+  NodeAddress address = 1;
+  // Root checksum of the saved part set (the dedupe key).
+  string checksum = 2;
+  // The manifest's doc_version after this save.
+  int64 doc_version = 3;
+  // Total size of the stored part set in bytes.
+  int64 size_bytes = 4;
+  // When the save committed.
+  google.protobuf.Timestamp saved_at = 5;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A document row was hard-deleted (DeleteDocument with purge_storage=true):
+// the row is gone and its objects were purged best-effort first. A soft
+// delete (purge_storage=false) fires PurgeRequested instead.
+message DocumentDeleted {
+  // The canonical storage identity of the removed row.
+  NodeAddress address = 1;
+  // Root checksum of the removed body.
+  string checksum = 2;
+  // When the removal committed.
+  google.protobuf.Timestamp deleted_at = 3;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Phase A of the two-phase delete: the row tombstoned to PENDING_PURGE and
+// its purge record was enqueued in the same transaction. The document is
+// unreadable from here; its objects still exist until DocumentPurged.
+message PurgeRequested {
+  // The canonical storage identity of the tombstoned row.
+  NodeAddress address = 1;
+  // The purge record id (document_purges.purge_id), for joining against the
+  // purge lifecycle and the eventual DocumentPurged.
+  string purge_id = 2;
+  // Root checksum of the body the purge targets (the snapshot body).
+  string checksum = 3;
+  // When the delete was requested (the purge record's requested_at; the
+  // staleness guard compares the row's updated_at against it).
+  google.protobuf.Timestamp requested_at = 4;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// Phase B of the two-phase delete landed: the snapshot objects were deleted
+// and the document row removed, in the same transaction as this event. A
+// purge VOIDED by the staleness guard (the body was re-staged) fires nothing.
+message DocumentPurged {
+  // The canonical storage identity of the purged row.
+  NodeAddress address = 1;
+  // The purge record id (document_purges.purge_id).
+  string purge_id = 2;
+  // Root checksum of the purged body, when the row was still there to read.
+  string checksum = 3;
+  // When the purge finalized.
+  google.protobuf.Timestamp purged_at = 4;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The single-topic wrapper: exactly one event per record. event_id is the
+// outbox row id (document_events_outbox.event_id) - the consumer dedupe key
+// under at-least-once delivery.
+message DocumentEvent {
+  // The outbox row id; stable across relay retries, so redeliveries dedupe.
+  string event_id = 1;
+  // The event payload — exactly one arm is set per record.
+  oneof event {
+    // A document body was (re)written and its row is AVAILABLE.
+    DocumentSaved saved = 2;
+    // A document row was hard-deleted (purge_storage=true).
+    DocumentDeleted deleted = 3;
+    // Phase A of the two-phase delete: the row tombstoned to PENDING_PURGE.
+    PurgeRequested purge_requested = 4;
+    // Phase B of the two-phase delete landed: objects purged, row removed.
+    DocumentPurged purged = 5;
+  }
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}

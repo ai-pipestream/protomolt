@@ -32,7 +32,7 @@ public enum IndexFieldKind {
     DATE_RANGE,
     /**
      * Taxonomy path over a message with a repeated string {@code segments} field
-     * (canonically {@code ai.pipestream.proto.types.v1.TreePath}). Engines emit the
+     * (canonically {@code ai.protomolt.proto.types.v1.TreePath}). Engines emit the
      * ancestor chain ("a", "a/b", "a/b/c") as keyword terms for hierarchical
      * drill-down facets and path-prefix filters.
      */

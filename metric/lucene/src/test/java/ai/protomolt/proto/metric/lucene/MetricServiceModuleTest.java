@@ -120,11 +120,11 @@ class MetricServiceModuleTest {
                                         .setAggregate(Aggregate.AGGREGATE_COUNT)
                                         .setName("documents")
                                         .build())
-                        .put("ai.pipestream.proto.repo.v1.SearchMetadata", "document_type",
+                        .put("ai.protomolt.proto.repo.v1.SearchMetadata", "document_type",
                                 FieldMetric.newBuilder()
                                         .setRole(MemberRole.MEMBER_ROLE_DIMENSION)
                                         .build())
-                        .put("ai.pipestream.proto.repo.v1.SearchMetadata", "processed_date",
+                        .put("ai.protomolt.proto.repo.v1.SearchMetadata", "processed_date",
                                 FieldMetric.newBuilder()
                                         .setRole(MemberRole.MEMBER_ROLE_DIMENSION)
                                         .setDefaultGrain(TimeGrain.TIME_GRAIN_MONTH)
@@ -489,7 +489,7 @@ class MetricServiceModuleTest {
                             .REBUILD_ROLLUP_WORKFLOW)
                     .orElseThrow();
             assertThat(envelope)
-                    .contains("ai.pipestream.proto.metric.v1.MetricService/RebuildRollup")
+                    .contains("ai.protomolt.proto.metric.v1.MetricService/RebuildRollup")
                     .contains("table = input.table");
         }
     }

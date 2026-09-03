@@ -128,7 +128,7 @@ class ProtoLuceneMapperFanOutTest {
         private static FileDescriptor file() throws Exception {
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("lucene_fanout.proto")
-                    .setPackage("ai.pipestream.test.lucenefanout")
+                    .setPackage("ai.protomolt.test.lucenefanout")
                     .setSyntax("proto3")
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Chunk")
@@ -149,7 +149,7 @@ class ProtoLuceneMapperFanOutTest {
                             .addField(FieldDescriptorProto.newBuilder()
                                     .setName("chunks").setNumber(2)
                                     .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                    .setTypeName(".ai.pipestream.test.lucenefanout.Chunk")
+                                    .setTypeName(".ai.protomolt.test.lucenefanout.Chunk")
                                     .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                     .build();
             return FileDescriptor.buildFrom(proto, new FileDescriptor[]{});

@@ -14,7 +14,7 @@ import java.util.Set;
 
 /**
  * Masks record values by their schema-declared sensitivity classes
- * ({@code ai.pipestream.proto.meta.v1.field.sensitivity}) — declare {@code pii} once in
+ * ({@code ai.protomolt.proto.meta.v1.field.sensitivity}) — declare {@code pii} once in
  * the proto and every topic this transform touches honors it, with zero per-deployment
  * field lists. {@code remove} clears the fields; {@code redact} turns strings into
  * {@code ***}. Recurses through nested and repeated messages; tombstones pass through.

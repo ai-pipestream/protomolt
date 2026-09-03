@@ -65,7 +65,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>The schema is deliberately the nasty one the repo service actually ships:
  * {@link DocumentEvent}, a multi-message file with a oneof wrapper and two imports. The
  * Confluent client registers the non-well-known import as a referenced subject
- * ({@code ai/pipestream/proto/repo/v1/address.proto}); the well-known
+ * ({@code ai/protomolt/proto/repo/v1/address.proto}); the well-known
  * {@code google/protobuf/timestamp.proto} never becomes a subject, on either side. The wrapper
  * is the fifth message in its file, so every frame here carries the non-trivial message index
  * {@code [4]}.</p>
@@ -82,14 +82,14 @@ class SerdeConfluentInteropIntegrationTest {
     static final RedpandaContainer REDPANDA = new RedpandaContainer(
             DockerImageName.parse("docker.redpanda.com/redpandadata/redpanda:v22.2.1"));
 
-    private static final String EVENT_TYPE = "ai.pipestream.proto.repo.v1.DocumentEvent";
+    private static final String EVENT_TYPE = "ai.protomolt.proto.repo.v1.DocumentEvent";
     /**
      * Confluent registers non-well-known imports as referenced subjects named by the import
      * path. Well-known types ({@code google/protobuf/*}) never become subjects: the reference
      * client resolves them from its bundled copy, and our compiler does the same.
      */
     private static final String TIMESTAMP_SUBJECT = "google/protobuf/timestamp.proto";
-    private static final String ADDRESS_SUBJECT = "ai/pipestream/proto/repo/v1/address.proto";
+    private static final String ADDRESS_SUBJECT = "ai/protomolt/proto/repo/v1/address.proto";
     /** DocumentEvent is the fifth top-level message in document_events.proto. */
     private static final List<Integer> DOCUMENT_EVENT_INDEX = List.of(4);
 
@@ -108,11 +108,11 @@ class SerdeConfluentInteropIntegrationTest {
     /** Wire-breaking v2 of DocumentEvent: field 1 keeps its number but changes type. */
     private static final String GATE_V2_BREAKING = """
             syntax = "proto3";
-            package ai.pipestream.proto.repo.v1;
-            import "ai/pipestream/proto/repo/v1/address.proto";
+            package ai.protomolt.proto.repo.v1;
+            import "ai/protomolt/proto/repo/v1/address.proto";
             import "google/protobuf/timestamp.proto";
             option java_multiple_files = true;
-            option java_package = "ai.pipestream.proto.repo.v1";
+            option java_package = "ai.protomolt.proto.repo.v1";
             message DocumentSaved {
               NodeAddress address = 1;
               string checksum = 2;

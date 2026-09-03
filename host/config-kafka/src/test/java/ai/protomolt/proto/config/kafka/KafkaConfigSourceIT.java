@@ -59,10 +59,10 @@ class KafkaConfigSourceIT {
     private static final String THROTTLE = """
             syntax = "proto3";
             package configit.v1;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Throttle {
               int32 limit = 1 [
-                (ai.pipestream.proto.validate.v1.field) = {
+                (ai.protomolt.proto.validate.v1.field) = {
                   required: true
                   int32: {gt: 0, lte: 1000}
                 }
@@ -83,7 +83,7 @@ class KafkaConfigSourceIT {
 
     @BeforeAll
     static void boot() throws Exception {
-        String validateSubject = "ai/pipestream/proto/validate/v1/validate.proto";
+        String validateSubject = "ai/protomolt/proto/validate/v1/validate.proto";
         String validateSource;
         try (var in = KafkaConfigSourceIT.class.getClassLoader()
                 .getResourceAsStream(validateSubject)) {

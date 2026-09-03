@@ -37,9 +37,9 @@ final class DemoSchemas {
 
     /** Option schemas the demo imports, registered as their own subjects. */
     static final List<String> OPTION_SUBJECTS = List.of(
-            "ai/pipestream/proto/index/hints/v1/indexing_hints.proto",
-            "ai/pipestream/proto/meta/v1/metadata.proto",
-            "ai/pipestream/proto/validate/v1/validate.proto");
+            "ai/protomolt/proto/index/hints/v1/indexing_hints.proto",
+            "ai/protomolt/proto/meta/v1/metadata.proto",
+            "ai/protomolt/proto/validate/v1/validate.proto");
 
     private static final String SHOP_RESOURCE = "ai/protomolt/proto/serve/demo_shop.proto";
 
@@ -66,13 +66,13 @@ final class DemoSchemas {
             String workflow = """
                     {"name": "compile-and-list",
                      "schema": {"sources": %s},
-                     "inputType": "ai.pipestream.proto.grpc.service.v1.CompileRequest",
+                     "inputType": "ai.protomolt.proto.grpc.service.v1.CompileRequest",
                      "steps": [
                        {"name": "compiled", "target": "127.0.0.1:%d",
-                        "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/Compile",
+                        "method": "ai.protomolt.proto.grpc.service.v1.ProtoMoltService/Compile",
                         "rules": ["sources = input.sources"]},
                        {"name": "types", "target": "127.0.0.1:%d",
-                        "method": "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes",
+                        "method": "ai.protomolt.proto.grpc.service.v1.ProtoMoltService/ListTypes",
                         "rules": ["schema.descriptor_set_base64 = compiled.descriptor_set_base64"]}
                      ]}
                     """.formatted(sources, grpcPort, grpcPort);

@@ -11,7 +11,7 @@ dependencies {
     // search_metadata.semantic_results.
     api project(':protomolt-repo-proto')
 
-    // Validation on write: declared rules (ai.pipestream.proto.validate.v1) gate the
+    // Validation on write: declared rules (ai.protomolt.proto.validate.v1) gate the
     // document before it becomes points.
     implementation project(':protomolt-protobuf-validation')
 

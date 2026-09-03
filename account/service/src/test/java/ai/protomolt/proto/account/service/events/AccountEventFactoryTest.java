@@ -116,7 +116,7 @@ class AccountEventFactoryTest {
         FileDescriptorSet set = FileDescriptorSet.parseFrom(
                 Base64.getDecoder().decode(AccountEventFactory.descriptorSetBase64()));
         assertThat(set.getFileList().stream().map(f -> f.getName()).toList())
-                .contains("ai/pipestream/proto/account/v1/account_events.proto",
+                .contains("ai/protomolt/proto/account/v1/account_events.proto",
                         "google/protobuf/timestamp.proto");
         var accountEvents = set.getFileList().stream()
                 .filter(f -> f.getName().endsWith("account_events.proto"))

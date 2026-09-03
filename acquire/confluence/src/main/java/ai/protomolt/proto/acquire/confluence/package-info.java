@@ -7,7 +7,7 @@
  * {@code _links.next}, the throttling contract honored (429 retried after
  * {@code Retry-After} with jitter), and a politeness gap between requests.
  * {@link ai.protomolt.proto.acquire.confluence.ConfluenceMapper} turns the REST JSON into
- * the {@code ai.pipestream.proto.acquire.confluence.v1} domain protos, never throwing on
+ * the {@code ai.protomolt.proto.acquire.confluence.v1} domain protos, never throwing on
  * unknown enum wire values.
  * {@link ai.protomolt.proto.acquire.confluence.ConfluenceCrawler} orchestrates the sweep on
  * virtual threads: spaces, then per space pages and blog posts with their comments,

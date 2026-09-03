@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.archive.v1;
+
+import "ai/protomolt/proto/asset/v1/classification.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.archive.v1";
+
+// ============================================================================
+// ARCHIVES — account-scoped named collections of entries.
+//
+// An archive binds one drive (the drive resolves storage coordinates;
+// nothing but repo-service speaks the object store) and declares its
+// versioning policy at creation. The archive's counters are ledger state,
+// maintained in the same transaction as the mutations they describe —
+// what the store claims, the store can prove from its own rows.
+// ============================================================================
+
+// How an archive treats superseded entry states.
+enum VersioningPolicy {
+  // Unset; never a stored policy.
+  VERSIONING_POLICY_UNSPECIFIED = 0;
+  // One retained state per entry: saves bump the version counter and
+  // superseded objects are deleted as part of the save's settling. The
+  // counter still says how many times the entry changed; the bytes do not
+  // accumulate.
+  VERSIONING_POLICY_NONE = 1;
+  // Every save lands a new immutable version. Old versions list, read,
+  // and prune explicitly; nothing is silently rewritten.
+  VERSIONING_POLICY_RETAINED = 2;
+}
+
+// One account-scoped named collection of entries.
+message Archive {
+  // Archive name, unique within the account. A slug because it appears in
+  // object keys.
+  string name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 100}
+    }
+  ];
+  // Owning account (tenant root).
+  string account_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // The drive whose backing store holds this archive's objects.
+  string drive_name = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // How superseded entry states are treated.
+  VersioningPolicy versioning = 4;
+  // Human-readable description of what the archive holds.
+  string description = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 2000}
+      ignore_if_zero: true
+    }
+  ];
+  // When the archive was created.
+  google.protobuf.Timestamp created_at = 6;
+  // Extensible key-value labels (extension-metadata map — repository
+  // field-99 convention).
+  map<string, string> metadata = 99;
+}
+
+// Per-rendition-name usage inside one archive.
+message RenditionStats {
+  // The rendition name the counters describe.
+  string rendition_name = 1;
+  // Number of stored objects under this name (all retained versions).
+  int64 object_count = 2;
+  // Total bytes of those objects.
+  int64 total_bytes = 3;
+}
+
+// One archive's exact ledger-maintained counters.
+message ArchiveStats {
+  // The archive the counters describe.
+  string archive = 1;
+  // Owning account.
+  string account_id = 2;
+  // Number of live entries.
+  int64 entries = 3;
+  // Number of retained versions across all entries.
+  int64 versions = 4;
+  // Bytes of every retained rendition object (deduplicated: an object
+  // shared by several versions counts once).
+  int64 retained_bytes = 5;
+  // Bytes of the current versions only — the logical size of the archive
+  // as a reader sees it.
+  int64 current_bytes = 6;
+  // Per-rendition-name breakdown of the retained objects.
+  repeated RenditionStats renditions = 7;
+  // How the archive's entries classify, one exact count per state.
+  repeated ClassificationStateCount classification_states = 8;
+}
+
+// One classification state's exact entry count.
+message ClassificationStateCount {
+  // The state the count describes.
+  ai.protomolt.proto.asset.v1.ClassificationState state = 1;
+  // Number of live entries in that state.
+  int64 count = 2;
+}

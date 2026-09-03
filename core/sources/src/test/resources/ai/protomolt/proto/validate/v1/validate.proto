@@ -1,0 +1,358 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.validate.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.validate";
+option java_outer_classname = "ValidateProto";
+
+import "google/protobuf/descriptor.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Pipestream protobuf validation — CEL-first, no Buf CLI / buf.validate dependency.
+// Standard constraints are evaluated in-process; custom rules use CEL with `this`.
+//
+// Presence semantics: standard rules run only when the field is present
+// (proto3 semantics: non-zero / non-empty, or hasField for explicit presence).
+// Repeated and map fields are the exception — collection rules (min_items,
+// min_pairs, …) also apply when the collection is empty.
+
+// One custom CEL rule attached to a field or message.
+message CelRule {
+  // Stable id unique within the field or message.
+  string id = 1;
+  // Human-readable failure message (optional; CEL string results override).
+  string message = 2;
+  // CEL expression returning bool (true = ok) or string (non-empty = failure).
+  string expression = 3;
+}
+
+// Standard constraints for string fields.
+message StringRules {
+  // Length rules count Unicode code points, not UTF-16 units or bytes.
+  optional int64 min_len = 1;
+  // Maximum length in Unicode code points (see min_len).
+  optional int64 max_len = 2;
+  // RE2-style pattern; matches anywhere in the value (find, not full match).
+  optional string pattern = 3;
+  // Value must be a valid email address (syntactic check only).
+  optional bool email = 4;
+  // Exact value the field must equal.
+  optional string const = 5;
+  // Exact length in code points.
+  optional int64 len = 6;
+  // Value must start with this string.
+  optional string prefix = 7;
+  // Value must end with this string.
+  optional string suffix = 8;
+  // Value must contain this substring.
+  optional string contains = 9;
+  // Value must not contain this substring.
+  optional string not_contains = 10;
+  // Value must equal one of these.
+  repeated string in = 11;
+  // Value must equal none of these.
+  repeated string not_in = 12;
+  // Well-known formats.
+  optional bool uuid = 13;
+  // Value must be a valid hostname (RFC 1034/1123, syntactic only).
+  optional bool hostname = 14;
+  // Absolute URI (has a scheme).
+  optional bool uri = 15;
+  // Value must be a valid IPv4 or IPv6 address.
+  optional bool ip = 16;
+  // Value must be a valid IPv4 address.
+  optional bool ipv4 = 17;
+  // Value must be a valid IPv6 address.
+  optional bool ipv6 = 18;
+  // Value must be an ISO-8601 calendar date (2026-07-01), strictly resolved.
+  optional bool date = 19;
+  // Value must be an RFC 3339 date-time with an offset.
+  optional bool date_time = 20;
+  // Value must be an IANA media type per the RFC 6838 grammar (type/subtype).
+  optional bool mime_type = 21;
+  // Value must be a well-formed BCP 47 language tag.
+  optional bool language_tag = 22;
+  // Value must be an ISO 4217 currency code.
+  optional bool currency_code = 23;
+  // Value must be a telephone number (E.164-shaped, display-tolerant).
+  optional bool phone_number = 24;
+  // Value must be a lowercase hex SHA-256 digest (64 chars).
+  optional bool sha256_hex = 25;
+  // Value must be a lowercase hex SHA-1 digest (40 chars).
+  optional bool sha1_hex = 26;
+  // Value must be lowercase hexadecimal (compose with len for sized ids).
+  optional bool hex = 27;
+  // Value must be base64 (standard alphabet, correct padding).
+  optional bool base64 = 28;
+}
+
+// Standard constraints for int32 fields.
+message Int32Rules {
+  // Value must be greater than this.
+  optional int32 gt = 1;
+  // Value must be greater than or equal to this.
+  optional int32 gte = 2;
+  // Value must be less than this.
+  optional int32 lt = 3;
+  // Value must be less than or equal to this.
+  optional int32 lte = 4;
+  // Exact value the field must equal.
+  optional int32 const = 5;
+  // Value must equal one of these.
+  repeated int32 in = 6;
+  // Value must equal none of these.
+  repeated int32 not_in = 7;
+}
+
+// Standard constraints for int64 fields.
+message Int64Rules {
+  // Value must be greater than this.
+  optional int64 gt = 1;
+  // Value must be greater than or equal to this.
+  optional int64 gte = 2;
+  // Value must be less than this.
+  optional int64 lt = 3;
+  // Value must be less than or equal to this.
+  optional int64 lte = 4;
+  // Exact value the field must equal.
+  optional int64 const = 5;
+  // Value must equal one of these.
+  repeated int64 in = 6;
+  // Value must equal none of these.
+  repeated int64 not_in = 7;
+}
+
+// Standard constraints for uint32 fields.
+message UInt32Rules {
+  // Value must be greater than this.
+  optional uint32 gt = 1;
+  // Value must be greater than or equal to this.
+  optional uint32 gte = 2;
+  // Value must be less than this.
+  optional uint32 lt = 3;
+  // Value must be less than or equal to this.
+  optional uint32 lte = 4;
+  // Exact value the field must equal.
+  optional uint32 const = 5;
+  // Value must equal one of these.
+  repeated uint32 in = 6;
+  // Value must equal none of these.
+  repeated uint32 not_in = 7;
+}
+
+// Standard constraints for uint64 fields.
+message UInt64Rules {
+  // Value must be greater than this.
+  optional uint64 gt = 1;
+  // Value must be greater than or equal to this.
+  optional uint64 gte = 2;
+  // Value must be less than this.
+  optional uint64 lt = 3;
+  // Value must be less than or equal to this.
+  optional uint64 lte = 4;
+  // Exact value the field must equal.
+  optional uint64 const = 5;
+  // Value must equal one of these.
+  repeated uint64 in = 6;
+  // Value must equal none of these.
+  repeated uint64 not_in = 7;
+}
+
+// Standard constraints for double fields.
+message DoubleRules {
+  // Value must be greater than this.
+  optional double gt = 1;
+  // Value must be greater than or equal to this.
+  optional double gte = 2;
+  // Value must be less than this.
+  optional double lt = 3;
+  // Value must be less than or equal to this.
+  optional double lte = 4;
+  // Exact value the field must equal.
+  optional double const = 5;
+  // Value must equal one of these.
+  repeated double in = 6;
+  // Value must equal none of these.
+  repeated double not_in = 7;
+  // Value must not be NaN or infinite.
+  optional bool finite = 8;
+}
+
+// Standard constraints for float fields.
+message FloatRules {
+  // Value must be greater than this.
+  optional float gt = 1;
+  // Value must be greater than or equal to this.
+  optional float gte = 2;
+  // Value must be less than this.
+  optional float lt = 3;
+  // Value must be less than or equal to this.
+  optional float lte = 4;
+  // Exact value the field must equal.
+  optional float const = 5;
+  // Value must equal one of these.
+  repeated float in = 6;
+  // Value must equal none of these.
+  repeated float not_in = 7;
+  // Value must not be NaN or infinite.
+  optional bool finite = 8;
+}
+
+// Standard constraints for bool fields.
+message BoolRules {
+  // Exact value the field must equal.
+  optional bool const = 1;
+}
+
+// Standard constraints for bytes fields.
+message BytesRules {
+  // Length rules count bytes.
+  optional int64 len = 1;
+  // Minimum length in bytes.
+  optional int64 min_len = 2;
+  // Maximum length in bytes.
+  optional int64 max_len = 3;
+  // Value must start with this byte sequence.
+  optional bytes prefix = 4;
+  // Value must end with this byte sequence.
+  optional bytes suffix = 5;
+  // Value must contain this byte sequence.
+  optional bytes contains = 6;
+}
+
+// Standard constraints for enum fields, expressed over the numeric values.
+message EnumRules {
+  // Exact numeric value the field must equal.
+  optional int32 const = 1;
+  // Value must be a number declared in the enum (proto3 enums are open).
+  optional bool defined_only = 2;
+  // Value must equal one of these numbers.
+  repeated int32 in = 3;
+  // Value must equal none of these numbers.
+  repeated int32 not_in = 4;
+}
+
+// Standard constraints for repeated fields.
+message RepeatedRules {
+  // Minimum number of elements (also applies when the collection is empty).
+  optional int64 min_items = 1;
+  // Maximum number of elements.
+  optional int64 max_items = 2;
+  // Elements must be pairwise distinct.
+  optional bool unique = 3;
+  // Rules applied to every element; the element type selects which rule
+  // set inside applies (repeated/map rules inside items are ignored).
+  FieldRules items = 4;
+}
+
+// Standard constraints for map fields.
+message MapRules {
+  // Minimum number of entries (also applies when the map is empty).
+  optional int64 min_pairs = 1;
+  // Maximum number of entries.
+  optional int64 max_pairs = 2;
+  // Rules applied to every key.
+  FieldRules keys = 3;
+  // Rules applied to every value.
+  FieldRules values = 4;
+}
+
+// Standard constraints for google.protobuf.Timestamp fields.
+message TimestampRules {
+  // Value must be after this instant.
+  google.protobuf.Timestamp gt = 1;
+  // Value must be at or after this instant.
+  google.protobuf.Timestamp gte = 2;
+  // Value must be before this instant.
+  google.protobuf.Timestamp lt = 3;
+  // Value must be at or before this instant.
+  google.protobuf.Timestamp lte = 4;
+  // Value must be in the past / future at validation time.
+  optional bool lt_now = 5;
+  // Value must be in the future at validation time.
+  optional bool gt_now = 6;
+  // Value must be within this duration of validation time (past or future).
+  google.protobuf.Duration within = 7;
+}
+
+// Standard constraints for google.protobuf.Duration fields.
+message DurationRules {
+  // Value must be longer than this duration.
+  google.protobuf.Duration gt = 1;
+  // Value must be at least this duration.
+  google.protobuf.Duration gte = 2;
+  // Value must be shorter than this duration.
+  google.protobuf.Duration lt = 3;
+  // Value must be at most this duration.
+  google.protobuf.Duration lte = 4;
+}
+
+// All constraints for one field, attached via the `field` extension below.
+// The field's own type selects which rule set applies; rule sets for other
+// types are ignored.
+message FieldRules {
+  // When true, the field must be present / non-empty (proto3 semantics).
+  bool required = 1;
+  // Constraints for string fields.
+  StringRules string = 2;
+  // Also applies to sint32/sfixed32 fields.
+  Int32Rules int32 = 3;
+  // Also applies to sint64/sfixed64 fields.
+  Int64Rules int64 = 4;
+  // Constraints for double fields.
+  DoubleRules double = 5;
+  // Constraints for float fields.
+  FloatRules float = 6;
+  // Also applies to fixed32 fields.
+  UInt32Rules uint32 = 7;
+  // Also applies to fixed64 fields.
+  UInt64Rules uint64 = 8;
+  // Constraints for bool fields.
+  BoolRules bool = 9;
+  // Custom CEL rules evaluated with `this` bound to the field value.
+  repeated CelRule cel = 10;
+  // Constraints for bytes fields.
+  BytesRules bytes = 11;
+  // Constraints for enum fields.
+  EnumRules enum = 12;
+  // Constraints for repeated fields.
+  RepeatedRules repeated = 13;
+  // Constraints for map fields.
+  MapRules map = 14;
+  // Constraints for google.protobuf.Timestamp fields.
+  TimestampRules timestamp = 15;
+  // Constraints for google.protobuf.Duration fields.
+  DurationRules duration = 16;
+  // When true, every rule on this field is skipped when the value is the
+  // type's zero value (empty string, 0, false): "absent or valid", the
+  // declared form of the ^$|... regex idiom. Fields with explicit
+  // presence (optional, message, oneof) already skip when unset; this is
+  // for implicit-presence scalars where empty is a legal non-answer.
+  bool ignore_if_zero = 17;
+}
+
+// Constraints attached to a message as a whole.
+message MessageRules {
+  // Custom CEL rules evaluated with `this` bound to the message.
+  repeated CelRule cel = 1;
+  // Name of a singular boolean field of this message. When that field is true on the message
+  // under validation, every field-level rule is skipped (including recursion into nested
+  // messages); message-level CEL rules still evaluate. This is the escape channel for
+  // producer-declared incompleteness: a filler that cannot satisfy the form declares the
+  // flag instead of fabricating values, and the message CEL rules (e.g. requiring a reason
+  // when the flag is set) police the declaration itself. Naming a field that does not exist
+  // or is not a singular boolean is a schema error and fails rule compilation.
+  string skip_when = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  // Per-field validation rules, declared on the field itself.
+  FieldRules field = 59100481;
+}
+
+extend google.protobuf.MessageOptions {
+  // Message-level validation rules, declared on the message itself.
+  MessageRules message = 59100482;
+}

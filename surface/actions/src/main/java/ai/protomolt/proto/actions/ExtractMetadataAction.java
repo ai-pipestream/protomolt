@@ -21,7 +21,7 @@ final class ExtractMetadataAction implements ProtoAction {
 
     @Override
     public String description() {
-        return "Extracts the descriptive metadata (ai.pipestream.proto.meta.v1 options: "
+        return "Extracts the descriptive metadata (ai.protomolt.proto.meta.v1 options: "
                 + "description, owner, sensitivity, display name, labels) declared on a protobuf "
                 + "message and its fields as a flat bag keyed 'message.*' and 'field.<name>.*'.";
     }

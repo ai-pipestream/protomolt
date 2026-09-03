@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Binds an {@link ActionCatalog} as the {@code ai.pipestream.proto.grpc.service.v1.ProtoMoltService}
+ * Binds an {@link ActionCatalog} as the {@code ai.protomolt.proto.grpc.service.v1.ProtoMoltService}
  * gRPC service: one unary handler per verb over {@link DynamicMessage}s, with the compiled
  * file descriptor attached so server reflection lists the service like any stub-generated one.
  */

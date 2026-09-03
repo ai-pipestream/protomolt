@@ -102,7 +102,7 @@ class ParsePlaygroundServerTest {
         // rendered through the registry (fields visible, not base64).
         String last = lines.getLast();
         assertThat(last).contains("\"document\"");
-        assertThat(last).contains("ai.pipestream.proto.parse.document.v1.Document");
+        assertThat(last).contains("ai.protomolt.proto.parse.document.v1.Document");
         assertThat(last).contains("The first paragraph.");
     }
 

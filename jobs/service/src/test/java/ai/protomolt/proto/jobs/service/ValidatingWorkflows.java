@@ -35,22 +35,22 @@ import java.util.Base64;
 public final class ValidatingWorkflows {
 
     private static final String VALIDATE_PROTO =
-            "ai/pipestream/proto/validate/v1/validate.proto";
+            "ai/protomolt/proto/validate/v1/validate.proto";
 
     /** The fixture proto. */
     public static final String PROTO = """
             syntax = "proto3";
             package jobs.guard;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Text { string text = 1; }
             message Tokens {
-              string tag = 1 [(ai.pipestream.proto.validate.v1.field) = {
+              string tag = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 required: true
                 string: {min_len: 3}
               }];
             }
             message Review {
-              string notes = 1 [(ai.pipestream.proto.validate.v1.field) = {
+              string notes = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 required: true
                 string: {min_len: 3}
               }];

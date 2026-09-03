@@ -22,7 +22,7 @@ class CatalogIndexingHintSourceTest {
         FieldDescriptor title = field("title");
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
                 .put("title", ResolvedFieldHint.of(IndexFieldKind.TEXT))
-                .put("ai.pipestream.test.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
+                .put("ai.protomolt.test.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
 
         assertThat(catalog.resolve(title)).get()
                 .extracting(ResolvedFieldHint::type)
@@ -43,7 +43,7 @@ class CatalogIndexingHintSourceTest {
     @Test
     void qualifiedKeyForAnotherMessageDoesNotApply() throws Exception {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
-                .put("ai.pipestream.other.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
+                .put("ai.protomolt.other.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
 
         assertThat(catalog.resolve(field("title"))).isEmpty();
     }
@@ -51,7 +51,7 @@ class CatalogIndexingHintSourceTest {
     @Test
     void unknownFieldResolvesEmpty() throws Exception {
         CatalogIndexingHintSource catalog = new CatalogIndexingHintSource()
-                .put("ai.pipestream.test.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
+                .put("ai.protomolt.test.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
 
         assertThat(catalog.resolve(field("body"))).isEmpty();
     }
@@ -59,9 +59,9 @@ class CatalogIndexingHintSourceTest {
     @Test
     void twoArgumentPutComposesTheSameKeyAsTheDottedOne() throws Exception {
         CatalogIndexingHintSource composed = new CatalogIndexingHintSource()
-                .put("ai.pipestream.test.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
+                .put("ai.protomolt.test.Doc", "title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
         CatalogIndexingHintSource dotted = new CatalogIndexingHintSource()
-                .put("ai.pipestream.test.Doc.title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
+                .put("ai.protomolt.test.Doc.title", ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
 
         assertThat(composed.resolve(field("title"))).isEqualTo(dotted.resolve(field("title")));
         assertThat(dotted.resolve(field("title"))).get()
@@ -76,7 +76,7 @@ class CatalogIndexingHintSourceTest {
     private static Descriptor descriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("catalog_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")

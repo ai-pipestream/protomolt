@@ -50,7 +50,7 @@ class McpScopeTest {
         ObjectNode listed = session.handle(request(2, "tools/list", null)).orElseThrow();
         assertThat(listed.path("result").path("tools")).hasSize(17);
         assertThat(listed.path("result").path("_meta")
-                .path("ai.pipestream.protomolt/toolCount").asInt()).isEqualTo(17);
+                .path("ai.protomolt/toolCount").asInt()).isEqualTo(17);
     }
 
     @Test
@@ -78,6 +78,6 @@ class McpScopeTest {
         initialize.put("protocolVersion", "2025-06-18");
         ObjectNode result = session.handle(request(1, "initialize", initialize)).orElseThrow();
         assertThat(result.path("result").path("_meta")
-                .path("ai.pipestream.protomolt/toolCount").asInt()).isEqualTo(17);
+                .path("ai.protomolt/toolCount").asInt()).isEqualTo(17);
     }
 }

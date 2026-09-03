@@ -157,8 +157,8 @@ class DocumentEventFactoryTest {
         List<String> files = set.getFileList().stream().map(f -> f.getName()).toList();
 
         assertThat(files).contains(
-                "ai/pipestream/proto/repo/v1/document_events.proto",
-                "ai/pipestream/proto/repo/v1/address.proto",
+                "ai/protomolt/proto/repo/v1/document_events.proto",
+                "ai/protomolt/proto/repo/v1/address.proto",
                 "google/protobuf/timestamp.proto");
     }
 

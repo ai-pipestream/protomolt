@@ -50,7 +50,7 @@ import java.util.OptionalLong;
 
 /**
  * Built-in {@link ValidationRuleSource} reading the Pipestream {@code validate.v1}
- * options — {@code (ai.pipestream.proto.validate.v1.field)} and {@code (…​.message)} —
+ * options — {@code (ai.protomolt.proto.validate.v1.field)} and {@code (…​.message)} —
  * off protobuf descriptors and translating them into the neutral rule model.
  */
 public final class AiPipestreamRuleSource implements ValidationRuleSource {
@@ -83,7 +83,7 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
     }
 
     /**
-     * The {@code (ai.pipestream.proto.validate.v1.field)} rules on {@code options}, or null when
+     * The {@code (ai.protomolt.proto.validate.v1.field)} rules on {@code options}, or null when
      * absent. Descriptors linked without this extension registered carry the annotation only as
      * an unknown field; reparse the options against a knowing registry rather than silently
      * dropping rules — a validator that cannot see a schema's rules pronounces every message
@@ -97,11 +97,11 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
             return null;
         }
         return reparse(options, DescriptorProtos.FieldOptions::parseFrom,
-                "(ai.pipestream.proto.validate.v1.field)")
+                "(ai.protomolt.proto.validate.v1.field)")
                 .getExtension(ValidateProto.field);
     }
 
-    /** As {@link #fieldRules} for the {@code (ai.pipestream.proto.validate.v1.message)} extension. */
+    /** As {@link #fieldRules} for the {@code (ai.protomolt.proto.validate.v1.message)} extension. */
     private static MessageRules messageRules(DescriptorProtos.MessageOptions options) {
         if (options.hasExtension(ValidateProto.message)) {
             return options.getExtension(ValidateProto.message);
@@ -110,7 +110,7 @@ public final class AiPipestreamRuleSource implements ValidationRuleSource {
             return null;
         }
         return reparse(options, DescriptorProtos.MessageOptions::parseFrom,
-                "(ai.pipestream.proto.validate.v1.message)")
+                "(ai.protomolt.proto.validate.v1.message)")
                 .getExtension(ValidateProto.message);
     }
 

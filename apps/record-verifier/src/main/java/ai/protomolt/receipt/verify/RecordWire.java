@@ -10,7 +10,7 @@ import java.util.Set;
 /**
  * The receipt wire contract, restated by hand: typed models and strict parsers for the
  * signed container, the manifest, and the trust snapshot, matching
- * {@code ai/pipestream/proto/receipt/v1/receipt.proto} field for field. A schema change
+ * {@code ai/protomolt/proto/receipt/v1/receipt.proto} field for field. A schema change
  * there is a change here — the conformance corpus cross-check is what keeps the two honest.
  */
 final class RecordWire {

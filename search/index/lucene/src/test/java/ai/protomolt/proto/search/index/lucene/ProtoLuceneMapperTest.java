@@ -1008,7 +1008,7 @@ class ProtoLuceneMapperTest {
         assertThatThrownBy(() -> lucene.map(message, mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
-                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
+                .hasMessageContaining("type.googleapis.com/ai.protomolt.test.MissingType");
     }
 
     @Test
@@ -1043,7 +1043,7 @@ class ProtoLuceneMapperTest {
             FileDescriptor file = FileDescriptor.buildFrom(
                     FileDescriptorProto.newBuilder()
                             .setName("any_lucene.proto")
-                            .setPackage("ai.pipestream.test")
+                            .setPackage("ai.protomolt.test")
                             .setSyntax("proto3")
                             .addDependency("google/protobuf/any.proto")
                             .addMessageType(DescriptorProto.newBuilder()
@@ -1101,7 +1101,7 @@ class ProtoLuceneMapperTest {
             return DynamicMessage.newBuilder(envelope)
                     .setField(envelope.findFieldByName("doc_id"), "doc-1")
                     .setField(envelope.findFieldByName("payload"), Any.newBuilder()
-                            .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                            .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                             .setValue(com.google.protobuf.ByteString.copyFromUtf8("x"))
                             .build())
                     .build();
@@ -1170,7 +1170,7 @@ class ProtoLuceneMapperTest {
             String lowerName, String upperName, FieldDescriptorProto.Type boundType) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("range_" + lowerName + "_" + boundType.name().toLowerCase() + ".proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Bounds")
@@ -1190,7 +1190,7 @@ class ProtoLuceneMapperTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RangeDoc");
@@ -1199,7 +1199,7 @@ class ProtoLuceneMapperTest {
     private static Descriptor timestampRangeDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("ts_range.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -1222,7 +1222,7 @@ class ProtoLuceneMapperTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[]{TimestampProto.getDescriptor()})
@@ -1232,7 +1232,7 @@ class ProtoLuceneMapperTest {
     private static Descriptor singularFieldDescriptor(String fieldName, FieldDescriptorProto.Type type) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName(fieldName + "_singular.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")
@@ -1248,7 +1248,7 @@ class ProtoLuceneMapperTest {
     private static Descriptor timestampDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("ts_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -1267,7 +1267,7 @@ class ProtoLuceneMapperTest {
     private static Descriptor nestedDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("nested_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Inner")
@@ -1282,7 +1282,7 @@ class ProtoLuceneMapperTest {
                                 .setName("inner")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Inner")
+                                .setTypeName(".ai.protomolt.test.Inner")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("title")
@@ -1296,7 +1296,7 @@ class ProtoLuceneMapperTest {
     private static Descriptor mapFieldDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("map_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("MapDoc")
@@ -1318,7 +1318,7 @@ class ProtoLuceneMapperTest {
                                 .setName("labels")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.MapDoc.LabelsEntry")
+                                .setTypeName(".ai.protomolt.test.MapDoc.LabelsEntry")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("MapDoc");
@@ -1327,7 +1327,7 @@ class ProtoLuceneMapperTest {
     private static Descriptor repeatedFieldDescriptor(String fieldName, FieldDescriptorProto.Type type) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName(fieldName + ".proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")

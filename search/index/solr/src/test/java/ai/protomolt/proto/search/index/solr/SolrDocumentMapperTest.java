@@ -347,7 +347,7 @@ class SolrDocumentMapperTest {
         assertThatThrownBy(() -> solr.map(env.unknownType(), mapping))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload")
-                .hasMessageContaining("type.googleapis.com/ai.pipestream.test.MissingType");
+                .hasMessageContaining("type.googleapis.com/ai.protomolt.test.MissingType");
     }
 
     @Test
@@ -376,7 +376,7 @@ class SolrDocumentMapperTest {
             FileDescriptor file = FileDescriptor.buildFrom(
                     FileDescriptorProto.newBuilder()
                             .setName("any_solr.proto")
-                            .setPackage("ai.pipestream.test")
+                            .setPackage("ai.protomolt.test")
                             .setSyntax("proto3")
                             .addDependency("google/protobuf/any.proto")
                             .addMessageType(DescriptorProto.newBuilder()
@@ -434,7 +434,7 @@ class SolrDocumentMapperTest {
             return DynamicMessage.newBuilder(envelope)
                     .setField(envelope.findFieldByName("doc_id"), "doc-1")
                     .setField(envelope.findFieldByName("payload"), Any.newBuilder()
-                            .setTypeUrl("type.googleapis.com/ai.pipestream.test.MissingType")
+                            .setTypeUrl("type.googleapis.com/ai.protomolt.test.MissingType")
                             .setValue(ByteString.copyFromUtf8("x"))
                             .build())
                     .build();
@@ -500,7 +500,7 @@ class SolrDocumentMapperTest {
     private static Descriptor mapFieldDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("map_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("MapDoc")
@@ -522,7 +522,7 @@ class SolrDocumentMapperTest {
                                 .setName("labels")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.MapDoc.LabelsEntry")
+                                .setTypeName(".ai.protomolt.test.MapDoc.LabelsEntry")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("MapDoc");
@@ -532,7 +532,7 @@ class SolrDocumentMapperTest {
             String lowerName, String upperName, FieldDescriptorProto.Type boundType) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("range_" + lowerName + "_" + boundType.name().toLowerCase() + ".proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Bounds")
@@ -552,7 +552,7 @@ class SolrDocumentMapperTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RangeDoc");
@@ -561,7 +561,7 @@ class SolrDocumentMapperTest {
     private static Descriptor timestampRangeDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("ts_range.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -584,7 +584,7 @@ class SolrDocumentMapperTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(
@@ -595,7 +595,7 @@ class SolrDocumentMapperTest {
     private static Descriptor boolDocDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("bool_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("BoolDoc")
@@ -611,7 +611,7 @@ class SolrDocumentMapperTest {
     private static Descriptor timestampDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("ts_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -631,7 +631,7 @@ class SolrDocumentMapperTest {
     private static Descriptor wktDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("wkt_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/duration.proto")
                 .addDependency("google/protobuf/wrappers.proto")
@@ -665,7 +665,7 @@ class SolrDocumentMapperTest {
     private static Descriptor docDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addEnumType(EnumDescriptorProto.newBuilder()
                         .setName("Color")
@@ -685,13 +685,13 @@ class SolrDocumentMapperTest {
                                 .setName("colors")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_ENUM)
-                                .setTypeName(".ai.pipestream.test.Color")
+                                .setTypeName(".ai.protomolt.test.Color")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED))
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("inner")
                                 .setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Inner")
+                                .setTypeName(".ai.protomolt.test.Inner")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Doc");

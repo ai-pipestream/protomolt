@@ -86,10 +86,10 @@ class SchemaInferrerTest {
 
         // The emitted source recompiles (the annotation pulls in metadata.proto)...
         String metadataProto = new String(getClass().getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/meta/v1/metadata.proto")
+                .getResourceAsStream("ai/protomolt/proto/meta/v1/metadata.proto")
                 .readAllBytes());
         var compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/meta/v1/metadata.proto", metadataProto, "meta")
+                .add("ai/protomolt/proto/meta/v1/metadata.proto", metadataProto, "meta")
                 .add(shape.file().getName(), shape.protoSource(), "inferred").build());
         // ...and although Wire drops the descriptor's own json_name from source, the
         // meta.v1 annotation survives and materializes it back — the full text
@@ -103,7 +103,7 @@ class SchemaInferrerTest {
                 .isEqualTo("user-name");
         assertThat(shape.protoSource())
                 .contains("json_name = \"user-name\"")
-                .contains("(ai.pipestream.proto.meta.v1.field) = {json_name: \"user-name\"}");
+                .contains("(ai.protomolt.proto.meta.v1.field) = {json_name: \"user-name\"}");
 
         // The very sample it was inferred from parses into the inferred type.
         DynamicMessage.Builder message = DynamicMessage.newBuilder(shape.type());

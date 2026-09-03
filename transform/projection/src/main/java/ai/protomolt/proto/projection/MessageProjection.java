@@ -35,8 +35,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * descriptor options on the target's own {@code .proto} file.
  *
  * <p>The target message declares its sources with
- * {@code option (ai.pipestream.proto.projection.v1.sources)} and each mapped
- * field carries {@code (ai.pipestream.proto.projection.v1.from)} with one of
+ * {@code option (ai.protomolt.proto.projection.v1.sources)} and each mapped
+ * field carries {@code (ai.protomolt.proto.projection.v1.from)} with one of
  * three provenance kinds: candidate source paths (first present value wins), a
  * CEL expression (evaluated with the source bound as {@code source}), or a
  * literal constant. A field may also carry {@code (default_from)}; that rule is

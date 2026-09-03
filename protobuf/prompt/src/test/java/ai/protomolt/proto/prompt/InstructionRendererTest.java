@@ -156,8 +156,8 @@ class InstructionRendererTest {
         assertThat(render())
                 .contains("\"tallies\" (map<string, int32>)")
                 .contains("\"years\" (repeated int32)")
-                .contains("\"nested\" (ai.pipestream.proto.prompt.testdata.v1.DecoratedOpinion)")
-                .contains("\"settledPosture\" (ai.pipestream.proto.prompt.testdata.v1.Posture)");
+                .contains("\"nested\" (ai.protomolt.proto.prompt.testdata.v1.DecoratedOpinion)")
+                .contains("\"settledPosture\" (ai.protomolt.proto.prompt.testdata.v1.Posture)");
     }
 
     @Test

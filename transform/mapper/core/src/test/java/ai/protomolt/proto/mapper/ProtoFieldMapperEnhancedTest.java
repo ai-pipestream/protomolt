@@ -356,7 +356,7 @@ public class ProtoFieldMapperEnhancedTest {
                         .setType(FieldDescriptorProto.Type.TYPE_STRING))
                 .addField(FieldDescriptorProto.newBuilder()
                         .setName("search_metadata").setNumber(2)
-                        .setTypeName(".ai.pipestream.test.SearchMetadata")
+                        .setTypeName(".ai.protomolt.test.SearchMetadata")
                         .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                 .addField(FieldDescriptorProto.newBuilder()
                         .setName("structured_data").setNumber(3)
@@ -366,7 +366,7 @@ public class ProtoFieldMapperEnhancedTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_document.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addDependency(timestampFd.getFullName())
                 .addDependency(structFd.getFullName())
                 .addDependency(anyFd.getFullName())

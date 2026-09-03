@@ -36,7 +36,7 @@ public final class AcpGrpcLive {
         String target = args.length > 1 && !args[1].isBlank() ? args[1] : "serve:9090";
         String method = args.length > 2 && !args[2].isBlank()
                 ? args[2]
-                : "ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes";
+                : "ai.protomolt.proto.grpc.service.v1.ProtoMoltService/ListTypes";
         String[] command = agentCommand.trim().split("\\s+");
 
         System.out.println("acp-grpc-live: agent   = " + agentCommand);

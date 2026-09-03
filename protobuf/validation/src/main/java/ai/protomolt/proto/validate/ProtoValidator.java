@@ -79,7 +79,7 @@ public final class ProtoValidator {
 
     private static final String TIMESTAMP_TYPE = "google.protobuf.Timestamp";
     private static final String DURATION_TYPE = "google.protobuf.Duration";
-    private static final String TREE_PATH_TYPE = "ai.pipestream.proto.types.v1.TreePath";
+    private static final String TREE_PATH_TYPE = "ai.protomolt.proto.types.v1.TreePath";
 
     /** Maximum message nesting the recursive walk follows before failing the evaluation. */
     private static final int MAX_NESTING_DEPTH = 500;

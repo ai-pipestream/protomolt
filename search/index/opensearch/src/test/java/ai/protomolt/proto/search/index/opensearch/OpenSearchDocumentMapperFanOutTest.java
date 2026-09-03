@@ -142,10 +142,10 @@ class OpenSearchDocumentMapperFanOutTest {
         }
 
         private static FileDescriptor file() throws Exception {
-            String pkg = ".ai.pipestream.test.osfanout";
+            String pkg = ".ai.protomolt.test.osfanout";
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("opensearch_fanout.proto")
-                    .setPackage("ai.pipestream.test.osfanout")
+                    .setPackage("ai.protomolt.test.osfanout")
                     .setSyntax("proto3")
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Inner")

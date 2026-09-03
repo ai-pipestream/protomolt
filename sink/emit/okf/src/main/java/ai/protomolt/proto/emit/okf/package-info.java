@@ -3,7 +3,7 @@
  *
  * <p>{@link OkfRenderer} converts a set of file descriptors into markdown concept documents with
  * YAML frontmatter — one per message, enum, and service — cross-linked into the knowledge graph
- * agents and data catalogs consume. The {@code ai.pipestream.proto.meta.v1} annotations carried by
+ * agents and data catalogs consume. The {@code ai.protomolt.proto.meta.v1} annotations carried by
  * the contract supply frontmatter and schema-table columns, so descriptions and sensitivity
  * classes come from the schema rather than a separate document.
  * {@link OkfRegistryBundles} renders a whole

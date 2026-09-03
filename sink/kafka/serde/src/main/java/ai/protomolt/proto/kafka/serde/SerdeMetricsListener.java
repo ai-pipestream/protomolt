@@ -67,7 +67,7 @@ public interface SerdeMetricsListener {
 
     /**
      * A record measured against the quality dimensions its schema declares
-     * ({@code ai.pipestream.proto.quality.v1}). Reported whether or not the record proceeds.
+     * ({@code ai.protomolt.proto.quality.v1}). Reported whether or not the record proceeds.
      *
      * @param composite  weighted average of the scored dimensions, in {@code [0, 1]}
      * @param dimensions score per dimension id; ids are the schema's own, so cardinality is

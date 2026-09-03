@@ -31,9 +31,9 @@ class SerdeMapperTest {
     private static final String PROTO = """
             syntax = "proto3";
             package serde.map.v1;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Event {
-              string id = 1 [(ai.pipestream.proto.validate.v1.field).string.min_len = 2];
+              string id = 1 [(ai.protomolt.proto.validate.v1.field).string.min_len = 2];
               string legacy_name = 2;
               string display_name = 3;
               string scratch = 4;
@@ -47,10 +47,10 @@ class SerdeMapperTest {
     @BeforeAll
     static void compile() throws Exception {
         String validateProto = new String(SerdeMapperTest.class.getClassLoader()
-                .getResourceAsStream("ai/pipestream/proto/validate/v1/validate.proto")
+                .getResourceAsStream("ai/protomolt/proto/validate/v1/validate.proto")
                 .readAllBytes());
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/validate/v1/validate.proto", validateProto, "test")
+                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("serde/map/v1/event.proto", PROTO, "test")
                 .build());
         descriptorSetBase64 = Base64.getEncoder()

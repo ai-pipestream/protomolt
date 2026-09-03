@@ -20,7 +20,7 @@ final class MeshFixtures {
             .setSeconds(1_700_000_000L).build();
     static final Timestamp DEADLINE = Timestamp.newBuilder()
             .setSeconds(1_700_000_600L).build();
-    static final String TYPE_NAME = "ai.pipestream.proto.mesh.test.v1.TestDocument";
+    static final String TYPE_NAME = "ai.protomolt.proto.mesh.test.v1.TestDocument";
 
     private MeshFixtures() {
     }

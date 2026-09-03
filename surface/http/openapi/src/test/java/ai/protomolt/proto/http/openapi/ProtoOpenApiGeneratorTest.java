@@ -222,7 +222,7 @@ class ProtoOpenApiGeneratorTest {
         Map<String, Object> schemas = schemasOf(new ProtoOpenApiGenerator().generate(wktRegistry()));
 
         assertThat(schemas.keySet()).noneMatch(key -> key.endsWith("Entry"));
-        Map<String, Object> counts = propertyOf(schemas, "ai_pipestream_test_WktDoc", "counts");
+        Map<String, Object> counts = propertyOf(schemas, "ai_protomolt_test_WktDoc", "counts");
         assertThat(counts).containsEntry("type", "object");
         @SuppressWarnings("unchecked")
         Map<String, Object> values = (Map<String, Object>) counts.get("additionalProperties");
@@ -235,51 +235,51 @@ class ProtoOpenApiGeneratorTest {
         Map<String, Object> doc = new ProtoOpenApiGenerator().generate(wktRegistry());
         Map<String, Object> schemas = schemasOf(doc);
 
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "created"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "created"))
                 .containsEntry("type", "string").containsEntry("format", "date-time");
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "ttl"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "ttl"))
                 .containsEntry("type", "string")
                 .hasEntrySatisfying("pattern", p -> assertThat((String) p).endsWith("s$"));
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "payload"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "payload"))
                 .containsEntry("type", "object").doesNotContainKey("properties");
         // google.protobuf.Value is any JSON value: the empty schema
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "dynamic")).isEmpty();
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "items"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "dynamic")).isEmpty();
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "items"))
                 .containsEntry("type", "array");
-        Map<String, Object> any = propertyOf(schemas, "ai_pipestream_test_WktDoc", "extra");
+        Map<String, Object> any = propertyOf(schemas, "ai_protomolt_test_WktDoc", "extra");
         assertThat(any).containsEntry("type", "object");
         @SuppressWarnings("unchecked")
         Map<String, Object> anyProps = (Map<String, Object>) any.get("properties");
         assertThat(anyProps).containsKey("@type");
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "mask"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "mask"))
                 .containsEntry("type", "string");
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "maybeName"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "maybeName"))
                 .containsEntry("type", "string").containsEntry("nullable", true);
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "maybeCount"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "maybeCount"))
                 .containsEntry("type", "string")
                 .containsEntry("format", "int64")
                 .containsEntry("nullable", true);
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "maybeFlag"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "maybeFlag"))
                 .containsEntry("type", "boolean").containsEntry("nullable", true);
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "maybeRatio"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "maybeRatio"))
                 .containsEntry("type", "number")
                 .containsEntry("format", "double")
                 .containsEntry("nullable", true);
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "maybeSize"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "maybeSize"))
                 .containsEntry("type", "integer")
                 .containsEntry("minimum", 0L)
                 .containsEntry("nullable", true);
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "maybeBlob"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "maybeBlob"))
                 .containsEntry("type", "string")
                 .containsEntry("format", "byte")
                 .containsEntry("nullable", true);
         // JsonFormat prints NullValue as JSON null
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "nothing"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "nothing"))
                 .containsEntry("nullable", true);
         // scalar 64-bit integers stay strings
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "big"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "big"))
                 .containsEntry("type", "string").containsEntry("format", "int64");
-        assertThat(propertyOf(schemas, "ai_pipestream_test_WktDoc", "huge"))
+        assertThat(propertyOf(schemas, "ai_protomolt_test_WktDoc", "huge"))
                 .containsEntry("type", "string").containsEntry("format", "uint64");
         // no internal-field object schemas leak into components for well-known types
         assertThat(schemas.keySet()).noneMatch(key -> key.startsWith("google_protobuf_"));
@@ -290,7 +290,7 @@ class ProtoOpenApiGeneratorTest {
     void enumsAcceptNamesOrNumbers() throws Exception {
         Map<String, Object> schemas = schemasOf(new ProtoOpenApiGenerator().generate(wktRegistry()));
 
-        Map<String, Object> color = propertyOf(schemas, "ai_pipestream_test_WktDoc", "color");
+        Map<String, Object> color = propertyOf(schemas, "ai_protomolt_test_WktDoc", "color");
         List<Map<String, Object>> anyOf = (List<Map<String, Object>>) color.get("anyOf");
         assertThat(anyOf).hasSize(2);
         assertThat(anyOf.get(0)).containsEntry("type", "string");
@@ -383,17 +383,17 @@ class ProtoOpenApiGeneratorTest {
                 .addField(FieldDescriptorProto.newBuilder()
                         .setName("color").setNumber(number++)
                         .setType(FieldDescriptorProto.Type.TYPE_ENUM)
-                        .setTypeName(".ai.pipestream.test.Color")
+                        .setTypeName(".ai.protomolt.test.Color")
                         .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                 .addField(FieldDescriptorProto.newBuilder()
                         .setName("counts").setNumber(number)
                         .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                        .setTypeName(".ai.pipestream.test.WktDoc.CountsEntry")
+                        .setTypeName(".ai.protomolt.test.WktDoc.CountsEntry")
                         .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED));
 
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("wkt_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addDependency("google/protobuf/duration.proto")
@@ -411,8 +411,8 @@ class ProtoOpenApiGeneratorTest {
                         .setName("WktService")
                         .addMethod(MethodDescriptorProto.newBuilder()
                                 .setName("Save")
-                                .setInputType(".ai.pipestream.test.WktDoc")
-                                .setOutputType(".ai.pipestream.test.WktDoc")))
+                                .setInputType(".ai.protomolt.test.WktDoc")
+                                .setOutputType(".ai.protomolt.test.WktDoc")))
                 .build();
         FileDescriptor descriptor = FileDescriptor.buildFrom(file, new FileDescriptor[]{
                 TimestampProto.getDescriptor(),

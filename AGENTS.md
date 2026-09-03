@@ -78,7 +78,7 @@ remaining segment is kept, in order.
 | intake/service | protomolt-intake-service | ai.protomolt.proto.intake.service |
 | host/config-registry | protomolt-config-registry | ai.protomolt.proto.config.registry |
 
-Proto packages are `ai.pipestream.proto.<domain>[.<sub>].v1` and always carry
+Proto packages are `ai.protomolt.proto.<domain>[.<sub>].v1` and always carry
 the `proto` segment.
 
 A directory matches its module and package stem exactly; where singular and
@@ -124,7 +124,7 @@ These are correct as they stand. Do not "fix" them.
 | protobuf/seo | schema.org words such as Recipe | external vocabulary, exempt from ADR-001 retirement |
 | bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |
 | host/integration/quarkus | runtime module named protomolt-integration-quarkus | the Quarkus extension convention pairs artifact with artifact-deployment |
-| search/index/spi | proto package ai.pipestream.proto.index.hints.v1 | wire-frozen dialect; schemas in the wild reference the extension |
+| search/index/spi | proto package ai.protomolt.proto.index.hints.v1 | wire-frozen dialect; schemas in the wild reference the extension |
 
 The parse/document and parse/grparse protos are canonical here and conform;
 fleet repos re-vendor them from this repo, byte-identical.

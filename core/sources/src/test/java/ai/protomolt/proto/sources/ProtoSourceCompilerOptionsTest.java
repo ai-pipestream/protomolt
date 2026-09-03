@@ -42,11 +42,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ProtoSourceCompilerOptionsTest {
 
-    private static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
-    private static final String METADATA = "ai/pipestream/proto/meta/v1/metadata.proto";
-    private static final String LLM = "ai/pipestream/proto/llm/v1/llm.proto";
-    private static final String QUALITY = "ai/pipestream/proto/quality/v1/quality.proto";
-    private static final String FORM = "ai/pipestream/proto/prompt/testdata/v1/form.proto";
+    private static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
+    private static final String METADATA = "ai/protomolt/proto/meta/v1/metadata.proto";
+    private static final String LLM = "ai/protomolt/proto/llm/v1/llm.proto";
+    private static final String QUALITY = "ai/protomolt/proto/quality/v1/quality.proto";
+    private static final String FORM = "ai/protomolt/proto/prompt/testdata/v1/form.proto";
 
     private static final ExtensionRegistry REGISTRY = ExtensionRegistry.newInstance();
 
@@ -68,19 +68,19 @@ class ProtoSourceCompilerOptionsTest {
                 .add("doc.proto", """
                         syntax = "proto3";
                         package test.bracket;
-                        import "ai/pipestream/proto/validate/v1/validate.proto";
-                        import "ai/pipestream/proto/meta/v1/metadata.proto";
-                        import "ai/pipestream/proto/llm/v1/llm.proto";
+                        import "ai/protomolt/proto/validate/v1/validate.proto";
+                        import "ai/protomolt/proto/meta/v1/metadata.proto";
+                        import "ai/protomolt/proto/llm/v1/llm.proto";
                         message Doc {
                           string title = 1 [
-                            (ai.pipestream.proto.validate.v1.field) = {
+                            (ai.protomolt.proto.validate.v1.field) = {
                               required: true
                               string: {max_len: 200}
                             },
-                            (ai.pipestream.proto.meta.v1.field) = {
+                            (ai.protomolt.proto.meta.v1.field) = {
                               description: "The title."
                             },
-                            (ai.pipestream.proto.llm.v1.field) = {
+                            (ai.protomolt.proto.llm.v1.field) = {
                               instruction: "Fill the title."
                             }
                           ];
@@ -108,14 +108,14 @@ class ProtoSourceCompilerOptionsTest {
                 .add("doc.proto", """
                         syntax = "proto3";
                         package test.statements;
-                        import "ai/pipestream/proto/validate/v1/validate.proto";
-                        import "ai/pipestream/proto/meta/v1/metadata.proto";
-                        import "ai/pipestream/proto/llm/v1/llm.proto";
+                        import "ai/protomolt/proto/validate/v1/validate.proto";
+                        import "ai/protomolt/proto/meta/v1/metadata.proto";
+                        import "ai/protomolt/proto/llm/v1/llm.proto";
                         message Doc {
-                          option (ai.pipestream.proto.meta.v1.message) = {
+                          option (ai.protomolt.proto.meta.v1.message) = {
                             description: "A document."
                           };
-                          option (ai.pipestream.proto.llm.v1.message) = {
+                          option (ai.protomolt.proto.llm.v1.message) = {
                             instruction: "Fill the document."
                           };
                           string title = 1;
@@ -248,14 +248,14 @@ class ProtoSourceCompilerOptionsTest {
                 .add("doc.proto", """
                         syntax = "proto3";
                         package test.repeated;
-                        import "ai/pipestream/proto/validate/v1/validate.proto";
+                        import "ai/protomolt/proto/validate/v1/validate.proto";
                         message Doc {
-                          option (ai.pipestream.proto.validate.v1.message) = {
+                          option (ai.protomolt.proto.validate.v1.message) = {
                             cel: {id: "first", expression: "true"}
                             cel: {id: "second", expression: "size(this.status) > 0"}
                           };
                           string status = 1 [
-                            (ai.pipestream.proto.validate.v1.field) = {
+                            (ai.protomolt.proto.validate.v1.field) = {
                               string: {in: ["a", "b", "c"]}
                             }
                           ];
@@ -318,15 +318,15 @@ class ProtoSourceCompilerOptionsTest {
                 .add("doc.proto", """
                         syntax = "proto3";
                         package test.labels;
-                        import "ai/pipestream/proto/meta/v1/metadata.proto";
+                        import "ai/protomolt/proto/meta/v1/metadata.proto";
                         message Doc {
-                          option (ai.pipestream.proto.meta.v1.message) = {
+                          option (ai.protomolt.proto.meta.v1.message) = {
                             description: "A labeled document."
                             labels: {key: "component", value: "jobs"}
                             labels: {key: "tier", value: "gold"}
                           };
                           string title = 1 [
-                            (ai.pipestream.proto.meta.v1.field) = {
+                            (ai.protomolt.proto.meta.v1.field) = {
                               description: "The title."
                               labels: {key: "pii", value: "no"}
                             }

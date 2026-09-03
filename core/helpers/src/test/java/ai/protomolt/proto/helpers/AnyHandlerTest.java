@@ -87,7 +87,7 @@ public class AnyHandlerTest {
         Any packedAny = handler.pack(person);
 
         assertTrue(handler.is(packedAny, personDescriptor));
-        assertTrue(handler.is(packedAny, "ai.pipestream.test.Person"));
+        assertTrue(handler.is(packedAny, "ai.protomolt.test.Person"));
         assertFalse(handler.is(packedAny, "some.other.Type"));
     }
 
@@ -100,17 +100,17 @@ public class AnyHandlerTest {
         Any packedAny = handler.pack(person);
         String typeName = handler.getTypeName(packedAny);
 
-        assertEquals("ai.pipestream.test.Person", typeName);
+        assertEquals("ai.protomolt.test.Person", typeName);
     }
 
     @Test
     void testCreateTypeUrl() {
-        String typeUrl = handler.createTypeUrl("ai.pipestream.test.Person");
-        assertEquals("type.googleapis.com/ai.pipestream.test.Person", typeUrl);
+        String typeUrl = handler.createTypeUrl("ai.protomolt.test.Person");
+        assertEquals("type.googleapis.com/ai.protomolt.test.Person", typeUrl);
 
         // Test idempotency - already has prefix
-        String typeUrl2 = handler.createTypeUrl("type.googleapis.com/ai.pipestream.test.Person");
-        assertEquals("type.googleapis.com/ai.pipestream.test.Person", typeUrl2);
+        String typeUrl2 = handler.createTypeUrl("type.googleapis.com/ai.protomolt.test.Person");
+        assertEquals("type.googleapis.com/ai.protomolt.test.Person", typeUrl2);
     }
 
     @Test
@@ -139,7 +139,7 @@ public class AnyHandlerTest {
                 .putFields("email", Value.newBuilder().setStringValue("packed@example.com").build())
                 .build();
 
-        Any packedAny = handler.packStruct(struct, "ai.pipestream.test.Person");
+        Any packedAny = handler.packStruct(struct, "ai.protomolt.test.Person");
         assertNotNull(packedAny);
         assertTrue(packedAny.getTypeUrl().contains("Person"));
 
@@ -213,7 +213,7 @@ public class AnyHandlerTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_any.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(personProto)
                 .build();
 

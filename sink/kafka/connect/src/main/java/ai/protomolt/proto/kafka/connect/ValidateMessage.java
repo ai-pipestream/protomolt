@@ -17,7 +17,7 @@ import java.util.Map;
 
 /**
  * Validates each record value against the validation rules declared on its protobuf schema
- * ({@code ai.pipestream.proto.validate.v1} options). Valid records pass through untouched.
+ * ({@code ai.protomolt.proto.validate.v1} options). Valid records pass through untouched.
  * Invalid records fail the record (the worker's error tolerance routes them — fail, skip,
  * or dead-letter queue), are dropped, or pass through with the violations attached as a
  * JSON header, per {@code on.invalid}. Tombstones (null values) always pass through.

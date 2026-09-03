@@ -11,7 +11,7 @@
  * <p>The hint sources are the extension point and live in
  * {@code ai.protomolt.proto.search.index.spi}: {@link ProtobufIndexer#create()} infers from the
  * descriptor alone, while {@link ProtobufIndexer#defaults} consults a catalog, then the
- * {@code ai.pipestream.proto.index.hints.v1} descriptor options, then inference. Descriptor sets
+ * {@code ai.protomolt.proto.index.hints.v1} descriptor options, then inference. Descriptor sets
  * parsed at runtime need the hint and validation extensions registered first, which
  * {@link ProtobufIndexer#registerExtensions} does in one call.</p>
  *

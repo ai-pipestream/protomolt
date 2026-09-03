@@ -11,7 +11,7 @@ import java.util.Optional;
 /**
  * The taxonomy-path shape behind {@link IndexFieldKind#TREE_PATH}.
  *
- * <p>The canonical type is {@code ai.pipestream.proto.types.v1.TreePath}, recognized by
+ * <p>The canonical type is {@code ai.protomolt.proto.types.v1.TreePath}, recognized by
  * name so a field of that type indexes as a tree path with no hint at all. Any other
  * message duck-types by declaring a repeated string field named {@code segments}.
  *
@@ -24,7 +24,7 @@ import java.util.Optional;
 public final class TreePaths {
 
     /** The canonical taxonomy path type, recognized by name. */
-    public static final String CANONICAL = "ai.pipestream.proto.types.v1.TreePath";
+    public static final String CANONICAL = "ai.protomolt.proto.types.v1.TreePath";
 
     /** Delimiter joining segments in rendered terms; segments must not contain it. */
     public static final String DELIMITER = "/";

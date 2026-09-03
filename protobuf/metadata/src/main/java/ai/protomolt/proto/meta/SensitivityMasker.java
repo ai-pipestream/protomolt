@@ -18,7 +18,7 @@ import java.util.Set;
 
 /**
  * Masks fields by their schema-declared sensitivity class
- * ({@code ai.pipestream.proto.meta.v1.field.sensitivity}) — declare once in the contract,
+ * ({@code ai.protomolt.proto.meta.v1.field.sensitivity}) — declare once in the contract,
  * mask on every surface. Two strategies:
  *
  * <ul>

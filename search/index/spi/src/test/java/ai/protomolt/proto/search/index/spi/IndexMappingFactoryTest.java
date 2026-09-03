@@ -372,7 +372,7 @@ class IndexMappingFactoryTest {
     private static Descriptor selfReferentialDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("self_referential.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Node")
@@ -385,7 +385,7 @@ class IndexMappingFactoryTest {
                                 .setName("next")
                                 .setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Node")
+                                .setTypeName(".ai.protomolt.test.Node")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Node");
@@ -394,7 +394,7 @@ class IndexMappingFactoryTest {
     private static Descriptor mutuallyRecursiveDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("mutually_recursive.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("A")
@@ -407,7 +407,7 @@ class IndexMappingFactoryTest {
                                 .setName("b")
                                 .setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.B")
+                                .setTypeName(".ai.protomolt.test.B")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("B")
@@ -420,7 +420,7 @@ class IndexMappingFactoryTest {
                                 .setName("a")
                                 .setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.A")
+                                .setTypeName(".ai.protomolt.test.A")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("A");
@@ -430,7 +430,7 @@ class IndexMappingFactoryTest {
     private static Descriptor chainDescriptor(int levels) throws Exception {
         FileDescriptorProto.Builder file = FileDescriptorProto.newBuilder()
                 .setName("chain.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3");
         for (int level = 0; level <= levels; level++) {
             DescriptorProto.Builder message = DescriptorProto.newBuilder().setName("L" + level);
@@ -439,7 +439,7 @@ class IndexMappingFactoryTest {
                         .setName("next")
                         .setNumber(1)
                         .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                        .setTypeName(".ai.pipestream.test.L" + (level + 1))
+                        .setTypeName(".ai.protomolt.test.L" + (level + 1))
                         .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL));
             } else {
                 message.addField(FieldDescriptorProto.newBuilder()
@@ -456,7 +456,7 @@ class IndexMappingFactoryTest {
     private static Descriptor inferenceDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("inference_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/timestamp.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -512,7 +512,7 @@ class IndexMappingFactoryTest {
                 .build();
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("rich_hinted_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("RichHintedDoc")
@@ -530,7 +530,7 @@ class IndexMappingFactoryTest {
             String lowerName, String upperName, FieldDescriptorProto.Type boundType) throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("range_" + lowerName + "_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Bounds")
@@ -550,7 +550,7 @@ class IndexMappingFactoryTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("RangeDoc");
@@ -559,7 +559,7 @@ class IndexMappingFactoryTest {
     private static Descriptor nestedRangeDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("nested_range_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Bounds")
@@ -574,7 +574,7 @@ class IndexMappingFactoryTest {
                                 .setName("pages")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Bounds")
+                                .setTypeName(".ai.protomolt.test.Bounds")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Outer")
@@ -582,7 +582,7 @@ class IndexMappingFactoryTest {
                                 .setName("inner")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Inner")
+                                .setTypeName(".ai.protomolt.test.Inner")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Outer");
@@ -597,7 +597,7 @@ class IndexMappingFactoryTest {
                 .build();
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("hinted_doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("HintedDoc")
@@ -614,7 +614,7 @@ class IndexMappingFactoryTest {
     private static Descriptor nestedSampleDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("nested_names.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Address")
@@ -629,7 +629,7 @@ class IndexMappingFactoryTest {
                                 .setName("user_address")
                                 .setNumber(1)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.test.Address")
+                                .setTypeName(".ai.protomolt.test.Address")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                 .build();
         return FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Profile");
@@ -638,7 +638,7 @@ class IndexMappingFactoryTest {
     private static Descriptor anyEnvelopeDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("any_envelope.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addDependency("google/protobuf/any.proto")
                 .addMessageType(DescriptorProto.newBuilder()
@@ -674,7 +674,7 @@ class IndexMappingFactoryTest {
     private static Descriptor sampleDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("doc.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .setSyntax("proto3")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Doc")

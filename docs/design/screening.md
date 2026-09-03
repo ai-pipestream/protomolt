@@ -98,7 +98,7 @@ cleaning uses:
   text — an unactioned or quoted span would itself be evidence of the
   content. Every finding is `{path, type, confidence, model version,
   threshold, policy}`.
-- `ScreeningConfig` (`ai.pipestream.proto.types.v1`, with
+- `ScreeningConfig` (`ai.protomolt.proto.types.v1`, with
   `ScreeningPolicy`) — the mount document for the config lane,
   the taxonomy pattern exactly: no name and no version inside (the
   subject `screening:<name>` is the identity, the source's version is

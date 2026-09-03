@@ -65,7 +65,7 @@ public final class SearchWorkflows {
         parse.put("name", "parse");
         parse.put("target", coordinatorTarget);
         parse.put("method",
-                "ai.pipestream.proto.parse.v1.ParseCoordinatorService/ParseDocument");
+                "ai.protomolt.proto.parse.v1.ParseCoordinatorService/ParseDocument");
         parse.put("deadlineMs", deadlineMs);
         parse.putArray("rules")
                 .add("address = input.address");
@@ -73,13 +73,13 @@ public final class SearchWorkflows {
         index.put("name", "index");
         index.put("target", searchTarget);
         index.put("method",
-                "ai.pipestream.proto.search.v1.SearchIndexService/IndexDocument");
+                "ai.protomolt.proto.search.v1.SearchIndexService/IndexDocument");
         index.put("deadlineMs", deadlineMs);
         index.putArray("rules")
                 .add("address = input.address")
                 .add("mapping_subject = input.mapping_subject");
         ObjectNode output = workflow.putObject("output");
-        output.put("type", "ai.pipestream.proto.search.v1.IndexDocumentResponse");
+        output.put("type", "ai.protomolt.proto.search.v1.IndexDocumentResponse");
         output.putArray("rules")
                 .add("doc_id = index.doc_id")
                 .add("chunks_indexed = index.chunks_indexed")
@@ -117,7 +117,7 @@ public final class SearchWorkflows {
         delete.put("name", "delete");
         delete.put("target", repoTarget);
         delete.put("method",
-                "ai.pipestream.proto.repo.v1.DocumentService/DeleteDocument");
+                "ai.protomolt.proto.repo.v1.DocumentService/DeleteDocument");
         delete.put("deadlineMs", deadlineMs);
         delete.putArray("rules")
                 .add("by_reference.address = input.address")
@@ -126,13 +126,13 @@ public final class SearchWorkflows {
         unindex.put("name", "unindex");
         unindex.put("target", searchTarget);
         unindex.put("method",
-                "ai.pipestream.proto.search.v1.SearchIndexService/DeleteDocument");
+                "ai.protomolt.proto.search.v1.SearchIndexService/DeleteDocument");
         unindex.put("deadlineMs", deadlineMs);
         unindex.putArray("rules")
                 .add("mapping_subject = input.mapping_subject")
                 .add("doc_id = input.address.doc_id");
         ObjectNode output = workflow.putObject("output");
-        output.put("type", "ai.pipestream.proto.search.v1.DeleteDocumentResponse");
+        output.put("type", "ai.protomolt.proto.search.v1.DeleteDocumentResponse");
         output.putArray("rules")
                 .add("doc_id = unindex.doc_id")
                 .add("chunks_deleted = unindex.chunks_deleted");

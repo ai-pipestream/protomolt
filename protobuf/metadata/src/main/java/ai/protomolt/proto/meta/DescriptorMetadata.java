@@ -10,7 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Reads {@code (ai.pipestream.proto.meta.v1.field|message)} options from descriptors.
+ * Reads {@code (ai.protomolt.proto.meta.v1.field|message)} options from descriptors.
  * Register extensions before parsing/building descriptor sets that carry them.
  */
 public final class DescriptorMetadata {

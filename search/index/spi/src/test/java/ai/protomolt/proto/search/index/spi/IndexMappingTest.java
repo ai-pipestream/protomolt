@@ -19,7 +19,7 @@ class IndexMappingTest {
         assertThatThrownBy(() -> new IndexMapping(null, List.of()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("messageFullName");
-        assertThatThrownBy(() -> new IndexMapping("ai.pipestream.test.Doc", null))
+        assertThatThrownBy(() -> new IndexMapping("ai.protomolt.test.Doc", null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("fields");
     }
@@ -28,7 +28,7 @@ class IndexMappingTest {
     void fieldsAreCopiedDefensivelyAndExposedImmutably() {
         List<IndexMapping.IndexedField> mutable = new ArrayList<>();
         mutable.add(field("title", IndexFieldKind.TEXT));
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", mutable);
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", mutable);
 
         mutable.add(field("body", IndexFieldKind.TEXT));
         assertThat(mapping.fields()).hasSize(1);
@@ -38,10 +38,10 @@ class IndexMappingTest {
 
     @Test
     void findReturnsTheFirstMatchingPathAndEmptyForUnknownPaths() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc",
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc",
                 List.of(field("title", IndexFieldKind.TEXT), field("body", IndexFieldKind.TEXT)));
 
-        assertThat(mapping.messageFullName()).isEqualTo("ai.pipestream.test.Doc");
+        assertThat(mapping.messageFullName()).isEqualTo("ai.protomolt.test.Doc");
         assertThat(mapping.find("title")).get()
                 .extracting(IndexMapping.IndexedField::type)
                 .isEqualTo(IndexFieldKind.TEXT);
@@ -50,7 +50,7 @@ class IndexMappingTest {
 
     @Test
     void indexableDropsSkipHintsButKeepsThemInTheMapping() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc",
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc",
                 List.of(field("title", IndexFieldKind.TEXT), field("secret", IndexFieldKind.SKIP)));
 
         assertThat(mapping.find("secret")).isPresent();

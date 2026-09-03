@@ -2,7 +2,7 @@
 
 A pipeline is the checked, streaming-aware execution form of a gRPC workflow.
 Its protobuf contract is
-[`pipeline.proto`](../../transform/pipeline/src/main/proto/ai/pipestream/proto/pipeline/v1/pipeline.proto).
+[`pipeline.proto`](../../transform/pipeline/src/main/proto/ai/protomolt/proto/pipeline/v1/pipeline.proto).
 
 Each step receives data through an explicit typed edge. The edge selects
 workflow input or prior step outputs, applies mapping and CEL rules, optionally

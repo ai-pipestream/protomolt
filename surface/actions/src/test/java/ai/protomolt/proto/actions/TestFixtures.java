@@ -174,7 +174,7 @@ final class TestFixtures {
     /** The real validation option file, read from the validation module's classpath resource. */
     static String validateProtoSource() {
         try (InputStream in = TestFixtures.class.getResourceAsStream(
-                "/ai/pipestream/proto/validate/v1/validate.proto")) {
+                "/ai/protomolt/proto/validate/v1/validate.proto")) {
             if (in == null) {
                 throw new IllegalStateException("validate.proto not found on the test classpath");
             }

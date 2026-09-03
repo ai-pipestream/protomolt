@@ -38,7 +38,7 @@ import java.util.Map;
  */
 final class LinkedOptionsEncoder {
 
-    /** Custom option extensions by qualified name, e.g. {@code ai.pipestream.proto.meta.v1.field}. */
+    /** Custom option extensions by qualified name, e.g. {@code ai.protomolt.proto.meta.v1.field}. */
     private final Map<String, FieldDescriptor> extensions;
 
     /**

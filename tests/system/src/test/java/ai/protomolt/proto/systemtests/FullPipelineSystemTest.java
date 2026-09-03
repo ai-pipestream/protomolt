@@ -71,7 +71,7 @@ import static org.assertj.core.groups.Tuple.tuple;
  * <p>Ordered steps are one continuous scenario — state flows from step to step on purpose.</p>
  *
  * <p><b>Validation-options fallback.</b> The team schemas here are plain proto3 without
- * {@code ai.pipestream.proto.validate.v1} options-in-text. The gather path compiles with the
+ * {@code ai.protomolt.proto.validate.v1} options-in-text. The gather path compiles with the
  * Wire-based {@link ai.protomolt.proto.sources.ProtoSourceCompiler}, and nothing in the repo
  * demonstrates Wire compiling {@code extend google.protobuf.FieldOptions} declarations plus
  * option usages into descriptors that {@code AiPipestreamRuleSource} could read back (the

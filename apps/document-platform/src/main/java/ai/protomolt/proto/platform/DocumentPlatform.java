@@ -91,19 +91,19 @@ public final class DocumentPlatform implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(DocumentPlatform.class);
 
     /** The registry subject the fleet document model publishes under. */
-    public static final String DOCUMENT_SUBJECT = "ai/pipestream/proto/parse/document/v1/document.proto";
+    public static final String DOCUMENT_SUBJECT = "ai/protomolt/proto/parse/document/v1/document.proto";
 
     /** The registry subject the routing contract publishes under. */
     public static final String ROUTING_SUBJECT =
-            "ai/pipestream/proto/parse/v1/routing.proto";
+            "ai/protomolt/proto/parse/v1/routing.proto";
 
     /** The registry subject the validation dialect publishes under. */
     public static final String VALIDATE_SUBJECT =
-            "ai/pipestream/proto/validate/v1/validate.proto";
+            "ai/protomolt/proto/validate/v1/validate.proto";
 
     /** The registry subject the access-policy contract publishes under. */
     public static final String ACCESS_POLICY_SUBJECT =
-            "ai/pipestream/proto/authz/v1/access_policy.proto";
+            "ai/protomolt/proto/authz/v1/access_policy.proto";
 
 
     /** The config subject the parse role's routing rules read: {@value}. */

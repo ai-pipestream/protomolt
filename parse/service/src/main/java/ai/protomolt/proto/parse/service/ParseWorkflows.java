@@ -57,14 +57,14 @@ public final class ParseWorkflows {
         parse.put("target", coordinatorTarget);
         parse.put(
                 "method",
-                "ai.pipestream.proto.parse.v1.ParseCoordinatorService/ParseDocument");
+                "ai.protomolt.proto.parse.v1.ParseCoordinatorService/ParseDocument");
         parse.put("deadlineMs", deadlineMs);
         parse.putArray("rules")
                 .add("address = input.address")
                 .add("parser_override = input.parser_override");
         ObjectNode output = workflow.putObject("output");
         output.put(
-                "type", "ai.pipestream.proto.parse.v1.ParseDocumentResponse");
+                "type", "ai.protomolt.proto.parse.v1.ParseDocumentResponse");
         output.putArray("rules")
                 .add("parser_results = parse.parser_results")
                 .add("search_metadata_fold = parse.search_metadata_fold");

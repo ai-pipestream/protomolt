@@ -91,7 +91,7 @@ elsewhere. On the command line, pass `sources` or `descriptorSetBase64`,
 the latter is what `compile`, `reflect`, and `gather-git` return, and what
 the registry's descriptor-set endpoint serves. Inline `sources` are
 compiled per call and must carry every file they import, including
-`ai/pipestream/proto/meta/v1/metadata.proto` and the other ProtoMolt option
+`ai/protomolt/proto/meta/v1/metadata.proto` and the other ProtoMolt option
 files if the schema uses them.
 
 Two verbs behave differently here than they do in a server, because the CLI

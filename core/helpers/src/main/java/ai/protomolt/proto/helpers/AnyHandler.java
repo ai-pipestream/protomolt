@@ -96,7 +96,7 @@ public class AnyHandler {
      * Checks if an Any message contains a specific type by full name.
      *
      * @param any The Any message to check
-     * @param fullTypeName The full type name (e.g., "ai.pipestream.data.v1.SearchMetadata")
+     * @param fullTypeName The full type name (e.g., "ai.protomolt.data.v1.SearchMetadata")
      * @return true if the Any contains the specified type
      */
     public boolean is(Any any, String fullTypeName) {

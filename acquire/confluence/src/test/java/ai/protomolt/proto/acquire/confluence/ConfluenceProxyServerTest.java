@@ -92,7 +92,7 @@ class ConfluenceProxyServerTest {
                 });
         requests.onNext(ServerReflectionRequest.newBuilder()
                 .setFileContainingSymbol(
-                        "ai.pipestream.proto.acquire.confluence.v1.ConfluenceService")
+                        "ai.protomolt.proto.acquire.confluence.v1.ConfluenceService")
                 .build());
         requests.onCompleted();
 
@@ -105,6 +105,6 @@ class ConfluenceProxyServerTest {
             files.add(DescriptorProtos.FileDescriptorProto.parseFrom(bytes).getName());
         }
         assertThat(files).contains(
-                "ai/pipestream/proto/acquire/confluence/v1/confluence_service.proto");
+                "ai/protomolt/proto/acquire/confluence/v1/confluence_service.proto");
     }
 }

@@ -201,7 +201,7 @@ class MappingValuesTest {
         private static FileDescriptor docFile() throws Exception {
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("mapping_values_doc.proto")
-                    .setPackage("ai.pipestream.test.mappingvalues")
+                    .setPackage("ai.protomolt.test.mappingvalues")
                     .setSyntax("proto3")
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Inner")
@@ -210,22 +210,22 @@ class MappingValuesTest {
                             .setName("Chunk")
                             .addField(stringField("text", 1, FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addField(stringField("tags", 2, FieldDescriptorProto.Label.LABEL_REPEATED))
-                            .addField(messageField("meta", 3, ".ai.pipestream.test.mappingvalues.Inner",
+                            .addField(messageField("meta", 3, ".ai.protomolt.test.mappingvalues.Inner",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Group")
-                            .addField(messageField("chunks", 1, ".ai.pipestream.test.mappingvalues.Chunk",
+                            .addField(messageField("chunks", 1, ".ai.protomolt.test.mappingvalues.Chunk",
                                     FieldDescriptorProto.Label.LABEL_REPEATED)))
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Doc")
                             .addField(stringField("doc_id", 1, FieldDescriptorProto.Label.LABEL_OPTIONAL))
-                            .addField(messageField("chunks", 2, ".ai.pipestream.test.mappingvalues.Chunk",
+                            .addField(messageField("chunks", 2, ".ai.protomolt.test.mappingvalues.Chunk",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
-                            .addField(messageField("solo", 3, ".ai.pipestream.test.mappingvalues.Inner",
+                            .addField(messageField("solo", 3, ".ai.protomolt.test.mappingvalues.Inner",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL))
-                            .addField(messageField("attrs", 4, ".ai.pipestream.test.mappingvalues.Doc.AttrsEntry",
+                            .addField(messageField("attrs", 4, ".ai.protomolt.test.mappingvalues.Doc.AttrsEntry",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
-                            .addField(messageField("groups", 5, ".ai.pipestream.test.mappingvalues.Group",
+                            .addField(messageField("groups", 5, ".ai.protomolt.test.mappingvalues.Group",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addNestedType(DescriptorProto.newBuilder()
                                     .setName("AttrsEntry")

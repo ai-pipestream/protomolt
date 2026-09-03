@@ -313,12 +313,12 @@ class GoldenPathSystemTest {
                 Path.of("..", "..", "parse", "document", "src", "main", "proto",
                         "ai", "pipestream", "proto", "parse", "document", "v1", "document.proto"));
         ProtoSourceSet sources = ProtoSourceSet.builder()
-                .add("ai/pipestream/proto/parse/document/v1/document.proto", documentProto, "fleet")
+                .add("ai/protomolt/proto/parse/document/v1/document.proto", documentProto, "fleet")
                 .build();
         try (ConfluentSchemaPublisher publisher = new ConfluentSchemaPublisher(registryBase)) {
             publisher.publish(sources, PublishOptions.defaults()).throwIfFailed();
         }
-        assertThat(registry.subjects()).contains("ai/pipestream/proto/parse/document/v1/document.proto");
+        assertThat(registry.subjects()).contains("ai/protomolt/proto/parse/document/v1/document.proto");
 
         HttpResponse<byte[]> descriptorSet = HTTP.send(
                 HttpRequest.newBuilder(registryBase.resolve(
@@ -391,9 +391,9 @@ class GoldenPathSystemTest {
                 ResolvedFieldHint.of(IndexFieldKind.KEYWORD));
         catalog.put(Document.getDescriptor().getFullName(), "search_metadata",
                 ResolvedFieldHint.of(IndexFieldKind.TEXT));
-        catalog.put("ai.pipestream.proto.repo.v1.SearchMetadata", "title",
+        catalog.put("ai.protomolt.proto.repo.v1.SearchMetadata", "title",
                 ResolvedFieldHint.builder(IndexFieldKind.TEXT).stored(true).build());
-        catalog.put("ai.pipestream.proto.repo.v1.SearchMetadata", "body",
+        catalog.put("ai.protomolt.proto.repo.v1.SearchMetadata", "body",
                 ResolvedFieldHint.builder(IndexFieldKind.TEXT).stored(true).build());
         // Storage and provenance planes stay out of the index.
         for (String skipped : new String[] {
@@ -401,7 +401,7 @@ class GoldenPathSystemTest {
             catalog.put(Document.getDescriptor().getFullName(), skipped, ResolvedFieldHint.skipped());
         }
         for (String skipped : new String[] {"semantic_results", "custom_fields", "metadata"}) {
-            catalog.put("ai.pipestream.proto.repo.v1.SearchMetadata", skipped,
+            catalog.put("ai.protomolt.proto.repo.v1.SearchMetadata", skipped,
                     ResolvedFieldHint.skipped());
         }
         IndexMapping documentMapping =

@@ -51,7 +51,7 @@ class SchemaIdentityResolverTest {
     void anUnknownTypeIsRejected() {
         EntityEnvelope entity = MeshFixtures.inlineEntity()
                 .setSchema(MeshFixtures.schema().toBuilder()
-                        .setTypeName("ai.pipestream.proto.mesh.test.v1.NoSuchType"))
+                        .setTypeName("ai.protomolt.proto.mesh.test.v1.NoSuchType"))
                 .build();
         assertThatThrownBy(() -> resolver().resolve(entity.getSchema()))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -62,7 +62,7 @@ class SchemaIdentityResolverTest {
     void aBodyThatDisagreesWithTheSchemaIsRejected() {
         EntityEnvelope entity = MeshFixtures.claimCheckEntity()
                 .setClaimCheck(MeshFixtures.claimCheckEntity().getClaimCheck().toBuilder()
-                        .setPayloadTypeName("ai.pipestream.proto.mesh.test.v1.TestResult")
+                        .setPayloadTypeName("ai.protomolt.proto.mesh.test.v1.TestResult")
                         .setDescriptorFingerprint(
                                 MeshFixtures.schema().getDescriptorFingerprint()))
                 .build();

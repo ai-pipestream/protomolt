@@ -19,7 +19,7 @@ class LuceneFieldSpecsTest {
 
     @Test
     void carriesAnalyzersDocValuesAndEngineParams() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .analyzer("english")
@@ -32,7 +32,7 @@ class LuceneFieldSpecsTest {
 
         LuceneFieldSpecs specs = LuceneFieldSpecs.from(mapping);
 
-        assertThat(specs.messageFullName()).isEqualTo("ai.pipestream.test.Doc");
+        assertThat(specs.messageFullName()).isEqualTo("ai.protomolt.test.Doc");
         LuceneFieldSpecs.FieldSpec title = specs.find("title").orElseThrow();
         assertThat(title.analyzer()).isEqualTo("english");
         assertThat(title.searchAnalyzer()).isEqualTo("english_search");
@@ -51,7 +51,7 @@ class LuceneFieldSpecsTest {
      */
     @Test
     void sortableAndFacetableFieldsReportTheMultiValuedDocValuesType() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.KEYWORD)
                                 .sortable(true)
@@ -73,7 +73,7 @@ class LuceneFieldSpecsTest {
 
     @Test
     void vectorSpecExposesLuceneSimilarityAndEncoding() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(768)
@@ -90,7 +90,7 @@ class LuceneFieldSpecsTest {
 
     @Test
     void subFieldsBecomeIndexedOnlyCompanionSpecs() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 new IndexMapping.IndexedField("title", "title",
                         ResolvedFieldHint.builder(IndexFieldKind.TEXT)
                                 .addSubField(new ResolvedFieldHint.SubField(
@@ -109,7 +109,7 @@ class LuceneFieldSpecsTest {
 
     @Test
     void skippedFieldsAreExcluded() {
-        IndexMapping mapping = new IndexMapping("ai.pipestream.test.Doc", List.of(
+        IndexMapping mapping = new IndexMapping("ai.protomolt.test.Doc", List.of(
                 new IndexMapping.IndexedField("internal", "internal", ResolvedFieldHint.skipped()),
                 new IndexMapping.IndexedField("id", "id", ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 

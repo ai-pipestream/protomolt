@@ -256,7 +256,7 @@ class AnyPayloadGateEdgeCaseTest {
         AnyPayloadGate gate = fixtures.gate((unpacked, path) -> { });
         DynamicMessage middle = DynamicMessage.newBuilder(fixtures.middle)
                 .setField(fixtures.middle.findFieldByName("next"), Any.newBuilder()
-                        .setTypeUrl("type.googleapis.com/ai.pipestream.test.edge.MissingType")
+                        .setTypeUrl("type.googleapis.com/ai.protomolt.test.edge.MissingType")
                         .setValue(ByteString.copyFromUtf8("x"))
                         .build())
                 .build();
@@ -264,7 +264,7 @@ class AnyPayloadGateEdgeCaseTest {
         assertThatThrownBy(() -> gate.validate(fixtures.envelope(Any.pack(middle))))
                 .isInstanceOf(MappingException.class)
                 .hasMessageContaining("payload.next")
-                .hasMessageContaining("ai.pipestream.test.edge.MissingType");
+                .hasMessageContaining("ai.protomolt.test.edge.MissingType");
     }
 
     @Test
@@ -425,7 +425,7 @@ class AnyPayloadGateEdgeCaseTest {
         private static FileDescriptor edgeFile() throws Exception {
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("any_payload_gate_edge_doc.proto")
-                    .setPackage("ai.pipestream.test.edge")
+                    .setPackage("ai.protomolt.test.edge")
                     .setSyntax("proto3")
                     .addDependency("google/protobuf/any.proto")
                     .addMessageType(DescriptorProto.newBuilder()
@@ -442,16 +442,16 @@ class AnyPayloadGateEdgeCaseTest {
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Bag")
                             .addField(messageField(
-                                    "slots", 1, ".ai.pipestream.test.edge.Bag.SlotsEntry",
+                                    "slots", 1, ".ai.protomolt.test.edge.Bag.SlotsEntry",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addNestedType(mapEntry("SlotsEntry", stringField("key", 1), messageField(
-                                    "value", 2, ".ai.pipestream.test.edge.Item",
+                                    "value", 2, ".ai.protomolt.test.edge.Item",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL))))
                     .addMessageType(DescriptorProto.newBuilder()
                             .setName("Node")
                             .addField(stringField("name", 1))
                             .addField(messageField(
-                                    "child", 2, ".ai.pipestream.test.edge.Node",
+                                    "child", 2, ".ai.protomolt.test.edge.Node",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addField(anyField("tag", 3, FieldDescriptorProto.Label.LABEL_OPTIONAL)))
                     .addMessageType(DescriptorProto.newBuilder()
@@ -466,19 +466,19 @@ class AnyPayloadGateEdgeCaseTest {
                             .addField(anyField("payload", 2, FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addField(anyField("extras", 3, FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addField(messageField(
-                                    "keyed", 4, ".ai.pipestream.test.edge.Envelope.KeyedEntry",
+                                    "keyed", 4, ".ai.protomolt.test.edge.Envelope.KeyedEntry",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addField(messageField(
-                                    "numbered", 5, ".ai.pipestream.test.edge.Envelope.NumberedEntry",
+                                    "numbered", 5, ".ai.protomolt.test.edge.Envelope.NumberedEntry",
                                     FieldDescriptorProto.Label.LABEL_REPEATED))
                             .addField(messageField(
-                                    "bag", 6, ".ai.pipestream.test.edge.Bag",
+                                    "bag", 6, ".ai.protomolt.test.edge.Bag",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addField(messageField(
-                                    "node", 7, ".ai.pipestream.test.edge.Node",
+                                    "node", 7, ".ai.protomolt.test.edge.Node",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addField(messageField(
-                                    "choice", 8, ".ai.pipestream.test.edge.Choice",
+                                    "choice", 8, ".ai.protomolt.test.edge.Choice",
                                     FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addNestedType(mapEntry("KeyedEntry", stringField("key", 1),
                                     anyField("value", 2, FieldDescriptorProto.Label.LABEL_OPTIONAL)))
@@ -492,7 +492,7 @@ class AnyPayloadGateEdgeCaseTest {
         static FileDescriptor groupFile() throws Exception {
             FileDescriptorProto proto = FileDescriptorProto.newBuilder()
                     .setName("any_payload_gate_group_doc.proto")
-                    .setPackage("ai.pipestream.test.edge.group")
+                    .setPackage("ai.protomolt.test.edge.group")
                     .setSyntax("proto2")
                     .addDependency("google/protobuf/any.proto")
                     .addMessageType(DescriptorProto.newBuilder()
@@ -501,7 +501,7 @@ class AnyPayloadGateEdgeCaseTest {
                                     .setName("wrap")
                                     .setNumber(1)
                                     .setType(FieldDescriptorProto.Type.TYPE_GROUP)
-                                    .setTypeName(".ai.pipestream.test.edge.group.GroupHolder.Wrap")
+                                    .setTypeName(".ai.protomolt.test.edge.group.GroupHolder.Wrap")
                                     .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                             .addNestedType(DescriptorProto.newBuilder()
                                     .setName("Wrap")

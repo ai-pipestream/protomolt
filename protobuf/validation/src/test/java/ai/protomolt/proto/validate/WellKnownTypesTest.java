@@ -61,7 +61,7 @@ class WellKnownTypesTest {
     @Test
     void anyInAllowListsTypeUrls() {
         ProtoValidator validator = forField("payload", FieldConstraints.builder()
-                .any(new AnyConstraints(List.of("type.googleapis.com/ai.pipestream.proto.validate.testdata.v1.Item"),
+                .any(new AnyConstraints(List.of("type.googleapis.com/ai.protomolt.proto.validate.testdata.v1.Item"),
                         List.of()))
                 .build());
 
@@ -77,7 +77,7 @@ class WellKnownTypesTest {
     void anyNotInForbidsTypeUrls() {
         ProtoValidator validator = forField("payload", FieldConstraints.builder()
                 .any(new AnyConstraints(List.of(),
-                        List.of("type.googleapis.com/ai.pipestream.proto.validate.testdata.v1.Item")))
+                        List.of("type.googleapis.com/ai.protomolt.proto.validate.testdata.v1.Item")))
                 .build());
 
         assertThat(validator.validate(Envelope.newBuilder()

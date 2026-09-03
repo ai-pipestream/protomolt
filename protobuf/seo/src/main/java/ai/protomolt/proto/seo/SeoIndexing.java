@@ -14,7 +14,7 @@ import java.util.Optional;
 
 /**
  * Builds {@link IndexMapping}s for the search-metadata standard from the
- * {@code (ai.pipestream.proto.index.hints.v1.index)} annotations the {@code seo.v1}
+ * {@code (ai.protomolt.proto.index.hints.v1.index)} annotations the {@code seo.v1}
  * descriptors carry.
  *
  * <p>The hint chain is: proto-option hints first (the standard's annotations are
@@ -23,7 +23,7 @@ import java.util.Optional;
  * {@code SearchStandard}'s nested shape into dotted leaf paths ({@code dublin_core.title},
  * {@code product.offers.price_currency}, ...): without it, an unannotated singular message
  * field infers as one opaque {@code OBJECT} entry and its annotated leaves never reach the
- * mapping. Only messages declared in the {@code ai.pipestream.proto.seo.v1} package expand
+ * mapping. Only messages declared in the {@code ai.protomolt.proto.seo.v1} package expand
  * this way — well-known types ({@code google.protobuf.Timestamp},
  * {@code google.protobuf.Duration}) keep their inferred single-entry shapes unless a field
  * annotation says otherwise.
@@ -31,7 +31,7 @@ import java.util.Optional;
 public final class SeoIndexing {
 
     /** The proto package whose message-typed fields expand into dotted mapping paths. */
-    private static final String SEO_PACKAGE = "ai.pipestream.proto.seo.v1";
+    private static final String SEO_PACKAGE = "ai.protomolt.proto.seo.v1";
 
     private SeoIndexing() {
     }

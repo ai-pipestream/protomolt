@@ -144,7 +144,7 @@ class SearchConsoleServerTest {
                 answer = body;
             } else if (path.endsWith("/describe-mapping")) {
                 answer = ("{\"mappingSubject\":\"repo-document\","
-                        + "\"messageType\":\"ai.pipestream.proto.repo.v1.Document\","
+                        + "\"messageType\":\"ai.protomolt.proto.repo.v1.Document\","
                         + "\"members\":[{\"name\":\"documents\",\"role\":\"MEMBER_ROLE_MEASURE\","
                         + "\"aggregate\":\"AGGREGATE_COUNT\"}],"
                         + "\"backends\":[\"METRIC_BACKEND_LUCENE\"]}")

@@ -121,7 +121,7 @@ public final class ProtoMoltSerdeConfig extends AbstractConfig {
                             + "producers do not all go through this serde.")
             .define(QUALITY_ON_WRITE, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.MEDIUM,
                     "Score messages against the quality dimensions their schema declares "
-                            + "(ai.pipestream.proto.quality.v1) before writing, reporting the "
+                            + "(ai.protomolt.proto.quality.v1) before writing, reporting the "
                             + "scores to the metrics listeners. Types declaring no dimensions "
                             + "cost nothing.")
             .define(QUALITY_ON_READ, ConfigDef.Type.BOOLEAN, false, ConfigDef.Importance.LOW,

@@ -62,7 +62,7 @@ import java.util.UUID;
  * point, not flattened onto every one.
  *
  * <p>Validation on write: {@link #map} first runs the document through the platform's
- * declared-rules validator ({@code ai.pipestream.proto.validate.v1} options) and throws
+ * declared-rules validator ({@code ai.protomolt.proto.validate.v1} options) and throws
  * {@link ValidationResult.ValidationException} on any violation, so an invalid document is
  * never turned into points — the same gate the Kafka serde and {@code ProtobufIndexer}
  * apply on their write paths.
@@ -101,7 +101,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     /**
      * Maps {@code message} (a repo {@link Document}) to one {@link PointStruct} per embedded
      * semantic chunk, in document order. The document is validated against its declared
-     * {@code ai.pipestream.proto.validate.v1} rules first.
+     * {@code ai.protomolt.proto.validate.v1} rules first.
      *
      * @throws ValidationResult.ValidationException when the document violates a declared rule
      * @throws MappingException when {@code message} is not a {@link Document}, a mapping path

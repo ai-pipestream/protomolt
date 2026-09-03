@@ -31,7 +31,7 @@ final class RenderIndexMappingsAction implements ProtoAction {
         return "Renders the search-index artifact for a protobuf message type — OpenSearch index "
                 + "mappings JSON, Solr managed-schema pieces, Lucene field specs, or a Qdrant "
                 + "collection schema (named vectors with size+distance, payload field indexes) — "
-                + "from its indexing hints (ai.pipestream.proto.index.hints.v1 options), "
+                + "from its indexing hints (ai.protomolt.proto.index.hints.v1 options), "
                 + "inferring sensible field kinds where no hint is declared.";
     }
 

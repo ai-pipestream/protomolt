@@ -2,7 +2,7 @@
  * Descriptive and operational metadata declared on descriptors as protobuf options.
  *
  * <p>The standard defines {@code FieldOptions} and {@code MessageOptions} extensions under
- * {@code ai.pipestream.proto.meta.v1} — ownership, sensitivity class, descriptions, display
+ * {@code ai.protomolt.proto.meta.v1} — ownership, sensitivity class, descriptions, display
  * names, labels — generated into this package as {@link FieldMeta} and {@link MessageMeta}.
  * {@link DescriptorMetadata} reads them back at runtime and flattens them into a bag suitable
  * for logs, headers, or CEL; descriptor sets parsed at runtime need

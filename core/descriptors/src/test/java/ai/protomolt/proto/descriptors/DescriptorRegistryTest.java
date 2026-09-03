@@ -26,7 +26,7 @@ public class DescriptorRegistryTest {
 
         registry.register(testDescriptor);
 
-        Descriptor found = registry.findDescriptorByFullName("ai.pipestream.test.TestMessage");
+        Descriptor found = registry.findDescriptorByFullName("ai.protomolt.test.TestMessage");
         assertNotNull(found);
         assertEquals(testDescriptor, found);
     }
@@ -51,7 +51,7 @@ public class DescriptorRegistryTest {
 
         registry.registerFile(fd);
 
-        Descriptor found = registry.findDescriptorByFullName("ai.pipestream.test.TestMessage");
+        Descriptor found = registry.findDescriptorByFullName("ai.protomolt.test.TestMessage");
         assertNotNull(found);
     }
 
@@ -67,7 +67,7 @@ public class DescriptorRegistryTest {
 
         registry.registerFromMessage(message);
 
-        Descriptor found = registry.findDescriptorByFullName("ai.pipestream.test.TestMessage");
+        Descriptor found = registry.findDescriptorByFullName("ai.protomolt.test.TestMessage");
         assertNotNull(found);
         assertEquals(testDescriptor, found);
     }
@@ -81,7 +81,7 @@ public class DescriptorRegistryTest {
         registry.register(testDescriptor);
 
         // Find by full name
-        Descriptor foundByFullName = registry.findDescriptor("ai.pipestream.test.TestMessage");
+        Descriptor foundByFullName = registry.findDescriptor("ai.protomolt.test.TestMessage");
         assertNotNull(foundByFullName);
 
         // Find by simple name
@@ -99,11 +99,11 @@ public class DescriptorRegistryTest {
         FileDescriptor fd = createTestFileDescriptor();
         Descriptor testDescriptor = fd.findMessageTypeByName("TestMessage");
 
-        assertFalse(registry.isRegistered("ai.pipestream.test.TestMessage"));
+        assertFalse(registry.isRegistered("ai.protomolt.test.TestMessage"));
 
         registry.register(testDescriptor);
 
-        assertTrue(registry.isRegistered("ai.pipestream.test.TestMessage"));
+        assertTrue(registry.isRegistered("ai.protomolt.test.TestMessage"));
     }
 
     @Test
@@ -124,12 +124,12 @@ public class DescriptorRegistryTest {
         Descriptor testDescriptor = fd.findMessageTypeByName("TestMessage");
 
         registry.register(testDescriptor);
-        assertTrue(registry.isRegistered("ai.pipestream.test.TestMessage"));
+        assertTrue(registry.isRegistered("ai.protomolt.test.TestMessage"));
 
         registry.clear();
 
         // Custom types should be cleared
-        assertFalse(registry.isRegistered("ai.pipestream.test.TestMessage"));
+        assertFalse(registry.isRegistered("ai.protomolt.test.TestMessage"));
 
         // Well-known types should still be there
         assertNotNull(registry.findDescriptorByFullName("google.protobuf.Struct"));
@@ -165,7 +165,7 @@ public class DescriptorRegistryTest {
                 .registerFile(fd)
                 .build();
 
-        assertNotNull(registry.findDescriptorByFullName("ai.pipestream.test.TestMessage"));
+        assertNotNull(registry.findDescriptorByFullName("ai.protomolt.test.TestMessage"));
     }
 
     @Test
@@ -176,11 +176,11 @@ public class DescriptorRegistryTest {
         registry.registerFile(fd);
 
         // Parent type
-        Descriptor parentDescriptor = registry.findDescriptorByFullName("ai.pipestream.test.Parent");
+        Descriptor parentDescriptor = registry.findDescriptorByFullName("ai.protomolt.test.Parent");
         assertNotNull(parentDescriptor);
 
         // Nested type
-        Descriptor nestedDescriptor = registry.findDescriptorByFullName("ai.pipestream.test.Parent.Nested");
+        Descriptor nestedDescriptor = registry.findDescriptorByFullName("ai.protomolt.test.Parent.Nested");
         assertNotNull(nestedDescriptor);
     }
 
@@ -249,7 +249,7 @@ public class DescriptorRegistryTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_registry.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(testMessageProto)
                 .build();
 
@@ -274,7 +274,7 @@ public class DescriptorRegistryTest {
 
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("test_nested.proto")
-                .setPackage("ai.pipestream.test")
+                .setPackage("ai.protomolt.test")
                 .addMessageType(parentProto)
                 .build();
 

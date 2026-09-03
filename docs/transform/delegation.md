@@ -5,7 +5,7 @@ an in-process coordinator, a worker adapter boundary, and deterministic
 transcript validation.
 
 The protobuf contract is
-[`delegation.proto`](../../transform/delegation/src/main/proto/ai/pipestream/proto/delegation/v1/delegation.proto).
+[`delegation.proto`](../../transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto).
 
 The LLM does not own the gRPC stream. A worker adapter keeps the stream open,
 invokes the configured provider, turns provider activity into structured

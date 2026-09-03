@@ -112,16 +112,16 @@ lint:
     # bar; see the module comment above. Top-level ignore ONLY: a
     # module-level lint block breaks the workspace image `buf breaking`
     # compares.
-    - parse/document/src/main/proto/ai/pipestream/proto/parse/document/v1/document.proto
+    - parse/document/src/main/proto/ai/protomolt/proto/parse/document/v1/document.proto
     # The vendored gRParse streaming surface keeps gRParse's own lint bar for
     # the same byte-identity reason.
-    - parse/grparse/src/main/proto/ai/pipestream/proto/parse/grparse/v1/parse_stream.proto
-    - parse/grparse/src/main/proto/ai/pipestream/proto/parse/grparse/v1/parse_types.proto
+    - parse/grparse/src/main/proto/ai/protomolt/proto/parse/grparse/v1/parse_stream.proto
+    - parse/grparse/src/main/proto/ai/protomolt/proto/parse/grparse/v1/parse_types.proto
   ignore_only:
     # GetDocument and GetDocumentByReference deliberately share
     # GetDocumentResponse: same payload, two coordinate systems.
     RPC_REQUEST_RESPONSE_UNIQUE:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
+      - repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_service.proto
     # Every ProtoMolt proto that generates Java sets java_multiple_files. These
     # two fixtures are deliberately inconsistent with each other because they
     # stand in for FOREIGN descriptors, which ProtoMolt must consume whatever
@@ -134,15 +134,15 @@ lint:
       - sink/kafka/serde/src/test/proto/serde/gen/v1/gen_order.proto
       - sink/kafka/serde/src/test/proto/serde/gen/v1/legacy_event.proto
     RPC_RESPONSE_STANDARD_NAME:
-      - repo/proto/src/main/proto/ai/pipestream/proto/repo/v1/document_service.proto
+      - repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_service.proto
 breaking:
   use:
     - FILE
   except:
     # Temporary, for the last untyped payloads on the work-record verbs: the
     # workflow field on replay, promote and evaluate becomes the durable
-    # ai.pipestream.proto.grpc.workflow.v1.Workflow, and trust becomes
-    # ai.pipestream.proto.receipt.v1.TrustSnapshot, both in place of
+    # ai.protomolt.proto.grpc.workflow.v1.Workflow, and trust becomes
+    # ai.protomolt.proto.receipt.v1.TrustSnapshot, both in place of
     # google.protobuf.Struct. Each already carried exactly that message as
     # JSON, which the verbs parsed by hand; declaring the type moves the
     # contract into the message. Nothing consumes the Struct forms, so the

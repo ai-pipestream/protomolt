@@ -10,7 +10,7 @@ Postgres as the truth.
 Two Gradle modules:
 
 - **`jobs/proto`** (`protomolt-jobs-proto`) — the wire contract
-  (`ai.pipestream.proto.jobs.v1`): `WorkflowRunEvent` (the lifecycle envelope on
+  (`ai.protomolt.proto.jobs.v1`): `WorkflowRunEvent` (the lifecycle envelope on
   the events topic) and `WorkflowRunRequest` (the request-topic payload for
   broker-native submission). Messages only — the verbs are descriptor-native
   ProtoMoltService actions, so there is no gRPC service here.

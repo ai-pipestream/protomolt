@@ -18,9 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class WorkflowStageContractTest {
 
-    private static final String DURABLE = "ai.pipestream.proto.grpc.workflow.v1.Workflow";
+    private static final String DURABLE = "ai.protomolt.proto.grpc.workflow.v1.Workflow";
     private static final String AUTHORING =
-            "ai.pipestream.proto.grpc.service.v1.CompiledWorkflow";
+            "ai.protomolt.proto.grpc.service.v1.CompiledWorkflow";
 
     private static String workflowFieldType(String message) {
         Descriptor descriptor = ProtoMoltServiceSchema.file().findMessageTypeByName(message);

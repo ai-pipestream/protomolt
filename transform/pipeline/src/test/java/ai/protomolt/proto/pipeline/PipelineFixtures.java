@@ -29,15 +29,15 @@ import java.util.List;
  */
 final class PipelineFixtures {
 
-    static final String VALIDATE = "ai/pipestream/proto/validate/v1/validate.proto";
+    static final String VALIDATE = "ai/protomolt/proto/validate/v1/validate.proto";
     static final String PROJECTION =
-            "ai/pipestream/proto/projection/v1/projection.proto";
+            "ai/protomolt/proto/projection/v1/projection.proto";
 
     static final String PROTO = """
             syntax = "proto3";
             package pipeline.test;
-            import "ai/pipestream/proto/validate/v1/validate.proto";
-            import "ai/pipestream/proto/projection/v1/projection.proto";
+            import "ai/protomolt/proto/validate/v1/validate.proto";
+            import "ai/protomolt/proto/projection/v1/projection.proto";
             message Ticket { string title = 1; }
             message Batch { repeated Ticket items = 1; }
             message TicketBox { repeated Ticket tickets = 1; }
@@ -48,20 +48,20 @@ final class PipelineFixtures {
             }
             message Results { repeated LookupResult results = 1; }
             message Summary {
-              string headline = 1 [(ai.pipestream.proto.validate.v1.field) = {
+              string headline = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 required: true
                 string: {min_len: 3, max_len: 200}
               }];
             }
             // The consumer-visible grounding: internal_notes is never projected.
             message DocGrounding {
-              option (ai.pipestream.proto.projection.v1.sources) = {
+              option (ai.protomolt.proto.projection.v1.sources) = {
                 source: "pipeline.test.LookupResult"
               };
-              string doc_id = 1 [(ai.pipestream.proto.projection.v1.from) = {
+              string doc_id = 1 [(ai.protomolt.proto.projection.v1.from) = {
                 paths: {path: "doc_id"}
               }];
-              string title = 2 [(ai.pipestream.proto.projection.v1.from) = {
+              string title = 2 [(ai.protomolt.proto.projection.v1.from) = {
                 paths: {path: "title"}
               }];
             }

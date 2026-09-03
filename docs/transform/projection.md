@@ -7,31 +7,31 @@ registry like any other schema, and executable at runtime from descriptors
 alone, with no generated classes required.
 
 ```proto
-import "ai/pipestream/proto/projection/v1/projection.proto";
+import "ai/protomolt/proto/projection/v1/projection.proto";
 
 message SearchDoc {
-  option (ai.pipestream.proto.projection.v1.sources) = {
+  option (ai.protomolt.proto.projection.v1.sources) = {
     source: "acme.court.v1.Case"
     source: "acme.billing.v1.Matter"
   };
 
-  string doc_id = 1 [(ai.pipestream.proto.projection.v1.from) = {
+  string doc_id = 1 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "case_id" path: "matter_no"}
   }];
-  string title = 2 [(ai.pipestream.proto.projection.v1.from) = {
+  string title = 2 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "style_of_cause" path: "caption"}
   }];
-  string region = 3 [(ai.pipestream.proto.projection.v1.from) = {
+  string region = 3 [(ai.protomolt.proto.projection.v1.from) = {
     cel: "source.address.state.upperAscii()"
   }];
-  string source_system = 4 [(ai.pipestream.proto.projection.v1.from) = {
+  string source_system = 4 [(ai.protomolt.proto.projection.v1.from) = {
     literal: {string_value: "filing-index"}
   }];
   optional string category = 5 [
-    (ai.pipestream.proto.projection.v1.from) = {
+    (ai.protomolt.proto.projection.v1.from) = {
       paths: {path: "category"}
     },
-    (ai.pipestream.proto.projection.v1.default_from) = {
+    (ai.protomolt.proto.projection.v1.default_from) = {
       cel: "source.kind.lowerAscii()"
     }
   ];

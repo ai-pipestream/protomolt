@@ -114,7 +114,7 @@ class TreePathMetricsLuceneTest {
     static Descriptor productDescriptor() throws Exception {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("test/product.proto").setPackage("test").setSyntax("proto3")
-                .addDependency("ai/pipestream/proto/types/v1/tree_path.proto")
+                .addDependency("ai/protomolt/proto/types/v1/tree_path.proto")
                 .addMessageType(DescriptorProto.newBuilder().setName("Product")
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("id").setNumber(1)
@@ -123,7 +123,7 @@ class TreePathMetricsLuceneTest {
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("category").setNumber(2)
                                 .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
-                                .setTypeName(".ai.pipestream.proto.types.v1.TreePath")
+                                .setTypeName(".ai.protomolt.proto.types.v1.TreePath")
                                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
                         .addField(FieldDescriptorProto.newBuilder()
                                 .setName("amount").setNumber(3)
