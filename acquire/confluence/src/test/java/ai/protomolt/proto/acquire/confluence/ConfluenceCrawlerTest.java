@@ -49,7 +49,7 @@ class ConfluenceCrawlerTest {
     private ConfluenceConnectorConfig config(String... spaces) {
         return ConfluenceConnectorConfig.builder()
                 .baseUrl(fake.baseUrl())
-                .email("bot@pipestream.ai")
+                .email("bot@protomolt.ai")
                 .apiToken("token-123")
                 .spaces(spaces)
                 .build();

@@ -71,9 +71,9 @@ class SpringProtoRestControllerTest {
     private static MockMvc mockMvcFor(ProtoRestGateway gateway, ProtoToolsServerConfig config) {
         SpringProtoRestController controller = new SpringProtoRestController(gateway, config);
         return MockMvcBuilders.standaloneSetup(controller)
-                .addPlaceholderValue("pipestream.proto.rest.health-path", "/health")
-                .addPlaceholderValue("pipestream.proto.rest.openapi-path", "/openapi.json")
-                .addPlaceholderValue("pipestream.proto.rest.path-prefix", "/grpc-json")
+                .addPlaceholderValue("protomolt.rest.health-path", "/health")
+                .addPlaceholderValue("protomolt.rest.openapi-path", "/openapi.json")
+                .addPlaceholderValue("protomolt.rest.path-prefix", "/grpc-json")
                 .build();
     }
 

@@ -48,7 +48,7 @@ public record QdrantConfig(String target, String collection, String apiKey, bool
     public static final String DEFAULT_TARGET = "localhost:6334";
 
     /** Collection used when nothing is configured: {@value}. */
-    public static final String DEFAULT_COLLECTION = "pipestream-chunks";
+    public static final String DEFAULT_COLLECTION = "protomolt-chunks";
 
     public QdrantConfig {
         Objects.requireNonNull(target, "target");

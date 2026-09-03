@@ -48,7 +48,7 @@ abstract class AbstractConfluentPublisherIntegrationTest {
 
     private static final String PERSON_PROTO = """
             syntax = "proto3";
-            package pipestream.it.pub.v1;
+            package protomolt.it.pub.v1;
             message Person {
               string name = 1;
               int32 id = 2;
@@ -57,7 +57,7 @@ abstract class AbstractConfluentPublisherIntegrationTest {
 
     private static final String TEAM_PROTO = """
             syntax = "proto3";
-            package pipestream.it.pub.v1;
+            package protomolt.it.pub.v1;
             import "person.proto";
             import "google/protobuf/timestamp.proto";
             message Team {
@@ -69,7 +69,7 @@ abstract class AbstractConfluentPublisherIntegrationTest {
 
     private static final String INCOMPAT_V1_PROTO = """
             syntax = "proto3";
-            package pipestream.it.pub.v1;
+            package protomolt.it.pub.v1;
             message Audit {
               string actor = 1;
             }
@@ -78,14 +78,14 @@ abstract class AbstractConfluentPublisherIntegrationTest {
     /** Field 1 changes type (string -> int32): backward-incompatible for both registries. */
     private static final String INCOMPAT_V2_PROTO = """
             syntax = "proto3";
-            package pipestream.it.pub.v1;
+            package protomolt.it.pub.v1;
             message Audit {
               int32 actor = 1;
             }
             """;
 
     private final String runId = UUID.randomUUID().toString().substring(0, 8);
-    private final String prefix = "pipestream-it-pub-" + runId + "-";
+    private final String prefix = "protomolt-it-pub-" + runId + "-";
     private final SubjectNamingStrategy naming = SubjectNamingStrategy.prefixed(prefix);
     private HttpClient http;
 
@@ -145,14 +145,14 @@ abstract class AbstractConfluentPublisherIntegrationTest {
                 Descriptor team = descriptors.stream()
                         .map(fd -> fd.findMessageTypeByName("Team"))
                         .filter(java.util.Objects::nonNull)
-                        .filter(d -> d.getFullName().equals("pipestream.it.pub.v1.Team"))
+                        .filter(d -> d.getFullName().equals("protomolt.it.pub.v1.Team"))
                         .findFirst()
                         .orElseThrow(() -> new AssertionError(
                                 "Published Team schema not loaded back from " + registryBaseUrl()));
                 FieldDescriptor members = team.findFieldByName("members");
                 assertThat(members.isRepeated()).isTrue();
                 assertThat(members.getMessageType().getFullName())
-                        .isEqualTo("pipestream.it.pub.v1.Person");
+                        .isEqualTo("protomolt.it.pub.v1.Person");
                 assertThat(members.getMessageType().findFieldByName("id").getNumber()).isEqualTo(2);
                 assertThat(team.findFieldByName("created").getMessageType().getFullName())
                         .isEqualTo("google.protobuf.Timestamp");

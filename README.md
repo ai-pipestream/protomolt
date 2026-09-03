@@ -413,7 +413,7 @@ their container binds.
 | `protomolt-server-jdk` | `host/server/jdk` | `com.sun.net.httpserver` on virtual threads. Engine id `jdk`. | `host/server/jdk/src/main/java/ai/protomolt/proto/server/jdk/JdkProtoRestServer.java` | |
 | `protomolt-server-vertx` | `host/server/vertx` | Vert.x 5, exposing `createRouter()` for mounting into a larger app. Engine id `vertx`. | `host/server/vertx/src/main/java/ai/protomolt/proto/server/vertx/VertxProtoRestServer.java` | |
 | `protomolt-server-netty` | `host/server/netty` | Netty 4.2 with a virtual-thread invoker pool. Engine id `netty`. | `host/server/netty/src/main/java/ai/protomolt/proto/server/netty/NettyProtoRestServer.java` | |
-| `protomolt-server-spring` | `host/server/spring` | A Spring MVC `@RestController` bean over the gateway, reading `pipestream.proto.rest.*` properties. | `host/server/spring/src/main/java/ai/protomolt/proto/server/spring/SpringProtoRestController.java` | A facade, not a host; Spring binds it |
+| `protomolt-server-spring` | `host/server/spring` | A Spring MVC `@RestController` bean over the gateway, reading `protomolt.rest.*` properties. | `host/server/spring/src/main/java/ai/protomolt/proto/server/spring/SpringProtoRestController.java` | A facade, not a host; Spring binds it |
 | `protomolt-server-micronaut` | `host/server/micronaut` | A plain facade with no Micronaut annotations, for you to wire yourself. | `host/server/micronaut/src/main/java/ai/protomolt/proto/server/micronaut/MicronautProtoRestFacade.java` | A facade. There is no Micronaut DI module, by design |
 | `protomolt-server-quarkus` | `host/server/quarkus` | An `@ApplicationScoped` CDI bean fronted by JAX-RS resources. Quarkus is still on Vert.x 4, so it cannot reuse the Vert.x 5 host. | `host/server/quarkus/src/main/java/ai/protomolt/proto/server/quarkus/QuarkusProtoRestFacade.java` | A facade |
 | `protomolt-integration-spring` | `host/integration/spring` | A Spring Boot 3 `@AutoConfiguration` supplying `@ConditionalOnMissingBean` producers for the descriptor registry, field mapper, CEL evaluator, transcoder, method registry, a fail-closed API-token validator and the gateway. | `host/integration/spring/src/main/java/ai/protomolt/proto/integration/spring/ProtoToolsAutoConfiguration.java` | |
@@ -794,8 +794,7 @@ descriptor-option dialects — both use `ai.protomolt.proto.*`:
 `ai.protomolt.proto.{meta,validate,llm,quality,metric,index.hints,projection,mesh}.v1`,
 beside the vendored `buf.validate` compatibility dialect. Configuration
 properties use the `protomolt.*` prefix and environment variables the
-`PROTOMOLT_*` prefix (framework-integration glue exposes a handful of
-`pipestream.*` properties). Module and package derivation is ADR-002 in
+`PROTOMOLT_*` prefix. Module and package derivation is ADR-002 in
 [AGENTS.md](AGENTS.md).
 
 Vocabulary note: the request-gating component is a **service**, **role** or

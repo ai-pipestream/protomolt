@@ -33,7 +33,7 @@ class ConfluentSchemaRegistryLoaderTest {
 
     private static final String PERSON_PROTO = """
             syntax = "proto3";
-            package pipestream.unit;
+            package protomolt.unit;
             message Person {
               string name = 1;
               int32 id = 2;
@@ -52,7 +52,7 @@ class ConfluentSchemaRegistryLoaderTest {
 
     private static final String TEAM_PROTO = """
             syntax = "proto3";
-            package pipestream.unit;
+            package protomolt.unit;
             import "person.proto";
             import "google/protobuf/timestamp.proto";
             message Team {
@@ -102,7 +102,7 @@ class ConfluentSchemaRegistryLoaderTest {
         Descriptor team = byName(descriptors, "team.proto").findMessageTypeByName("Team");
         FieldDescriptor members = team.findFieldByName("members");
         assertThat(members.isRepeated()).isTrue();
-        assertThat(members.getMessageType().getFullName()).isEqualTo("pipestream.unit.Person");
+        assertThat(members.getMessageType().getFullName()).isEqualTo("protomolt.unit.Person");
         assertThat(members.getMessageType().findFieldByName("id").getNumber()).isEqualTo(2);
         assertThat(team.findFieldByName("created").getMessageType().getFullName())
                 .isEqualTo("google.protobuf.Timestamp");
@@ -242,7 +242,7 @@ class ConfluentSchemaRegistryLoaderTest {
         ConfluentSchemaRegistryLoader loader = new ConfluentSchemaRegistryLoader(baseUri());
 
         assertThat(loader.loadDescriptor("person.proto").getName()).isEqualTo("person.proto");
-        assertThat(loader.loadDescriptor("pipestream.unit.Team").getName()).isEqualTo("team.proto");
+        assertThat(loader.loadDescriptor("protomolt.unit.Team").getName()).isEqualTo("team.proto");
         assertThat(loader.loadDescriptor("Person").getName()).isEqualTo("person.proto");
         assertThat(loader.loadDescriptor("missing.proto")).isNull();
     }

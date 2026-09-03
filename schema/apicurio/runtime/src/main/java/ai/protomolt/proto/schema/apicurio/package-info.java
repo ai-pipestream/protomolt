@@ -14,7 +14,7 @@
  * {@link io.apicurio.registry.rest.client.RegistryClient} and its transport, and
  * {@link ApicurioDescriptorInstaller} wires the loader into an available
  * {@link ai.protomolt.proto.descriptors.DescriptorRegistry} at startup, optionally bulk-loading
- * then. {@link ProtoToolsApicurioConfig} maps the {@code pipestream.proto.apicurio} configuration
+ * then. {@link ProtoToolsApicurioConfig} maps the {@code protomolt.apicurio} configuration
  * root. The matching build-time processor lives in the {@code deployment} subpackage.</p>
  *
  * <p>{@link ApicurioProtobufParseFallback} covers the case where the registry is unreachable but

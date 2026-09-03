@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@code ./gradlew build} stays green without containers.</p>
  *
  * <p>To run against an external registry instead (for example the compose stack's):
- * {@code -Dpipestream.it.apicurio.url=...} or env {@code PIPESTREAM_IT_APICURIO_URL}.
+ * {@code -Dpipestream.it.apicurio.url=...} or env {@code PROTOMOLT_IT_APICURIO_URL}.
  * An unreachable override endpoint still skips via a JUnit assumption.</p>
  *
  * <p>Artifacts are registered under unique per-run groups so reruns never collide. The shared
@@ -57,7 +57,7 @@ class ApicurioSchemaPublisherIntegrationTest {
 
     private static final String COMMON_PROTO = """
             syntax = "proto3";
-            package pipestream.it.pub.v1;
+            package protomolt.it.pub.v1;
             message Address {
               string street = 1;
               string city = 2;
@@ -66,22 +66,22 @@ class ApicurioSchemaPublisherIntegrationTest {
 
     private static final String EMPLOYEE_PROTO = """
             syntax = "proto3";
-            package pipestream.it.pub.v1;
+            package protomolt.it.pub.v1;
             import "common.proto";
             message Employee {
               string name = 1;
-              pipestream.it.pub.v1.Address address = 2;
+              protomolt.it.pub.v1.Address address = 2;
             }
             """;
 
     private static final String COMPANY_PROTO = """
             syntax = "proto3";
-            package pipestream.it.pub.v1;
+            package protomolt.it.pub.v1;
             import "employee.proto";
             import "google/protobuf/timestamp.proto";
             message Company {
               string name = 1;
-              repeated pipestream.it.pub.v1.Employee employees = 2;
+              repeated protomolt.it.pub.v1.Employee employees = 2;
               google.protobuf.Timestamp founded = 3;
             }
             """;
@@ -89,8 +89,8 @@ class ApicurioSchemaPublisherIntegrationTest {
     // Resolved in setUp: the container's mapped port only exists once it has started.
     private String registryUrl;
     private final String runId = UUID.randomUUID().toString().substring(0, 8);
-    private final String groupId = "pipestream-it-pub-" + runId;
-    private final String dryRunGroupId = "pipestream-it-pub-dry-" + runId;
+    private final String groupId = "protomolt-it-pub-" + runId;
+    private final String dryRunGroupId = "protomolt-it-pub-dry-" + runId;
 
     private HttpClient http;
     private RegistryClient registryClient;
@@ -173,9 +173,9 @@ class ApicurioSchemaPublisherIntegrationTest {
         FieldDescriptor employees = company.findFieldByName("employees");
         assertThat(employees.isRepeated()).isTrue();
         Descriptor employee = employees.getMessageType();
-        assertThat(employee.getFullName()).isEqualTo("pipestream.it.pub.v1.Employee");
+        assertThat(employee.getFullName()).isEqualTo("protomolt.it.pub.v1.Employee");
         assertThat(employee.findFieldByName("address").getMessageType().getFullName())
-                .isEqualTo("pipestream.it.pub.v1.Address");
+                .isEqualTo("protomolt.it.pub.v1.Address");
         assertThat(company.findFieldByName("founded").getMessageType().getFullName())
                 .isEqualTo("google.protobuf.Timestamp");
 

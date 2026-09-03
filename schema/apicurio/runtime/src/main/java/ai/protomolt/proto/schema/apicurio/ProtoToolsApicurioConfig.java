@@ -11,13 +11,13 @@ import java.util.Optional;
  * Runtime configuration for the proto-tools Apicurio descriptor extension.
  *
  * <pre>
- * pipestream.proto.apicurio.enabled=true
- * pipestream.proto.apicurio.registry-url=http://localhost:8080/apis/registry/v3
- * pipestream.proto.apicurio.group-id=default
- * pipestream.proto.apicurio.auto-load-on-startup=false
+ * protomolt.apicurio.enabled=true
+ * protomolt.apicurio.registry-url=http://localhost:8080/apis/registry/v3
+ * protomolt.apicurio.group-id=default
+ * protomolt.apicurio.auto-load-on-startup=false
  * </pre>
  */
-@ConfigMapping(prefix = "pipestream.proto.apicurio")
+@ConfigMapping(prefix = "protomolt.apicurio")
 @ConfigRoot(phase = ConfigPhase.RUN_TIME)
 public interface ProtoToolsApicurioConfig {
 

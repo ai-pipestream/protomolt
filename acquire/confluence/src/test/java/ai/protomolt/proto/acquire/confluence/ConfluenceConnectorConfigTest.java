@@ -14,7 +14,7 @@ class ConfluenceConnectorConfigTest {
     private static ConfluenceConnectorConfig.Builder valid() {
         return ConfluenceConnectorConfig.builder()
                 .baseUrl("https://pipestreamai.atlassian.net/wiki")
-                .email("bot@pipestream.ai")
+                .email("bot@protomolt.ai")
                 .apiToken("secret-token");
     }
 
@@ -76,17 +76,17 @@ class ConfluenceConnectorConfigTest {
         String rendered = valid().build().toString();
         assertThat(rendered).doesNotContain("secret-token");
         assertThat(rendered).contains("***");
-        assertThat(rendered).contains("bot@pipestream.ai");
+        assertThat(rendered).contains("bot@protomolt.ai");
     }
 
     @Test
     void environmentAliasesSupplyCredentials() {
         ConfluenceConnectorConfig config = ConfluenceConnectorConfig.fromEnvironment(Map.of(
                 "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki",
-                "CONFLUENCE_USER", "me@pipestream.ai",
+                "CONFLUENCE_USER", "me@protomolt.ai",
                 "CONFLUENCE_TOKEN", "alias-token"));
 
-        assertThat(config.email()).isEqualTo("me@pipestream.ai");
+        assertThat(config.email()).isEqualTo("me@protomolt.ai");
         assertThat(config.apiToken()).isEqualTo("alias-token");
     }
 
@@ -94,12 +94,12 @@ class ConfluenceConnectorConfigTest {
     void canonicalCredentialNamesBeatAliases() {
         ConfluenceConnectorConfig config = ConfluenceConnectorConfig.fromEnvironment(Map.of(
                 "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki",
-                "CONFLUENCE_EMAIL", "bot@pipestream.ai",
-                "CONFLUENCE_USER", "me@pipestream.ai",
+                "CONFLUENCE_EMAIL", "bot@protomolt.ai",
+                "CONFLUENCE_USER", "me@protomolt.ai",
                 "CONFLUENCE_API_TOKEN", "canonical-token",
                 "CONFLUENCE_TOKEN", "alias-token"));
 
-        assertThat(config.email()).isEqualTo("bot@pipestream.ai");
+        assertThat(config.email()).isEqualTo("bot@protomolt.ai");
         assertThat(config.apiToken()).isEqualTo("canonical-token");
     }
 
@@ -128,7 +128,7 @@ class ConfluenceConnectorConfigTest {
     void sinkConfigFromEnvironment() {
         ConfluenceConnectorConfig config = ConfluenceConnectorConfig.fromEnvironment(Map.of(
                 "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki",
-                "CONFLUENCE_EMAIL", "bot@pipestream.ai",
+                "CONFLUENCE_EMAIL", "bot@protomolt.ai",
                 "CONFLUENCE_API_TOKEN", "token",
                 "CONFLUENCE_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092",
                 "CONFLUENCE_KAFKA_TOPIC", "events-x",

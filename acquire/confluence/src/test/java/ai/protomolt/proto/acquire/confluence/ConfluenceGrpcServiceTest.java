@@ -73,7 +73,7 @@ class ConfluenceGrpcServiceTest {
         fake = FakeConfluenceServer.start();
         config = ConfluenceConnectorConfig.builder()
                 .baseUrl(fake.baseUrl())
-                .email("bot@pipestream.ai")
+                .email("bot@protomolt.ai")
                 .apiToken("token-123")
                 .build();
         client = new ConfluenceClient(config.baseUrl(), config.email(), config.apiToken(),

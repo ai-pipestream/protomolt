@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@code ./gradlew build} stays green without containers.</p>
  *
  * <p>To run against an external registry instead (for example the compose stack's):
- * {@code -Dpipestream.it.apicurio.url=...} or env {@code PIPESTREAM_IT_APICURIO_URL}.
+ * {@code -Dpipestream.it.apicurio.url=...} or env {@code PROTOMOLT_IT_APICURIO_URL}.
  * An unreachable override endpoint still skips via a JUnit assumption.</p>
  *
  * <p>Artifacts are registered under unique per-run groups so reruns never collide. The shared
@@ -50,7 +50,7 @@ class ApicurioDescriptorLoaderIntegrationTest {
 
     private static final String PERSON_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             message Person {
               string name = 1;
               int32 id = 2;
@@ -60,7 +60,7 @@ class ApicurioDescriptorLoaderIntegrationTest {
 
     private static final String ORDER_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             message Order {
               string order_id = 1;
               int64 total_cents = 2;
@@ -69,7 +69,7 @@ class ApicurioDescriptorLoaderIntegrationTest {
 
     private static final String COMMON_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             message Address {
               string street = 1;
               string city = 2;
@@ -78,27 +78,27 @@ class ApicurioDescriptorLoaderIntegrationTest {
 
     private static final String EMPLOYEE_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             import "common.proto";
             message Employee {
               string name = 1;
-              pipestream.it.v1.Address address = 2;
+              protomolt.it.v1.Address address = 2;
             }
             """;
 
     private static final String COMPANY_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             import "employee.proto";
             message Company {
               string name = 1;
-              repeated pipestream.it.v1.Employee employees = 2;
+              repeated protomolt.it.v1.Employee employees = 2;
             }
             """;
 
     private static final String BASE_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             message Base {
               string id = 1;
             }
@@ -106,58 +106,58 @@ class ApicurioDescriptorLoaderIntegrationTest {
 
     private static final String LEFT_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             import "base.proto";
             message Left {
-              pipestream.it.v1.Base base = 1;
+              protomolt.it.v1.Base base = 1;
             }
             """;
 
     private static final String RIGHT_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             import "base.proto";
             message Right {
-              pipestream.it.v1.Base base = 1;
+              protomolt.it.v1.Base base = 1;
             }
             """;
 
     private static final String TOP_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             import "left.proto";
             import "right.proto";
             message Top {
-              pipestream.it.v1.Left left = 1;
-              pipestream.it.v1.Right right = 2;
+              protomolt.it.v1.Left left = 1;
+              protomolt.it.v1.Right right = 2;
             }
             """;
 
     private static final String DANGLING_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             import "missing.proto";
             message Dangling {
-              pipestream.it.v1.Missing missing = 1;
+              protomolt.it.v1.Missing missing = 1;
             }
             """;
 
     // Resolved in setUp: the container's mapped port only exists once it has started.
     private String registryUrl;
     private final String runId = UUID.randomUUID().toString().substring(0, 8);
-    private final String groupId = "pipestream-it-" + runId;
-    private final String refGroupId = "pipestream-it-refs-" + runId;
-    private final String transitiveGroupId = "pipestream-it-trans-" + runId;
-    private final String diamondGroupId = "pipestream-it-diamond-" + runId;
-    private final String danglingGroupId = "pipestream-it-dangling-" + runId;
+    private final String groupId = "protomolt-it-" + runId;
+    private final String refGroupId = "protomolt-it-refs-" + runId;
+    private final String transitiveGroupId = "protomolt-it-trans-" + runId;
+    private final String diamondGroupId = "protomolt-it-diamond-" + runId;
+    private final String danglingGroupId = "protomolt-it-dangling-" + runId;
 
     private HttpClient http;
     private RegistryClient registryClient;
 
     static String configuredRegistryUrl(String defaultUrl) {
-        String url = System.getProperty("pipestream.it.apicurio.url");
+        String url = System.getProperty("protomolt.it.apicurio.url");
         if (url == null || url.isBlank()) {
-            url = System.getenv("PIPESTREAM_IT_APICURIO_URL");
+            url = System.getenv("PROTOMOLT_IT_APICURIO_URL");
         }
         if (url == null || url.isBlank()) {
             url = defaultUrl;
@@ -288,7 +288,7 @@ class ApicurioDescriptorLoaderIntegrationTest {
         assertThat(descriptors).hasSize(2);
 
         Descriptor person = findMessage(descriptors, "Person");
-        assertThat(person.getFile().getPackage()).isEqualTo("pipestream.it.v1");
+        assertThat(person.getFile().getPackage()).isEqualTo("protomolt.it.v1");
         assertThat(person.getFields()).hasSize(3);
         FieldDescriptor name = person.findFieldByName("name");
         assertThat(name.getNumber()).isEqualTo(1);
@@ -333,7 +333,7 @@ class ApicurioDescriptorLoaderIntegrationTest {
                 .contains("common.proto");
         FieldDescriptor address = employee.findFieldByName("address");
         assertThat(address.getType()).isEqualTo(FieldDescriptor.Type.MESSAGE);
-        assertThat(address.getMessageType().getFullName()).isEqualTo("pipestream.it.v1.Address");
+        assertThat(address.getMessageType().getFullName()).isEqualTo("protomolt.it.v1.Address");
         assertThat(address.getMessageType().findFieldByName("city").getType())
                 .isEqualTo(FieldDescriptor.Type.STRING);
     }
@@ -346,7 +346,7 @@ class ApicurioDescriptorLoaderIntegrationTest {
         assertThat(employeeFile).isNotNull();
         Descriptor employee = employeeFile.findMessageTypeByName("Employee");
         assertThat(employee.findFieldByName("address").getMessageType().getFullName())
-                .isEqualTo("pipestream.it.v1.Address");
+                .isEqualTo("protomolt.it.v1.Address");
     }
 
     @Test
@@ -361,9 +361,9 @@ class ApicurioDescriptorLoaderIntegrationTest {
         FieldDescriptor employees = company.findFieldByName("employees");
         assertThat(employees.isRepeated()).isTrue();
         Descriptor employee = employees.getMessageType();
-        assertThat(employee.getFullName()).isEqualTo("pipestream.it.v1.Employee");
+        assertThat(employee.getFullName()).isEqualTo("protomolt.it.v1.Employee");
         assertThat(employee.findFieldByName("address").getMessageType().getFullName())
-                .isEqualTo("pipestream.it.v1.Address");
+                .isEqualTo("protomolt.it.v1.Address");
     }
 
     @Test
@@ -378,9 +378,9 @@ class ApicurioDescriptorLoaderIntegrationTest {
         Descriptor left = top.findFieldByName("left").getMessageType();
         Descriptor right = top.findFieldByName("right").getMessageType();
         assertThat(left.findFieldByName("base").getMessageType().getFullName())
-                .isEqualTo("pipestream.it.v1.Base");
+                .isEqualTo("protomolt.it.v1.Base");
         assertThat(right.findFieldByName("base").getMessageType().getFullName())
-                .isEqualTo("pipestream.it.v1.Base");
+                .isEqualTo("protomolt.it.v1.Base");
     }
 
     @Test

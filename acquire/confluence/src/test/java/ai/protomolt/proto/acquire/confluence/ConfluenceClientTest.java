@@ -28,7 +28,7 @@ class ConfluenceClientTest {
     void startFake() throws Exception {
         fake = FakeConfluenceServer.start();
         // No politeness gap in tests.
-        client = new ConfluenceClient(fake.baseUrl(), "bot@pipestream.ai", "token-123",
+        client = new ConfluenceClient(fake.baseUrl(), "bot@protomolt.ai", "token-123",
                 Duration.ZERO);
     }
 
@@ -46,7 +46,7 @@ class ConfluenceClientTest {
         List<FakeConfluenceServer.RecordedRequest> requests = fake.requestsTo("/wiki/api/v2/spaces");
         assertThat(requests).hasSize(1);
         String expected = "Basic " + Base64.getEncoder()
-                .encodeToString("bot@pipestream.ai:token-123".getBytes());
+                .encodeToString("bot@protomolt.ai:token-123".getBytes());
         assertThat(requests.get(0).authorization()).isEqualTo(expected);
     }
 

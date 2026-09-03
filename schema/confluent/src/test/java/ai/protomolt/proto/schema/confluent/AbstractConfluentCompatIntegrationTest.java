@@ -53,7 +53,7 @@ abstract class AbstractConfluentCompatIntegrationTest {
 
     private static final String PERSON_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             message Person {
               string name = 1;
               int32 id = 2;
@@ -67,7 +67,7 @@ abstract class AbstractConfluentCompatIntegrationTest {
      */
     private static final String TEAM_PROTO = """
             syntax = "proto3";
-            package pipestream.it.v1;
+            package protomolt.it.v1;
             import "person.proto";
             import "google/protobuf/timestamp.proto";
             message Team {
@@ -77,7 +77,7 @@ abstract class AbstractConfluentCompatIntegrationTest {
             }
             """;
 
-    private final String subject = "pipestream-it-" + UUID.randomUUID().toString().substring(0, 8);
+    private final String subject = "protomolt-it-" + UUID.randomUUID().toString().substring(0, 8);
     private final String teamSubject = subject + "-team";
     private HttpClient http;
 
@@ -291,14 +291,14 @@ abstract class AbstractConfluentCompatIntegrationTest {
 
         FieldDescriptor members = team.findFieldByName("members");
         assertThat(members.isRepeated()).isTrue();
-        assertThat(members.getMessageType().getFullName()).isEqualTo("pipestream.it.v1.Person");
+        assertThat(members.getMessageType().getFullName()).isEqualTo("protomolt.it.v1.Person");
         assertThat(members.getMessageType().findFieldByName("id").getNumber()).isEqualTo(2);
 
         assertThat(team.findFieldByName("created").getMessageType().getFullName())
                 .isEqualTo("google.protobuf.Timestamp");
 
         // On-demand lookup scans the loaded subjects by file or message name.
-        FileDescriptor person = loader.loadDescriptor("pipestream.it.v1.Person");
+        FileDescriptor person = loader.loadDescriptor("protomolt.it.v1.Person");
         assertThat(person).isNotNull();
         assertThat(person.findMessageTypeByName("Person").findFieldByName("name")).isNotNull();
     }
@@ -308,7 +308,7 @@ abstract class AbstractConfluentCompatIntegrationTest {
         FileDescriptorProto file = FileDescriptorProto.newBuilder()
                 .setName("person.proto")
                 .setSyntax("proto3")
-                .setPackage("pipestream.it.v1")
+                .setPackage("protomolt.it.v1")
                 .addMessageType(DescriptorProto.newBuilder()
                         .setName("Person")
                         .addField(FieldDescriptorProto.newBuilder()

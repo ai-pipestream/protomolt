@@ -49,13 +49,13 @@ public class SpringProtoRestController {
         cachedOpenApiJson = null;
     }
 
-    @GetMapping("${pipestream.proto.rest.health-path:/health}")
+    @GetMapping("${protomolt.rest.health-path:/health}")
     public Map<String, String> health() {
         return Map.of("status", "UP");
     }
 
     @GetMapping(
-            value = "${pipestream.proto.rest.openapi-path:/openapi.json}",
+            value = "${protomolt.rest.openapi-path:/openapi.json}",
             produces = MediaType.APPLICATION_JSON_VALUE)
     public String openApi() {
         String cached = cachedOpenApiJson;
@@ -67,7 +67,7 @@ public class SpringProtoRestController {
     }
 
     @RequestMapping(
-            path = "${pipestream.proto.rest.path-prefix:/grpc-json}/{serviceName}/{methodName}",
+            path = "${protomolt.rest.path-prefix:/grpc-json}/{serviceName}/{methodName}",
             method = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH,
                     RequestMethod.DELETE},
             produces = MediaType.APPLICATION_JSON_VALUE)
