@@ -423,6 +423,12 @@ results have idempotency keys and immutable content fingerprints.
   synchronize client-encrypted, content-addressed agent artifacts through the
   repository service and S3. Search indexes can be stored remotely, unloaded
   locally, and hydrated by claim check when needed.
+- [Processor placement and locality](12-processor-placement-and-locality.md):
+  name why a processor runs where it runs. Hardware-pinned, data-pinned, and
+  movable placement; shipping a static model to the caller instead of paying a
+  round trip per embedding; shard ownership for in-process search engines; and
+  the document-frequency decision a shard fan-out otherwise inherits by
+  accident.
 - Durable agent-session recovery: checkpoint a live provider conversation and
   revive it after an HTTP/2 disconnect within the advertised resume window.
 - Multi-agent workspace exchange: allow delegated workers to publish bounded
